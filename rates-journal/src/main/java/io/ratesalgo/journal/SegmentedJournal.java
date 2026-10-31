@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -38,7 +39,8 @@ import org.agrona.DirectBuffer;
  * milliseconds for a 512 MiB segment. With preallocation on ({@link #create(Path, String, int,
  * Clock, boolean)}), the journal creates the next segment on its own background thread once the
  * current one is half full, under a temporary name ({@code name.00000k.raj.pending}) that it
- * renames atomically when the file is complete; the roll then only maps the ready file. The header
+ * renames atomically when the file is complete; the roll then only maps the ready file, and the
+ * full segment is forced to disk and unmapped on the same background thread. The header
  * stamp of a preallocated segment is the time it was created, not the time of the roll. An unused
  * preallocated segment is deleted on {@link #close()}; one left behind by a crash is an empty
  * segment, which readers and {@link #open} accept.
@@ -240,7 +242,9 @@ public final class SegmentedJournal implements AutoCloseable {
     if (pending != null) {
       await(pending);
       pending = null;
-      current.close();
+      // closing forces the full segment to disk; the background thread does that too
+      final JournalWriter full = current;
+      preallocator.execute(full::close);
       segmentIndex++;
       current = JournalWriter.open(segmentPath(dir, name, segmentIndex), clock, nextSequence, hash);
       return;
@@ -294,6 +298,13 @@ public final class SegmentedJournal implements AutoCloseable {
           pending = null;
         }
         preallocator.shutdown();
+        try {
+          if (!preallocator.awaitTermination(1, TimeUnit.MINUTES)) {
+            throw new IllegalStateException("journal " + name + ": background close timed out");
+          }
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
       }
     }
   }
