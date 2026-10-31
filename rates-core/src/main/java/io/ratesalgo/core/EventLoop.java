@@ -86,6 +86,12 @@ public final class EventLoop {
     this.replay = b.replay;
     this.pendingDropped = new long[outbound.length];
     this.pendingFirstTemplate = new int[outbound.length];
+    // Load and initialise the backpressure path's classes now, on the building thread. The loop
+    // reads ControlMessages only through compile-time constants until the first dropped message,
+    // so without this the first backpressure event of a run loads the class on the loop thread,
+    // which allocates (DR-INT-02). The scratch buffer is overwritten before every use.
+    ControlMessages.encodeBackpressure(scratch, 0, 0L, 0L, 0, 0);
+    backpressureEvent.set(0, 0L, 0, 0L);
   }
 
   /** A builder over the loop's clock. Journals given to the builder should use the same clock. */
