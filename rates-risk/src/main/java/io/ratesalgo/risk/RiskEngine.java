@@ -353,10 +353,17 @@ public final class RiskEngine {
     }
     final boolean buy = ourSide == Side.Buy;
     final long maxPos = limits.maxPosition(instrumentId);
-    long room =
-        buy
-            ? maxPos - (position[i] + pendingBuy[i])
-            : maxPos + (position[i] - pendingSell[i]);
+    // quantity already used toward the limit on this side; negative when the position leans the
+    // other way. maxPos - used saturates at Long.MAX_VALUE instead of overflowing.
+    final long used = buy ? position[i] + pendingBuy[i] : pendingSell[i] - position[i];
+    long room;
+    if (used >= maxPos) {
+      room = 0L;
+    } else if (used < 0 && maxPos > Long.MAX_VALUE + used) {
+      room = Long.MAX_VALUE;
+    } else {
+      room = maxPos - used;
+    }
     room = Math.min(room, limits.maxOrderSize());
     if (room <= 0) {
       return 0L;
@@ -626,13 +633,13 @@ public final class RiskEngine {
   private int positionOnly(final int i, final long buy, final long sell) {
     final Instrument inst = directory.byIndex(i);
     final long maxPos = limits.maxPosition(inst.id());
-    final long hiPos = position[i] + pendingBuy[i] + buy;
-    final long loPos = position[i] - pendingSell[i] - sell;
-    if (hiPos > maxPos) {
-      return record(LimitKind.Position, inst.id(), inst.major(maxPos), inst.major(hiPos));
+    if (exceeds(position[i] + pendingBuy[i], buy, maxPos)) {
+      return record(
+          LimitKind.Position, inst.id(), inst.major(maxPos), inst.major(position[i] + pendingBuy[i]) + inst.major(buy));
     }
-    if (loPos < -maxPos) {
-      return record(LimitKind.Position, inst.id(), inst.major(maxPos), inst.major(loPos));
+    if (exceeds(pendingSell[i] - position[i], sell, maxPos)) {
+      return record(
+          LimitKind.Position, inst.id(), inst.major(maxPos), inst.major(position[i] - pendingSell[i]) - inst.major(sell));
     }
     return OK;
   }
@@ -648,7 +655,7 @@ public final class RiskEngine {
   private boolean envelopeQuiet(final int i, final long buy, final long sell) {
     final Instrument inst = directory.byIndex(i);
     final long maxPos = limits.maxPosition(inst.id());
-    if (position[i] + pendingBuy[i] + buy > maxPos || position[i] - pendingSell[i] - sell < -maxPos) {
+    if (exceeds(position[i] + pendingBuy[i], buy, maxPos) || exceeds(pendingSell[i] - position[i], sell, maxPos)) {
       return false;
     }
     return pv01Envelope(i, buy, sell, false) == OK;
@@ -784,6 +791,11 @@ public final class RiskEngine {
       publish(kind, scope, limit, observed, 0L);
     }
     postAlerted[c][slot] = breached;
+  }
+
+  /** {@code used + add > max} without overflow, for non-negative {@code add} and {@code max}. */
+  private static boolean exceeds(final long used, final long add, final long max) {
+    return used > max - add;
   }
 
   private static double offset(final double a, final double b) {

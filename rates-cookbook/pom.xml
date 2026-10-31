@@ -30,6 +30,26 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-api</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-risk</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-hedge</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-quoting</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.agrona</groupId>
       <artifactId>agrona</artifactId>
     </dependency>

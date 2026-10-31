@@ -185,6 +185,17 @@ class RiskEngineTest {
   }
 
   @Test
+  void headroomWithUnlimitedPositionsDoesNotOverflow() {
+    final RiskFixture f = new RiskFixture();
+    f.risk.onFill(BOND10, 150 * M, f.fairMid(BOND10));
+    assertEquals(Long.MAX_VALUE, f.risk.headroom(BOND10, Side.Sell));
+    assertEquals(Long.MAX_VALUE - 150 * M, f.risk.headroom(BOND10, Side.Buy));
+    f.risk.onFill(BOND10, -300 * M, f.fairMid(BOND10));
+    assertEquals(Long.MAX_VALUE, f.risk.headroom(BOND10, Side.Buy));
+    assertEquals(Long.MAX_VALUE - 150 * M, f.risk.headroom(BOND10, Side.Sell));
+  }
+
+  @Test
   void riskReducingHedgesPassWhenTheBookIsInBreach() {
     final RiskFixture f = new RiskFixture(new RiskLimits().bucketPv01(50_000.0).netPv01(60_000.0));
     f.risk.onFill(BOND10, 100 * M, f.fairMid(BOND10)); // -82k: post-trade breach
