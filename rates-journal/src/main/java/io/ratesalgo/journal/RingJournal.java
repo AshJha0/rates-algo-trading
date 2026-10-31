@@ -63,8 +63,11 @@ public final class RingJournal implements AutoCloseable {
   private final int maxFrame;
   private final Thread drainer;
 
+  /** Read and written on the producing thread only. */
   private long nextSequence;
-  private boolean closed;
+
+  /** Written by {@link #close()}, which may run on another thread once the producer has stopped. */
+  private volatile boolean closed;
 
   private volatile boolean stopping;
   private volatile Throwable failure;

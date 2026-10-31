@@ -74,7 +74,7 @@ public final class SafepointStallProbe {
     }
   }
 
-  public static void main(final String[] args) throws Exception {
+  public static void main(final String[] args) throws IOException, InterruptedException {
     if (args.length != 4) {
       throw new IllegalArgumentException("usage: SafepointStallProbe agrona|channel|channel-touch|journal dir sizeMiB count");
     }

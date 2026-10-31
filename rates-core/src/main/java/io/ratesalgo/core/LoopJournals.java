@@ -55,12 +55,17 @@ public final class LoopJournals implements AutoCloseable {
       final JournalMode mode,
       final int ringCapacity) {
     final Sink in = Sink.create(dir, inboundName, segmentBytes, clock, mode, ringCapacity);
+    boolean opened = false;
     try {
-      return new LoopJournals(
-          mode, in, Sink.create(dir, outboundName, segmentBytes, clock, mode, ringCapacity));
-    } catch (final RuntimeException e) {
-      in.close();
-      throw e;
+      final LoopJournals journals =
+          new LoopJournals(
+              mode, in, Sink.create(dir, outboundName, segmentBytes, clock, mode, ringCapacity));
+      opened = true;
+      return journals;
+    } finally {
+      if (!opened) {
+        in.close();
+      }
     }
   }
 
@@ -145,11 +150,15 @@ public final class LoopJournals implements AutoCloseable {
       if (mode == JournalMode.DIRECT) {
         return new Sink(journal, null);
       }
+      boolean started = false;
       try {
-        return new Sink(journal, RingJournal.start(name, journal, clock, ringCapacity));
-      } catch (final RuntimeException e) {
-        journal.close();
-        throw e;
+        final Sink sink = new Sink(journal, RingJournal.start(name, journal, clock, ringCapacity));
+        started = true;
+        return sink;
+      } finally {
+        if (!started) {
+          journal.close();
+        }
       }
     }
 
