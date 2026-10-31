@@ -1194,6 +1194,10 @@ Tolerance: \(|\text{residual}| < 0.01\) on every run, per instrument and in tota
 
 Java and Python agree on `data/fixtures/backtest/stats_crosscheck.json`: exactly for the bootstrap and generator, to 1e-12 for Welch.
 
+### 16.6a Depth-walk hedge fills, best-price client and coupon carry (round 2 fix D)
+
+`HedgeCostModel.withDepthWalk(on)` returns a copy that fills a market hedge level by level against the displayed quantity at each price; `depthWalk()` reads the setting. The default, and `fromPreset`, keep the linear cost rule, so earlier ledger rows reproduce. `RfqOutcomeModel.ClientChoice` is `HIT_RATE` (default: the soft logistic of the hit-rate model) or `BEST_PRICE` (the client trades with the best price: we win inside the cover, lose outside, and a tie is a fair coin). `withClientChoice(c)` returns a copy with the other rule and `clientChoice()` reads it. Both rules draw the same numbers in the same order. `CarryModel.bondCoupons(annualCouponByInstrument)` accrues each bond's coupon ACT/365 on the carry line next to funding; `CarryModel.NONE` books nothing.
+
 ### 16.7 SplitMix64
 
 `state += 0x9E3779B97F4A7C15`; output `mix(state)` with `z = (z ^ z>>>30) * 0xBF58476D1CE4E5B9; z = (z ^ z>>>27) * 0x94D049BB133111EB; z ^ z>>>31`. `nextDouble = (nextLong >>> 11) * 2^-53`; `nextInt(b) = (nextLong >>> 1) mod b`; `forStream(seed, key) = new SplitMix64(mix(seed ^ mix(key + golden)))`. `nextGaussian` (Box-Muller) is reproducible within the JVM only.

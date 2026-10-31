@@ -792,7 +792,7 @@ Also, `VenueBindingTest.aLostSessionIsPulledOnTheLoopCancelledAtTheVenueAndQuoti
 
 Consequences. A desk configuration whose cap is below its own expected cost now quotes nothing rather than quoting at a loss. Any new desk configuration has to keep `winnersCurseBp`, the hedge cost and the cap consistent, and a smoke day that quotes nothing fails `SmokeTest`.
 
-## DR-INT-06: Load-sensitive tests: exact accounting in the latency harness test, a longer wait for the first quote
+## DR-INT-06: Load-sensitive tests: exact accounting in the latency harness test, a longer wait for the first quote, a JIT-settled warm-up for the wired allocation test
 
 Date: 2026-10-31
 
@@ -801,6 +801,8 @@ Context. `LatencyHarnessTest.shortRunWritesAReportWhoseHistogramsReadBack` faile
 Decision. The single equality becomes three exact equalities over the counters the harness writes to its JSON report. The loop processed exactly what the generator did not drop (`inbound == generated - generatorDropped`). Each processed request was either published or counted as dropped (`inbound == outbound + outboundDropped`). The gateway handed on exactly what was published (`seen == outbound`). Every other assertion is unchanged, and a failure prints the report.
 
 Also, `TradingProcessMainTest.theTradingRoleQuotesTakesTheKillAndItsJournalsReplay` failed with "no quote within 30 s" under full-build load in the fix-c session and passed alone. The process runs in wall-clock time at time scale 60, so a loaded machine delays its first quote. The test already polled `/control/status` until `quotesSent` was positive; the ceiling is now 180 s, and the failure message prints the last status. The kill, metrics and replay assertions are unchanged.
+
+Also, `WiredLoopAllocationTest` (rates-app) failed once under full-build load in the fix-d session and passed alone. The failing report was not kept. Five runs at integration, each in a fresh JVM with all 12 cores held busy by spinning processes, all passed, so no allocation was reproduced and no code path was found that allocates. The one mechanism that fits a failure that appears only under load is JIT timing. The test warms up for a fixed 600,000 messages; when the compiler threads are starved, C2 compilations and deoptimisations of the desk's paths land in the measured windows, and a deoptimisation that rematerialises scalar-replaced objects allocates on the loop thread. The test now keeps warming up, one window at a time, until a whole window passes with no new JIT compilation time, for at most 4 extra windows, and its report gives the number of extra windows. The measured windows are unchanged: the same four windows of 150,000 messages, no later window above 1,024 bytes, and at least one window with zero bytes. A genuine per-message allocation still fails, because it would show in every window. If the failure recurs with the JIT quiet, the report now says so, and the cause is then a real one-off allocation to fix as in DR-INT-02.
 
 Consequences. The test still fails if a message is lost without being counted on any path, which is what the old check guarded, and it now also checks the loop's own counters against the generator. A run where the loop drops Quotes on backpressure passes, as it should. The harness itself is unchanged.
 
@@ -943,6 +945,36 @@ Context. Fix package A2 (`claude/fix-a2-engine-8168e0`) met the same NEGATIVE_ED
 Decision. The wired desk keeps `winnersCurseBp(0.02)` (DR-INT-05), so there is one setting. Recipe 22's output on the merged tree with packages A1, B, C and A2 equals A2's recording, and `RecipesTest` and `check_cookbook.py` pass on it. README.md and STATUS.md quote that output: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills, 229 trades reconciled, and a back-test of 36 RFQs, 14 client fills and 171 hedge fills.
 
 Consequences. The smoke-day numbers move again whenever a quoting default changes. Recipe 22's recorded output is the reference, and README and STATUS follow it.
+
+## DR-FIX-D-01: The back-tester can walk the displayed depth for market hedges; the linear rule stays the default
+
+Date: 2026-10-31
+
+Context. The P&L audit measured hedge cost with a linear rule on one block (item 1: 0.328 bp per DV01 hedged), while the production router sends child orders against displayed depth.
+
+Decision. `HedgeCostModel.withDepthWalk(true)` fills market hedges level by level against the displayed touch quantity. `fromPreset` and the default keep the linear rule, so P5-001 and AUDIT-01 to AUDIT-04 still reproduce from their ledger rows.
+
+Consequences. Runs that want realistic child-order costs opt in. AUDIT-11 measured 0.089 bp per DV01 with the depth walk against 0.174 bp under the linear rule for the production desk.
+
+## DR-FIX-D-02: A best-price client rule beside the hit-rate client, on the same random draws
+
+Date: 2026-10-31
+
+Context. Item 3: volume rested on clients accepting quotes behind the cover, which the soft logistic client allows.
+
+Decision. `RfqOutcomeModel.ClientChoice.BEST_PRICE` makes the client trade with the best price, with a tie on a fair coin. Both rules draw the same numbers in the same order, so every RFQ's cover is the same under either and a paired comparison isolates the client rule.
+
+Consequences. A strategy's dependence on clients who accept worse prices can be measured directly. `HIT_RATE` stays the default.
+
+## DR-FIX-D-03: Bond coupons accrue on the carry line
+
+Date: 2026-10-31
+
+Context. Item 17 (AUDIT-01 funding line): the back-tester charged bond funding without coupon carry, so a net short bond position looked cheaper to hold than it is.
+
+Decision. `CarryModel.bondCoupons` accrues each bond's annual coupon ACT/365 next to funding.
+
+Consequences. Balance sheet, initial margin and the CCP basis are still not priced. Item 17 is fixed for coupons only.
 
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 

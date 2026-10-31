@@ -1,0 +1,53 @@
+# Pre-registration AUDIT-12, the production-engine re-run of the P&L audit (audit fix package D,
+# docs/research/PNL_AUDIT.md). Written, hashed and committed before the evaluation period was run.
+# Format: API_SPEC.md Section 16.8, validated by PreRegistration.requireValid and
+# ratesresearch.prereg.validate. Run with research/audit/run_desk_audit.sh, which records one
+# ledger row whatever the result.
+prereg_version: 1
+id: AUDIT-12
+title: "AUDIT-02's design on the production engine: pricing adverse flow by widening"
+hypothesis: >
+  AUDIT-02 found that declining informed flow loses money at model_spread's spreads and that a
+  small widening of the toxic tier is close to neutral. The production desk runs one tier for
+  every client (DeskSettings.tiers) and the D2C simulator does not label informed clients, so
+  decline rules cannot be expressed; the re-run measures the pricing side: widen_0p05 and
+  widen_0p10 add 0.05 and 0.10 bp to both ends of the half-spread clamp for every client.
+  Expected: widening earns more than the engine at the low and central points.
+metric: >
+  Total position P&L per recorded session in USD, rounded to cents (cash plus the final position
+  at the final mid; attribution reconciled to it on every run). Unit of analysis: one session of
+  15 simulated minutes from 08:25 New York. Each difference is also reported per 1,000,000 USD of
+  client DV01 traded, normalised by the engine's mean per session at that band point.
+baseline: engine
+treatments: [widen_0p05, widen_0p10]
+period: {start: 2026-03-02, end: 2026-03-27}
+fitting_period: {start: 2026-01-05, end: 2026-01-16}
+holdout: [2026-04-06, 2026-04-07, 2026-04-08, 2026-04-09, 2026-04-10]
+success_threshold: >
+  Per variant and band point (low, central, high): Welch's two-sided test of variant against
+  engine session P&L, Holm-adjusted over every (variant, band point) test of this
+  pre-registration, below 0.05, and the 95 percent moving-block bootstrap interval (blocks of 2
+  sessions, 2000 resamples, seed 11) of the paired session difference entirely above zero:
+  supported. Adjusted p below 0.05 and interval entirely below zero: reversed. Otherwise
+  inconclusive. The size is the paired mean difference with its interval, reported whatever the
+  verdict. The row is void if any run's attribution residual exceeds one cent.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/AUDIT-12.config.yaml
+config_sha256: 8d873e54f43c6e9ec2b4e2c8bbb49c64df7884090bc468b98e6fa678bf5bb1bb
+limitations: >
+  Simulated sessions only (DR-008): the D2C simulator's dealers, the back-tester's competitor
+  model and win-probability slope are declared assumptions, so every number is a simulator
+  consistency check, not edge. The sessions are recordings of the P2 venue simulators, not the
+  synthetic days of AUDIT-01 to AUDIT-04, so absolute sizes are not comparable with those rows;
+  the comparison is of signs and of sizes per 1mm USD of client DV01. Sessions are 15 simulated
+  minutes, not a full day, because a replay of the production desk costs about 3 s of CPU per
+  simulated minute. The back-tester has no resting-order cancel, so the desk's child orders are
+  filled as market orders (DR-R2W-11). Labels are session keys for the seed rule; every session
+  is the simulators' trading date 2026-11-02. A pilot on fitting-period labels with a scratch
+  ledger checked the harness before this file was committed; its numbers are not used. The
+  holdout is not opened.

@@ -65,6 +65,13 @@ Round 2 fixes from the P&L audit, package A2 (branch `claude/fix-a2-engine-8168e
 - Audit item 13: a late single-RFQ Done (review DR-R2R-13) is recorded and reaches the hedger (DR-FIX-A2-06).
 - rates-app: the package's own winner's-curse setting (0.01 bp, commit 2031b7a) was superseded in its merge of round2-integration by DR-INT-05's 0.02 bp, which stands (DR-INT-07). COOKBOOK recipes 22 and 27 re-recorded. Tests: `AuditFixesTest`.
 
+Round 2 fixes from the P&L audit, package D (branch `claude/fix-d-backtest-cdd6aa`, commits 503be68, 04edc03 and 8331c41).
+
+- Audit item 3 (back-tester side): `RfqOutcomeModel.ClientChoice.BEST_PRICE` (`withClientChoice`), a client who trades with the best price, with the same random draws as the default `HIT_RATE` (DR-FIX-D-02).
+- Audit item 17 (coupon carry): `CarryModel.bondCoupons(annualCouponByInstrument)` accrues bond coupons ACT/365 on the carry line next to funding (DR-FIX-D-03). Balance sheet, initial margin and the CCP basis remain unpriced.
+- Back-tester hedge fills: `HedgeCostModel.withDepthWalk(true)` fills market hedges level by level against the displayed touch quantity; `fromPreset` keeps the linear rule so P5-001 and AUDIT-01 to 04 still reproduce (DR-FIX-D-01).
+- Experiments: pre-registrations AUDIT-11 to AUDIT-14 (`research/prereg/`), the P&L audit re-run on the production desk (`research/audit/DeskAudit.java`, `run_desk_audit.sh`), ledger rows seq 19 to 22, results and a PNL_AUDIT.md section "Production-engine re-run". Tests: `FixPackageDTest`.
+
 ### Fixed
 
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).

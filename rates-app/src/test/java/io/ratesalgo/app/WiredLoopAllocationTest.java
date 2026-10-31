@@ -62,6 +62,7 @@ class WiredLoopAllocationTest {
   private static final int WINDOW = 150_000;
   private static final int WINDOWS = 4;
   private static final long LATER_WINDOW_BOUND = 1024L;
+  private static final int EXTRA_WARM_UP = 4;
 
   @TempDir Path dir;
 
@@ -142,8 +143,29 @@ class WiredLoopAllocationTest {
       venueSide = outbound[AppIds.D2C_GATEWAY];
       publish(publisher, WARM_UP);
       await(loop, WARM_UP);
-      final long[] bytes = new long[WINDOWS];
       long sent = WARM_UP;
+      // Under machine load the JIT's compiler threads fall behind, so compilations and
+      // deoptimisations of the desk's paths can land in the measured windows instead of the fixed
+      // warm-up. Keep warming up, a window at a time, until a whole window passes with no new JIT
+      // compilation time, up to EXTRA_WARM_UP windows (DR-INT-06). The measured windows and their
+      // bounds are unchanged.
+      final java.lang.management.CompilationMXBean jit = ManagementFactory.getCompilationMXBean();
+      int extraWarmUp = 0;
+      if (jit != null && jit.isCompilationTimeMonitoringSupported()) {
+        long compiled = jit.getTotalCompilationTime();
+        while (extraWarmUp < EXTRA_WARM_UP) {
+          publish(publisher, WINDOW);
+          sent += WINDOW;
+          await(loop, sent);
+          extraWarmUp++;
+          final long now = jit.getTotalCompilationTime();
+          if (now == compiled) {
+            break;
+          }
+          compiled = now;
+        }
+      }
+      final long[] bytes = new long[WINDOWS];
       for (int w = 0; w < WINDOWS; w++) {
         final long before = threads.getThreadAllocatedBytes(runner.threadId());
         publish(publisher, WINDOW);
@@ -158,7 +180,8 @@ class WiredLoopAllocationTest {
       final var desk = factory.last().desk();
       final long hedgeFills = factory.last().hedgeFills();
       final String report =
-          "bytes per window " + java.util.Arrays.toString(bytes) + "; quotes " + desk.quoting().quotesSent()
+          "bytes per window " + java.util.Arrays.toString(bytes) + " after " + extraWarmUp
+              + " extra warm-up windows; quotes " + desk.quoting().quotesSent()
               + ", fills " + desk.quoting().fills() + ", hedge parents " + factory.last().hedgesRouted()
               + ", curve rebuilds " + factory.last().pricing().rebuilds()
               + ", hedger sent " + factory.last().desk().hedger(io.ratesalgo.api.CurrencyCode.USD).parentsSent()
