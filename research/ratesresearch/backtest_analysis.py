@@ -213,4 +213,4 @@ def crosscheck_values() -> dict[str, Any]:
 
 def write_crosscheck(path: str | Path) -> None:
     payload = {"input": crosscheck_input(), "expected": crosscheck_values()}
-    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")

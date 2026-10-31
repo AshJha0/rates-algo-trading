@@ -11,10 +11,12 @@ strategies:
     bond_half_spread_bp: 0.15
     hedge_threshold_dv01: 100000
   model_spread:
-    # expected adverse mid move at 1 min by tier, bp, estimated on the fitting period
-    adverse_bp_by_tier: [0.0, 0.0, 0.0]
-    swap_hedge_cost_bp: 0.0
-    bond_hedge_cost_bp: 0.0
+    # expected adverse mid move at 1 min by tier, bp, and hedge cost per bp of client DV01, both
+    # estimated on the fitting period 2026-01-05..2026-01-16 with fixed_spread at the central band
+    # point (ratesresearch.markouts.adverse_bp_by_tier; STATUS.md and LEARN.md Section 10)
+    adverse_bp_by_tier: [0.0241, 0.0667, 0.1300]
+    swap_hedge_cost_bp: 0.2459
+    bond_hedge_cost_bp: 0.2459
     max_half_spread_bp: 2.0
     grid_step_bp: 0.01
     hedge_threshold_dv01: 100000

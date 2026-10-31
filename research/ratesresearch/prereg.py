@@ -94,6 +94,10 @@ def validate(path: str | Path, repo_root: str | Path) -> list[str]:
                 holdout.append(d)
     else:
         problems.append("holdout must be a non-empty list of dates")
+    if len(holdout) == 1:
+        problems.append("holdout needs at least two dates: the daily statistics need two days")
+    if period and len(business_days(period[0], period[1])) < 2:
+        problems.append("evaluation period needs at least two business days")
     _date(raw["date"], "date", problems)
     if period and fitting and not (period[1] < fitting[0] or period[0] > fitting[1]):
         problems.append(f"evaluation period {period[0]}..{period[1]} overlaps the fitting period")
