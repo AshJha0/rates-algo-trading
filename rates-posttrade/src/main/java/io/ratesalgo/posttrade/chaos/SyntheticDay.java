@@ -255,6 +255,7 @@ public final class SyntheticDay {
     try (JournalScript script = new JournalScript(journal, 1 << 22, MIDNIGHT)) {
       for (final Event e : events) {
         final long before = script.nextSequence();
+        script.arriveAt(e.arrival);
         e.writer.write(script);
         frames++;
         if (e.arrival <= CUT) {

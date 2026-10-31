@@ -128,6 +128,13 @@ public final class JournalScript implements AutoCloseable {
     return append(at, templateId, payload.length);
   }
 
+  /** Moves the journal clock forward to {@code arrivalNanos}, the time the next frame arrives. */
+  public void arriveAt(final long arrivalNanos) {
+    if (arrivalNanos > clock.epochNanos()) {
+      clock.setEpochNanos(arrivalNanos);
+    }
+  }
+
   /** The sequence the next frame will get. */
   public long nextSequence() {
     return writer.nextSequence();
