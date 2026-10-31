@@ -95,10 +95,14 @@ class TradingProcessMainTest {
       assertNotNull(s);
       final int port = s.server().port();
       assertEquals(200, http("GET", port, "/health/ready").statusCode());
-      final long deadline = System.nanoTime() + 30_000_000_000L;
-      while (!http("GET", port, "/control/status").body().matches(".*\"quotesSent\":[1-9].*")) {
-        assertTrue(System.nanoTime() < deadline, "no quote within 30 s");
+      // the process runs in wall-clock time (time scale 60), so a loaded machine delays the first
+      // quote; wait on the status itself with a generous ceiling (DR-INT-06)
+      final long deadline = System.nanoTime() + 180_000_000_000L;
+      String status = http("GET", port, "/control/status").body();
+      while (!status.matches(".*\"quotesSent\":[1-9].*")) {
+        assertTrue(System.nanoTime() < deadline, "no quote within 180 s; last status " + status);
         Thread.sleep(50);
+        status = http("GET", port, "/control/status").body();
       }
       assertEquals(403, http("POST", port, "/control/kill").statusCode());
       final HttpResponse<String> kill =

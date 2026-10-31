@@ -792,6 +792,18 @@ Also, `VenueBindingTest.aLostSessionIsPulledOnTheLoopCancelledAtTheVenueAndQuoti
 
 Consequences. A desk configuration whose cap is below its own expected cost now quotes nothing rather than quoting at a loss. Any new desk configuration has to keep `winnersCurseBp`, the hedge cost and the cap consistent, and a smoke day that quotes nothing fails `SmokeTest`.
 
+## DR-INT-06: Load-sensitive tests: exact accounting in the latency harness test, a longer wait for the first quote
+
+Date: 2026-10-31
+
+Context. `LatencyHarnessTest.shortRunWritesAReportWhoseHistogramsReadBack` failed twice under full-build load in the fix-a1 session and passed when run alone. Among its checks, it required the gateway callback to see exactly `generated - generatorDropped` Quotes. That holds only if the loop publishes every Quote. When the machine is loaded, the gateway thread that drains the outbound ring can fall behind, and the loop then drops Quotes on the full ring and counts them as `outboundDropped` (DR-P2C backpressure). So a correct run could fail the check. The other checks in the test (counts against the measured window, histogram read-back, report rows) do not depend on scheduling.
+
+Decision. The single equality becomes three exact equalities over the counters the harness writes to its JSON report. The loop processed exactly what the generator did not drop (`inbound == generated - generatorDropped`). Each processed request was either published or counted as dropped (`inbound == outbound + outboundDropped`). The gateway handed on exactly what was published (`seen == outbound`). Every other assertion is unchanged, and a failure prints the report.
+
+Also, `TradingProcessMainTest.theTradingRoleQuotesTakesTheKillAndItsJournalsReplay` failed with "no quote within 30 s" under full-build load in the fix-c session and passed alone. The process runs in wall-clock time at time scale 60, so a loaded machine delays its first quote. The test already polled `/control/status` until `quotesSent` was positive; the ceiling is now 180 s, and the failure message prints the last status. The kill, metrics and replay assertions are unchanged.
+
+Consequences. The test still fails if a message is lost without being counted on any path, which is what the old check guarded, and it now also checks the loop's own counters against the generator. A run where the loop drops Quotes on backpressure passes, as it should. The harness itself is unchanged.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31

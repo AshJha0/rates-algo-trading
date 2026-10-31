@@ -46,8 +46,16 @@ class LatencyHarnessTest {
     assertTrue(r.scheduledToEncode().getTotalCount() <= 40_000L);
     assertTrue(r.scheduledToEncode().getTotalCount() >= measured - r.generatorDropped());
     assertTrue(r.decodeToEncode().getTotalCount() >= r.scheduledToEncode().getTotalCount());
-    assertEquals(r.generated() - r.generatorDropped(), seen.get());
     final String json = Files.readString(r.jsonFile(), StandardCharsets.UTF_8);
+    // Exact accounting on every path a message can leave by (DR-INT-06). Under machine load the
+    // gateway thread can fall behind, and the loop then drops Quotes on a full outbound ring
+    // (backpressure, counted), so the gateway sees fewer than the loop processed.
+    final long inbound = count(json, "inbound");
+    final long outbound = count(json, "outbound");
+    final long outboundDropped = count(json, "outboundDropped");
+    assertEquals(r.generated() - r.generatorDropped(), inbound, json);
+    assertEquals(inbound, outbound + outboundDropped, json);
+    assertEquals(outbound, seen.get(), json);
     assertTrue(json.contains("\"schema\": \"rates-bench-latency/1\""));
     assertTrue(json.contains("\"tickToWire\": null"));
     assertTrue(json.contains("\"journalMode\": \"" + mode + "\""), json);
@@ -60,6 +68,13 @@ class LatencyHarnessTest {
     assertEquals(2, rows.size());
     assertTrue(rows.get(0).contains("core decode-to-encode"));
     assertTrue(rows.get(1).contains("scheduled-to-encode"));
+  }
+
+  private static long count(final String json, final String name) {
+    final java.util.regex.Matcher m =
+        java.util.regex.Pattern.compile("\"" + name + "\": (\\d+)").matcher(json);
+    assertTrue(m.find(), "no count " + name + " in " + json);
+    return Long.parseLong(m.group(1));
   }
 
   @Test
