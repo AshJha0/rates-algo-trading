@@ -8133,10 +8133,10 @@
    "contract": "TY",
    "year": 2025,
    "month": 3,
-   "coupon": 0.045,
-   "dated": "2023-11-15",
-   "maturity": "2033-11-15",
-   "factor": 0.9013
+   "coupon": 0.035,
+   "dated": "2023-02-15",
+   "maturity": "2033-02-15",
+   "factor": 0.8468
   },
   {
    "exchange": "CME",
@@ -8664,15 +8664,15 @@
      "implied_repo": 0.04167515909151855
     },
     {
-     "coupon": 0.045,
-     "dated": "2023-11-15",
-     "maturity": "2033-11-15",
-     "clean": 99.38766424071429,
-     "conversion_factor": 0.9013,
-     "gross_basis": 1.7233595532142942,
-     "carry": 0.0346006887948791,
-     "net_basis": 1.6887588644194151,
-     "implied_repo": -0.039025921963921475
+     "coupon": 0.035,
+     "dated": "2023-02-15",
+     "maturity": "2033-02-15",
+     "clean": 93.06040184925133,
+     "conversion_factor": 0.8468,
+     "gross_basis": 1.3016830992513349,
+     "carry": -0.11555896805710308,
+     "net_basis": 1.4172420673084378,
+     "implied_repo": -0.03075221069348495
     }
    ],
    "ctd_index": 5
