@@ -148,6 +148,67 @@ public final class BondPricer {
     }
   }
 
+  /**
+   * Clean price per 100 by the Treasury's auction formula (31 CFR Part 356, Appendix B, Section
+   * I.A): the value at the next coupon date of the remaining cash flows at the semi-annual yield,
+   * discounted to settlement with simple interest over the fraction r/s of the current period,
+   * less accrued interest. It differs from the compounded street convention only through that
+   * first fraction, and it reproduces every 2024 note and bond auction price to the published six
+   * decimals ({@code PublishedExamplesTest}). Exact.
+   */
+  public double treasuryAuctionPrice(
+      final FixedRateBond b, final double yield, final int settlement) {
+    return treasuryAuctionDirtyPrice(b, yield, settlement) - accrued(b, settlement, false);
+  }
+
+  /**
+   * Dirty price per 100 by the Treasury auction formula. The Treasury publishes the clean price
+   * as this value and the accrued interest each rounded to six decimals, then subtracted, which
+   * reproduces all 84 note and bond prices of 2024.
+   */
+  public double treasuryAuctionDirtyPrice(
+      final FixedRateBond b, final double yield, final int settlement) {
+    int k = 0;
+    while (b.payNominal[k] <= settlement) {
+      k++;
+    }
+    final int f = b.convention().frequency();
+    final double v = 1.0 / (1.0 + yield / f);
+    double atNext = b.amount[k];
+    double vj = 1.0;
+    final int n = b.couponCount();
+    for (int j = k + 1; j < n; j++) {
+      vj *= v;
+      atNext += b.amount[j] * vj;
+    }
+    atNext += 100.0 * (k == n - 1 ? 1.0 : vj);
+    final double s = b.refEnd[k] - b.refStart[k];
+    final double r = b.payNominal[k] - settlement;
+    return atNext / (1.0 + r / s * yield / f);
+  }
+
+  /** Yield from a clean price by the Treasury auction formula; to 1e-15. */
+  public double treasuryAuctionYield(
+      final FixedRateBond b, final double cleanPrice, final int settlement) {
+    auctionFunction.bond = b;
+    auctionFunction.settlement = settlement;
+    auctionFunction.target = cleanPrice;
+    return Brent.solve(auctionFunction, -0.5, 1.0, 1e-15, 200);
+  }
+
+  private final AuctionFunction auctionFunction = new AuctionFunction();
+
+  private final class AuctionFunction implements Brent.Function {
+    FixedRateBond bond;
+    int settlement;
+    double target;
+
+    @Override
+    public double value(final double y) {
+      return treasuryAuctionPrice(bond, y, settlement) - target;
+    }
+  }
+
   /** Modified duration -(dP/dy)/P on the dirty price. */
   public double modifiedDuration(
       final FixedRateBond b, final double yield, final int settlement, final boolean adjusted) {

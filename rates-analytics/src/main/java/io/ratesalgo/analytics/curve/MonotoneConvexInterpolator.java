@@ -26,9 +26,9 @@ final class MonotoneConvexInterpolator extends Interpolator {
   private final double[] f;
   private int count;
   // G, dG/dg0, dG/dg1 from the last call of integral()
-  private double gValue;
-  private double gD0;
-  private double gD1;
+  double gValue;
+  double gD0;
+  double gD1;
 
   MonotoneConvexInterpolator(final int capacity) {
     this.t = new double[capacity];
@@ -121,7 +121,7 @@ final class MonotoneConvexInterpolator extends Interpolator {
    * Sets gValue = G(u) = integral of g over [0, u] and its partials in g0 and g1 for the
    * Hagan-West regions (i) to (iv).
    */
-  private void integral(final double u, final double g0, final double g1) {
+  void integral(final double u, final double g0, final double g1) {
     if (g0 == 0.0 && g1 == 0.0) {
       gValue = 0.0;
       gD0 = 0.0;
