@@ -6,16 +6,18 @@ import io.ratesalgo.core.EventClock;
 import io.ratesalgo.core.EventLoop;
 import io.ratesalgo.core.IdleStrategies;
 import io.ratesalgo.core.InboundPublisher;
+import io.ratesalgo.core.JournalMode;
 import io.ratesalgo.core.JournalSink;
 import io.ratesalgo.core.LoopCounters;
+import io.ratesalgo.core.LoopJournals;
 import io.ratesalgo.core.LoopRunner;
 import io.ratesalgo.core.RingBufferContract;
-import io.ratesalgo.journal.SegmentedJournal;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.QuoteRequestDecoder;
 import io.ratesalgo.messages.sbe.QuoteRequestEncoder;
 import io.ratesalgo.messages.sbe.Side;
 import java.io.IOException;
+import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -45,7 +47,7 @@ import org.agrona.concurrent.ringbuffer.OneToOneRingBuffer;
  * <p>Usage: {@code mvn -pl rates-bench exec:exec@latency} with {@code -Dlatency.rate},
  * {@code -Dlatency.warmup}, {@code -Dlatency.measure} and the other properties in the module pom,
  * or {@code java ... io.ratesalgo.bench.LatencyHarness --rate=50000 --warmup-seconds=60
- * --measure-seconds=300 --idle=busy-spin --journal=true --out=target/latency}.
+ * --measure-seconds=300 --idle=busy-spin --journal=true --journal-mode=direct --out=target/latency}.
  */
 public final class LatencyHarness {
 
@@ -90,10 +92,17 @@ public final class LatencyHarness {
     final AnchoredClock live = new AnchoredClock(SystemClock.INSTANCE);
     final EventClock clock = new EventClock(live);
     final Path journalDir = cfg.journal() ? Files.createTempDirectory("rates-bench-journal") : null;
-    final SegmentedJournal in =
-        cfg.journal() ? SegmentedJournal.create(journalDir, "bench-in", cfg.segmentBytes(), clock, true) : null;
-    final SegmentedJournal out =
-        cfg.journal() ? SegmentedJournal.create(journalDir, "bench-out", cfg.segmentBytes(), clock, true) : null;
+    final LoopJournals journals =
+        cfg.journal()
+            ? LoopJournals.create(
+                journalDir,
+                "bench-in",
+                "bench-out",
+                cfg.segmentBytes(),
+                clock,
+                JournalMode.valueOf(cfg.journalMode().toUpperCase(Locale.ROOT)),
+                cfg.ringBytes())
+            : null;
     final ManyToOneRingBuffer inbound =
         RingBufferContract.newInbound(RingBufferContract.DEFAULT_INBOUND_CAPACITY);
     final OneToOneRingBuffer outbound = RingBufferContract.newOutbound(1 << 20);
@@ -101,8 +110,8 @@ public final class LatencyHarness {
         EventLoop.builder(clock)
             .inbound(inbound)
             .outbound(outbound)
-            .inboundJournal(in == null ? JournalSink.NONE : in::append)
-            .outboundJournal(out == null ? JournalSink.NONE : out::append)
+            .inboundJournal(journals == null ? JournalSink.NONE : journals.inbound())
+            .outboundJournal(journals == null ? JournalSink.NONE : journals.outbound())
             .build();
     final long[] scheduled = new long[SCHEDULE_SLOTS];
     final BenchQuoter quoter =
@@ -110,13 +119,16 @@ public final class LatencyHarness {
     loop.register(QuoteRequestDecoder.TEMPLATE_ID, quoter);
 
     final AtomicBoolean draining = new AtomicBoolean(true);
+    // One handler for the whole run: a capturing lambda written inside the loop below was a new
+    // object per poll, and the gateway thread's garbage caused a young collection about once a
+    // second, each one a safepoint that stopped the loop thread too (DECISIONS.md DR-R2J-01).
+    final org.agrona.concurrent.MessageHandler onQuote =
+        (t, b, i, l) -> probe.onOutbound(b, i, l, SystemClock.INSTANCE.nanoTime());
     final Thread gateway =
         new Thread(
             () -> {
               while (draining.get() || outbound.size() > 0) {
-                final int n =
-                    outbound.read(
-                        (t, b, i, l) -> probe.onOutbound(b, i, l, SystemClock.INSTANCE.nanoTime()), 256);
+                final int n = outbound.read(onQuote, 256);
                 if (n == 0) {
                   Thread.onSpinWait();
                 }
@@ -140,6 +152,9 @@ public final class LatencyHarness {
     final com.sun.management.ThreadMXBean threads =
         (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
     final long allocationDelta;
+    long rollWaits = 0;
+    long producerWaits = 0;
+    final long[] collections = new long[2];
     try {
       gateway.start();
       runner.start();
@@ -149,6 +164,8 @@ public final class LatencyHarness {
         Thread.sleep(1);
       }
       final long before = threads.getThreadAllocatedBytes(loopThread);
+      collections[0] = -collectionCount();
+      collections[1] = -collectionMillis();
       generatorThread.join();
       final long expected = generator.total - generator.dropped;
       final long deadline = System.nanoTime() + DRAIN_TIMEOUT_NANOS;
@@ -164,13 +181,16 @@ public final class LatencyHarness {
         Thread.sleep(1);
       }
       allocationDelta = threads.getThreadAllocatedBytes(loopThread) - before;
+      collections[0] += collectionCount();
+      collections[1] += collectionMillis();
     } finally {
       runner.close();
       draining.set(false);
       gateway.join();
-      if (in != null) {
-        in.close();
-        out.close();
+      if (journals != null) {
+        journals.close();
+        rollWaits = journals.rollWaits();
+        producerWaits = journals.producerWaits();
         deleteTree(journalDir);
       }
     }
@@ -182,7 +202,7 @@ public final class LatencyHarness {
     final Path jsonFile = cfg.outDir().resolve("latency-" + stamp + ".json");
     final Path mdFile = cfg.outDir().resolve("latency-" + stamp + ".md");
     final String json =
-        json(cfg, machine, started, runner.isPinned(), generator, loop, quoter, allocationDelta);
+        json(cfg, machine, started, runner.isPinned(), generator, loop, quoter, allocationDelta, rollWaits, producerWaits, collections);
     Files.writeString(jsonFile, json, StandardCharsets.UTF_8);
     final String reportName = String.valueOf(jsonFile.getFileName());
     final String md =
@@ -212,7 +232,10 @@ public final class LatencyHarness {
       final Generator g,
       final EventLoop loop,
       final BenchQuoter q,
-      final long allocationDelta) {
+      final long allocationDelta,
+      final long rollWaits,
+      final long producerWaits,
+      final long[] collections) {
     final StringBuilder b = new StringBuilder(8192);
     b.append("{\n  \"schema\": ").append(LatencyReport.quote(LatencyReport.SCHEMA));
     b.append(",\n  \"started\": ").append(LatencyReport.quote(started.toString()));
@@ -235,6 +258,8 @@ public final class LatencyHarness {
     b.append(", \"measureSeconds\": ").append(cfg.measureSeconds());
     b.append(", \"idle\": ").append(LatencyReport.quote(cfg.idle()));
     b.append(", \"journal\": ").append(cfg.journal());
+    b.append(", \"journalMode\": ").append(LatencyReport.quote(cfg.journalMode()));
+    b.append(", \"ringBytes\": ").append(cfg.ringBytes());
     b.append(", \"segmentBytes\": ").append(cfg.segmentBytes());
     b.append(", \"cpu\": ").append(cfg.cpu());
     b.append(", \"pinned\": ").append(pinned).append('}');
@@ -248,6 +273,10 @@ public final class LatencyHarness {
                     + " s at the fixed rate) run through the same path and are not recorded"));
     b.append(",\n  \"counts\": {\"generated\": ").append(g.total);
     b.append(", \"generatorDropped\": ").append(g.dropped);
+    b.append(", \"journalRollWaits\": ").append(rollWaits);
+    b.append(", \"journalRingWaits\": ").append(producerWaits);
+    b.append(", \"gcCollections\": ").append(collections[0]);
+    b.append(", \"gcMillis\": ").append(collections[1]);
     for (int id = 0; id < LoopCounters.COUNT; id++) {
       b.append(", \"").append(LoopCounters.name(id)).append("\": ").append(loop.counters().get(id));
     }
@@ -268,6 +297,24 @@ public final class LatencyHarness {
                     + " tickToWire is left for the FIX codec (TickToWireProbe)"));
     b.append("\n}\n");
     return b.toString();
+  }
+
+  /** Collections by every collector so far; read from the main thread. */
+  private static long collectionCount() {
+    long n = 0;
+    for (final GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+      n += Math.max(gc.getCollectionCount(), 0);
+    }
+    return n;
+  }
+
+  /** Milliseconds spent in collections so far, as the collectors report it. */
+  private static long collectionMillis() {
+    long n = 0;
+    for (final GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+      n += Math.max(gc.getCollectionTime(), 0);
+    }
+    return n;
   }
 
   private static void deleteTree(final Path dir) throws IOException {

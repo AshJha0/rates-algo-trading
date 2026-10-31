@@ -385,6 +385,15 @@ public final class EventLoop {
       return this;
     }
 
+    /**
+     * Sets both journals from a pair opened in one {@link JournalMode}; the same as {@link
+     * #inboundJournal} with {@code journals.inbound()} and {@link #outboundJournal} with {@code
+     * journals.outbound()}.
+     */
+    public Builder journals(final LoopJournals journals) {
+      return inboundJournal(journals.inbound()).outboundJournal(journals.outbound());
+    }
+
     Builder replayOutbound(final JournalSink sink) {
       outboundJournal = sink;
       return this;

@@ -11,11 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -32,18 +30,30 @@ import org.agrona.DirectBuffer;
  * segment read alone fails the chain check unless the reader is told where the previous segment
  * ended, which {@link SegmentedJournalReader} does by walking the segments in order.
  *
- * <p>{@link #append} does not allocate except when it rolls, which maps a new file. Size segments
- * so that rolls are rare on the hot path (DECISIONS.md DR-P2C-03).
- *
  * <p>Creating a segment writes {@code segmentCapacity} zero bytes, which takes hundreds of
- * milliseconds for a 512 MiB segment. With preallocation on ({@link #create(Path, String, int,
- * Clock, boolean)}), the journal creates the next segment on its own background thread once the
- * current one is half full, under a temporary name ({@code name.00000k.raj.pending}) that it
- * renames atomically when the file is complete; the roll then only maps the ready file, and the
- * full segment is forced to disk and unmapped on the same background thread. The header
- * stamp of a preallocated segment is the time it was created, not the time of the roll. An unused
- * preallocated segment is deleted on {@link #close()}; one left behind by a crash is an empty
- * segment, which readers and {@link #open} accept.
+ * milliseconds for a 512 MiB segment, and the first store to each page of a fresh mapping is a page
+ * fault. With preallocation on ({@link #create(Path, String, int, Clock, boolean)}), the appending
+ * thread does neither (DECISIONS.md DR-R2J-02):
+ *
+ * <ul>
+ *   <li>{@code create} touches every page of the first segment before it returns;
+ *   <li>a background thread ({@code journal-prepare-<name>}) creates the next segment as soon as
+ *       the current one becomes current, under a temporary name ({@code name.00000k.raj.pending})
+ *       that it renames atomically once the file is complete and forced, then maps it and touches
+ *       every page;
+ *   <li>a roll takes the prepared writer through a volatile field, hands the full segment back to
+ *       the background thread, which forces and unmaps it, and allocates nothing;
+ *   <li>if the next segment is not ready when the current one is full, the roll waits for it and
+ *       counts the wait ({@link #rollWaits()}).
+ * </ul>
+ *
+ * <p>The appending thread never calls {@code force}, never maps or unmaps a file and never takes a
+ * lock. The header stamp of a prepared segment is the time it was created, not the time of the
+ * roll. An unused prepared segment is deleted on {@link #close()}; one left behind by a crash is an
+ * empty segment, which readers and {@link #open} accept.
+ *
+ * <p>Without preallocation, {@link #append} rolls by creating the next segment itself, which maps a
+ * file and allocates; that mode is for tests and tools with small segments.
  */
 public final class SegmentedJournal implements AutoCloseable {
 
@@ -53,17 +63,18 @@ public final class SegmentedJournal implements AutoCloseable {
   /** Largest segment index; six decimal digits. */
   public static final int MAX_SEGMENTS = 999_999;
 
+  private static final long PREPARER_PARK_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
+
   private final Path dir;
   private final String name;
   private final int segmentCapacity;
   private final Clock clock;
 
-  private final ExecutorService preallocator;
+  private final Preparer preparer;
 
   private JournalWriter current;
   private int segmentIndex;
   private boolean closed;
-  private Future<?> pending;
 
   private SegmentedJournal(
       final Path dir,
@@ -79,15 +90,11 @@ public final class SegmentedJournal implements AutoCloseable {
     this.clock = clock;
     this.current = current;
     this.segmentIndex = segmentIndex;
-    this.preallocator =
-        preallocate
-            ? Executors.newSingleThreadExecutor(
-                r -> {
-                  final Thread t = new Thread(r, "journal-preallocate-" + name);
-                  t.setDaemon(true);
-                  return t;
-                })
-            : null;
+    this.preparer = preallocate ? new Preparer(segmentIndex) : null;
+    if (preparer != null) {
+      current.pretouch();
+      preparer.thread.start();
+    }
   }
 
   /** The path of segment {@code index} (1-based) of journal {@code name} in {@code dir}. */
@@ -130,8 +137,9 @@ public final class SegmentedJournal implements AutoCloseable {
   }
 
   /**
-   * Creates a new segmented journal; with {@code preallocate} the next segment is created on a
-   * background thread before it is needed.
+   * Creates a new segmented journal; with {@code preallocate} every page of the first segment is
+   * touched before this returns and each next segment is prepared on a background thread before
+   * it is needed.
    *
    * @throws IllegalArgumentException if any segment of {@code name} already exists in {@code dir}
    */
@@ -178,7 +186,8 @@ public final class SegmentedJournal implements AutoCloseable {
   }
 
   /**
-   * Appends one frame, rolling to a new segment first if the current one cannot hold it.
+   * Appends one frame stamped with the journal's clock, rolling to a new segment first if the
+   * current one cannot hold it.
    *
    * @return the sequence number assigned to the frame
    * @throws JournalFullException if the frame is larger than an empty segment can hold
@@ -186,6 +195,23 @@ public final class SegmentedJournal implements AutoCloseable {
   public long append(
       final int templateId,
       final int schemaVersion,
+      final DirectBuffer payload,
+      final int offset,
+      final int length) {
+    return append(templateId, schemaVersion, clock.epochNanos(), payload, offset, length);
+  }
+
+  /**
+   * Appends one frame stamped with {@code timestampNanos}, rolling to a new segment first if the
+   * current one cannot hold it.
+   *
+   * @return the sequence number assigned to the frame
+   * @throws JournalFullException if the frame is larger than an empty segment can hold
+   */
+  public long append(
+      final int templateId,
+      final int schemaVersion,
+      final long timestampNanos,
       final DirectBuffer payload,
       final int offset,
       final int length) {
@@ -198,39 +224,7 @@ public final class SegmentedJournal implements AutoCloseable {
       }
       roll();
     }
-    final long sequence = current.append(templateId, schemaVersion, payload, offset, length);
-    if (preallocator != null && pending == null && current.remaining() < segmentCapacity / 2) {
-      preallocateNext();
-    }
-    return sequence;
-  }
-
-  private void preallocateNext() {
-    if (segmentIndex == MAX_SEGMENTS) {
-      return;
-    }
-    final Path target = segmentPath(dir, name, segmentIndex + 1);
-    final Path temp = dir.resolve(target.getFileName() + ".pending");
-    pending =
-        preallocator.submit(
-            () -> {
-              try (JournalWriter w = JournalWriter.create(temp, segmentCapacity, clock)) {
-                w.sync();
-              }
-              Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
-              return null;
-            });
-  }
-
-  private static void await(final Future<?> future) {
-    try {
-      future.get();
-    } catch (final InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new IllegalStateException("interrupted while waiting for a preallocated segment", e);
-    } catch (final ExecutionException e) {
-      throw new IllegalStateException("could not preallocate the next segment", e.getCause());
-    }
+    return current.append(templateId, schemaVersion, timestampNanos, payload, offset, length);
   }
 
   private void roll() {
@@ -239,14 +233,13 @@ public final class SegmentedJournal implements AutoCloseable {
     }
     final long nextSequence = current.nextSequence();
     final long hash = current.chainHash();
-    if (pending != null) {
-      await(pending);
-      pending = null;
-      // closing forces the full segment to disk; the background thread does that too
-      final JournalWriter full = current;
-      preallocator.execute(full::close);
+    if (preparer != null) {
+      final JournalWriter next = preparer.take();
+      next.continueChain(nextSequence, hash);
+      preparer.retire(current);
+      current = next;
       segmentIndex++;
-      current = JournalWriter.open(segmentPath(dir, name, segmentIndex), clock, nextSequence, hash);
+      preparer.becameCurrent(segmentIndex);
       return;
     }
     current.close();
@@ -276,35 +269,32 @@ public final class SegmentedJournal implements AutoCloseable {
     return segmentCapacity;
   }
 
+  /**
+   * Rolls that found the next segment not yet prepared and waited for it; 0 without preallocation.
+   * Readable from any thread.
+   */
+  public long rollWaits() {
+    return preparer == null ? 0L : preparer.rollWaits.get();
+  }
+
   /** Forces the current segment to the file. Not called on the hot path. */
   public void sync() {
     ensureOpen();
     current.sync();
   }
 
+  /**
+   * Closes the journal: forces and unmaps the current segment on the calling thread, stops the
+   * background thread after it has closed any full segment it holds, and deletes an unused
+   * prepared segment.
+   */
   @Override
   public void close() {
     if (!closed) {
       closed = true;
       current.close();
-      if (preallocator != null) {
-        if (pending != null) {
-          try {
-            await(pending);
-            Files.deleteIfExists(segmentPath(dir, name, segmentIndex + 1));
-          } catch (final IOException | IllegalStateException e) {
-            // an unused preallocated segment that cannot be removed stays as an empty segment
-          }
-          pending = null;
-        }
-        preallocator.shutdown();
-        try {
-          if (!preallocator.awaitTermination(1, TimeUnit.MINUTES)) {
-            throw new IllegalStateException("journal " + name + ": background close timed out");
-          }
-        } catch (final InterruptedException e) {
-          Thread.currentThread().interrupt();
-        }
+      if (preparer != null) {
+        preparer.stop();
       }
     }
   }
@@ -322,6 +312,144 @@ public final class SegmentedJournal implements AutoCloseable {
         || ".".equals(name)
         || "..".equals(name)) {
       throw new IllegalArgumentException("invalid journal name: " + name);
+    }
+  }
+
+  /**
+   * The background thread that prepares the next segment and retires full ones. The appending
+   * thread and this thread exchange writers through three volatile fields, so neither side
+   * allocates or locks on the exchange.
+   */
+  private final class Preparer implements Runnable {
+
+    final Thread thread;
+
+    /** The prepared next segment, mapped and touched; written here, taken by the appender. */
+    private volatile JournalWriter ready;
+
+    /** A full segment for this thread to force and unmap; written by the appender. */
+    private volatile JournalWriter retiring;
+
+    /** The index of the segment being appended to; written by the appender at each roll. */
+    private volatile int currentIndex;
+
+    private volatile boolean stopping;
+    private volatile Throwable failure;
+    /** Written by the appender only; read from any thread. */
+    private final AtomicLong rollWaits = new AtomicLong();
+
+    Preparer(final int currentIndex) {
+      this.currentIndex = currentIndex;
+      this.thread = new Thread(this, "journal-prepare-" + name);
+      this.thread.setDaemon(true);
+    }
+
+    @Override
+    public void run() {
+      int prepared = currentIndex;
+      try {
+        while (!stopping) {
+          final JournalWriter full = retiring;
+          if (full != null) {
+            full.close();
+            retiring = null;
+          }
+          final int index = currentIndex;
+          if (ready == null && prepared == index && index < MAX_SEGMENTS) {
+            ready = prepare(index + 1);
+            prepared = index + 1;
+          } else if (retiring == null) {
+            LockSupport.parkNanos(PREPARER_PARK_NANOS);
+          }
+        }
+      } catch (final Throwable t) {
+        failure = t;
+      } finally {
+        final JournalWriter full = retiring;
+        if (full != null) {
+          full.close();
+          retiring = null;
+        }
+      }
+    }
+
+    private JournalWriter prepare(final int index) throws IOException {
+      final Path target = segmentPath(dir, name, index);
+      final Path temp = dir.resolve(target.getFileName() + ".pending");
+      try (JournalWriter w = JournalWriter.create(temp, segmentCapacity, clock)) {
+        w.sync();
+      }
+      Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
+      final JournalWriter w = JournalWriter.open(target, clock);
+      w.pretouch();
+      return w;
+    }
+
+    /** Called by the appender at a roll; waits, counted, if the next segment is not ready. */
+    JournalWriter take() {
+      JournalWriter next = ready;
+      if (next == null) {
+        rollWaits.lazySet(rollWaits.get() + 1);
+        while ((next = ready) == null) {
+          checkFailure();
+          LockSupport.unpark(thread);
+          Thread.onSpinWait();
+        }
+      }
+      ready = null;
+      return next;
+    }
+
+    /** Called by the appender at a roll to hand over the full segment. */
+    void retire(final JournalWriter full) {
+      while (retiring != null) {
+        checkFailure();
+        Thread.onSpinWait();
+      }
+      retiring = full;
+    }
+
+    /** Called by the appender after a roll; the thread prepares the segment after this one. */
+    void becameCurrent(final int index) {
+      currentIndex = index;
+      LockSupport.unpark(thread);
+    }
+
+    private void checkFailure() {
+      final Throwable t = failure;
+      if (t != null) {
+        throw new IllegalStateException("journal " + name + ": could not prepare the next segment", t);
+      }
+    }
+
+    void stop() {
+      stopping = true;
+      LockSupport.unpark(thread);
+      try {
+        thread.join(TimeUnit.MINUTES.toMillis(1));
+      } catch (final InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      if (thread.isAlive()) {
+        throw new IllegalStateException("journal " + name + ": background thread did not stop");
+      }
+      final JournalWriter unused = ready;
+      if (unused != null) {
+        ready = null;
+        final Path path = segmentPath(dir, name, segmentIndex + 1);
+        unused.close();
+        try {
+          Files.deleteIfExists(path);
+        } catch (final IOException e) {
+          // an unused prepared segment that cannot be removed stays as an empty segment
+        }
+      }
+      // a crash of the preparing thread mid-way can leave a .pending file; readers ignore it
+      try {
+        Files.deleteIfExists(dir.resolve(segmentPath(dir, name, segmentIndex + 1).getFileName() + ".pending"));
+      } catch (final IOException e) {
+        // left for an operator; readers ignore .pending files
+      }
     }
   }
 }

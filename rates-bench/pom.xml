@@ -25,6 +25,7 @@
     <latency.measure>300</latency.measure>
     <latency.idle>busy-spin</latency.idle>
     <latency.journal>true</latency.journal>
+    <latency.journalMode>direct</latency.journalMode>
     <latency.cpu>-1</latency.cpu>
     <latency.label>local</latency.label>
     <latency.out>${project.build.directory}/latency</latency.out>
@@ -124,6 +125,7 @@
                 <argument>--measure-seconds=${latency.measure}</argument>
                 <argument>--idle=${latency.idle}</argument>
                 <argument>--journal=${latency.journal}</argument>
+                <argument>--journal-mode=${latency.journalMode}</argument>
                 <argument>--cpu=${latency.cpu}</argument>
                 <argument>--label=${latency.label}</argument>
                 <argument>--out=${latency.out}</argument>
