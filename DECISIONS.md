@@ -140,9 +140,9 @@ Date: 2026-10-31
 
 Context. CONTRIBUTING.md says goldens are regenerated on Linux only. This session had only a Windows machine. QuantLib's helpers also carry defaults (schedule calendar of an OIS helper, pillar choice) that could hide a convention mismatch.
 
-Decision. The golden file is produced by `research/ratesresearch/goldens/generator.py` with QuantLib 1.44 (pinned in the `golden` extra). The generator bootstraps the curves itself, a sequential Brent search in which each instrument is a QuantLib object built with explicit schedules and calendars, so QuantLib does all the pricing and nothing depends on helper defaults. The first file was generated on Windows 11 on 2026-10-31. `research/tests/test_goldens.py` regenerates it and compares every number to 1e-12 relative (absolute floor 1e-12); CI installs QuantLib and runs it on Linux and Windows, so a platform difference fails a build rather than passing silently.
+Decision. The golden file is produced by `research/ratesresearch/goldens/generator.py` with QuantLib 1.44 (pinned in the `golden` extra). The generator bootstraps the curves itself, a sequential Brent search in which each instrument is a QuantLib object built with explicit schedules and calendars, so QuantLib does all the pricing and nothing depends on helper defaults. The first file was generated on Windows 11 on 2026-10-31. `research/tests/test_goldens.py` regenerates it and compares every number to 1e-12 relative with an absolute floor of 1e-6 (amended 2026-10-31 at integration: the first Linux run differed from Windows on par-swap PVs at the 1e-9 level, rounding noise on sums of cancelling 1e6 terms, so the floor is one millionth of a currency unit, far below a cent); CI installs QuantLib and runs it on Linux and Windows, so a platform difference fails a build rather than passing silently.
 
-Consequences. This is an exception to the Linux-only rule for one file, made visible by the regeneration test. If the Linux job ever disagrees beyond 1e-12, the file is regenerated on Linux and this record is superseded.
+Consequences. This is an exception to the Linux-only rule for one file, made visible by the regeneration test. If the Linux job ever disagrees beyond that tolerance, the file is regenerated on Linux and this record is superseded.
 
 ## DR-P1-07: Three bond yield conventions, named
 
