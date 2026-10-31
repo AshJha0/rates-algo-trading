@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.ratesalgo</groupId>
+    <artifactId>rates-algo-trading</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>rates-backtest</artifactId>
+  <name>rates-backtest</name>
+  <description>Replay back-tester over SBE journals: outcome models, synthetic day generator, P&amp;L attribution, statistics, pre-registration and ledger, daily report.</description>
+
+  <properties>
+    <!-- SnakeYAML reads data/presets.yaml, pre-registrations and ledger lines. The back-tester
+         is off the hot path (docs/ARCHITECTURE.md), so a parsing library is acceptable here. -->
+    <snakeyaml.version>2.5</snakeyaml.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-messages</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-journal</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.agrona</groupId>
+      <artifactId>agrona</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.yaml</groupId>
+      <artifactId>snakeyaml</artifactId>
+      <version>${snakeyaml.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <ratesalgo.repoRoot>${maven.multiModuleProjectDirectory}</ratesalgo.repoRoot>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
