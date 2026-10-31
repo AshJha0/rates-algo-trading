@@ -1,0 +1,29 @@
+%% Title: Multi-curve bootstrap, OIS first and held fixed
+flowchart TD
+  oisq["OIS quotes<br/>PeriodRateInstrument, OisFutureInstrument,<br/>OisSwapInstrument"]
+  fix["FixingHistory<br/>published overnight fixings"]
+  oisb{"CurveBuilder for the OIS curve<br/>discount argument null"}
+  oisctx["CurveContext<br/>target and discount are the same curve,<br/>singleCurve true"]
+  ois["OIS DiscountCurve<br/>for example EUR-OIS"]
+  oisj["Jacobian of OIS quotes<br/>in OIS log discount factors"]
+  termq["Term swap quotes<br/>TermSwapInstrument, for example EUR 6M"]
+  projb{"CurveBuilder for the projection curve<br/>discount argument the OIS curve"}
+  projctx["CurveContext<br/>target the projection curve,<br/>discount the OIS curve"]
+  proj["Projection DiscountCurve<br/>for example EUR-6M"]
+  projj["Jacobian of term swap quotes<br/>in projection log discount factors only"]
+  sens["quoteSensitivities<br/>solve J^T x = g per curve"]
+  ladder["Dv01Ladder<br/>key-rate and parallel"]
+
+  oisq -->|one per pillar| oisb
+  fix -->|past fixings| oisb
+  oisb -->|builds with| oisctx
+  oisctx -->|"Method.AUTO, tolerance 1e-12"| ois
+  oisb -->|at the solution| oisj
+  ois -->|built first, then held fixed| projb
+  termq -->|one per pillar| projb
+  projb -->|builds with| projctx
+  projctx -->|"Method.AUTO, tolerance 1e-12"| proj
+  projb -->|at the solution| projj
+  oisj -->|OIS ladder| sens
+  projj -->|projection ladder| sens
+  sens -->|"times 1 bp (DR-P1-04)"| ladder

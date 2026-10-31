@@ -1,0 +1,16 @@
+workup 5000 ms, exclusive 2000 ms, extend on trade true
+resting book: normal, held 0
+  feed bids [97.984375x400000000] offers [98.015625x1000000000, 98.03125x500000000]
+B lifts 2m at 98.015625: workup at 98.015625, held 0
+  trade 2000000 @ 98.015625 DLR-B/DLR-A N
+  feed bids [97.984375x400000000] offers [98.015625x800000000, 98.03125x500000000]
+C bids 3m (held), B adds 1m: workup at 98.015625, held 1
+  trade 1000000 @ 98.015625 DLR-B/DLR-A X
+  feed bids [97.984375x400000000] offers [98.015625x700000000, 98.03125x500000000]
+exclusive window over: workup at 98.015625, held 0
+  trade 3000000 @ 98.015625 DLR-C/DLR-A W
+  trade 1000000 @ 98.015625 DLR-D/DLR-A W
+  feed bids [97.984375x400000000] offers [98.015625x300000000, 98.03125x500000000]
+workup timer expired: normal, held 0
+  feed bids [97.984375x400000000] offers [98.015625x300000000, 98.03125x500000000]
+trades 4, feed sequence 6, consumer sequence 6, gaps 0

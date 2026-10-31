@@ -1,0 +1,27 @@
+journal frames 92
+frames by template (80 decision, 81 venue row, 82 child transition): {80=11, 81=22, 82=58}
+decision 2 parent 2 Slice Sell slice 0 qty 4.0 alloc 4.0 horizon 3.0s expected 0.013448
+venue kind    bid        ask          same    opp    cap P(fill) impact    passive   aggress   chosen     alloc mode excluded
+1     Clob    98.500000  98.515625    12.0  120.0   33.0 0.0000  0.002402  0.013597  0.010766  0.013597     3.0 pass None
+2     Clob    98.500000  98.515625     6.0   60.0   16.0 0.0037  0.001961  0.013001  0.010239  0.013001     1.0 pass None
+decision 3 Escalation slice 3.0m alloc 0.0m
+decision 4 Escalation slice 1.0m alloc 0.0m
+decision 5 Retry slice 4.0m alloc 4.0m
+decision 6 Slice slice 4.0m alloc 4.0m
+child orders of parent 2:
+  seq   9 child 3 venue 1 New -> New (Sent) cum 0.0m
+  seq  10 child 4 venue 2 New -> New (Sent) cum 0.0m
+  seq  13 child 3 venue 1 New -> Acknowledged (Ack) cum 0.0m
+  seq  14 child 4 venue 2 New -> Acknowledged (Ack) cum 0.0m
+  seq  15 child 3 venue 1 Acknowledged -> CancelRequested (CancelSent) cum 0.0m
+  seq  16 child 4 venue 2 Acknowledged -> CancelRequested (CancelSent) cum 0.0m
+  seq  17 child 3 venue 1 CancelRequested -> Replaced (CancelConfirmed) cum 0.0m
+  seq  21 child 4 venue 2 CancelRequested -> Replaced (CancelConfirmed) cum 0.0m
+  seq  28 child 5 venue 1 New -> New (Sent) cum 0.0m
+  seq  29 child 6 venue 2 New -> New (Sent) cum 0.0m
+  seq  30 child 6 venue 2 New -> Filled (Fill) cum 1.0m
+  seq  31 child 5 venue 1 New -> Filled (Fill) cum 3.0m
+  seq  35 child 7 venue 1 New -> New (Sent) cum 0.0m
+  seq  36 child 8 venue 2 New -> New (Sent) cum 0.0m
+  seq  37 child 8 venue 2 New -> Filled (Fill) cum 1.0m
+  seq  38 child 7 venue 1 New -> Filled (Fill) cum 3.0m

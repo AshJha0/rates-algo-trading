@@ -1,0 +1,35 @@
+%% Title: From a position change to a routed hedge and its fills
+sequenceDiagram
+  participant Q as QuotingEngine
+  participant R as RiskEngine
+  participant H as Hedger
+  participant HP as HedgePlanner and BoxQpSolver
+  participant S as SmartOrderRouter
+  participant A as Allocator and CostTable
+  participant J as Journal via FrameSink
+  participant B as ChildOrderBook
+  participant V as Venue via OrderGateway
+  participant HA as HedgeAnalytics
+
+  Q->>R: onFill, client trade changes the position
+  Note over R: ladder revalued for the instrument (Section 13.1)
+  H->>R: onTimer: ladder plus working parents is the residual r
+  alt one-day std dev of r below the trigger (10,000)
+    H->>HA: recordResidual, episode ends
+  else above the trigger
+    H->>HP: plan(r)
+    HP-->>H: lots per hedge instrument, FISTA to tolerance 1e-9
+    H->>R: checkOrder, reserve the parent quantity
+    H->>S: submit parent through HedgeOrderSink, bound at integration
+    Note over H,S: first tranche 0.5 immediately, later tranches 1 - 2^(-dt / 30 s)
+    S->>A: allocate the next slice across venues
+    A-->>S: quantity per venue, aggressive or passive
+    S->>J: RouteDecision (80) and RouteDecisionVenue (81) rows, before any child
+    S->>V: newOrder, NewOrder (20) per child
+    V-->>S: ExecutionReport (21) through ExecutionListener
+    S->>B: apply the report, ChildOrderTransition (82) journaled
+    Note over S,V: passive child cancelled at its horizon and re-routed aggressively, deadline routes everything
+    S-->>H: parent fill, bound at integration
+    H->>R: onHedgeFill: release, onFill
+    H->>HA: slippage against the arrival mid
+  end

@@ -13,6 +13,8 @@ One runbook per incident class, plus the daily procedures and the warm-standby d
 
 Daily procedures: [start-of-day.md](start-of-day.md), [end-of-day.md](end-of-day.md). Design: [warm-standby-design.md](warm-standby-design.md). Record template: [post-incident-template.md](post-incident-template.md).
 
+The controls these runbooks act on are drawn in [RTS 6 control map](../site/pages/diagrams.md#rts-6-control-map).
+
 ## Conventions
 
 - The journal is the record. Every query below uses `tools/journal_query.py`, which verifies the hash chain as it reads; a chain break is itself an incident (API_SPEC.md Section 4) and is escalated to the development lead before anything else.

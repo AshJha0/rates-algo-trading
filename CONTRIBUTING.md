@@ -8,6 +8,8 @@ Commits follow Conventional Commits: `feat(journal): ...`, `fix(common): ...`, `
 
 One combined pull request per round of work. The PR description lists its slices (for example "slice 1: TimerWheel", "slice 2: journal reader") and reviewers review slice by slice, commenting with the slice name. Exceptions: a signed pre-registration (P5) or a change to a frozen contract gets its own PR so the review record is clean.
 
+The workflows and the jobs that gate a merge are drawn in [CI and release pipeline](docs/site/pages/diagrams.md#ci-and-release-pipeline).
+
 ## Definition of done
 
 A change is done when the same pull request contains:

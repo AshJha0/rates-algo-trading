@@ -1,0 +1,32 @@
+%% Title: Live run, journals, replay and the outbound hash comparison
+flowchart LR
+  subgraph live["Live run (LoopRunner)"]
+    rings["Inbound rings<br/>InboundPublisher"]
+    lloop["EventLoop<br/>EventClock latched once per cycle"]
+    agents["Agents<br/>not journaled"]
+  end
+  inj[("Inbound SegmentedJournal<br/>messages, clock ticks,<br/>Backpressure, LoopError")]
+  outj[("Outbound SegmentedJournal<br/>every message the loop produced")]
+  subgraph rep["Replay (LoopReplay.run)"]
+    replayer["Replayer<br/>ManualClock set to each frame's timestampNanos"]
+    factory["LoopFactory<br/>same factory as live, fresh loop at the first frame"]
+    rloop["Replay EventLoop<br/>onReplayFrame, agents do not run"]
+    verifier["Outbound verifier<br/>ChainHash from the genesis hash"]
+  end
+  result{"ReplayResult<br/>matches"}
+  same["Equal counts and final hashes,<br/>firstMismatch 0"]
+  diff["firstMismatch: sequence of the first<br/>produced message that differs"]
+
+  rings -->|drain, journal then dispatch| lloop
+  agents -->|effects only as inbound messages| rings
+  lloop -->|append inbound| inj
+  lloop -->|append outbound before the ring| outj
+  inj -->|frames in order| replayer
+  replayer -->|first frame| factory
+  factory -->|builds| rloop
+  rloop -->|"tick: poll timers<br/>Backpressure: call the listener<br/>LoopError: stop<br/>other: dispatch"| rloop
+  rloop -->|produced messages| verifier
+  outj -->|recorded frames| verifier
+  verifier -->|counts and hashes| result
+  result -->|yes| same
+  result -->|no| diff

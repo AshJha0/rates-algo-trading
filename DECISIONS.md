@@ -114,6 +114,8 @@ Decision. Nodes are log discount factors at instrument pillars; extrapolation ex
 
 Consequences. Linear interpolation matches QuantLib's `PiecewiseLogLinearDiscount`, which the golden uses; the two non-local schemes are checked by round trip, incremental rebuild and gradient tests only (QuantLib's convex-monotone implementation has different defaults). Instruments may not share a pillar.
 
+Diagram: [multi-curve bootstrap](docs/site/pages/diagrams.md#multi-curve-bootstrap).
+
 ## DR-P1-04: Key-rate DV01 by algorithmic differentiation through the bootstrap
 
 Date: 2026-10-31
@@ -617,6 +619,8 @@ Context. DR-008 makes win probability a declared assumption. The research sessio
 Decision. P(win) is logistic in spread from fair, log size relative to a typical clip, tenor, a liquid-session indicator and dealer count (API_SPEC.md Section 12.2). Coefficients have a central value and a band. The engine reads the preset named `quoting_hit_rate_default` from `data/presets.yaml` if present, otherwise the copy shipped as `rates-quoting/src/main/resources/quoting-hit-rate-default.yaml`, in the same schema (Section 12.3). Win and loss feedback moves the intercept and spread coefficient by stochastic gradient steps and clamps them to the band.
 
 Consequences. Learning cannot leave the declared assumption. When the research session adds the preset to `data/presets.yaml`, it takes precedence without a code change. The back-tester (P5) sweeps the band.
+
+Diagram: [research to production parameters](docs/site/pages/diagrams.md#research-to-production-parameters).
 
 ## DR-P3-03: A fair-value signal needs an out-of-sample validation record
 

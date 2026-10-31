@@ -254,6 +254,8 @@ Sequential (Brent, local interpolation and no instrument past its pillar) or glo
 
 `DiscountCurve.accumulateLogDfGradient` gives \(\partial \ln P(T) / \partial y_i\) exactly for all three schemes. `CurveBuilder.quoteSensitivities(g)` solves \(J^{\top} x = g\) with \(J_{kj} = \partial q_k / \partial y_j\), turning a gradient in pillar values into one in quotes.
 
+Diagram: [multi-curve bootstrap](docs/site/pages/diagrams.md#multi-curve-bootstrap).
+
 ## Section 7. Pricing formulas and tolerances
 
 ### 7.1 Formulas
@@ -424,6 +426,8 @@ Both modes write the same frames: the same `JournalWriter` code assigns the sequ
 The result (`ReplayResult`) gives the produced and recorded counts, both final hashes and `firstMismatch`: the outbound sequence of the first produced message whose chain hash or template id differs from the recorded frame, or the produced count plus one when replay produced fewer messages than were recorded; 0 when the streams are equal. Equal final hashes mean equal outbound byte streams, because the chain covers every payload byte in order.
 
 Worked example: `LoopReplayTest.replayReproducesTheOutboundStreamExactly` runs 480 QuoteRequests with expiry timers, an undrained gateway that causes backpressure, a disconnect and 4096-byte segments, then replays; produced and recorded counts and hashes are equal. Replacing the handler's 2,000,000 spread (0.002 in price units) with 3,000,000 gives `firstMismatch = 1`.
+
+Diagram: [replay and determinism](docs/site/pages/diagrams.md#replay-and-determinism).
 
 ### 9.8 Counters
 
@@ -811,6 +815,8 @@ presets:
 
 A preset named `quoting_hit_rate_default` in `data/presets.yaml` takes precedence; otherwise the copy in `rates-quoting/src/main/resources/quoting-hit-rate-default.yaml` is used (DR-P3-02). Feedback moves `intercept` and `spread_bp` and clamps them to their bands.
 
+Diagram: [research to production parameters](docs/site/pages/diagrams.md#research-to-production-parameters).
+
 ### 12.4 Skew
 
 With p the book's PV01 ladder in the instrument's currency, u the instrument's per-unit ladder, U its parallel PV01, \(\Sigma\) the key-rate covariance (14.2) and Q the quoted quantity in major units:
@@ -830,6 +836,8 @@ Bonds and futures: microprice of the composite book, \((b \cdot A + a \cdot B) /
 For each QuoteRequest, after `poll`: duplicate (venue, rfqId) within the window; kill switch ACTIVE; inputs healthy (heartbeats, sessions, feed sequence); instrument known and quantity positive; request not expired; client tier not blocked; re-quote throttle; fair value present; oldest input within `maxInputAgeNanos`; size reduced to `min(request, tier max, risk headroom)` rounded down to the step, pass if zero; capacity of the live book; spread, skew, axe; risk pre-trade check (Section 13.2). A failure at any step is a PASS with the `PassReason` in `RfqOutcome`. Otherwise the quantity is reserved and a Quote sent: FIRM with `validUntilNanos = min(now + firmTtl, request expiry)`, or SUBJECT with `validUntilNanos = 0` (DR-P3-10). The diagram is docs/diagrams/rfq_decision.mmd.
 
 `poll(now)` expires quotes with `validUntilNanos <= now` and releases their reservation; sends QuoteWithdraw (reason StaleInput) for any live quote whose oldest input is older than `maxInputAgeNanos`; sends QuoteWithdraw for every live quote when inputs turn unhealthy (reasons HeartbeatLoss, SessionLoss, FeedGap); and measures due markouts. A withdrawn quote keeps its reservation until answered or expired. On QuoteResponse: Done books the fill at the traded price, teaches a win and, with a disclosed cover, a win at the cover distance; TradedAway teaches a loss; every status releases and frees the quote.
+
+Diagram: [RFQ end to end with timings](docs/site/pages/diagrams.md#rfq-end-to-end-with-timings).
 
 ### 12.7 Package RFQs
 
@@ -898,6 +906,8 @@ Default covariance: daily volatilities 6.0, 6.5, 6.8, 7.0, 7.0, 6.8, 6.2, 5.8 bp
 ### 14.4 Staging, axes and analytics
 
 On each timer the hedger measures r; below the trigger nothing happens and the episode ends. Otherwise it plans and sends the first-tranche fraction of each instrument's planned lots (urgency 0, immediate), then on later timers \(1 - 2^{-\Delta t / t_{1/2}}\) of the current plan (urgency now plus the half-life), at least one lot while any is planned. Every parent passes `checkOrder` and reserves its quantity until filled or done. While an episode is active, `axeBp(instrument, side)` is `axeMax * min(1, -corr)` where corr is the \(\Sigma\)-correlation between the trade's PV01 and r, and zero when the trade adds variance. `HedgeAnalytics` records slippage of each fill against the arrival mid (positive is a cost, in currency and PV01-weighted bp), the residual variance and net PV01 at each timer, and calls the `BasisAttribution` hook.
+
+Diagram: [hedge and route](docs/site/pages/diagrams.md#hedge-and-route).
 
 ## Section 15. Smart order router (P4)
 
@@ -1164,6 +1174,8 @@ Ledger `data/ledger/ledger.jsonl`, one canonical JSON object per line (sorted ke
 | `verdict` | `supported` or `not supported` |
 
 `ExperimentCli` exit codes: 0 recorded, 1 error, 2 refused (nothing run, nothing recorded).
+
+Diagram: [experiment lifecycle](docs/site/pages/diagrams.md#experiment-lifecycle).
 
 ### 16.9 Results tables and daily report
 
