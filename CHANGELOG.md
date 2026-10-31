@@ -6,6 +6,18 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Added
 
+Round 2, journal write path off the loop's latency path (branch `claude/r2-journal-latency-ee2034`).
+
+- `rates-journal`: `RingJournal`, a journal written by its own thread from an off-heap Agrona ring, with the same frames as a direct append (DR-R2J-03); `JournalWriter.append` and `SegmentedJournal.append` overloads that take the frame stamp; `SegmentedJournal.rollWaits()`.
+- `rates-core`: `JournalMode` (`DIRECT`, `RING`), `LoopJournals` (a loop's two journals in one mode) and `EventLoop.Builder.journals(LoopJournals)`.
+- `rates-bench`: `--journal-mode` and `--ring-bytes` options, collection counts and journal wait counts in the JSON report, `JournalModeAppendBenchmark` (JMH, the loop thread's append in each mode) and `SafepointStallProbe` (how long segment creation holds up a spinning thread).
+- Tests: `RingJournalTest` (frame-for-frame equality with the direct mode as a jqwik property, a ring smaller than the stream, refusals), a zero-allocation roll test and a pretouch test in `SegmentedJournalTest`; `LoopAllocationTest`, `LoopReplayTest` and the replay-hash property now run in both modes.
+- Docs: BENCHMARKS cause analysis and before and after rows, API_SPEC Sections 1.5 and 9.7, ARCHITECTURE journal write path, DR-R2J-01 to DR-R2J-05.
+
+### Fixed
+
+- Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).
+
 Phase 2, event core (workstream W2).
 
 - `rates-core` (new): `EventLoop` single-writer duty cycle over Agrona `ManyToOneRingBuffer` inbound rings and one `OneToOneRingBuffer` per gateway, with dispatch by SBE template id, inbound and outbound journaling at a latched cycle time, timer polling with journaled clock ticks, agents and outbound backpressure events; `LoopRunner` with thread naming, optional Linux core pinning (`net.openhft:affinity`, optional), idle strategies, day hooks and LoopError journaling; `LoopReplay` with frame-by-frame outbound chain-hash comparison; `RingBufferContract`, `InboundPublisher`, `ControlMessages` (core control schema 100); `AnchoredClock`, `EventClock`, `LoopCounters`; `chaos.FaultInjector` for drop, duplicate, delay, reorder and gateway disconnect.

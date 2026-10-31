@@ -86,7 +86,22 @@ Planned 9 plan-days and about 0.75 wall-clock days. Actual, 2026-10-31: first co
 | Segmented journal round trip and cross-segment corruption | met | `SegmentedJournalTest` |
 | Coverage floor 0.85, SpotBugs clean | met: rates-core 0.98, rates-journal 0.96 lines | `mvn verify` |
 | Latency harness in CI with JSON artifact | wired, informational | `.github/workflows/ci.yml` job `latency` |
-| p50 under 20 us, p99.9 under 100 us in-process on the laptop | met with journaling off (0.2 us, 6.9 us); with journaling on p50 met (0.5 us), p99.9 not met (271 ms) | docs/BENCHMARKS.md results |
+| p50 under 20 us, p99.9 under 100 us in-process on the laptop | met with journaling off (0.2 us, 6.9 us); with journaling on p50 met (0.5 us), p99.9 not met (271 ms). Met with journaling on after R2 (next section) | docs/BENCHMARKS.md results |
+
+### R2 journal write path (branch `claude/r2-journal-latency-ee2034`)
+
+Task: take the journal write off the event loop's latency path so the P2 latency target holds with journaling on. Started 2026-10-31 about 11:25 UTC (UK time equals UTC on that date), code committed 12:11, pushed after the checks below; one working session, measurement runs included.
+
+| Item | Result | Where |
+|---|---|---|
+| Cause found with evidence | time to safepoint from Agrona's page-touching zero-fill of each new segment (no safepoint poll in counted loops under ParallelGC), with a young collection about every 0.6 s from the harness's own gateway garbage | DR-R2J-01, docs/BENCHMARKS.md "Cause of the journaling-on tail", `docs/benchmarks/safepoint-evidence-20261031.md` |
+| p50 under 20 us, p99.9 under 100 us, journaling on, in-process on the laptop | met in both modes when the generator kept to schedule: direct p50 0.2 us, p99.9 1.6 us; ring p50 0.1 us, p99.9 1.6 us; journaling off p99.9 1.1 us (P2: 271 ms with journaling on). Runs disturbed by other load on the laptop are recorded and discarded by the generator rule; one of them (direct) reached 275 us at p99.9, and a controlled-load run with journaling off reached 11.4 ms, so the remaining tail is operating-system scheduling of unpinned threads | docs/BENCHMARKS.md results |
+| Zero bytes on the loop thread in both modes | met: `LoopAllocationTest` runs per mode with rolls inside the measured windows; 0 bytes in the harness runs | `rates-core` |
+| Replay-hash equality in both modes | met: frame-for-frame property against the direct mode, `LoopReplayTest` and the replay property per mode | `RingJournalTest`, `LoopReplayTest`, `LoopPropertiesTest` |
+| Default mode | `DIRECT` (meets the target; fewer threads; every appended frame survives a process crash) | DR-R2J-04 |
+| JMH benchmark of the append path | `JournalModeAppendBenchmark` | docs/BENCHMARKS.md microbenchmarks |
+
+Deferred: the same runs on a pinned Linux host with isolated cores (DR-005); a measured comparison of the modes at rates where one journal thread cannot keep up; locking the touched pages in memory (Windows `VirtualLock`, Linux `mlock`) so that the operating system cannot trim them under memory pressure; durability across an operating-system crash, which needs a decision on how often to force and from which thread.
 
 ### P2 venue half (W3)
 

@@ -73,6 +73,14 @@ A segmented journal named `name` in directory `dir` is the files `name.000001.ra
 
 Sequence and chain continue across segments. The first frame of segment *k* + 1 carries the sequence after the last frame of segment *k*, and its chain hash input begins with the last chain hash of segment *k* (not with zero). The writer (`SegmentedJournal`) rolls to the next segment when the next frame does not fit in the current one, so a segment ends either at its terminating zero length or at its end. A frame larger than an empty segment can hold is refused (`JournalFullException`). A writer may create the next segment ahead of time under the name `name.00000k.raj.pending` and rename it to its final name when it is complete; readers ignore `.pending` files, and a complete segment with no frames is valid (a crash after preallocation leaves one).
 
+How `SegmentedJournal` prepares segments when preallocation is on (R2, DECISIONS.md DR-R2J-01 and DR-R2J-02); none of this changes a byte of the format:
+
+- A new segment file is zero-filled with file-channel writes and then mapped. It is not zero-filled by storing through the mapping.
+- `create` writes a zero byte into the last byte of every page of the first segment before it returns ("touching" the page), so the operating system has mapped every page before the first append.
+- As soon as a segment becomes current, a background thread (`journal-prepare-<name>`) prepares the next one: create as `.pending`, force, rename, map, touch every page. One segment is kept ready ahead of the current one.
+- At a roll the appending thread takes the ready writer through a volatile field, continues the chain in it and hands the full segment back to the background thread, which forces and unmaps it. The roll maps nothing, forces nothing and allocates nothing on the appending thread. If the next segment is not ready, the roll waits for it and counts the wait (`rollWaits()`).
+- Touching a byte that is already zero leaves the file unchanged; a touched segment with no frames reads as an empty segment.
+
 A reader (`SegmentedJournalReader`) walks the segments in index order up to the highest index present when it opened, carrying sequence and hash across each boundary, and applies 1.4 throughout. A segment read on its own fails the chain check unless the reader is given the previous segment's last sequence and hash, which is deliberate: a segment cannot be swapped for another self-consistent one without detection. A missing segment below the highest index is reported as corruption at the sequence the missing segment should have started with. `SegmentedJournalTest` checks a swapped segment, a missing segment, a flipped byte in a later segment and a truncated earlier segment.
 
 ## Section 2. SBE schema v1
@@ -390,6 +398,21 @@ Template ids start at 65001 so that a journal frame's template id never collides
 ### 9.7 Journals and replay comparison
 
 A live loop writes two journals, each a `SegmentedJournal` (Section 1.5) built with the loop's `EventClock`: the inbound journal holds every accepted inbound message, every clock tick, every Backpressure and the LoopError if there is one; the outbound journal holds every message the loop produced. Both carry the latched cycle time in `timestampNanos`.
+
+Journal modes (R2, DECISIONS.md DR-R2J-03). `LoopJournals.create(dir, inboundName, outboundName, segmentBytes, clock, mode)` opens both journals, with preallocation on, in one `JournalMode`, and `EventLoop.Builder.journals(LoopJournals)` gives them to the loop. `inboundJournal(JournalSink)` and `outboundJournal(JournalSink)` still accept any sink, so a caller that wires `SegmentedJournal::append` itself is unaffected.
+
+| Mode | What the loop thread does per message | Who writes the mapped file | Chain hash computed on |
+|---|---|---|---|
+| `DIRECT` (default, DR-R2J-04) | `SegmentedJournal.append`: copy the payload into the touched segment, hash, header, length written last with an ordered store | the loop thread | the loop thread |
+| `RING` | `RingJournal.append`: claim a record in an off-heap Agrona `OneToOneRingBuffer` (64 MiB by default), write the latched `epochNanos()`, the schema version and the payload, commit | the journal thread `journal-drain-<name>`, through `SegmentedJournal.append` with the stamp from the record | the journal thread |
+
+Both modes write the same frames: the same `JournalWriter` code assigns the sequence and computes the chain hash from the same payload bytes in the order the loop appended them, and the stamp is the latched time read on the loop thread in both. `RingJournalTest.ringModeWritesTheSameFramesAsTheDirectMode` checks sequence, stamp, template id, schema version, payload and chain hash frame by frame. Replay (below) reads either. In ring mode:
+
+- a full ring makes the loop thread wait until the journal thread makes room, and the wait is counted (`producerWaits()`); a frame is never dropped;
+- a frame too large for an empty segment is refused on the loop thread (`JournalFullException`), as in direct mode;
+- if the journal thread fails, the next append on the loop thread throws `IllegalStateException` with the cause; the runner stops the loop as for any other failure (Section 4), and its attempt to journal a LoopError through the failed journal fails too and is attached to the failure as suppressed;
+- a process crash loses the frames still in the ring (normally microseconds of traffic); in direct mode every appended frame is already in the mapping and survives a process crash. Neither mode forces to disk on the loop thread; durability across an operating-system crash is the background force at each roll plus the operating system's write-back.
+- `LoopJournals.close()` drains each ring before closing its journal; call it after the loop thread has stopped.
 
 `LoopReplay.run(inbound, recordedOutbound, factory)` replays the inbound journal through a fresh loop built by the same `LoopFactory` that built the live one:
 
