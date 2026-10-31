@@ -257,7 +257,9 @@ class ChaosTest {
       if (engine.liveQuotes() != 0) {
         failures.add(at + "live quotes while " + state);
       }
-      if (m.desk.hedger(CurrencyCode.USD).workingParents() + m.desk.hedger(CurrencyCode.EUR).workingParents() != 0) {
+      // a daily-loss kill keeps the hedges flattening (PNL_AUDIT item 14); any other kill stops them
+      if (!m.desk.risk().flattenOnly()
+          && m.desk.hedger(CurrencyCode.USD).workingParents() + m.desk.hedger(CurrencyCode.EUR).workingParents() != 0) {
         failures.add(at + "hedge parents working while " + state);
       }
       for (final boolean bid : new boolean[] {true, false}) {

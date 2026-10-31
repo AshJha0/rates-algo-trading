@@ -10,7 +10,7 @@ import io.ratesalgo.api.OutboundSink;
 import io.ratesalgo.api.SensitivityProvider;
 import io.ratesalgo.common.time.Clock;
 import io.ratesalgo.hedge.AxeSource;
-import io.ratesalgo.hedge.BasisAttribution;
+import io.ratesalgo.hedge.ExposureBasisAttribution;
 import io.ratesalgo.hedge.HedgeAnalytics;
 import io.ratesalgo.hedge.HedgeCostModel;
 import io.ratesalgo.hedge.HedgePlanner;
@@ -36,6 +36,7 @@ public final class Desk {
   private final KillSwitchController killSwitch;
   private final RiskEngine risk;
   private final Hedger[] hedgers = new Hedger[CurrencyCode.COUNT];
+  private final ExposureBasisAttribution[] basis = new ExposureBasisAttribution[CurrencyCode.COUNT];
   private final FairValueEngine fairValue;
   private final QuotingEngine quoting;
   private final PackageQuoter packages;
@@ -73,6 +74,7 @@ public final class Desk {
     for (int c = 0; c < CurrencyCode.COUNT; c++) {
       final HedgePlanner planner =
           new HedgePlanner(in.hedgeUniverse(), risk, covariance, in.hedgeCosts(), DEFAULT_HEDGE_KAPPA, 1e-9, 20_000);
+      basis[c] = new ExposureBasisAttribution(risk, CurrencyCode.ofIndex(c));
       hedgers[c] =
           new Hedger(
               CurrencyCode.ofIndex(c),
@@ -80,7 +82,7 @@ public final class Desk {
               risk,
               in.hedgeSink(),
               in.fairValues(),
-              new HedgeAnalytics(1024, BasisAttribution.NONE),
+              new HedgeAnalytics(1024, basis[c]),
               in.clock(),
               in.hedgerConfig().parentIdBase((1L << 40) + ((long) c << 36)));
     }
@@ -133,6 +135,11 @@ public final class Desk {
   /** The hedger for a currency. */
   public Hedger hedger(final CurrencyCode currency) {
     return hedgers[currency.index()];
+  }
+
+  /** Basis and swap-spread attribution of a currency's hedge fills. */
+  public ExposureBasisAttribution basisAttribution(final CurrencyCode currency) {
+    return basis[currency.index()];
   }
 
   public FairValueEngine fairValue() {

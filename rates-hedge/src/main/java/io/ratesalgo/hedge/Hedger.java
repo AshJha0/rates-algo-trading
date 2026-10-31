@@ -25,6 +25,10 @@ import io.ratesalgo.risk.RiskEngine;
  * Every parent passes {@link RiskEngine#checkOrder} first and reserves its quantity until filled
  * or cancelled.
  *
+ * <p>A kill cancels every parent, except a kill from the risk engine's daily-loss limit ({@link
+ * RiskEngine#flattenOnly}): then the parents keep working and timers keep sending risk-reducing
+ * tranches, so the book is flattened rather than frozen with a loss on it.
+ *
  * <p>Also an {@link AxeSource}: while an episode is active, a client trade that moves the book
  * toward the hedge earns a price improvement proportional to its correlation with the needed
  * hedge, capped at {@code axeMaxBp}. Allocation-free after construction.
@@ -117,6 +121,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private final long[] killedRemaining;
   private int killedCount;
   private long lateFills;
+  private long flattenKills;
 
   private final Dv01Vector residual;
   private final double[] r = new double[K];
@@ -167,7 +172,8 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   public int onTimer(final long epochNanos) {
     measure();
     analytics.recordResidual(epochNanos, residualVariance, residual.parallel());
-    if (!risk.killSwitch().isActive() || Math.sqrt(residualVariance) < config.triggerStdDev) {
+    final boolean allowed = risk.killSwitch().isActive() || risk.flattenOnly();
+    if (!allowed || Math.sqrt(residualVariance) < config.triggerStdDev) {
       episode = false;
       return 0;
     }
@@ -256,6 +262,11 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     return lateFills;
   }
 
+  /** Daily-loss kills under which the working parents were kept to keep flattening. */
+  public long flattenKills() {
+    return flattenKills;
+  }
+
   /** The router finished a parent without filling the rest (cancelled, expired, rejected). */
   public void onParentDone(final long id) {
     final int p = find(id);
@@ -267,6 +278,12 @@ public final class Hedger implements AxeSource, KillSwitchListener {
 
   @Override
   public void onKill(final KillReason reason, final long epochNanos) {
+    if (risk.flattenOnly()) {
+      // the risk engine's own daily-loss kill: quotes are pulled, but the hedges that reduce the
+      // loss keep working and new ones are still sent, each passing checkOrder (PNL_AUDIT item 14)
+      flattenKills++;
+      return;
+    }
     // remembered before the cancel-all, since the router may report each parent done inside it
     killedCount = 0;
     for (int p = 0; p < parentCount; p++) {

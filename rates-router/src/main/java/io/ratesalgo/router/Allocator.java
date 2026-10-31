@@ -12,13 +12,21 @@ import io.ratesalgo.messages.sbe.VenueExclusion;
  * {@code h}, impact {@code I(q) = y * sigmaDay * (q / ADV)^alpha} (the
  * square-root law when alpha is 0.5, as in the owner's earlier library, API_SPEC.md Section 8.3),
  * latency cost {@code L = kLat * sigmaSec * sqrt(latency)} and adverse move {@code A = kAdv *
- * sigmaSec * sqrt(T)} over the passive horizon {@code T}:
+ * sigmaSec * sqrt(T)} over the passive horizon {@code T}, adverse selection on a filled passive
+ * child {@code F = kFill * sigmaSec * sqrt(min(W, T))} over the expected queue wait {@code W}, and
+ * message cost {@code M = c * lot / q} per message:
  *
  * <pre>
- * aggressive(q) = o + h + I(q) + takerFee + L
- * passive(q)    = o + P(q) (-h + I(q) + makerFee) + (1 - P(q)) (A + h + I(q) + takerFee) + L
+ * aggressive(q) = o + h + I(q) + takerFee + L + M
+ * passive(q)    = o + P(q) (-h + I(q) + makerFee + F) + (1 - P(q)) (A + h + I(q) + takerFee + 2M)
+ *                 + L + M
  * chosen(q)     = min of the allowed ones (ties cross)
  * </pre>
+ *
+ * <p>{@code sigma} is the routed instrument's own volatility when the parameters list one. A
+ * passive child that does not fill costs two more messages, the cancel and the aggressive order
+ * that replaces it, since the router has no amend. {@code F} and {@code M} are zero unless the
+ * parameters turn them on (PNL_AUDIT.md items 15 and 18).
  *
  * where {@code P(q)} is the complete-fill probability of {@link QueueFillModel} with the displayed
  * same-side depth ahead, the unit market-order rate {@code tradeRate / (2 * lot)} and the venue's
@@ -71,16 +79,17 @@ public final class Allocator {
       final VenueParams vp) {
     final double halfSpread = (t.bestAsk[r] - t.bestBid[r]) * 0.5 / SCALE;
     final double offset = venueOffset(t, r);
-    final double sigmaSec = rp.sigmaPerSqrtSecond();
+    final double sigmaSec = rp.sigmaPerSqrtSecond(t.instrumentId);
     impact =
         rp.impactY()
-            * rp.sigmaDailyPoints()
+            * rp.sigmaDailyPoints(t.instrumentId)
             * StrictMath.pow((double) quantity / vp.adv(), rp.impactAlpha());
     final double latency =
         rp.latencyRiskFactor() * sigmaSec * StrictMath.sqrt(t.latencyNanos[r] / SCALE);
     final double taker = t.takerFee[r] / SCALE;
     final double maker = t.makerFee[r] / SCALE;
-    aggressiveCost = offset + halfSpread + impact + taker + latency;
+    final double message = rp.messageCostPoints() * t.lotSize[r] / Math.max(1L, quantity);
+    aggressiveCost = offset + halfSpread + impact + taker + latency + message;
 
     final double horizon = t.passiveHorizonNanos / SCALE;
     final long lot = t.lotSize[r];
@@ -98,11 +107,14 @@ public final class Allocator {
       waitSeconds = MAX_WAIT_SECONDS;
     }
     final double adverse = rp.adverseFactor() * sigmaSec * StrictMath.sqrt(horizon);
+    final double filledAdverse =
+        rp.filledAdverseFactor() * sigmaSec * StrictMath.sqrt(Math.min(waitSeconds, horizon));
     passiveCost =
         offset
-            + fillProbability * (-halfSpread + impact + maker)
-            + (1.0 - fillProbability) * (adverse + halfSpread + impact + taker)
-            + latency;
+            + fillProbability * (-halfSpread + impact + maker + filledAdverse)
+            + (1.0 - fillProbability) * (adverse + halfSpread + impact + taker + 2.0 * message)
+            + latency
+            + message;
     final boolean passiveOk = t.passiveAllowed[r] && horizon > 0.0;
     passiveChosen = passiveOk && (!t.aggressiveAllowed[r] || passiveCost < aggressiveCost);
     chosenCost = passiveChosen ? passiveCost : aggressiveCost;
