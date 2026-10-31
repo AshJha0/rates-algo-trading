@@ -4,8 +4,8 @@ Golden files are compared numerically, not byte for byte: a libm difference betw
 may move the last bits, so every number must agree to 1e-12 relative with an absolute floor of
 1e-6 (DECISIONS.md DR-P1-06). The floor matters for par-swap PVs, which are sums of cancelling
 terms of order 1e6 and land at 1e-8 or so on any platform: the first Linux CI run saw 9.3e-9
-against 7.5e-9 from Windows, pure rounding noise, far below one cent. Skipped when QuantLib is not installed; CI installs it through the
-``golden`` extra.
+against 7.5e-9 from Windows, pure rounding noise, far below one cent. Skipped when QuantLib is
+not installed; CI installs it through the ``golden`` extra.
 """
 
 from __future__ import annotations
