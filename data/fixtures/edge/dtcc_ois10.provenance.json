@@ -1,0 +1,24 @@
+{
+  "fixture": "dtcc_ois10.csv",
+  "created_utc": "2026-10-31T14:01:56+00:00",
+  "sha256": "023f1592cdeb212ba9dc95aea46c6bad8882ebd524c538b648166a97f5173a10",
+  "size": 16451,
+  "rows": 416,
+  "columns": [
+    "date",
+    "ois10_low",
+    "n_low",
+    "ois10_central",
+    "n_central",
+    "ois10_high",
+    "n_high"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_dtcc.json"
+  ],
+  "raw_file_count": 436,
+  "raw_files": "listed in the manifests",
+  "transformation": "DTCC CFTC cumulative rates slices; trades NEWT/TRAD, USD SOFR OIS, not a package, spot-starting (effective within 7 days), standard tenor within 0.15 years, executed (New York time) on the file's day; days up to 2026-06-30. Per day, median fixed rate (percent) of 10Y prints in 15:00-15:30 (low), 14:30-16:00 (central) and the whole day (high), New York time; NaN when fewer than 5 prints; n_* = print counts.",
+  "produced_by": "ratesresearch.edge.build"
+}

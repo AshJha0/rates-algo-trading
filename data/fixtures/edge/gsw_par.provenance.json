@@ -1,0 +1,33 @@
+{
+  "fixture": "gsw_par.csv",
+  "created_utc": "2026-10-31T13:47:27+00:00",
+  "sha256": "2624f80fa2712c4bb0f8733db1dcb3ed0109333b20a7f2e3818e47b2be0b78b1",
+  "size": 222313,
+  "rows": 2874,
+  "columns": [
+    "date",
+    "g2",
+    "g3",
+    "g5",
+    "g7",
+    "g10",
+    "g20",
+    "g30"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_gsw.json"
+  ],
+  "raw_file_count": 1,
+  "raw_files": [
+    {
+      "name": "feds200628.csv",
+      "url": "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv",
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "sha256": "88cab90e84ad765ab79d9854b33e5813051210f2ac2285eaa6e720149fdd256d",
+      "size": 16664803
+    }
+  ],
+  "transformation": "Federal Reserve feds200628 (Gurkaynak, Sack and Wright) fitted par yields SVENPY02 to SVENPY30 at 2, 3, 5, 7, 10, 20, 30 years, percent; 2015-01-02 to 2026-06-30.",
+  "produced_by": "ratesresearch.edge.build"
+}

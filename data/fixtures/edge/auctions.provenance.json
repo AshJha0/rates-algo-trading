@@ -1,0 +1,207 @@
+{
+  "fixture": "auctions.csv",
+  "created_utc": "2026-10-31T13:47:27+00:00",
+  "sha256": "30c8119c056c12a8a8b2272a5c35edc101544f8209c30757e351c1c4f1dbb132",
+  "size": 45840,
+  "rows": 910,
+  "columns": [
+    "cusip",
+    "auction_date",
+    "issue_date",
+    "term",
+    "tenor",
+    "reopening",
+    "offering_bn"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_auctions.json"
+  ],
+  "raw_file_count": 26,
+  "raw_files": [
+    {
+      "name": "td_note_2014.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=12/01/2014&endDate=12/31/2014",
+      "downloaded_utc": "2026-10-31T13:41:46+00:00",
+      "sha256": "5168e5390621337217cee59f139627da46d5aa7d45d03a274e4df6024fc6b493",
+      "size": 54257
+    },
+    {
+      "name": "td_note_2015.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2015&endDate=12/31/2015",
+      "downloaded_utc": "2026-10-31T13:41:47+00:00",
+      "sha256": "caf3188e94b8a44119234ed8d3f2d48f9d6c7a8fdaeba2d9f82c6742d7781eb2",
+      "size": 407407
+    },
+    {
+      "name": "td_note_2016.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2016&endDate=12/31/2016",
+      "downloaded_utc": "2026-10-31T13:41:48+00:00",
+      "sha256": "41b9f71d0f16e64d1fca3db5c77f6ab4d535f088ec23ca97c985da9be1489311",
+      "size": 387066
+    },
+    {
+      "name": "td_note_2017.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2017&endDate=12/31/2017",
+      "downloaded_utc": "2026-10-31T13:41:49+00:00",
+      "sha256": "b2ca25b5fe20c200d6d8adca7124abc46639774f28c8c46529cd4ac50f9796f3",
+      "size": 408618
+    },
+    {
+      "name": "td_note_2018.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2018&endDate=12/31/2018",
+      "downloaded_utc": "2026-10-31T13:41:50+00:00",
+      "sha256": "9d9c296c22d435a809547c8e68b8aa289bf8ee4aae2be28684e6c9a5d471c836",
+      "size": 428388
+    },
+    {
+      "name": "td_note_2019.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2019&endDate=12/31/2019",
+      "downloaded_utc": "2026-10-31T13:41:52+00:00",
+      "sha256": "a1fa835ac97558e31fa5085ff637cd651128542ab2f899a852955c081a754a69",
+      "size": 415445
+    },
+    {
+      "name": "td_note_2020.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2020&endDate=12/31/2020",
+      "downloaded_utc": "2026-10-31T13:41:52+00:00",
+      "sha256": "5bcee4a1758a4757fcd4c4d3edec238ece201914addabdc0012bfabfa6239065",
+      "size": 408458
+    },
+    {
+      "name": "td_note_2021.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2021&endDate=12/31/2021",
+      "downloaded_utc": "2026-10-31T13:41:53+00:00",
+      "sha256": "9b56df955bfa055a678f8c2cfff654f815c1da72ee92dd755eccbe9760f3544e",
+      "size": 408699
+    },
+    {
+      "name": "td_note_2022.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2022&endDate=12/31/2022",
+      "downloaded_utc": "2026-10-31T13:41:54+00:00",
+      "sha256": "a939dfe192b6eefe4b3262fafa32b697e58d9d893f023ad6a200c43da3243317",
+      "size": 388023
+    },
+    {
+      "name": "td_note_2023.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2023&endDate=12/31/2023",
+      "downloaded_utc": "2026-10-31T13:41:55+00:00",
+      "sha256": "233df8cd4722577c99fded8b6506add306022a9ab7d284f6eda438cf5ac4223c",
+      "size": 407716
+    },
+    {
+      "name": "td_note_2024.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2024&endDate=12/31/2024",
+      "downloaded_utc": "2026-10-31T13:41:56+00:00",
+      "sha256": "c8bd80fe3eb92ff3714ee0561cc830a39330694e2ff3407684117699aefd95c8",
+      "size": 428896
+    },
+    {
+      "name": "td_note_2025.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2025&endDate=12/31/2025",
+      "downloaded_utc": "2026-10-31T13:41:57+00:00",
+      "sha256": "bda108693506588fb4428e626e17ce49ed1c881a63b01970e3d3232767f4696a",
+      "size": 408889
+    },
+    {
+      "name": "td_note_2026.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=01/01/2026&endDate=07/31/2026",
+      "downloaded_utc": "2026-10-31T13:41:58+00:00",
+      "sha256": "4ba3602fd3a4c70ea7125978b4aec8392e8878fceb324836b7db8b7ae94a7303",
+      "size": 238659
+    },
+    {
+      "name": "td_bond_2014.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=12/01/2014&endDate=12/31/2014",
+      "downloaded_utc": "2026-10-31T13:41:58+00:00",
+      "sha256": "8d170b4ffc73c9ba1221efc35c8ef1138a4fab10aaf67d5b13ea29336e801630",
+      "size": 6860
+    },
+    {
+      "name": "td_bond_2015.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2015&endDate=12/31/2015",
+      "downloaded_utc": "2026-10-31T13:41:59+00:00",
+      "sha256": "5f27de1cd8dc5e089f63f9da98fe613821684d22aeff642be1338efe5e143702",
+      "size": 82098
+    },
+    {
+      "name": "td_bond_2016.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2016&endDate=12/31/2016",
+      "downloaded_utc": "2026-10-31T13:41:59+00:00",
+      "sha256": "27f1b51cd195b04414207355b6d23ce2bb7648423fde7a3c72b071faad048788",
+      "size": 82078
+    },
+    {
+      "name": "td_bond_2017.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2017&endDate=12/31/2017",
+      "downloaded_utc": "2026-10-31T13:42:00+00:00",
+      "sha256": "e299edb5027f79be69d3aa2f7d4c354d4d44ff94adf4e0345023661d780c6f17",
+      "size": 82065
+    },
+    {
+      "name": "td_bond_2018.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2018&endDate=12/31/2018",
+      "downloaded_utc": "2026-10-31T13:42:00+00:00",
+      "sha256": "528ca737a2021c30cfe4d8b4544645e4d0a7f1e3a54e2c04f687ee2497e6e44e",
+      "size": 82082
+    },
+    {
+      "name": "td_bond_2019.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2019&endDate=12/31/2019",
+      "downloaded_utc": "2026-10-31T13:42:01+00:00",
+      "sha256": "8d7a75627a9635ea41eb0252c48b02f263ec2480302d9879b6c78033125c9382",
+      "size": 82079
+    },
+    {
+      "name": "td_bond_2020.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2020&endDate=12/31/2020",
+      "downloaded_utc": "2026-10-31T13:42:01+00:00",
+      "sha256": "2f6d2a0986e26032d4a4b77881e3ec3598859a29de9bf54c4e4fcb5ffb58b069",
+      "size": 137107
+    },
+    {
+      "name": "td_bond_2021.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2021&endDate=12/31/2021",
+      "downloaded_utc": "2026-10-31T13:42:02+00:00",
+      "sha256": "6892eb8d76079c8aafa1ebc74b511c96b508f2ed544efc9e9a95be5899fefe3a",
+      "size": 171358
+    },
+    {
+      "name": "td_bond_2022.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2022&endDate=12/31/2022",
+      "downloaded_utc": "2026-10-31T13:42:03+00:00",
+      "sha256": "a255627beb5d8b9624f1ca4ae3bd555f5feefcaffc3e9dad3701e362ef22cc73",
+      "size": 157668
+    },
+    {
+      "name": "td_bond_2023.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2023&endDate=12/31/2023",
+      "downloaded_utc": "2026-10-31T13:42:03+00:00",
+      "sha256": "40c5992bd51e2a6f5efd992afbe536d2e180237004f65c6ead5291256b785b07",
+      "size": 164387
+    },
+    {
+      "name": "td_bond_2024.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2024&endDate=12/31/2024",
+      "downloaded_utc": "2026-10-31T13:42:04+00:00",
+      "sha256": "b58d4213bccba465c26b8b9889bb8e213d649f96831670f936f08dc18daccf73",
+      "size": 171391
+    },
+    {
+      "name": "td_bond_2025.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2025&endDate=12/31/2025",
+      "downloaded_utc": "2026-10-31T13:42:05+00:00",
+      "sha256": "3569b84f203fdd261af670911d2aa18b189ce165c1ba968e98f79e9cd4b127ec",
+      "size": 164624
+    },
+    {
+      "name": "td_bond_2026.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=01/01/2026&endDate=07/31/2026",
+      "downloaded_utc": "2026-10-31T13:42:05+00:00",
+      "sha256": "e30dffa9e2e30702761d6f7d8b69f37c120ca0270fb2fcc8c8d07a37950c1b1f",
+      "size": 95982
+    }
+  ],
+  "transformation": "TreasuryDirect auction records (Note and Bond searches by issue date 2014-12-01 to 2026-07-31), nominal fixed coupons only (TIPS and FRNs dropped), tenor = securityTerm rounded to 2, 3, 5, 7, 10, 20 or 30 years, auction day from auctionDate or competitiveAuctionCloseDate; auction and issue dates up to 2026-06-30.",
+  "produced_by": "ratesresearch.edge.build"
+}

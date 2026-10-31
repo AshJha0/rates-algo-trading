@@ -9,6 +9,7 @@ Usage: ``python -m ratesresearch.edge.sources <source> [...]`` with sources from
 
 from __future__ import annotations
 
+import http.client
 import json
 import sys
 import time
@@ -105,7 +106,10 @@ def _items_auctions() -> list[Item]:
 
 def _items_gsw() -> list[Item]:
     return [
-        Item("feds200628.csv", "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv")
+        Item(
+            "feds200628.csv",
+            "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv",
+        )
     ]
 
 
@@ -152,7 +156,10 @@ SOURCES: dict[str, tuple[str, Callable[[], list[Item]]]] = {
     "cot": (CFTC_LICENCE, _items_cot),
     "fomc": (FED_LICENCE, _items_fomc),
     "bea": (BEA_LICENCE, _items_bea),
-    "alfred": ("FRED/ALFRED terms of use (St. Louis Fed); series data from BLS and BEA.", _items_alfred),
+    "alfred": (
+        "FRED/ALFRED terms of use (St. Louis Fed); series data from BLS and BEA.",
+        _items_alfred,
+    ),
     "dtcc": (dtcc.LICENCE, _items_dtcc),
 }
 
@@ -169,7 +176,7 @@ def _get(url: str, timeout: float = 120.0) -> bytes:
             if e.code in (403, 404):
                 raise
             last = e
-        except (urllib.error.URLError, TimeoutError) as e:
+        except (urllib.error.URLError, TimeoutError, http.client.HTTPException, OSError) as e:
             last = e
         time.sleep(2.0 * (attempt + 1))
     raise RuntimeError(f"{url}: {last}")
@@ -198,9 +205,18 @@ def fetch(source: str, items: Iterable[Item] | None = None) -> dict[str, Any]:
                 missing.append(missing_old[item.name])
                 continue
             try:
-                target.write_bytes(_get(item.url))
+                tmp = target.with_suffix(target.suffix + ".part")
+                tmp.write_bytes(_get(item.url))
+                tmp.replace(target)
                 stamp = datetime.now(UTC).isoformat(timespec="seconds")
-            except (urllib.error.HTTPError, RuntimeError) as e:
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", "replace")
+                reason = "S3 DEEP_ARCHIVE (InvalidObjectState)" if "DEEP_ARCHIVE" in body else ""
+                missing.append(
+                    {"name": item.name, "url": item.url, "error": f"HTTP {e.code} {reason}".strip()}
+                )
+                continue
+            except RuntimeError as e:
                 missing.append({"name": item.name, "url": item.url, "error": str(e)[:200]})
                 continue
         files.append(
