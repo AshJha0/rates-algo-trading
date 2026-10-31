@@ -123,6 +123,32 @@ class BondAnalyticsTest {
   }
 
   @Test
+  void gcRepoFromNewYorkFedTgcrAndBgcrFundsInventory() throws IOException {
+    // data/fixtures/repo_gc_2024.csv: published TGCR and BGCR (NY Fed), percent
+    final List<String> lines = Files.readAllLines(
+        Golden.repoRoot().resolve(Path.of("data", "fixtures", "repo_gc_2024.csv")),
+        StandardCharsets.UTF_8);
+    double tgcr = Double.NaN;
+    double bgcr = Double.NaN;
+    for (final String line : lines.subList(1, lines.size())) {
+      final String[] f = line.split(",", -1);
+      if (f[0].equals("2025-01-14")) {
+        if (f[1].equals("TGCR")) {
+          tgcr = Double.parseDouble(f[2]) / 100.0;
+        } else if (f[1].equals("BGCR")) {
+          bgcr = Double.parseDouble(f[2]) / 100.0;
+        }
+      }
+    }
+    assertTrue(tgcr > 0.03 && tgcr < 0.06 && Math.abs(tgcr - bgcr) < 0.001, tgcr + " " + bgcr);
+    // overnight point from TGCR; one-month and three-month points declared (DR-P1-07)
+    final RepoCurve gc = new RepoCurve(new int[] {1, 30, 90},
+        new double[] {tgcr, tgcr - 0.0002, tgcr - 0.0006});
+    final double charge = RepoCurve.fundingCharge(1e8, 30, gc.specialRate(30, 0.0025));
+    assertEquals(1e8 * (tgcr - 0.0002 - 0.0025) * 30 / 360.0, charge, 1e-6);
+  }
+
+  @Test
   void svenssonParametersFromTheBundesbankFixtureAndRefit() throws IOException {
     final List<String> lines = Files.readAllLines(
         Golden.repoRoot().resolve(Path.of("data", "fixtures", "bund_svensson_2024.csv")),

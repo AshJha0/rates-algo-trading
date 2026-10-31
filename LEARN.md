@@ -4,7 +4,7 @@
 
 Each section follows the same shape. First the plain idea, in a few sentences a newcomer can hold in their head. Then the formal statement, with the conventions and formulas a reviewer would check. Then a glossary definition for each new term, repeated in Section 17. Then one worked example with numbers, with the method stated so the number can be reproduced. Where a number comes from code in this repository, the file and test are named.
 
-Only Sections 1 and 11 are written in full in Phase 0. Every other section states what it will cover and which phase writes it, because the material should be written alongside the code that exercises it. Where a section depends on code that does not exist yet, this document says so rather than describing the code as if it did.
+Sections 1 and 11 were written in Phase 0 and Sections 2 to 5 in Phase 1. Every other section states what it will cover and which phase writes it, because the material should be written alongside the code that exercises it. Where a section depends on code that does not exist yet, this document says so rather than describing the code as if it did.
 
 Nothing here is investment advice. All numbers are illustrative or come from simulations against public data.
 
@@ -65,7 +65,7 @@ so
 DV01 \approx 100{,}000{,}000 \times 8.11 \times 0.0001 \approx 81{,}000 \text{ USD per basis point}.
 \]
 
-The number is approximate. A production figure would bump the bootstrapped curve by one basis point, reprice both legs with the real schedule and day counts, and difference the two values; the result for a 10-year USD SOFR swap at 4 percent sits in the same region, around 80 to 85 thousand per basis point per 100 million, and moves with the level of rates because the annuity does. The swap pricer that computes this properly is planned for Phase 1, and Section 3 will replace this example with one that cites a golden test.
+The number is approximate. A production figure would bump the bootstrapped curve by one basis point, reprice both legs with the real schedule and day counts, and difference the two values; the result for a 10-year USD SOFR swap at 4 percent sits in the same region, around 80 to 85 thousand per basis point per 100 million, and moves with the level of rates because the annuity does. Section 3 repeats the example with the Phase 1 swap pricer: 82,367 USD per basis point on the COOKBOOK.md recipe 5 curve.
 
 ### Why this matters for the platform
 
@@ -73,19 +73,181 @@ Every one of the conventions above becomes a field in the securities master, a b
 
 ## 2. Discount curves and the multi-curve world
 
-Planned for P1 (analytics). It will cover why OIS discounting replaced LIBOR discounting, how a curve is bootstrapped from OIS swaps and futures with stated interpolation, what a multi-curve setup still means in a post-LIBOR market (OIS discounting plus separate projection where credit-sensitive indices survive), and how the project's bootstrap is checked against QuantLib with named tolerances.
+### Plain idea
+
+A discount curve answers one question: what is a dollar paid on a given future date worth today. Every price in this project is a sum of cash flows times those values. The curve is not observed directly; it is inferred from instruments that are, overnight fixings, OIS swaps and futures, by finding the curve under which each of them is worth exactly its quoted price. That inference is the bootstrap.
+
+Before 2008 one LIBOR curve both projected floating rates and discounted cash flows. Collateralised derivatives are now discounted at the overnight rate paid on collateral, so the OIS curve discounts. Where a term index survives (EURIBOR is the main example), it gets its own projection curve, built after the OIS curve with OIS discounting held fixed. That is the multi-curve setup.
+
+### Formal statement
+
+A curve is a set of pillar dates \(T_1 < \dots < T_N\) and log discount factors \(y_i = \ln P(0, T_i)\), with \(y_0 = 0\) at the valuation date. Time is \(t = (T - T_0)/365\). Between pillars the curve is interpolated in \(y(t)\) by one of three schemes (`Interpolation`, DECISIONS.md DR-P1-03):
+
+- linear in \(y\): the instantaneous forward \(f(t) = -y'(t)\) is constant between pillars, so a pillar affects only its two neighbouring segments;
+- monotone convex (Hagan and West 2006): forwards are continuous and stay within the range of the neighbouring average forwards;
+- exponential tension spline: smooth like a cubic spline but with a tension that suppresses overshoot.
+
+Beyond the last pillar the last segment's average forward is extended. Each instrument \(k\) has an implied quote \(q_k(y)\), a smooth function of the pillar values. The bootstrap solves the square system \(q_k(y) = Q_k\) for all \(k\), one instrument per pillar, to \(|q_k - Q_k| \le 10^{-12}\):
+
+- sequentially, pillar by pillar with Brent's method, when the interpolation is local and no instrument depends on dates beyond its own pillar;
+- globally, by Levenberg-Marquardt on all \(y_i\) with the analytic Jacobian \(J_{kj} = \partial q_k / \partial y_j\), when instruments overlap or the interpolation is non-local.
+
+Instruments: the overnight fixing from today to the next fixing day, \(q = (P(t_0)/P(t_1) - 1)/\tau\); meeting-dated OIS between central bank effective dates, with the same formula over the meeting window, so that linear interpolation makes the overnight forward a step function that moves only at meetings; three-month futures, \(q = 100(1 - R - CA)\) with \(R\) the compounded rate over the IMM period and \(CA\) the Hull-White convexity adjustment (Section 5); and par OIS swaps (Section 3). A known year-end turn is an extra spread over the turn window, applied on top of the interpolated curve.
+
+### Glossary
+
+- **Discount factor**: \(P(0, T)\), the value today of one unit paid at \(T\).
+- **Pillar**: a date at which the curve's value is a free parameter, one per bootstrap instrument.
+- **Bootstrap**: solving for pillar values so that every input instrument reprices to its quote.
+- **OIS discounting**: discounting collateralised cash flows on the curve of the overnight rate paid on collateral.
+- **Projection curve**: a curve used only to forecast a term index such as EURIBOR 6M, built with OIS discounting held fixed.
+- **Meeting-dated OIS**: an OIS whose period runs between two central bank policy effective dates, quoting the expected overnight rate between those meetings.
+- **Turn**: a known jump in the overnight rate over a short window such as year end, added to the curve explicitly.
+- **Monotone convex interpolation**: the Hagan-West scheme that keeps instantaneous forwards continuous and within the range of the neighbouring average forwards.
+- **Tension spline**: a spline with a tension parameter between a cubic spline (zero tension) and linear interpolation (infinite tension).
+
+### Worked example: a SOFR curve on 15 January 2025
+
+COOKBOOK.md recipe 4 builds a curve from nine instruments: SOFR overnight at 4.30 percent (an estimate, since 15 January's SOFR is published on 16 January), three meeting-dated OIS to 8 May 2025 at 4.30, 4.29 and 4.22 percent, the September 2025 three-month future at 96.05, and par OIS at 2, 5, 10 and 30 years. The builder chooses the sequential solver. The two-year discount factor is 0.9266847083 (zero rate 3.776 percent) and the ten-year 0.6710374866 (3.983 percent); every instrument reprices within the 1e-12 solver tolerance.
+
+The method is checked twice. Against QuantLib 1.44, the Java bootstrap of the four golden curves (USD, EUR and GBP OIS and a EUR 6M projection curve, 81 instruments) matches the QuantLib-priced bootstrap to 8.3e-16 in discount factor (`AnalyticsGoldenTest.javaBootstrapMatchesQuantLibCurvesAndRepricesInstruments`, 2026-10-31). Against itself, changing the 10Y quote by 7 basis points and rebuilding incrementally gives the same discount factors as a full rebuild to 3.9e-16 (linear), 7.5e-14 (monotone convex) and 6.8e-15 (tension spline) (`CurveBuilderTest.incrementalRebuildEqualsFullRebuild`, 2026-10-31).
 
 ## 3. Swaps: schedules, PV, par rate, DV01
 
-Planned for P1 (analytics). It will cover schedule generation with stubs and business-day conventions, compounding in arrears with payment lags, present value of each leg, the par rate, DV01 by curve bump and by annuity approximation, and the golden tests that pin each number.
+### Plain idea
+
+A swap is two schedules of payments. The fixed leg is easy: rate times accrual times discount factor. The overnight leg compounds a daily published rate over each period and pays the result a few days later. Getting either leg wrong by one day is a real error, so the schedule generator, the business-day rules and the separation between the calendar of fixings and the calendar of payments carry most of the work. Once the legs are right, the par rate is the fixed rate that balances them, and the DV01 is how much the value moves when the curve inputs move by one basis point.
+
+### Formal statement
+
+Schedule (`Schedule.generate`, the rules of QuantLib's `Schedule`): roll unadjusted dates by the period from the termination date backward (short front stub, the default) or from the effective date forward (short back stub); apply the end-of-month rule if requested; adjust intermediate dates by the business-day convention; merge a short stub into its neighbour for a long stub.
+
+Compounded in arrears (ISDA 2021 Definitions, Section 7.6). For an accrual period with fixing-calendar business days \(d_0 < \dots < d_n\) and published rates \(r_i\):
+
+\[
+C = \prod_{i=0}^{n-1} \bigl(1 + r_i \, \delta_i\bigr), \qquad \text{coupon} = N (C - 1), \qquad \delta_i = \frac{d_{i+1} - d_i}{360 \text{ or } 365}
+\]
+
+paid on the payment calendar \(L\) business days after the period end (USD \(L = 2\), EUR 1, GBP 0). A lookback of \(k\) days observes the rate \(k\) fixing days earlier; a lockout of \(k\) days repeats the rate observed \(k\) days before the end; an observation shift weights each rate by its observation period. Rates not yet published are projected from the curve, \(r_i = (P(d_i)/P(d_{i+1}) - 1)/\delta_i\), and runs of such days telescope to one ratio of discount factors.
+
+Present value, par rate, annuity:
+
+\[
+PV_{\text{payer}} = \sum_p N (C_p - 1) P(\text{pay}_p) - N K \sum_i \alpha_i P(\text{pay}_i), \qquad K_{\text{par}} = \frac{\sum_p (C_p - 1) P(\text{pay}_p)}{\sum_i \alpha_i P(\text{pay}_i)}.
+\]
+
+DV01 by algorithmic differentiation (DECISIONS.md DR-P1-04): the pricer returns \(g_j = \partial PV / \partial y_j\); with the bootstrap Jacobian \(J\), the sensitivity to the quotes solves \(J^{\top} x = g\), and the key-rate DV01 of input \(k\) is \(x_k \times 10^{-4}\) (or \(-100 \times x_k \times 10^{-4}\) for a futures price). The parallel DV01 is their sum by construction.
+
+### Glossary
+
+- **Compounded in arrears**: the floating amount is the compounded daily rate over the period, known only at its end.
+- **Payment lag**: business days between the period end and payment, on the payment calendar.
+- **Fixing calendar**: the days on which the index is published; distinct from the payment calendar (SOFR is not published on Good Friday even when SIFMA recommends only an early close).
+- **Lookback, lockout, observation shift**: variants of the observation window that give the payer time to know the amount before paying.
+- **Stub**: a period shorter (or longer) than the regular period at the start or end of a schedule.
+- **End-of-month rule**: if the start is the last business day of its month, every date is the last business day of its month.
+- **IMM swap**: a swap starting on an IMM date and ending on another.
+- **Annuity**: \(\sum_i \alpha_i P(\text{pay}_i)\), the value of one unit of fixed rate paid on the fixed leg.
+- **Algorithmic differentiation (AD)**: computing exact derivatives by applying the chain rule through the code's operations, here backwards from the price to the curve inputs.
+
+### Worked example: the 10-year swap, revisited
+
+Section 1 estimated the DV01 of a 10-year par swap at 4 percent as about 81,000 USD per basis point per 100 million. COOKBOOK.md recipe 5 computes it on the recipe 4 curve: a 10-year SOFR swap paying 4 percent on 100 million has par rate 3.990000 percent, annuity 8.232552, present value minus 82,325.52 USD and parallel DV01 82,367.26 USD per basis point, almost all of it on the 10Y pillar because the swap has the dates of the 10Y curve instrument. Bumping each quote one basis point up and down gives 82,367.28.
+
+Against QuantLib 1.44 over 83 swaps (spot, off-market, forward-starting, IMM, seasoned with real 2024 fixings, and USD with lookback, lockout and observation shift), present values agree to 1.6e-15 of notional and par rates to 3.5e-16; parallel DV01 by AD agrees with QuantLib's one-basis-point central bumps to 1.4e-6 relative, the size of the bump's own truncation error (`AnalyticsGoldenTest`, 2026-10-31).
+
+Holdout year 2024: a one-year OIS's daily grid has exactly the publication dates of SOFR, EUR STR and SONIA in 2024, and compounding the published rates with the swap's day weights reproduces every published SOFR Index, EUR STR compounded index and SONIA Compounded Index value from 3 January 2024 to 31 January 2025 to the eighth decimal, from a starting value within the published starting index's rounding interval (`CompoundedIndexHoldoutTest`, 2026-10-31).
 
 ## 4. Government bonds: price, yield, carry, repo
 
-Planned for P1 (analytics). It will cover clean and dirty price, yield to maturity by root finding, accrued interest under Act/Act and Act/Act ICMA, ex-dividend handling for gilts, carry and roll-down, and repo financing with general collateral and special rates.
+### Plain idea
+
+A bond's price is the value of its remaining coupons and principal. Markets quote the clean price and settle the dirty price, which adds the coupon interest earned since the last payment. The yield is the single rate that discounts the cash flows to the dirty price, under a stated convention for how fractions of a period count. Owning a bond costs money to finance, normally in repo; the difference between the coupon income and that financing cost is carry, and the price change from the bond sliding down a sloped curve as it ages is roll-down.
+
+### Formal statement
+
+Accrued interest (Act/Act ICMA): \(AI = 100 \, c \, \frac{\text{days since last coupon}}{f \times \text{days in the coupon period}}\); for a gilt inside its ex-dividend period (seven business days before the coupon) \(AI = -100 \, c \, \frac{\text{days to next coupon}}{f \times \text{days in the period}}\).
+
+Price from yield, street convention (`BondPricer.dirtyPrice`, QuantLib's `CashFlows::npv`): with times \(t_k\) accumulated period by period in Act/Act ICMA from settlement to each nominal coupon date,
+
+\[
+P_{\text{dirty}} = \sum_k CF_k \Bigl(1 + \frac{y}{f}\Bigr)^{-f t_k}.
+\]
+
+The true yield uses coupon dates moved to business days. The Treasury's auction formula (31 CFR 356, Appendix B) instead discounts the first fractional period with simple interest, \(P_{\text{dirty}} = V_{\text{next}} / (1 + \tfrac{r}{s}\tfrac{y}{2})\), and the Treasury rounds the dirty price and the accrued interest to six decimals before subtracting.
+
+Risk: modified duration \(D = -P'/P\), convexity \(P''/P\), DV01 \(= D \, P \times 10^{-4}\) per 100 face.
+
+Repo forward and carry, for repo rate \(r\) (Act/360) over \(d\) days and coupons \(C_i\) paid \(d_i\) days before the horizon:
+
+\[
+F_{\text{clean}} = P_{\text{dirty}}\Bigl(1 + \frac{r d}{360}\Bigr) - \sum_i C_i \Bigl(1 + \frac{r d_i}{360}\Bigr) - AI_{\text{horizon}}, \qquad \text{carry} = P_{\text{clean}} - F_{\text{clean}}.
+\]
+
+Spreads to the OIS curve: the z-spread \(s\) solves \(P_{\text{dirty}} = \sum_k CF_k P(t_k) e^{-s t_k} / (P(t_0) e^{-s t_0})\); the par-par asset-swap spread is \((B - P_{\text{dirty}})/(100 A)\), with \(B\) the bond's value on the curve and \(A\) the floating annuity. Fitted curves for relative value: Nelson-Siegel-Svensson (the Bundesbank's daily form) and a natural cubic spline in yield.
+
+### Glossary
+
+- **Clean and dirty price**: the quoted price without and with accrued interest.
+- **Accrued interest**: coupon interest earned since the last coupon date, paid by the buyer to the seller.
+- **Ex-dividend period**: for gilts, the seven business days before a coupon date, during which a buyer does not receive the coupon and accrued interest is negative.
+- **Street yield**: yield on nominal coupon dates, compounded at the coupon frequency.
+- **True yield**: yield on the dates coupons are actually paid.
+- **Modified duration**: minus the relative price change per unit change in yield.
+- **Convexity**: the relative second derivative of price in yield.
+- **Repo**: a sale and repurchase that finances a bond; **general collateral (GC)** is the rate for any eligible bond, a bond **trading special** finances below GC.
+- **Carry**: coupon income minus financing cost to a horizon, here in price terms.
+- **Roll-down**: the price change from the bond's yield moving along an unchanged curve as its maturity shortens.
+- **Z-spread**: the constant continuously compounded spread over the OIS zero curve that reprices the bond.
+- **Asset-swap spread**: the spread over the floating index received by a buyer who pays par for the bond and swaps its coupons.
+- **Nelson-Siegel-Svensson**: a six-parameter smooth zero curve used by central banks for government yields.
+
+### Worked example: the 4 1/4% Treasury note of November 2034
+
+COOKBOOK.md recipe 6 prices the note for trade on 15 January 2025, settling 16 January, at a 4.66 percent yield: clean 96.790759, accrued 0.727901, dirty 97.518659, modified duration 7.860048, DV01 766.50 USD per million face. The true yield for the same price is 4.65971296 percent. Its Appendix B price at the 11 December 2024 reopening auction's high yield of 4.235 percent is 100.114150, the published value.
+
+Checks: all 84 note and bond auctions and all 332 bill auctions of 2024 reproduce the published price to six decimals and the published yield to three (`PublishedExamplesTest`, TreasuryDirect data in `data/fixtures/ust_auctions_2024.csv`, 2026-10-31). Against QuantLib 1.44 for 67 Treasuries, Bunds and gilts (four of the gilts settle inside their ex-dividend period), clean price and accrued interest agree to 3.3e-13 per 100, street and true yields to 7.3e-16, duration, convexity and DV01 to 4.2e-15 relative (`AnalyticsGoldenTest.bondsMatchQuantLib`, 2026-10-31). The UK DMO's gilt reference prices could not be downloaded by script (data/SOURCES.md), so no DMO worked example is in the gate yet; recipe 7 shows the gilt ex-dividend rule.
 
 ## 5. Futures: CTD, basis, convexity
 
-Planned for P1 (analytics). It will cover Treasury futures contract specifications, conversion factors, the cheapest-to-deliver basket, gross and net basis, implied repo, the delivery option, and the convexity adjustment between futures and forwards.
+### Plain idea
+
+A Treasury bond future is a promise to deliver one of a basket of bonds at a fixed price times a conversion factor. The short chooses which bond, so the future tracks the bond that is cheapest to deliver. The basis is the gap between the bond's price and the futures price times the factor; it shrinks to the delivery option's value at expiry, and after carry what is left is the net basis. A SOFR future pays on the average or compounded SOFR over a reference period, and because it is settled daily its rate sits slightly above the forward rate: the convexity adjustment.
+
+### Formal statement
+
+Conversion factor (CME formula for CBOT contracts): with \(n\) whole years and \(z\) months (rounded down to a quarter, or a month for the 2-, 3- and 5-year notes) from the first day of the delivery month to maturity, \(v = z\) if \(z < 7\) else \(z - 6\),
+
+\[
+a = 1.03^{-v/6}, \quad b = \frac{c}{2} \frac{6 - v}{6}, \quad C = 1.03^{-2n} \text{ or } 1.03^{-(2n+1)}, \quad d = \frac{c}{0.06}(1 - C), \quad CF = a\Bigl(\frac{c}{2} + C + d\Bigr) - b,
+\]
+
+rounded to four decimals. Eurex and ICE factors are the clean price per unit face at the contract's notional coupon (6 percent annual, 4 percent semi-annual) on the delivery date.
+
+Basis, carry and implied repo for spot settlement \(s\), delivery \(D\), futures price \(F\): gross basis \(= P - F \, CF\); implied repo \(= (F \, CF + AI_D + \sum C_i - P_{\text{dirty}}) / (P_{\text{dirty}} d/360 - \sum C_i (D - t_i)/360)\); net basis = gross basis minus carry at the repo rate. The CTD maximises implied repo. Futures DV01 = CTD DV01 / CF.
+
+SOFR futures: price \(= 100 (1 - R - CA)\), with \(R\) the compounded (three-month) or arithmetic average (one-month) SOFR over the reference period. In the Hull-White model \(dr = (\theta(t) - a r)dt + \sigma dW\), with \(B(s,t) = (1 - e^{-a(t-s)})/a\),
+
+\[
+CA = \frac{B(t_1, t_2)}{t_2 - t_1}\Bigl[B(t_1, t_2)(1 - e^{-2 a t_1}) + 2 a B(0, t_1)^2\Bigr] \frac{\sigma^2}{4a},
+\]
+
+with \(a = 0.03\) and \(\sigma = 0.0085\) (DECISIONS.md DR-P1-05).
+
+### Glossary
+
+- **Conversion factor**: the price per unit face of a deliverable bond at the contract's notional coupon yield.
+- **Gross basis**: cash price minus futures price times conversion factor.
+- **Net basis**: gross basis minus carry to delivery.
+- **Implied repo**: the financing rate at which buying the bond and delivering it into the future breaks even.
+- **Delivery option**: the short's right to choose the bond and the day of delivery, which the net basis prices.
+- **Convexity adjustment**: the excess of a daily-settled futures rate over the forward rate, from the correlation between margin flows and rates.
+
+### Worked example: the March 2025 10-year note future
+
+COOKBOOK.md recipe 8 takes four bonds in the TY March 2025 basket at prices from the golden file's smooth curve, with the future at 108-11+ (108.359375) and repo at 4.30 percent. The 4 1/8% note of November 2031 (CF 0.9003) has the highest implied repo, 4.1674 percent, and the smallest net basis, 0.0267: it is the CTD. The deep-discount 1 3/8% of November 2031 (CF 0.7541) has an implied repo of minus 0.94 percent.
+
+Against the golden file, all 38 conversion factors (CBOT, Eurex and ICE) match exactly at their published rounding, and gross basis, carry, net basis and implied repo agree to 1e-10 with the same CTD in five contracts (`AnalyticsGoldenTest`, 2026-10-31). SOFR futures priced on the golden USD curve match QuantLib's `OvernightIndexFuture` exactly for six one-month and four three-month contracts. For the December 2025 three-month contract the convexity adjustment is 0.38 basis points.
 
 ## 6. How rates trade electronically: RFQ versus CLOB, SEFs, workup
 
@@ -171,7 +333,7 @@ Planned for P6. Primary sources for each section: ISDA definitions and the ARRC 
 
 ## 17. Glossary
 
-Terms defined in Phase 0. Later sections add to this list.
+Terms defined in Phase 0 and Phase 1 (Sections 2 to 5). Later sections add to this list.
 
 - **DV01**: the change in present value of a position for a one basis point parallel increase in the yield curve, usually quoted in currency per basis point. Sign convention: a payer swap (paying fixed) gains when rates rise.
 - **PV01**: the present value of one basis point of coupon on the fixed leg, equal to notional times the annuity times 0.0001. For a par swap PV01 and DV01 are close but not identical; PV01 is the annuity measure, DV01 the sensitivity measure.
@@ -193,3 +355,38 @@ Terms defined in Phase 0. Later sections add to this list.
 - **Holdout**: a portion of data set aside before research starts and used once, at the end, to confirm or reject a result found on the rest.
 - **Journal**: the append-only record of every input event to the event loop, with sequence numbers and a hash chain, from which the system's state and outputs can be reproduced.
 - **Flyweight**: an object that provides a typed view over a region of a byte buffer without copying the data, so that one instance can be re-pointed at many messages without allocation.
+- **Discount factor**: \(P(0, T)\), the value today of one unit paid at \(T\).
+- **Pillar**: a date at which a curve's value is a free parameter, one per bootstrap instrument.
+- **Bootstrap**: solving for pillar values so that every input instrument reprices to its quote.
+- **OIS discounting**: discounting collateralised cash flows on the curve of the overnight rate paid on collateral.
+- **Projection curve**: a curve used only to forecast a term index, built with OIS discounting held fixed.
+- **Meeting-dated OIS**: an OIS between two central bank policy effective dates.
+- **Turn**: a known jump in the overnight rate over a short window such as year end.
+- **Monotone convex interpolation**: the Hagan-West scheme keeping forwards continuous and between their neighbours.
+- **Tension spline**: a spline between a cubic spline and linear interpolation, set by a tension parameter.
+- **Compounded in arrears**: a floating amount equal to the compounded daily rate over the period, known at its end.
+- **Payment lag**: business days between period end and payment, on the payment calendar.
+- **Fixing calendar**: the days an index is published; kept apart from the payment calendar.
+- **Lookback, lockout, observation shift**: variants of an overnight leg's observation window.
+- **Stub**: an irregular first or last period of a schedule.
+- **End-of-month rule**: a schedule starting on a month's last business day keeps every date on the last business day.
+- **IMM swap**: a swap starting and ending on IMM dates.
+- **Annuity**: the value of one unit of fixed rate paid on the fixed leg.
+- **Algorithmic differentiation**: exact derivatives by the chain rule through the code's operations.
+- **Clean and dirty price**: a bond price without and with accrued interest.
+- **Accrued interest**: coupon interest earned since the last coupon date.
+- **Ex-dividend period**: for gilts, seven business days before a coupon date with negative accrued interest.
+- **Street yield** and **true yield**: yield on nominal coupon dates, and on the dates actually paid.
+- **Modified duration**: minus the relative price change per unit change in yield.
+- **Convexity** (bond): the relative second derivative of price in yield.
+- **Repo**, **general collateral**, **special**: secured financing of a bond; the rate for any eligible bond; a bond financing below it.
+- **Carry**: coupon income minus financing cost to a horizon.
+- **Roll-down**: the price change from a bond's yield moving along an unchanged curve as it ages.
+- **Z-spread**: the constant spread over the zero curve that reprices a bond.
+- **Asset-swap spread**: the spread over the floating index for a par asset swap of a bond.
+- **Nelson-Siegel-Svensson**: a six-parameter smooth zero curve.
+- **Conversion factor**: a deliverable bond's price per unit face at the contract's notional coupon yield.
+- **Net basis**: gross basis minus carry to delivery.
+- **Implied repo**: the financing rate at which a cash-and-carry delivery breaks even.
+- **Delivery option**: the futures short's choice of bond and delivery day.
+- **Convexity adjustment** (futures): the excess of a daily-settled futures rate over the forward rate.

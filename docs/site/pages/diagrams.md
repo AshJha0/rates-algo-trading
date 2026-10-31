@@ -33,3 +33,11 @@ The 32-byte file header, the 32-byte frame header and the chain hash definition,
 ```mermaid
 --8<-- "docs/diagrams/journal_frame.mmd"
 ```
+
+## Curve build (P1)
+
+Quotes and fixings become one instrument per pillar; `CurveBuilder` solves them sequentially or globally (DECISIONS.md DR-P1-03); pricers differentiate their value with respect to the curve and the bootstrap Jacobian turns that into the DV01 ladder (DR-P1-04).
+
+```mermaid
+--8<-- "docs/diagrams/curve_build.mmd"
+```
