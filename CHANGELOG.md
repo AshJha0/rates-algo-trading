@@ -35,6 +35,13 @@ R2 desk features (branch `claude/r2-business-6cda18`).
 - Tests: baseline equivalence, feature formulas, allocation-free per-RFQ and per-fill paths, waterfall reconciliation, experiment harness and refusals.
 - Docs: docs/research/DESK_FEATURES.md (site page "Desk features"), API_SPEC.md Section 19, DECISIONS DR-R2B-01 to DR-R2B-10, diagrams "Internalisation flow" and "Desk P&L waterfall". SpotBugs exclusion for shared desk state (DR-R2B-08).
 
+Round 2 fixes from the P&L audit, package A1 (branch `claude/fix-a1-models-67fd05`, commit 18da1a1).
+
+- Audit item 2: `HitRateModel` learns the intercept and the spread slope from the desk's own wins and losses, one Newton step per outcome with a 5,000-RFQ forgetting window, within learning bounds of -8.0 to -0.2 for the slope and -3.0 to 5.0 for the intercept instead of the declared band; `learnedSlope()`, `learnedIntercept()`, `slopeStandardError()` and `slopeOutsideDeclaredBand()` for the daily report; `base()` no longer includes the intercept (DR-FIX-A1-01).
+- Audit item 5: `TierTable.standard(version, maxQuantity, clients)` builds a three-tier default with nothing blocked and tiers 2 and 3 widened (1.15 and 1.35); `unblocked(version, widening)` turns blocked tiers into widened ones; `blockedTiers()` counts them (DR-FIX-A1-03).
+- Audit item 11: `SpreadModel` averages the win probability over a normal cover spread with 8-point Gauss-Hermite quadrature; `observeCoverGap(gapBp)`, `coverSigmaBp()`, `meanCoverGapBp()`, `coverGaps()` and `winProbability(base, s)`; with no gaps and no prior the optimum equals the point estimate (DR-FIX-A1-02).
+- Tests: `PricingModelsTest` (learning, bounds, cover averaging, tier defaults).
+
 ### Fixed
 
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).

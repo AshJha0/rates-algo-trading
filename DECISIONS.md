@@ -804,6 +804,36 @@ Also, `TradingProcessMainTest.theTradingRoleQuotesTakesTheKillAndItsJournalsRepl
 
 Consequences. The test still fails if a message is lost without being counted on any path, which is what the old check guarded, and it now also checks the loop's own counters against the generator. A run where the loop drops Quotes on backpressure passes, as it should. The harness itself is unchanged.
 
+## DR-FIX-A1-01: The hit-rate intercept and slope are learned by a forgetting Newton step within wide bounds
+
+Date: 2026-10-31
+
+Context. P&L audit item 2 (docs/research/PNL_AUDIT.md; AUDIT-01, seq 8, `slope_known`): the production hit-rate slope was held near its central value, and learning was bounded to [-2.4, -1.0]. When the settling slope was known, the strategy earned +949k a day at the H band point, so a desk that cannot move its slope toward what its own outcomes show leaves money on the table.
+
+Decision. `HitRateModel` learns b0 and b1 from the desk's own wins and losses. Each outcome takes one Newton step on the logistic log-likelihood, using an information matrix that starts at the prior precision `1 / learningRate` and decays with a window of 5,000 RFQs, so the first steps equal the old gradient ascent and later ones shrink as evidence accumulates. Both coefficients are clamped to learning bounds wider than the declared band: slope -8.0 to -0.2 (AUDIT-01 sweeps to -5.0; the slope stays negative) and intercept -3.0 to 5.0. `base()` excludes the intercept, so a base stored when a quote is sent stays valid after the intercept moves. The daily report can read `learnedSlope()`, `slopeStandardError()` and `slopeOutsideDeclaredBand()`.
+
+Consequences. The desk's slope can reach a market where price decides or one where it hardly matters, and the report shows when its data has left the assumption band. One RFQ is still one label (DR-R2R-08). The learning is allocation-free. Wins are scarce at wide spreads, so the slope's standard error is reported beside it.
+
+## DR-FIX-A1-02: The spread optimiser averages over the cover with Gauss-Hermite quadrature, the observed gaps setting a floor
+
+Date: 2026-10-31
+
+Context. Audit item 11 (AUDIT-01, `cover_integrated`): the optimiser evaluated the hit rate at a point estimate of the cover, while the cover is uncertain. Averaging over it earned +69k a day at C (interval -50k to 214k) and +29k at L.
+
+Decision. `SpreadModel` maximises `Pbar(win | s) * (s - c)`, where `Pbar` averages the hit-rate model over a cover distributed normally around the expected cover. It uses 8-point Gauss-Hermite quadrature and a golden-section search on [0, maxHalfSpread], with no derivative and no allocation. The cover's standard deviation comes from the gaps between our winning prices and the disclosed covers, fed through `observeCoverGap`, with a window of 500. Until a gap arrives it is the prior given at construction, 0 by default, which reproduces the point estimate exactly.
+
+Consequences. Gaps are seen only on wins, so the observed spread is that of a truncated sample and understates the true one; it is treated as a floor. Engine output is unchanged until the engine feeds gaps, which is left to the engine package (fix A2).
+
+## DR-FIX-A1-03: Default tier tables price toxic tiers wider instead of blocking them
+
+Date: 2026-10-31
+
+Context. Audit item 5 (AUDIT-02, seq 9): at the engine's spreads, declining informed flow cost more than it saved: `oracle_decline_informed` -486k a day at C and -1.13mm at L; declining tier 3 lost 638k at C.
+
+Decision. `TierTable.standard` builds three firm tiers with nothing blocked and spread multipliers 1.0, 1.15 and 1.35. Unmapped clients get tier 2. `unblocked(version, widening)` converts any blocked tier of an existing table into a quoting tier with its multiplier times `widening` (default 1.5), and `blockedTiers()` lets a check flag a table that still refuses quotes. The multipliers are declared, not fitted; they follow AUDIT-02's `widen_tier3` direction (+93k at L).
+
+Consequences. Blocking stays possible through an explicit `ClientTier`, but no default builds one. Which table a desk runs remains a configuration choice approved through `TierTableControl`.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31
