@@ -70,7 +70,9 @@ def reconcile(run: Run) -> list[str]:
             ("fees", fees, row["fees"]),
         ):
             if abs(expected - float(actual)) > CENT:
-                failures.append(f"{row['instrument']}: {name} {actual} but fills give {expected:.6f}")
+                failures.append(
+                    f"{row['instrument']}: {name} {actual} but fills give {expected:.6f}"
+                )
     total = pnl[pnl["instrument"] == "TOTAL"].iloc[0]
     for c in (*LINES, "residual", "position_pnl"):
         if abs(float(rows[c].sum()) - float(total[c])) > CENT:
@@ -126,7 +128,14 @@ def compare(
     w = stats.welch(treatment, baseline)
     diff = [a - b for a, b in zip(treatment, baseline, strict=True)]
     ci = stats.block_bootstrap_mean_ci(diff, block, resamples, level, seed)
-    return {"mean_difference": w.difference, "t": w.t, "df": w.df, "p": w.p, "ci_low": ci.lower, "ci_high": ci.upper}
+    return {
+        "mean_difference": w.difference,
+        "t": w.t,
+        "df": w.df,
+        "p": w.p,
+        "ci_low": ci.lower,
+        "ci_high": ci.upper,
+    }
 
 
 def recompute_experiment(record: dict[str, Any]) -> dict[str, dict[str, float]]:
@@ -213,4 +222,6 @@ def crosscheck_values() -> dict[str, Any]:
 
 def write_crosscheck(path: str | Path) -> None:
     payload = {"input": crosscheck_input(), "expected": crosscheck_values()}
-    Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    Path(path).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )

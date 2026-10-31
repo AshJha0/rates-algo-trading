@@ -118,7 +118,9 @@ def competition() -> dict[str, Any]:
         "and size; Treasuries quote half as wide in yield bp. The true_* coefficients are the "
         "logistic the label simulator uses; the slope is the band below.",
     )
-    p["assumptions"] = {"spread_to_cover_bp": {"band": dict(SLOPE_BAND), "rationale": SLOPE_RATIONALE}}
+    p["assumptions"] = {
+        "spread_to_cover_bp": {"band": dict(SLOPE_BAND), "rationale": SLOPE_RATIONALE}
+    }
     return p
 
 

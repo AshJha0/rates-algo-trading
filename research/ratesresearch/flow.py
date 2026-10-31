@@ -110,7 +110,9 @@ def fit_intensity(
         x = _design(centres, w, events)
         beta, cov = _irls(x, counts, offset)
         mu = np.exp(x @ beta + offset)
-        ll = float(np.sum(counts * np.log(mu) - mu - np.array([math.lgamma(c + 1) for c in counts])))
+        ll = float(
+            np.sum(counts * np.log(mu) - mu - np.array([math.lgamma(c + 1) for c in counts]))
+        )
         dof = max(len(counts) - x.shape[1], 1)
         disp = float(np.sum((counts - mu) ** 2 / mu) / dof)
         se = np.sqrt(np.diag(cov) * max(disp, 1.0))
@@ -133,14 +135,17 @@ def fit_intensity(
 
 
 def _norm_logsf(z: np.ndarray) -> np.ndarray:
-    return np.log(np.array([0.5 * math.erfc(v / math.sqrt(2)) for v in z]))
+    out: np.ndarray = np.log(np.array([0.5 * math.erfc(v / math.sqrt(2)) for v in z]))
+    return out
 
 
 def censored_lognormal_loglik(mu: float, sigma: float, x: np.ndarray, capped: np.ndarray) -> float:
     lx = np.log(x)
     z = (lx - mu) / sigma
     exact = ~capped
-    ll = float(np.sum(-0.5 * z[exact] ** 2 - math.log(sigma) - 0.5 * math.log(2 * math.pi) - lx[exact]))
+    ll = float(
+        np.sum(-0.5 * z[exact] ** 2 - math.log(sigma) - 0.5 * math.log(2 * math.pi) - lx[exact])
+    )
     if capped.any():
         ll += float(np.sum(_norm_logsf(z[capped])))
     return ll
@@ -169,7 +174,10 @@ def fit_censored_lognormal(x: np.ndarray, capped: np.ndarray) -> tuple[float, fl
                 f = np.zeros(2)
                 f[j] = h
                 hess[i, j] = (
-                    nll(theta + e + f) - nll(theta + e - f) - nll(theta - e + f) + nll(theta - e - f)
+                    nll(theta + e + f)
+                    - nll(theta + e - f)
+                    - nll(theta - e + f)
+                    + nll(theta - e - f)
                 ) / (4 * h * h)
         step = np.linalg.solve(hess, g)
         t = 1.0
@@ -219,7 +227,7 @@ def fit_dtcc(
         "name": "usd_rfq_flow",
         "fitted_from": manifest,
         "data_range": {"start": data_range[0], "end": data_range[1]},
-        "sample_size": int(len(trades)),
+        "sample_size": len(trades),
         "method": (
             "quasi-Poisson IRLS on 5-minute counts with Gaussian event bumps; censored lognormal "
             "MLE for sizes; research/ratesresearch/flow.py::fit_dtcc"
@@ -246,7 +254,7 @@ def fit_finra_fixture(trades: pd.DataFrame, source: str) -> dict[str, Any]:
         "name": "ust_trace_flow_fixture",
         "fitted_from": source,
         "data_range": {"start": "2025-10-01", "end": "2025-10-01"},
-        "sample_size": int(len(trades)),
+        "sample_size": len(trades),
         "method": "censored lognormal MLE, research/ratesresearch/flow.py::fit_finra_fixture",
         "parameters": {
             "size_mu_ln_mm": param(mu, se_mu),
@@ -268,7 +276,9 @@ def intensity_per_minute(fit_or_preset: dict[str, Any], minute: float) -> float:
     w = float(p["event_bump_width_minutes"]["value"])
     for k in range(int(p["event_count"]["value"])):
         m = float(p[f"event_{k}_minute_et"]["value"])
-        z += float(p[f"event_{k}_log_amplitude"]["value"]) * math.exp(-0.5 * ((minute - m) / w) ** 2)
+        z += float(p[f"event_{k}_log_amplitude"]["value"]) * math.exp(
+            -0.5 * ((minute - m) / w) ** 2
+        )
     return math.exp(z)
 
 

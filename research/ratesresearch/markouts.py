@@ -65,7 +65,7 @@ def client_fills(fills: pd.DataFrame) -> pd.DataFrame:
 
 
 def curves(fills: pd.DataFrame, by: str) -> pd.DataFrame:
-    """Mean mid-to-mid markout in bp at each horizon, grouped by ``tier``, ``size_bucket`` or ``instrument``."""
+    """Mean mid-to-mid markout in bp per horizon, by ``tier``, ``size_bucket`` or ``instrument``."""
     f = client_fills(fills)
     cols = [f"bp_{h}" for h in HORIZONS]
     out = f.groupby(by)[cols].mean()
@@ -73,7 +73,9 @@ def curves(fills: pd.DataFrame, by: str) -> pd.DataFrame:
     return out.reset_index()
 
 
-def informed_share(fills: pd.DataFrame, horizon: str = "1min", by: str | None = None) -> pd.DataFrame:
+def informed_share(
+    fills: pd.DataFrame, horizon: str = "1min", by: str | None = None
+) -> pd.DataFrame:
     """Agreement-based informed-share estimate, overall or per group, with a binomial SE."""
     f = client_fills(fills)
     # client direction is the opposite of ours; the client is right when we lose mid-to-mid
@@ -85,7 +87,9 @@ def informed_share(fills: pd.DataFrame, horizon: str = "1min", by: str | None = 
         n = len(g)
         a = float(g["agree"].mean()) if n else float("nan")
         se = math.sqrt(a * (1 - a) / n) if n else float("nan")
-        rows.append({"group": key, "fills": n, "agreement": a, "informed_share": 2 * a - 1, "se": 2 * se})
+        rows.append(
+            {"group": key, "fills": n, "agreement": a, "informed_share": 2 * a - 1, "se": 2 * se}
+        )
     return pd.DataFrame(rows)
 
 
@@ -103,10 +107,18 @@ def toxicity_table(fills: pd.DataFrame, rfqs: pd.DataFrame, horizon: str = "1min
     """
     share = informed_share(fills, horizon, by="client_id").rename(columns={"group": "client_id"})
     curve = curves(fills, "client_id")[["client_id", f"bp_{horizon}"]]
-    q = rfqs.groupby("client_id").agg(rfqs=("rfq_id", "size"), quoted=("quoted", "sum"), won=("won", "sum"))
+    q = rfqs.groupby("client_id").agg(
+        rfqs=("rfq_id", "size"), quoted=("quoted", "sum"), won=("won", "sum")
+    )
     q["hit_rate"] = q["won"] / q["quoted"].where(q["quoted"] > 0)
-    t = q.reset_index().merge(curve, on="client_id", how="left").merge(share, on="client_id", how="left")
-    t["suggested_tier"] = np.where(t["informed_share"] < 0.10, 1, np.where(t["informed_share"] < 0.30, 2, 3))
+    t = (
+        q.reset_index()
+        .merge(curve, on="client_id", how="left")
+        .merge(share, on="client_id", how="left")
+    )
+    t["suggested_tier"] = np.where(
+        t["informed_share"] < 0.10, 1, np.where(t["informed_share"] < 0.30, 2, 3)
+    )
     return t
 
 

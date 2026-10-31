@@ -44,8 +44,13 @@ class Model:
     sigma: float
 
     @staticmethod
-    def from_presets(hit: dict[str, Any], competition: dict[str, Any], slope: float | None = None) -> Model:
-        coefficients = {k: value(hit, k) for k in ("intercept", "log_size_mm", "tenor_years", "fixing_window", "dealer_count")}
+    def from_presets(
+        hit: dict[str, Any], competition: dict[str, Any], slope: float | None = None
+    ) -> Model:
+        coefficients = {
+            k: value(hit, k)
+            for k in ("intercept", "log_size_mm", "tenor_years", "fixing_window", "dealer_count")
+        }
         central = float(hit["assumptions"]["spread_to_cover_bp"]["band"]["central"])
         return Model(
             coefficients,
@@ -58,11 +63,19 @@ class Model:
         )
 
     def median(self, kind: str, tenor: float, size_mm: float) -> float:
-        m = self.median_bp * (tenor / 10.0) ** self.tenor_slope * (size_mm / 50.0) ** self.size_slope
-        return m * (1.0 if kind == "swap" else self.bond_multiplier)
+        m = (
+            self.median_bp
+            * (tenor / 10.0) ** self.tenor_slope
+            * (size_mm / 50.0) ** self.size_slope
+        )
+        return float(m) * (1.0 if kind == "swap" else self.bond_multiplier)
 
-    def win_probability(self, s: float, kind: str, tenor: float, size_mm: float, dealers: int, window: bool) -> float:
-        cover = self.median(kind, tenor, size_mm) * math.exp(self.sigma * EXPECTED_MIN[min(max(dealers - 1, 1), 7)])
+    def win_probability(
+        self, s: float, kind: str, tenor: float, size_mm: float, dealers: int, window: bool
+    ) -> float:
+        cover = self.median(kind, tenor, size_mm) * math.exp(
+            self.sigma * EXPECTED_MIN[min(max(dealers - 1, 1), 7)]
+        )
         c = self.coefficients
         z = (
             c["intercept"]
@@ -107,7 +120,9 @@ def optimal_half_spread(
     best_s, best_e = 0.0, -math.inf
     for i in range(round(max_bp / step_bp) + 1):
         s = i * step_bp
-        e = expected_edge_bp(model, s, product, size_mm, dealers, adverse_bp, hedge_bp, vol_scale, window)
+        e = expected_edge_bp(
+            model, s, product, size_mm, dealers, adverse_bp, hedge_bp, vol_scale, window
+        )
         if e > best_e + 1e-12:
             best_s, best_e = s, e
     return best_s, best_e
@@ -150,6 +165,8 @@ def sensitivity(
     for v in vol_scales:
         row: dict[str, Any] = {"vol_scale": v}
         for n in dealer_counts:
-            row[f"dealers_{n}"] = optimal_half_spread(m, product, 50.0, n, adverse_bp, hedge_bp, v)[0]
+            row[f"dealers_{n}"] = optimal_half_spread(m, product, 50.0, n, adverse_bp, hedge_bp, v)[
+                0
+            ]
         rows.append(row)
     return rows

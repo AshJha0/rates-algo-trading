@@ -29,7 +29,14 @@ import numpy as np
 
 from ratesresearch.presets import get_preset, param, value
 
-FEATURES = ("intercept", "spread_to_cover_bp", "log_size_mm", "tenor_years", "fixing_window", "dealer_count")
+FEATURES = (
+    "intercept",
+    "spread_to_cover_bp",
+    "log_size_mm",
+    "tenor_years",
+    "fixing_window",
+    "dealer_count",
+)
 TENORS = (2.0, 5.0, 10.0, 30.0)
 LABEL_SEED = 20261031
 
@@ -50,7 +57,9 @@ def sigmoid(z: np.ndarray) -> np.ndarray:
     return out
 
 
-def simulate_labels(competition: dict[str, Any], n: int, seed: int = LABEL_SEED) -> tuple[np.ndarray, np.ndarray]:
+def simulate_labels(
+    competition: dict[str, Any], n: int, seed: int = LABEL_SEED
+) -> tuple[np.ndarray, np.ndarray]:
     """Labelled RFQs from the declared competition model (central slope), as (X, y)."""
     rng = np.random.default_rng(seed)
     tenor = rng.choice(TENORS, size=n)
@@ -64,7 +73,10 @@ def simulate_labels(competition: dict[str, Any], n: int, seed: int = LABEL_SEED)
     )
     sigma = value(competition, "lognormal_sigma")
     cover = np.array(
-        [m * math.exp(sigma * float(rng.normal(size=k - 1).min())) for m, k in zip(median, dealers, strict=True)]
+        [
+            m * math.exp(sigma * float(rng.normal(size=k - 1).min()))
+            for m, k in zip(median, dealers, strict=True)
+        ]
     )
     ours = cover + rng.normal(0.0, 0.35, size=n)  # our quotes scatter around the cover
     s = ours - cover
@@ -120,14 +132,16 @@ def fit(x: np.ndarray, y: np.ndarray, train_share: float = 0.7) -> Fit:
     )
 
 
-def calibration_table(x: np.ndarray, y: np.ndarray, beta: np.ndarray, bins: int = 10) -> list[tuple[float, float, int]]:
+def calibration_table(
+    x: np.ndarray, y: np.ndarray, beta: np.ndarray, bins: int = 10
+) -> list[tuple[float, float, int]]:
     """(mean predicted, observed rate, count) per decile of predicted probability."""
     p = sigmoid(x @ beta)
     order = np.argsort(p)
     rows = []
     for chunk in np.array_split(order, bins):
         if len(chunk):
-            rows.append((float(p[chunk].mean()), float(y[chunk].mean()), int(len(chunk))))
+            rows.append((float(p[chunk].mean()), float(y[chunk].mean()), len(chunk)))
     return rows
 
 
@@ -140,31 +154,42 @@ def calibration_svg(rows: list[tuple[float, float, int]], size: int = 320) -> st
         return pad + px * span, size - pad - py * span
 
     parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" viewBox="0 0 {size} {size}">',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
+        f'viewBox="0 0 {size} {size}">',
         f'<rect x="{pad}" y="{pad}" width="{span}" height="{span}" fill="none" stroke="#888"/>',
-        f'<line x1="{pad}" y1="{size - pad}" x2="{size - pad}" y2="{pad}" stroke="#bbb" stroke-dasharray="4 3"/>',
+        f'<line x1="{pad}" y1="{size - pad}" x2="{size - pad}" y2="{pad}" stroke="#bbb" '
+        'stroke-dasharray="4 3"/>',
     ]
     pts = " ".join(f"{a:.1f},{b:.1f}" for a, b in (xy(r[0], r[1]) for r in rows))
     parts.append(f'<polyline points="{pts}" fill="none" stroke="#3949ab" stroke-width="2"/>')
     for r in rows:
         cx, cy = xy(r[0], r[1])
         parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="3" fill="#3949ab"/>')
-    parts.append(f'<text x="{size / 2}" y="{size - 8}" text-anchor="middle" font-size="12">predicted win probability</text>')
     parts.append(
-        f'<text x="12" y="{size / 2}" text-anchor="middle" font-size="12" transform="rotate(-90 12 {size / 2})">observed win rate</text>'
+        f'<text x="{size / 2}" y="{size - 8}" text-anchor="middle" font-size="12">'
+        "predicted win probability</text>"
+    )
+    parts.append(
+        f'<text x="12" y="{size / 2}" text-anchor="middle" font-size="12" '
+        f'transform="rotate(-90 12 {size / 2})">observed win rate</text>'
     )
     parts.append("</svg>")
     return "\n".join(parts)
 
 
 def preset_from_fit(f: Fit, competition: dict[str, Any], n: int) -> dict[str, Any]:
-    params = {name: param(float(b), float(s)) for name, b, s in zip(FEATURES, f.beta, f.se, strict=True)}
+    params = {
+        name: param(float(b), float(s)) for name, b, s in zip(FEATURES, f.beta, f.se, strict=True)
+    }
     params["oos_log_loss_model"] = param(f.log_loss_model)
     params["oos_log_loss_constant"] = param(f.log_loss_constant)
     band = dict(competition["assumptions"]["spread_to_cover_bp"]["band"])
     return {
         "name": "usd_rfq_hit_rate",
-        "fitted_from": f"synthetic labels: ratesresearch.hitrate.simulate_labels(n={n}, seed={LABEL_SEED}) from usd_rfq_competition",
+        "fitted_from": (
+            f"synthetic labels: ratesresearch.hitrate.simulate_labels(n={n}, seed={LABEL_SEED}) "
+            "from usd_rfq_competition"
+        ),
         "data_range": {"start": "2026-10-31", "end": "2026-10-31"},
         "sample_size": int(n),
         "method": "logistic regression, Newton-Raphson MLE, research/ratesresearch/hitrate.py::fit",

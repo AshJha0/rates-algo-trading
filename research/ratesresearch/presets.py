@@ -99,7 +99,10 @@ def validate_preset(preset: dict[str, Any]) -> list[str]:
 
 def param(v: float, se: float | None = None) -> dict[str, float | None]:
     """A parameter entry; values rounded to 10 significant digits for a stable file."""
-    return {"value": float(f"{v:.10g}"), "standard_error": None if se is None else float(f"{se:.6g}")}
+    return {
+        "value": float(f"{v:.10g}"),
+        "standard_error": None if se is None else float(f"{se:.6g}"),
+    }
 
 
 def write_preset(path: str | Path, preset: dict[str, Any]) -> None:

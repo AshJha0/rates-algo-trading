@@ -50,7 +50,7 @@ def download(days: Iterable[date], out_dir: str | Path, timeout: float = 60.0) -
     for d in days:
         target = out / f"CFTC_CUMULATIVE_RATES_{d.strftime('%Y_%m_%d')}.zip"
         if not target.exists():
-            with urllib.request.urlopen(url_for(d), timeout=timeout) as resp:  # noqa: S310
+            with urllib.request.urlopen(url_for(d), timeout=timeout) as resp:
                 target.write_bytes(resp.read())
         paths.append(target)
     return paths
@@ -83,7 +83,9 @@ def load_sofr_ois(path: str | Path) -> pd.DataFrame:
         & df["UPI Underlier Name"].str.contains("SOFR", case=False)
         & (df["Package indicator"].str.lower() == "false")
     )
-    sub = df.loc[keep, ["Execution Timestamp", "Effective Date", "Expiration Date", "Notional amount-Leg 1"]]
+    sub = df.loc[
+        keep, ["Execution Timestamp", "Effective Date", "Expiration Date", "Notional amount-Leg 1"]
+    ]
     exec_time = pd.to_datetime(sub["Execution Timestamp"], utc=True, errors="coerce")
     eff = pd.to_datetime(sub["Effective Date"], errors="coerce")
     exp = pd.to_datetime(sub["Expiration Date"], errors="coerce")

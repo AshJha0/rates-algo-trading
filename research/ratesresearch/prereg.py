@@ -140,7 +140,9 @@ def read_ledger(path: str | Path) -> list[dict[str, Any]]:
         return []
     entries: list[dict[str, Any]] = []
     prev = GENESIS
-    for n, line in enumerate((x for x in p.read_text(encoding="utf-8").splitlines() if x.strip()), 1):
+    for n, line in enumerate(
+        (x for x in p.read_text(encoding="utf-8").splitlines() if x.strip()), 1
+    ):
         entry = json.loads(line)
         if entry.get("prev_sha256") != prev:
             raise ValueError(f"{p}: hash chain broken at line {n}")

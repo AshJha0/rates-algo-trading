@@ -57,7 +57,9 @@ def load_treasury_trades(path: str | Path) -> pd.DataFrame:
     )
     bad = ~out["benchmark"].isin(BENCHMARKS)
     if bad.any():
-        raise ValueError(f"{path}: unknown benchmark labels {sorted(set(out.loc[bad, 'benchmark']))}")
+        raise ValueError(
+            f"{path}: unknown benchmark labels {sorted(set(out.loc[bad, 'benchmark']))}"
+        )
     return out
 
 
