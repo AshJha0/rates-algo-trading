@@ -120,4 +120,21 @@
       <Bug pattern="EI_EXPOSE_REP2" />
     </Or>
   </Match>
+  <!-- RingJournal (R2, DR-R2J-03): nextSequence is read and written only on the single
+       producing thread, by the class contract; the journal thread never touches it. -->
+  <Match>
+    <Class name="io.ratesalgo.journal.RingJournal" />
+    <Field name="nextSequence" />
+    <Bug pattern="AT_NONATOMIC_64BIT_PRIMITIVE" />
+  </Match>
+  <!-- LoopJournals (R2, DR-R2J-03): inbound() and outbound() hand the loop the journal sinks it
+       appends to; sharing them is the purpose of the class. -->
+  <Match>
+    <Class name="io.ratesalgo.core.LoopJournals" />
+    <Or>
+      <Method name="inbound" />
+      <Method name="outbound" />
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP" />
+  </Match>
 </FindBugsFilter>
