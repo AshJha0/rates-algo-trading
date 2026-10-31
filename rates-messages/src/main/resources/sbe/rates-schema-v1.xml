@@ -60,6 +60,7 @@
       <validValue name="Expired">3</validValue>
       <validValue name="Rejected">4</validValue>
       <validValue name="Passed">5</validValue>
+      <validValue name="DoneAway">6</validValue>
     </enum>
 
     <enum name="OrdStatus" encodingType="uint8">
@@ -107,6 +108,20 @@
       <validValue name="FeedGap">3</validValue>
       <validValue name="SessionLoss">4</validValue>
       <validValue name="StaleReference">5</validValue>
+    </enum>
+    <enum name="MdRejectReason" encodingType="uint8" description="Why a market data input was kept out of the composite (API_SPEC.md Section 11)">
+      <validValue name="CrossedQuote">1</validValue>
+      <validValue name="LockedQuote">2</validValue>
+      <validValue name="NonPositivePrice">3</validValue>
+      <validValue name="Outlier">4</validValue>
+      <validValue name="Stale">5</validValue>
+      <validValue name="CrossedComposite">6</validValue>
+      <validValue name="LockedComposite">7</validValue>
+      <validValue name="FixingRepublicationLate">8</validValue>
+      <validValue name="FixingRepublicationUnchanged">9</validValue>
+      <validValue name="SequenceGap">10</validValue>
+      <validValue name="OutOfOrder">11</validValue>
+      <validValue name="UnknownInstrument">12</validValue>
     </enum>
   </types>
 
@@ -218,6 +233,58 @@
     <field name="scopeId" id="2" type="int32" description="0 for the whole process, else an instrument group"/>
     <field name="requestedBy" id="3" type="PartyId"/>
     <field name="timestampNanos" id="4" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="MarketDataReject" id="40" description="A market data input rejected by the quality layer, journaled with its reason">
+    <field name="sourceId" id="1" type="int32" description="Quote source or feed the input came from"/>
+    <field name="instrumentId" id="2" type="InstrumentId"/>
+    <field name="reason" id="3" type="MdRejectReason"/>
+    <field name="bidPrice" id="4" type="Decimal9"/>
+    <field name="askPrice" id="5" type="Decimal9"/>
+    <field name="referencePrice" id="6" type="Decimal9" description="Reference the input was checked against, 0 if none"/>
+    <field name="sourceSeqNo" id="7" type="SeqNo"/>
+    <field name="sourceNanos" id="8" type="EpochNanos" description="Time stamp carried by the input"/>
+    <field name="timestampNanos" id="9" type="EpochNanos" description="Time the rejection was decided"/>
+  </sbe:message>
+
+  <sbe:message name="OrderCancel" id="41" description="Outbound request to cancel a resting order">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64"/>
+    <field name="origClOrdId" id="3" type="int64"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="side" id="5" type="Side"/>
+    <field name="quantity" id="6" type="Quantity"/>
+    <field name="sentNanos" id="7" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="OrderReplace" id="42" description="Outbound request to change price or quantity of a resting order">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64"/>
+    <field name="origClOrdId" id="3" type="int64"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="side" id="5" type="Side"/>
+    <field name="price" id="6" type="Decimal9"/>
+    <field name="quantity" id="7" type="Quantity"/>
+    <field name="sentNanos" id="8" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="QuoteCancel" id="43" description="Outbound withdrawal of a live RFQ quote">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="rfqId" id="2" type="int64"/>
+    <field name="quoteId" id="3" type="int64"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="sentNanos" id="5" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="TradeBust" id="44" description="Venue cancelled an earlier fill (FIX ExecType H)">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64"/>
+    <field name="execId" id="3" type="int64" description="Execution being busted"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="side" id="5" type="Side"/>
+    <field name="price" id="6" type="Decimal9"/>
+    <field name="quantity" id="7" type="Quantity"/>
+    <field name="timestampNanos" id="8" type="EpochNanos"/>
   </sbe:message>
 
 </sbe:messageSchema>

@@ -1,0 +1,18 @@
+# Party master: clients with tiers, dealers, venues and FCMs. Names are invented.
+id,code,name,type,tier
+1,RALGO,rates-algo-trading desk,DEALER,0
+11,DLR-A,Simulated Dealer A,DEALER,0
+12,DLR-B,Simulated Dealer B,DEALER,0
+13,DLR-C,Simulated Dealer C,DEALER,0
+14,DLR-D,Simulated Dealer D,DEALER,0
+15,DLR-E,Simulated Dealer E,DEALER,0
+101,D2C-RFQ,Simulated D2C RFQ venue,VENUE,0
+102,D2D-CLOB,Simulated D2D CLOB venue,VENUE,0
+103,SEF,Simulated swap execution facility,VENUE,0
+201,FCM-1,Simulated FCM One,FCM,0
+202,FCM-2,Simulated FCM Two,FCM,0
+2001,CL-PENSION,Client pension fund,CLIENT,1
+2002,CL-INSURER,Client insurer,CLIENT,1
+2003,CL-ASSETMGR,Client asset manager,CLIENT,2
+2004,CL-HEDGEFUND,Client hedge fund,CLIENT,2
+2005,CL-REGIONAL,Client regional bank,CLIENT,3

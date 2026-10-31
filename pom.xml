@@ -25,6 +25,9 @@
     <module>rates-common</module>
     <module>rates-messages</module>
     <module>rates-journal</module>
+    <module>rates-refdata</module>
+    <module>rates-fix</module>
+    <module>rates-venues</module>
     <module>rates-cookbook</module>
   </modules>
 

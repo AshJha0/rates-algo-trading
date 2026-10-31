@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.ratesalgo</groupId>
+    <artifactId>rates-algo-trading</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>rates-venues</artifactId>
+  <name>rates-venues</name>
+  <description>Venue simulators (D2C multi-dealer RFQ, D2D CLOB with workup and an SBE book feed, SEF RFQ and order book) as QuickFIX/J acceptors, the book feed consumer, the market data quality and composite layer, and the venue conformance suites.</description>
+
+  <properties>
+    <!-- Used only by this module, so pinned here rather than in the parent (brief rule). -->
+    <quickfixj.version>3.0.2</quickfixj.version>
+    <slf4j.version>2.0.18</slf4j.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-messages</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-fix</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-refdata</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-journal</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.agrona</groupId>
+      <artifactId>agrona</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.quickfixj</groupId>
+      <artifactId>quickfixj-core</artifactId>
+      <version>${quickfixj.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.quickfixj</groupId>
+      <artifactId>quickfixj-messages-fix44</artifactId>
+      <version>${quickfixj.version}</version>
+    </dependency>
+    <dependency>
+      <!-- QuickFIX/J logs through SLF4J; the simulators keep their own event logs, so the
+           SLF4J output is discarded rather than configured. -->
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-nop</artifactId>
+      <version>${slf4j.version}</version>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+</project>
