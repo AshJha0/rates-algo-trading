@@ -25,6 +25,10 @@
     <module>rates-common</module>
     <module>rates-messages</module>
     <module>rates-journal</module>
+    <module>rates-api</module>
+    <module>rates-risk</module>
+    <module>rates-hedge</module>
+    <module>rates-quoting</module>
     <module>rates-cookbook</module>
   </modules>
 

@@ -1,0 +1,24 @@
+# Default hit-rate preset for the quoting engine (rates-quoting).
+#
+# This is a declared assumption, not a fit (DECISIONS.md DR-008, DR-P3-02). Public data shows
+# executed swaps and bonds, never the losing quotes, so win probability cannot be fitted from it.
+# The values below were chosen so that, for a typical-size 10Y request in the liquid session
+# against four dealers, a quote 0.5 bp from fair wins about one time in three and a quote 1 bp
+# from fair about one time in six. The bands are the ranges the back-tester (P5) sweeps.
+# Same schema as data/presets.yaml (API_SPEC.md Section 12.3); a preset of the same name in
+# data/presets.yaml takes precedence over this file.
+
+presets:
+  - name: quoting_hit_rate_default
+    fitted_from: assumption
+    data_range: { start: 2026-10-31, end: 2026-10-31 }
+    sample_size: 0
+    method: "declared assumption, rates-quoting HitRateModel; see LEARN.md Section 7"
+    parameters:
+      intercept: { value: 1.0, standard_error: null, band_low: 0.0, band_high: 2.0 }
+      spread_bp: { value: -1.6, standard_error: null, band_low: -2.4, band_high: -1.0 }
+      log_size: { value: -0.15, standard_error: null, band_low: -0.4, band_high: 0.0 }
+      tenor_years: { value: -0.01, standard_error: null, band_low: -0.03, band_high: 0.0 }
+      liquid_session: { value: 0.2, standard_error: null, band_low: 0.0, band_high: 0.5 }
+      dealers_minus_one: { value: -0.35, standard_error: null, band_low: -0.6, band_high: -0.15 }
+    notes: "EUR and GBP use the same values (DR-004 scaling assumption)"
