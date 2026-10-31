@@ -26,9 +26,9 @@ public final class BoxQpSolver {
   private int iterations;
   private double residual;
 
-  /** A solver for {@code n} variables. */
+  /** A solver for {@code n} variables; zero is allowed and solves trivially. */
   public BoxQpSolver(final int n, final double tolerance, final int maxIterations) {
-    if (n <= 0 || !(tolerance > 0.0) || maxIterations <= 0) {
+    if (n < 0 || !(tolerance > 0.0) || maxIterations <= 0) {
       throw new IllegalArgumentException(
           "n " + n + ", tolerance " + tolerance + ", maxIterations " + maxIterations);
     }

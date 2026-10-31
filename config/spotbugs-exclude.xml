@@ -17,4 +17,18 @@
     <Class name="io.ratesalgo.common.time.TimerWheel" />
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
   </Match>
+  <!-- P3 (DR-P3-09): the hedger, quoting engine and their helpers are wired once at start-up
+       to collaborators they share by design on the single writer thread (the risk engine, the
+       kill switch, sinks). Holding those references is the architecture, not a leak, as for the
+       Replayer above. Arrays and value objects are still copied where they cross the boundary. -->
+  <Match>
+    <Or>
+      <Package name="io.ratesalgo.hedge" />
+      <Package name="io.ratesalgo.quoting" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>

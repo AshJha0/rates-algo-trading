@@ -162,7 +162,8 @@ public final class RiskEngine {
     final double qty = inst.major(signedQuantityMinor);
     final double px = Decimal9.toDouble(price);
     if (!marked[i]) {
-      mark[i] = px;
+      final long fairMid = fairValues.fairMid(instrumentId);
+      mark[i] = fairMid == FairValueSource.NO_VALUE ? px : Decimal9.toDouble(fairMid);
       marked[i] = true;
     }
     cash[c] -= qty * px * inst.quoteValue();
