@@ -10,7 +10,9 @@ package io.ratesalgo.hedge;
  * by accelerated projected gradient (FISTA with gradient-based restart). Q must be symmetric
  * positive semi-definite. The step is 1/L with L the Gershgorin bound on Q's largest eigenvalue.
  * Iteration stops when the projected-gradient residual {@code max_i |x_i - P(x_i - g_i / L)| * L}
- * falls below {@code tolerance} times {@code max(1, max_i |c_i|)}, or after {@code maxIterations}
+ * falls below {@code tolerance} times {@code max(1, max_i |c_i|)} over the variables with {@code
+ * lo_i < hi_i} (a fixed variable's linear term does not affect the solution and must not loosen
+ * the stop), or after {@code maxIterations}
  * (API_SPEC.md Section 14.3 gives the tolerances in use).
  *
  * <p>Sized once for {@code n} variables; {@link #solve} does not allocate.
@@ -54,7 +56,9 @@ public final class BoxQpSolver {
         row += Math.abs(q[i][j]);
       }
       lip = Math.max(lip, row);
-      cScale = Math.max(cScale, Math.abs(c[i]));
+      if (lo[i] < hi[i]) {
+        cScale = Math.max(cScale, Math.abs(c[i]));
+      }
       if (lo[i] > hi[i]) {
         throw new IllegalArgumentException("lo " + lo[i] + " > hi " + hi[i] + " at " + i);
       }

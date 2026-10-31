@@ -50,7 +50,7 @@ public final class TableHedgeCostModel implements HedgeCostModel {
   @Override
   public double linearPerLot(final int instrumentId) {
     final int s = slots.get(instrumentId);
-    return s < 0 ? Double.MAX_VALUE / 1e6 : halfSpread[s] + basis[s];
+    return s < 0 ? Double.POSITIVE_INFINITY : halfSpread[s] + basis[s];
   }
 
   @Override
