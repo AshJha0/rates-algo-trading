@@ -94,6 +94,7 @@ public final class FixTags {
   public static final int MD_PRICE_LEVEL = 1023;
   public static final int DISPLAY_QTY = 1138;
   public static final int MIN_QTY = 110;
+  public static final int TOT_NUM_REPORTS = 911;
 
   /** Number of dealers in competition on an RFQ (simulator custom tag). */
   public static final int DEALER_COUNT = 9501;

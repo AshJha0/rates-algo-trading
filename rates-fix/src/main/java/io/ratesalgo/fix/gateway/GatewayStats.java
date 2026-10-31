@@ -15,6 +15,7 @@ public final class GatewayStats {
   long businessRejects;
   long marketDataRejects;
   long lastQuoteStatus = -1;
+  long massStatusEmpty;
 
   /** FIX messages turned into SBE messages. */
   public long inboundTranslated() {
@@ -69,6 +70,11 @@ public final class GatewayStats {
   /** MarketDataRequestReject (35=Y) messages received. */
   public long marketDataRejects() {
     return marketDataRejects;
+  }
+
+  /** Order mass status replies reporting no open orders (TotNumReports 0). */
+  public long massStatusEmpty() {
+    return massStatusEmpty;
   }
 
   /** QuoteStatus (297) of the last QuoteStatusReport, -1 before the first. */

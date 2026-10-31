@@ -237,6 +237,10 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
   }
 
   private void onExecutionReport(final FixParser p) {
+    if (p.getLong(FixTags.TOT_NUM_REPORTS, -1) == 0) {
+      stats.massStatusEmpty++;
+      return;
+    }
     final int instrumentId = instrument(p, 0);
     if (instrumentId == 0) {
       stats.unknownInstrument++;

@@ -238,6 +238,9 @@ class VenueGatewayTest {
     assertEquals(77, lastEr().clOrdId());
     assertEquals(OrdStatus.Filled, lastEr().ordStatus());
     assertEquals(Side.Sell, lastEr().side());
+    venue.begin(MsgType.EXECUTION_REPORT).put(37, 0).put(584, 1).put(911, 0).putChar(150, (byte) 'I');
+    venue.deliver(session);
+    assertEquals(1, gateway.stats().massStatusEmpty());
     final FixWriter unknown = venue.begin(MsgType.EXECUTION_REPORT).put(11, 1).putText(48, "XX");
     assertTrue(unknown.bodyLength() > 0);
     venue.deliver(session);

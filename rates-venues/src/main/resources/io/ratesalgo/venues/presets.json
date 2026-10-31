@@ -1,0 +1,58 @@
+{
+  "d2c": {
+    "default": {
+      "description": "USD Treasuries and SOFR swaps, D2C multi-dealer RFQ. Declared assumptions, not fits (DR-P2V-05).",
+      "responseWindowMillis": 5000,
+      "minDealers": 3,
+      "maxDealers": 5,
+      "dealerResponseProbability": 0.9,
+      "dealerDelayMillis": {"median": 800, "sigma": 0.6},
+      "halfSpread": {"bond": {"median": "0.0078125", "sigma": 0.5}, "swap": {"median": "0.0025", "sigma": 0.5}},
+      "clientToleranceMultiple": {"median": 2.5, "sigma": 0.4},
+      "doneAwayProbability": 0.05,
+      "informedFraction": 0.2,
+      "informedJumpMultiple": 4.0,
+      "informedLagMillis": 30000,
+      "markoutHorizonMillis": 300000,
+      "midVolPerSqrtHour": {"bond": "0.06", "swap": "0.015"},
+      "timeZone": "America/New_York",
+      "arrivals": {
+        "basePerHour": 30,
+        "events": [
+          {"time": "08:00", "label": "SOFR fixing published", "amplitudePerHour": 60, "widthMinutes": 10},
+          {"time": "08:30", "label": "scheduled data release", "amplitudePerHour": 240, "widthMinutes": 6},
+          {"time": "10:00", "label": "scheduled data release", "amplitudePerHour": 120, "widthMinutes": 6},
+          {"time": "13:00", "label": "Treasury auction result", "amplitudePerHour": 90, "widthMinutes": 8},
+          {"time": "15:00", "label": "close and month-end fixings", "amplitudePerHour": 120, "widthMinutes": 20}
+        ]
+      },
+      "sizes": {
+        "bond": [["1000000", 0.35], ["5000000", 0.35], ["10000000", 0.20], ["25000000", 0.08], ["50000000", 0.02]],
+        "swap": [["10000000", 0.30], ["25000000", 0.30], ["50000000", 0.25], ["100000000", 0.15]]
+      }
+    }
+  },
+  "clob": {
+    "default": {
+      "description": "D2D Treasury CLOB in the BrokerTec style. Tick 1/128, minimum size 1mm.",
+      "tickSize": "0.0078125",
+      "minQty": "1000000",
+      "workupMillis": 5000,
+      "exclusiveMillis": 2000,
+      "extendOnTrade": true,
+      "selfMatch": "CANCEL_RESTING",
+      "depth": 5
+    }
+  },
+  "sef": {
+    "default": {
+      "description": "SEF for USD SOFR swaps: RFQ-to-3 for required transactions, order book, FCM credit hub.",
+      "requiredMinDealers": 3,
+      "responseWindowMillis": 5000,
+      "tickSize": "0.0001",
+      "minQty": "1000000",
+      "fcmLimits": {"FCM-1": "500000000", "FCM-2": "200000000"},
+      "partyFcm": {"RALGO": "FCM-1", "2001": "FCM-1", "2002": "FCM-2", "2003": "FCM-2", "2004": "FCM-2", "2005": "FCM-1"}
+    }
+  }
+}
