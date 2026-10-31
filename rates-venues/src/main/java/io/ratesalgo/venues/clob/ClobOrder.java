@@ -13,7 +13,6 @@ public final class ClobOrder {
   final long display;
   long visible;
   long cumQty;
-  long priority;
   final boolean immediateOrCancel;
   boolean done;
 

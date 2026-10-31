@@ -324,7 +324,7 @@ class VenueGatewayTest {
     final QuoteCancelEncoder qc = new QuoteCancelEncoder();
     qc.wrapAndApplyHeader(out, 0, headerEncoder).venueId(101).rfqId(42).quoteId(7).instrumentId(1008);
     assertTrue(gateway.offer(out, 0, MessageHeaderEncoder.ENCODED_LENGTH + qc.encodedLength()));
-    assertTrue(venue.last().contains("|35=Z|131=42|117=7|298=5|") || venue.last().contains("|131=42|117=7|298=5|"), venue.last());
+    assertTrue(venue.last().contains("|131=42|117=7|298=1|295=1|55=" + ISIN), venue.last());
 
     final NewOrderEncoder no = new NewOrderEncoder();
     no.wrapAndApplyHeader(out, 0, headerEncoder).venueId(102).clOrdId(5).instrumentId(1008).side(Side.Sell)

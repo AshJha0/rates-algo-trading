@@ -41,7 +41,6 @@ public final class ClobBook {
   private final TreeMap<Long, ArrayDeque<ClobOrder>> asks = new TreeMap<>();
   private final List<ClobOrder> held = new ArrayList<>();
   private final Set<String> participants = new HashSet<>();
-  private long prioritySeq;
   private boolean workup;
   private long workupPrice;
   private long workupEnd;
@@ -200,7 +199,6 @@ public final class ClobBook {
         queue.pollFirst();
         if (p.remaining > 0) {
           p.visible = Math.min(p.display, p.remaining);
-          p.priority = ++prioritySeq;
           queue.addLast(p);
         }
       }
@@ -222,7 +220,6 @@ public final class ClobBook {
 
   private void rest(final ClobOrder o) {
     o.visible = o.display > 0 ? Math.min(o.display, o.remaining) : o.remaining;
-    o.priority = ++prioritySeq;
     (o.buy ? bids : asks).computeIfAbsent(o.price, k -> new ArrayDeque<>()).addLast(o);
   }
 

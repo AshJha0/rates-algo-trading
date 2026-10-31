@@ -495,10 +495,17 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
 
   private boolean sendQuoteCancel(final DirectBuffer b, final int o, final int bl, final int v) {
     quoteCancel.wrap(b, o, bl, v);
+    if (instruments.securityId(quoteCancel.instrumentId()) == null) {
+      return false;
+    }
+    // FIX 4.4 has no QuoteCancelType 5 (cancel by QuoteID, added in FIX 5.0): type 1 with the
+    // QuoteID and one NoQuoteEntries instrument cancels that quote (API_SPEC.md Section 10.2).
     final FixWriter w = session.begin(MsgType.QUOTE_CANCEL);
     w.put(FixTags.QUOTE_REQ_ID, quoteCancel.rfqId())
         .put(FixTags.QUOTE_ID, quoteCancel.quoteId())
-        .put(FixTags.QUOTE_CANCEL_TYPE, 5);
+        .put(FixTags.QUOTE_CANCEL_TYPE, 1)
+        .put(FixTags.NO_QUOTE_ENTRIES, 1);
+    putInstrument(w, quoteCancel.instrumentId());
     session.send();
     return true;
   }

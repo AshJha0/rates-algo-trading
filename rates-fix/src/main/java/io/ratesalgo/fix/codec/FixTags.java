@@ -76,6 +76,7 @@ public final class FixTags {
   public static final int MD_REQ_REJ_REASON = 281;
   public static final int QUOTE_STATUS = 297;
   public static final int QUOTE_CANCEL_TYPE = 298;
+  public static final int NO_QUOTE_ENTRIES = 295;
   public static final int NUMBER_OF_ORDERS = 346;
   public static final int REF_TAG_ID = 371;
   public static final int REF_MSG_TYPE = 372;

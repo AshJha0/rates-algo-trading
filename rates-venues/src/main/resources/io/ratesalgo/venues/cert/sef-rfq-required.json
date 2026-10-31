@@ -1,0 +1,15 @@
+{
+  "venue": "sef",
+  "flow": "rfq",
+  "description": "Required Transaction in a made-available-to-trade tenor, RFQ to three dealers; we win with the cover disclosed.",
+  "steps": [
+    {"venue": {"action": "sefRfq", "instrument": "USD-SOFR-10Y", "side": "1", "qty": "50000000", "dealers": 3, "competitors": ["3.7025", "3.703"]}},
+    {"expect": {"35": "R", "131": "$rfq", "55": "USD-SOFR-10Y", "22": "8", "54": "1", "38": "50000000", "9501": "3", "9505": "R", "9506": "Q", "9507": "N"}},
+    {"send": {"35": "S", "131": "$131", "117": "1", "55": "USD-SOFR-10Y", "48": "USD-SOFR-10Y", "22": "8", "132": "3.69", "133": "3.701", "134": "50000000", "135": "50000000"}},
+    {"expect": {"35": "AI", "117": "1", "297": "0"}},
+    {"venue": {"action": "decide"}},
+    {"expect": {"35": "AJ", "117": "1", "694": "1", "44": "3.701", "9502": "3.7025"}},
+    {"expect": {"35": "8", "117": "1", "150": "F", "31": "3.701", "9505": "R"}},
+    {"expectNone": true}
+  ]
+}

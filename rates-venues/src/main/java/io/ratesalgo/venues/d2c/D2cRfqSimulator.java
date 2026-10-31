@@ -202,9 +202,7 @@ public final class D2cRfqSimulator extends VenueSimulator {
       createRfq(inst, buy, size, clientId, rng.between(config.minDealers(), config.maxDealers()), null,
           ClientDecision.MODEL, informed);
     }
-    if (autoFlow) {
-      scheduleNextArrival();
-    }
+    scheduleNextArrival();
   }
 
   /** Injects a scripted RFQ; returns its id. */

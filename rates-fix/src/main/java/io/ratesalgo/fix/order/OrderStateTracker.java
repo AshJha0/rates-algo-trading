@@ -146,8 +146,10 @@ public final class OrderStateTracker {
     if (execType == 'A' || execType == '6' || execType == 'E') {
       return PENDING;
     }
-    if (origClOrdId != 0 && execType == '5') {
-      final long old = slotByClOrdId.remove(origClOrdId);
+    if (origClOrdId != 0 && (execType == '5' || execType == '4')) {
+      // A replace moves the order to its new ClOrdID; a cancel ack carries the cancel request's
+      // ClOrdID, which becomes another name for the same order so later reports on either apply.
+      final long old = execType == '5' ? slotByClOrdId.remove(origClOrdId) : slotByClOrdId.get(origClOrdId);
       if (old >= 0 && !slotByClOrdId.containsKey(clOrdId)) {
         slotByClOrdId.put(clOrdId, old);
       }
