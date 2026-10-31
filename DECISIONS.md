@@ -83,3 +83,63 @@ Context. A dealer quoting into a multi-dealer RFQ needs a model of the probabili
 Decision. Win probability is a declared assumption band, not a fitted quantity. The quoting engine (P3) takes a parametrised curve (for example logistic in price distance with a stated slope and midpoint) and the back-tester (P5) reports results across the declared band, not at a point. The band and its rationale are written in `data/presets.yaml` and in LEARN.md Section 7.
 
 Consequences. No result from this project can claim a fitted hit rate. Sensitivity to the band is reported with every quoting result. If a data source with quote-level RFQ data becomes available under acceptable terms, a decision record replaces the assumption with a fit.
+
+## DR-P4-01: Router messages as fixed-length header and rows, template ids 80 to 82, schema version unchanged
+
+Date: 2026-10-31
+
+Context. Every routing decision must be reconstructible from the journal, so the per-venue cost inputs and the split must be journaled. A decision has a variable number of venues. SBE supports repeating groups, but schema v1 is all fixed-length messages (API_SPEC.md Section 2) and the brief reserves template ids 80 to 89 for the router.
+
+Decision. A decision is one RouteDecision (80) followed by one RouteDecisionVenue (81) per venue, linked by `decisionId` and a row index; child order audit records are ChildOrderTransition (82). Five enums are appended to the types. The schema version stays 0: the change only adds types and messages with new ids, no existing field moves, and no journal written with v1 exists in a release.
+
+Consequences. Readers of a decision must collect rows; `DecisionCodec` does so and rejects rows out of sequence. If another phase adds messages in the same round, the coordinator merges the XML; if the coordinator prefers to bump the schema version for the combined additions, these messages move with it unchanged.
+
+## DR-P4-02: Re-route only quantity the venue has confirmed cancelled
+
+Date: 2026-10-31
+
+Context. A child cancelled for escalation or a book move may have fills in flight. Re-routing its whole remainder at once can make the children exceed the parent when those fills arrive.
+
+Decision. The router re-routes only quantity a Cancelled report (or reconciliation) confirms will not fill: ordered minus the larger of our cumulative and the venue's reported cumulative. The state machine keeps the invariant cum + leaves + cancelled = ordered, with late fills reducing leaves.
+
+Consequences. Escalation waits one venue round trip. The parent can never be overfilled by the router (`RouterChaosPropertiesTest`). A venue that reported a cancel with a cumulative below what it had filled would break the guarantee; the book counts that as an anomaly.
+
+## DR-P4-03: Declared cost-model defaults; refit deferred
+
+Date: 2026-10-31
+
+Context. The brief asks for square-root impact parameters refitted from simulator data. The P2 venue simulators are not available to this phase.
+
+Decision. Ship a declared preset (config version 1) in `data/presets.yaml` under `router`, mirrored in `RouterPresets` and checked by `RouterPresetsTest`. The queue model and the passive-or-aggressive comparison reuse the maths of the owner's earlier execution library (AshJha0/electronic-trading 2.0.0, API_SPEC.md Sections 8.3, 13.1 and 13.2), adapted to this project's units and rewritten to be allocation-free.
+
+Consequences. Costs are model estimates under stated assumptions. A refit from P2 simulator output, with a manifest, replaces the preset under a new config version.
+
+## DR-P4-04: Greedy marginal allocation
+
+Date: 2026-10-31
+
+Context. The allocation is a small integer program over a handful of venues with minimum sizes, lots and caps, solved on the hot path.
+
+Decision. Greedy by marginal cost per unit in blocks of a common increment, at most `maxSteps` steps, ties to the lower row.
+
+Consequences. Optimal on the increment lattice for convex per-venue costs without minimum sizes (checked against enumeration); a heuristic otherwise. Bounded, deterministic and allocation-free.
+
+## DR-P4-05: Cookbook recipe numbered 17
+
+Date: 2026-10-31
+
+Context. The brief names the router recipe 16; COOKBOOK.md's planned list gives 16 to the P3 kill-switch recipe and 17 to "route a hedge order and read the markout report (P4)".
+
+Decision. The repository wins: the router recipe is 17, and it prints a markout line as the planned title says.
+
+Consequences. No collision with the P3 recipe.
+
+## DR-P4-06: The router routes one instrument across venues; the hedger chooses the instrument
+
+Date: 2026-10-31
+
+Context. A rates hedge can be done in cash bonds or futures; a futures contract and a cash bond are different instruments with basis risk between them.
+
+Decision. A parent names one instrument; the router splits it across the venues that list it. Venue kind (CLOB or futures) selects default parameters only. Choosing between cash and futures, and the hedge ratio, belongs to the P3 hedger.
+
+Consequences. The router does not net or convert between instruments. A cross-instrument router would be a later change with its own decision record.

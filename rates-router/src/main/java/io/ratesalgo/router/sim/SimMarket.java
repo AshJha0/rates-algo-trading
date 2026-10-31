@@ -127,7 +127,7 @@ public final class SimMarket implements BookView, OrderGateway {
     this.tick = cfg.tickMantissa();
     this.lot = cfg.lotSize();
     this.moveProbability = cfg.moveRatePerSecond() * dt;
-    this.ewmaAlpha = 1.0 - Math.exp(-dt / EWMA_SECONDS);
+    this.ewmaAlpha = 1.0 - StrictMath.exp(-dt / EWMA_SECONDS);
     venueId = new int[venueCount];
     spread = new int[venueCount];
     arrivalExp = new double[venueCount];
@@ -141,7 +141,7 @@ public final class SimMarket implements BookView, OrderGateway {
       final SimVenueSpec s = cfg.venue(v);
       venueId[v] = s.venueId();
       spread[v] = s.spreadTicks();
-      arrivalExp[v] = Math.exp(-s.arrivalLotsPerSecond() * dt);
+      arrivalExp[v] = StrictMath.exp(-s.arrivalLotsPerSecond() * dt);
       tradeRate[v] = 2.0 * s.arrivalLotsPerSecond() * lot;
       for (int k = 0; k < levels; k++) {
         baseDepth[v][k] = s.topDepthLots() + k * s.depthStepLots();
@@ -496,7 +496,7 @@ public final class SimMarket implements BookView, OrderGateway {
     final double rate = cfg.cancelRatePerSecond() * dt;
     for (int s = 0; s < orderHighWater; s++) {
       if (oPhase[s] == RESTING && oAhead[s] > 0) {
-        final int k = poissonFrom(queueRandom, Math.exp(-rate * oAhead[s]));
+        final int k = poissonFrom(queueRandom, StrictMath.exp(-rate * oAhead[s]));
         oAhead[s] = Math.max(0, oAhead[s] - k);
       }
     }

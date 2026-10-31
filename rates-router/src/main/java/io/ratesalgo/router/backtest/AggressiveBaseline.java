@@ -98,6 +98,9 @@ public final class AggressiveBaseline implements ExecutionStrategy {
   }
 
   private void sendPending() {
+    if (market == null) {
+      throw new IllegalStateException(name + ": startDay was not called");
+    }
     for (int i = 0; i < venueIds.length; i++) {
       if (pending[i] <= 0) {
         continue;
@@ -119,7 +122,7 @@ public final class AggressiveBaseline implements ExecutionStrategy {
 
   @Override
   public void poll() {
-    if (clock.nanoTime() < nextRetry) {
+    if (clock == null || clock.nanoTime() < nextRetry) {
       return;
     }
     for (final long p : pending) {
@@ -147,7 +150,7 @@ public final class AggressiveBaseline implements ExecutionStrategy {
       final long cumQuantity,
       final long transactNanos) {
     final long i = venueOf.get(clOrdId);
-    if (i == NONE) {
+    if (i == NONE || clock == null) {
       return;
     }
     filled += lastQuantity;

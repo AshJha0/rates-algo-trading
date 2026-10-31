@@ -11,7 +11,7 @@ This document describes the system as designed and marks, component by component
 | Market state | Books, last trades, curve inputs per instrument group, updated incrementally | planned P2 |
 | Pricing | Curves, swap and bond pricers, futures analytics, incremental revaluation on input change, validated against QuantLib | planned P1 |
 | Quoting engine | Turn an RFQ or book state plus inventory and risk into a two-way quote with skew; manage quote lifetimes with timers | planned P3 |
-| Smart order router | Choose venue and size for hedge and client orders; record decision inputs for markout analysis | planned P4 |
+| Smart order router | Choose venue and size for hedge and client orders; record decision inputs for markout analysis | exists in P4 (`rates-router`) |
 | Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | planned P3 |
 | Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | planned P3 |
 | Journal and replay | Append-only hash-chained record of inputs; replayer that drives the same handlers and verifies the chain | exists in P0 (`rates-journal`) |
@@ -39,6 +39,7 @@ Rules that follow from this:
 rates-common      io.ratesalgo.common.time     Clock, SystemClock, ManualClock, TimerWheel
 rates-messages    io.ratesalgo.messages.sbe    generated from rates-schema-v1.xml by sbe-tool
 rates-journal     io.ratesalgo.journal         JournalWriter, JournalReader, Replayer, exceptions
+rates-router      io.ratesalgo.router          SmartOrderRouter, Allocator, ChildOrderBook, DecisionCodec (P4)
 ```
 
 Dependencies: `rates-journal` depends on `rates-common` (for `Clock`) and on Agrona for buffers. `rates-messages` depends on the SBE runtime and Agrona. `rates-common` depends on nothing outside the JDK. `rates-journal` does not depend on `rates-messages`: the journal stores payload bytes and a template id, and interpretation belongs to the handler. The Mermaid source is `docs/diagrams/module_deps.mmd`.
@@ -46,6 +47,23 @@ Dependencies: `rates-journal` depends on `rates-common` (for `Clock`) and on Agr
 `rates-cookbook` holds the COOKBOOK.md recipes as programs; `RecipesTest` runs each and compares its output with the recorded text, and `tools/check_cookbook.py` checks that the cookbook quotes both verbatim.
 
 Agrona 2.x reaches `jdk.internal.misc.Unsafe`, so every JVM that runs these modules, tests included, starts with `--add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED` (set for Surefire in the parent `pom.xml`).
+
+## Smart order router
+
+`rates-router` (P4) turns a parent order into child orders across CLOB and futures venues for one instrument. It depends on `rates-common` (Clock, TimerWheel) and `rates-messages` (codecs) only; its inputs and outputs are interfaces the coordinator binds (API_SPEC.md Section 15.0): `ParentOrderSink` from the hedger, `BookView` from market state, `OrderGateway` to the venue gateway, `ExecutionListener` back from it, and `FrameSink` to the journal.
+
+```
+hedger --ParentOrderSink--> SmartOrderRouter --OrderGateway--> gateway --> venues
+                              |  ^                                            |
+               BookView ------+  +---------- ExecutionListener <--------------+
+                              |
+                              +--FrameSink--> journal (RouteDecision 80, RouteDecisionVenue 81,
+                                                       ChildOrderTransition 82)
+```
+
+Inside, `SmartOrderRouter` owns the parent table, a `TimerWheel` for slices, passive time limits, retries and deadlines, a `ChildRandomiser` for the anti-gaming jitter, an `Allocator` (the cost model of API_SPEC.md Section 15.1 and the greedy allocation of 15.2, with `QueueFillModel` for fill probabilities), a `CostTable` reused for every decision, a `DecisionCodec`, and a `ChildOrderBook` with the child state machine of 15.4. All of it runs on one thread and is allocation-free after warm-up (`RouterAllocationTest`), so it can sit on the event loop. `io.ratesalgo.router.sim` holds in-memory venues and `io.ratesalgo.router.backtest` the harness that compares the router with two baselines (15.6). The child lifecycle diagram is `docs/diagrams/child_order_lifecycle.mmd`.
+
+The router re-routes quantity only after a venue confirms a cancel, caps aggressive prices one tick inside its own opposite orders (resting or in flight), and journals each decision before sending its children, so every child order can be traced to the cost table that produced it.
 
 ## Threading and memory rules
 

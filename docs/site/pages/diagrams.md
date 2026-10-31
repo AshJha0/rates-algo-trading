@@ -33,3 +33,11 @@ The 32-byte file header, the 32-byte frame header and the chain hash definition,
 ```mermaid
 --8<-- "docs/diagrams/journal_frame.mmd"
 ```
+
+## Child order lifecycle
+
+The router's child order states and the reports and actions that move between them, as pinned in [API contract](api-spec.md) Section 15.4. Late fills after a cancel are counted up to the cumulative quantity the venue reported with the cancel.
+
+```mermaid
+--8<-- "docs/diagrams/child_order_lifecycle.mmd"
+```

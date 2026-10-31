@@ -1,0 +1,29 @@
+stateDiagram-v2
+  [*] --> New: router sends NewOrder (audit cause Sent)
+  New --> Acknowledged: ER New
+  New --> PartiallyFilled: ER fill, cum below ordered
+  New --> Filled: ER fill, cum equals ordered
+  New --> Rejected: ER Rejected
+  New --> CancelRequested: time limit, book move or deadline
+  New --> Cancelled: ER Cancelled (IOC remainder)
+  Acknowledged --> PartiallyFilled: ER fill
+  Acknowledged --> Filled: ER fill, cum equals ordered
+  Acknowledged --> Rejected: ER Rejected
+  Acknowledged --> CancelRequested: cancel sent
+  Acknowledged --> Cancelled: ER Cancelled
+  PartiallyFilled --> PartiallyFilled: ER fill
+  PartiallyFilled --> Filled: ER fill, cum equals ordered
+  PartiallyFilled --> CancelRequested: cancel sent
+  PartiallyFilled --> Cancelled: ER Cancelled
+  CancelRequested --> CancelRequested: ER fill (raced the cancel)
+  CancelRequested --> Filled: ER fill, cum equals ordered
+  CancelRequested --> Cancelled: ER Cancelled, plain cancel
+  CancelRequested --> Replaced: ER Cancelled, quantity to be re-routed
+  CancelRequested --> Acknowledged: cancel reject, nothing filled
+  CancelRequested --> PartiallyFilled: cancel reject, some filled
+  Cancelled --> Cancelled: late fill up to the venue's reported cum
+  Replaced --> Replaced: late fill up to the venue's reported cum
+  Filled --> [*]
+  Cancelled --> [*]: leaves zero, slot released
+  Replaced --> [*]: leaves zero, slot released
+  Rejected --> [*]

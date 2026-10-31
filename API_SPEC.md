@@ -71,7 +71,7 @@ A reader must verify, for each frame: `frameLength >= 32`, `sequence == previous
 
 Source of truth: `rates-messages/src/main/resources/sbe/rates-schema-v1.xml`. Package `io.ratesalgo.messages.sbe`, schema id 1, version 0, semantic version 1.0.0, little-endian, all messages fixed length (no groups, no var-data) in v1. This section lists the messages so that other documents can refer to them; the XML wins on any difference.
 
-Shared types: `Decimal9` is a composite of `mantissa` int64 and a constant `exponent` of -9; `Ccy` is `char[3]` ASCII; `Tenor` is `char[4]` ASCII, space padded; `EpochNanos`, `Quantity` and `SeqNo` are int64; `InstrumentId`, `PartyId` and `VenueId` are int32. Enums are uint8: `Side` (Buy 1, Sell 2), `BookAction` (Add, Change, Delete, Clear), `QuoteStatus` (Done, TradedAway, Expired, Rejected, Passed), `OrdStatus` (New 0, PartiallyFilled 1, Filled 2, Cancelled 4, Rejected 8), `OrdType` (Market, Limit), `TimeInForce` (Day 0, ImmediateOrCancel 3, FillOrKill 4, GoodTillDate 6), `CurveInputKind` (Fixing, Future, ParSwap, Bond), `LimitKind` (Position, BucketDv01, NetDv01, GrossDv01, DailyLoss, OrderRate, QuoteRate, MaxOrderSize, PriceCollar), `KillReason` (Manual, LimitBreach, FeedGap, SessionLoss, StaleReference).
+Shared types: `Decimal9` is a composite of `mantissa` int64 and a constant `exponent` of -9; `Ccy` is `char[3]` ASCII; `Tenor` is `char[4]` ASCII, space padded; `EpochNanos`, `Quantity` and `SeqNo` are int64; `InstrumentId`, `PartyId` and `VenueId` are int32. Enums are uint8: `Side` (Buy 1, Sell 2), `BookAction` (Add, Change, Delete, Clear), `QuoteStatus` (Done, TradedAway, Expired, Rejected, Passed), `OrdStatus` (New 0, PartiallyFilled 1, Filled 2, Cancelled 4, Rejected 8), `OrdType` (Market, Limit), `TimeInForce` (Day 0, ImmediateOrCancel 3, FillOrKill 4, GoodTillDate 6), `CurveInputKind` (Fixing, Future, ParSwap, Bond), `LimitKind` (Position, BucketDv01, NetDv01, GrossDv01, DailyLoss, OrderRate, QuoteRate, MaxOrderSize, PriceCollar), `KillReason` (Manual, LimitBreach, FeedGap, SessionLoss, StaleReference). P4 adds the enums `VenueKind` (Clob 1, Futures 2), `RouteReason` (Slice 1, Escalation 2, BookMove 3, Retry 4, Deadline 5, Reconcile 6), `VenueExclusion` (None 0, NoQuote 1, SelfCross 2, BelowMinimum 3, CapReached 4, LimitPrice 5), `ChildState` (New 1, Acknowledged 2, PartiallyFilled 3, Filled 4, CancelRequested 5, Cancelled 6, Replaced 7, Rejected 8) and `TransitionCause` (Sent 1, Ack 2, Fill 3, CancelSent 4, CancelConfirmed 5, Rejected 6, CancelRejected 7, Reconciled 8). Template ids 80 to 89 are reserved for the router.
 
 | Template id | Message | Fields (in order) |
 |---|---|---|
@@ -85,6 +85,9 @@ Shared types: `Decimal9` is a composite of `mantissa` int64 and a constant `expo
 | 21 | ExecutionReport | `venueId`, `clOrdId`, `venueOrderId` int64, `execId` int64, `instrumentId`, `side`, `ordStatus`, `lastPrice`, `lastQuantity`, `leavesQuantity`, `cumQuantity`, `transactNanos` |
 | 30 | RiskLimitBreach | `limitKind`, `scopeId` int32, `limitValue` Decimal9, `observedValue` Decimal9, `rejectedMessageSeqNo` (journal sequence of the rejected message, 0 if post-trade), `timestampNanos` |
 | 31 | KillSwitch | `reason` KillReason, `scopeId` int32 (0 for the whole process), `requestedBy` PartyId, `timestampNanos` |
+| 80 | RouteDecision | `decisionId` int64, `parentId` int64, `instrumentId`, `side`, `reason` RouteReason, `configVersion` int32, `venueCount` uint8, `sliceIndex` int32, `parentQuantity`, `sliceQuantity`, `allocatedQuantity`, `urgency` Decimal9, `passiveHorizonNanos` int64, `sliceIntervalNanos` int64, `arrivalMid` Decimal9, `expectedCost` Decimal9, `timestampNanos` (P4, Section 15.5) |
+| 81 | RouteDecisionVenue | `decisionId`, `row` uint8, `venueId`, `kind` VenueKind, `bestBid`, `bestAsk`, `tick` Decimal9, `lotSize`, `minSize`, `sameSideDepth`, `oppositeDepth`, `tradeRate` Decimal9, `takerFee` Decimal9, `makerFee` Decimal9, `latencyNanos` int64, `participationCap`, `passiveAllowed` uint8, `aggressiveAllowed` uint8, `exclusion` VenueExclusion, `evaluatedQuantity`, `allocatedQuantity`, `passive` uint8, `fillProbability` Decimal9, `queueWaitNanos` int64, `impactCost`, `passiveCost`, `aggressiveCost`, `chosenCost` (all Decimal9) (P4) |
+| 82 | ChildOrderTransition | `clOrdId` int64, `parentId` int64, `venueId`, `fromState` ChildState, `toState` ChildState, `cause` TransitionCause, `execId` int64, `orderedQuantity`, `cumQuantity`, `leavesQuantity`, `cancelledQuantity`, `timestampNanos` (P4) |
 
 Every message is preceded on the wire by the standard SBE `messageHeader` (blockLength uint16, templateId uint16, schemaId uint16, version uint16), 8 bytes. `QuoteRequest` has block length 49, so its encoded length is 57 (COOKBOOK.md recipe 3).
 
@@ -137,3 +140,149 @@ Exceptions carry enough to reproduce: sequence, expected and actual values. Noth
 ## Section 5 onward
 
 Sections 5 onward arrive with P1: market conventions (day counts, calendars, business-day rules, settlement lags per currency), curve bootstrap (instruments, interpolation, tolerances), pricing formulas and their tolerances against QuantLib (relative error with an absolute floor, stated per quantity).
+
+## Section 15. Smart order router (P4)
+
+Module `rates-router`, package `io.ratesalgo.router`. Units follow Section 0: prices and fees in price points (per 100 of face), stored on the wire as Decimal9 mantissas; quantities in minor units of face; times in nanoseconds. Costs are per unit of quantity, in price points, positive when paid.
+
+### 15.0 Interfaces the coordinator binds
+
+| Interface | Direction | Contract |
+|---|---|---|
+| `ParentOrderSink.submit(parentId, instrumentId, side, quantity, urgency, limitPrice)` | in | Parent orders. The P3 `HedgeOrderSink` (rates-api) is bound to it. `quantity` is a positive multiple of the largest venue lot; `urgency` in [0, 1]; `limitPrice` 0 for none. `SmartOrderRouter` implements it. |
+| `BookView` | in | `bestBid`, `bestAsk`, `depth(venue, side, level)`, `tradeRatePerSecond(venue)` per venue for the routed instrument. Bound to P2 market state. Must not allocate. |
+| `OrderGateway` | out | `newOrder` (fields of NewOrder, template 20) and `cancel(venue, clOrdId)`. Bound to the P2 gateway. Must not call back into the router synchronously. |
+| `ExecutionListener` | in | `onExecutionReport` (fields of template 21), `onCancelReject`, `onBookUpdate`. Called on the router's thread. |
+| `FrameSink` | out | `append(templateId, schemaVersion, buffer, offset, length)`; bind to `JournalWriter::append`. |
+| `SmartOrderRouter.reconcile(venueId, statuses)` | in | Mass order status after a reconnect (15.4). |
+
+`io.ratesalgo.router.sim.SimMarket` implements `BookView` and `OrderGateway` for tests and the back-test until the P2 simulators are bound.
+
+### 15.1 Cost model
+
+Parameters, config version 1 (`RouterParams`, `VenueParams`; defaults in `RouterPresets` and `data/presets.yaml` key `router`, checked equal by `RouterPresetsTest`):
+
+| Parameter | Symbol | Unit | Range | Default |
+|---|---|---|---|---|
+| `sigmaDailyPoints` | \(\sigma_d\) | price points per day | [1e-6, 10] | 0.5 |
+| `tradingSecondsPerDay` | \(D\) | s | [3600, 86400] | 23400 |
+| `impactY` | \(y\) | 1 | [0, 5] | 0.6 |
+| `impactAlpha` | \(\alpha\) | 1 | (0, 1] | 0.5 |
+| `adverseFactor` | \(k_A\) | sigma over \(T\) | [0, 5] | 0.5 |
+| `latencyRiskFactor` | \(k_L\) | sigma over latency | [0, 10] | 1.0 |
+| `passiveHorizonMaxNanos` | \(T_{max}\) | ns | [0, 600 s] | 30 s |
+| `passiveHorizonMinNanos` | \(T_{min}\) | ns | [0, \(T_{max}\)] | 1 s |
+| `maxSlices` | \(N\) | 1 | [1, 64] | 8 |
+| `scheduleHorizonNanos` | \(H\) | ns | [0, 3600 s] | 120 s |
+| `sizeJitter`, `intervalJitter` | \(j_q, j_t\) | fraction | [0, 0.5] | 0.25, 0.3 |
+| `bookMoveThresholdTicks` | \(m\) | ticks | [1, 100] | 2 |
+| `aggressiveCollarTicks` | \(k\) | ticks | [0, 100] | 8 |
+| `retryDelayNanos` | | ns | (0, 60 s] | 0.5 s |
+| `maxSteps` | | 1 | [1, 1024] | 32 |
+| venue `takerFee`, `makerFee` | \(f_t, f_m\) | price points per unit | [0, 1], [-1, 1] | CLOB 0.0005, 0.0002; futures 0.0015, 0.0015 |
+| venue `latencyNanos` | \(\ell\) | ns | [0, 1 s] | CLOB 250 us; futures 500 us |
+| venue `cancelRatePerSecond` | \(\theta\) | per unit ahead per s | [0, 10] | CLOB 0.05; futures 0.03 |
+| venue `adv` | ADV | quantity per day | > 0 | CLOB 30 bn face; futures 1.5 m contracts |
+| venue `participationCap` | \(\rho\) | fraction | (0, 1] | CLOB 0.25; futures 0.2 |
+| venue `lotSize`, `minSize`, `tickMantissa`, `depthLevels` | | as named | | CLOB 1 m, 1 m, 1/64, 5; futures 1 contract, 1 contract, 1/64, 5 |
+
+For row \(v\) of a decision and quantity \(q\), with bid \(b\), ask \(a\), same-side displayed depth \(Q\), trade rate \(r\) (quantity per second, both sides), lot \(\lambda\), passive horizon \(T\) (0 when passive is not allowed) and \(\sigma_s = \sigma_d/\sqrt{D}\):
+
+\[
+h = \tfrac{a-b}{2},\quad I(q) = y\,\sigma_d\,(q/\mathrm{ADV})^{\alpha},\quad L = k_L\,\sigma_s\sqrt{\ell},\quad A = k_A\,\sigma_s\sqrt{T}
+\]
+\[
+c_{aggr}(q) = h + I(q) + f_t + L,\qquad c_{pass}(q) = P\,(-h + I(q) + f_m) + (1-P)\,(A + h + I(q) + f_t) + L
+\]
+
+where \(P\) is `QueueFillModel.probability(ceil(Q/λ), ceil(q/λ), r/(2λ), θ, T)` (complete-fill probability, Cont, Stoikov and Talreja 2010, uniformisation as in the owner's earlier library, API_SPEC.md Section 13.1 there; tolerance 1e-10 against the Poisson tail when \(\theta = 0\), `CostModelTest`). The chosen cost is \(c_{pass}\) if passive is allowed and either aggressive is not allowed or \(c_{pass} < c_{aggr}\); otherwise \(c_{aggr}\). The expected queue wait reported is \((\lceil Q/\lambda\rceil + \lceil q/\lambda\rceil)/(r/2\lambda)\), capped at 1e6 s. All doubles are rounded to Decimal9 with `Math.round(x * 1e9)` when written to the table; inputs that enter the model as doubles (trade rate, fees) are taken from the rounded table values, so a decision re-evaluated from the journal reproduces every mantissa.
+
+### 15.2 Routing objective and allocation
+
+A decision allocates a slice \(S\) to minimise
+
+\[
+\sum_v q_v\, c_v(q_v)\quad\text{subject to}\quad \sum_v q_v \le S,\; q_v \in \{0\} \cup [\mathrm{minSize}_v, \mathrm{cap}_v],\; q_v \equiv 0 \pmod{\lambda_v}
+\]
+
+with \(\mathrm{cap}_v = \lfloor \rho_v (\text{opposite depth over depthLevels} + r_v \cdot \text{sliceInterval}) \rfloor\) rounded down to the lot. The increment is the largest lot (every lot must divide it), coarsened so that \(S\) takes at most `maxSteps` increments. Greedy: each step gives the next block (the first block of a venue is its minimum size rounded up to the lot) to the venue whose total cost rises least per unit; ties to the lower row. For convex per-venue totals without minimum sizes this is optimal on the increment lattice (`CostModelTest.greedyMatchesBruteForceForConvexCosts` checks it against enumeration for 1 to 20 lots); with minimum sizes it is a heuristic (DR-P4-04). Unallocated quantity is retried after `retryDelayNanos`.
+
+Eligibility per row, before allocation: no two-sided quote gives `NoQuote`. The aggressive limit is the far touch plus \(k\) ticks, capped one tick inside our own most aggressive live order on the other side of that venue (resting or in flight) and at the parent limit; aggressive is allowed only if that limit still reaches the far touch. Passive joins the near touch and is allowed only if \(T > 0\), the join price does not reach our own opposite order, and it respects the parent limit. A row with neither is `SelfCross` (if we have an opposite order there) or `LimitPrice`. The allocator marks `BelowMinimum` and `CapReached`.
+
+### 15.3 Schedule, escalation, re-routing and anti-gaming
+
+At submit, with patience \(p = 1 - u\): slices \(n = 1 + \mathrm{round}((N-1)p)\), schedule \(H_u = \mathrm{round}(H p)\), interval \(H_u/n\), passive horizon \(T_u = \mathrm{round}(T_{max} p)\) set to 0 below \(T_{min}\), deadline at \(H_u + T_u\) + retry delay. Slice sizes are \(b(1 + j_q(2U - 1))\) with \(b\) = remaining over slices left, rounded to the increment and clamped to [increment, remaining]; the last slice takes the rest. Intervals are jittered the same way with \(j_t\). \(U\) comes from the injected `RandomSource`.
+
+| Event | Action | Decision reason |
+|---|---|---|
+| slice timer | allocate the next slice | Slice |
+| passive child reaches \(T_u\) | cancel; on confirmation route the freed quantity aggressively | Escalation |
+| touch moves \(m\) ticks or more away from a resting child | cancel; on confirmation route the freed quantity, passive allowed | BookMove |
+| IOC remainder cancelled, reject, or quantity unallocated | retry after the delay | Retry |
+| deadline | cancel every resting child, route everything aggressively from now on | Deadline |
+| reconciliation releases quantity | route it, passive allowed | Reconcile |
+
+Quantity is re-routed only when the venue has confirmed it will not fill. Parent accounting: quantity = filled + outstanding (sum of child leaves) + unrouted, each non-negative, checked after every step by `RouterChaosPropertiesTest`.
+
+### 15.4 Child order state machine
+
+`ChildOrderBook`. Quantities satisfy cum + leaves + cancelled = ordered after every report, where cancelled is quantity the venue has confirmed will never fill and leaves is quantity that may still fill (working, or filled at the venue with the report still in flight). This is the precise form of "leaves plus cumulative equals ordered": for a cancelled order the cancelled quantity is accounted for explicitly. Fills are counted once per (venueId, execId); a fill that would take cum above ordered is refused as an anomaly.
+
+| From | Report or action | To | Effect |
+|---|---|---|---|
+| (none) | router sends | New | audit Sent |
+| New | ER New | Acknowledged | |
+| New, Acknowledged, PartiallyFilled | ER with a new fill, cum below ordered | PartiallyFilled | cum += lastQty |
+| any | ER with a new fill, cum reaches ordered | Filled | cancelled = 0 |
+| New, Acknowledged, PartiallyFilled | router cancels | CancelRequested | remembers the prior state and whether to re-route |
+| CancelRequested | ER with a new fill | CancelRequested (Filled if complete) | the fill raced the cancel |
+| New, Acknowledged, PartiallyFilled, CancelRequested | ER Cancelled | Cancelled, or Replaced if the cancel was for re-routing | cancelled = ordered - max(cum, venueCum); no change if that is 0 |
+| CancelRequested | cancel reject | prior state (PartiallyFilled if anything filled) | |
+| New, Acknowledged | ER Rejected | Rejected | cancelled = ordered - max(cum, venueCum) |
+| Cancelled, Replaced | ER with a new fill | unchanged | late fill: cum grows, leaves shrinks |
+| any | duplicate fill (seen execId) | unchanged | counted as duplicate |
+| any | status that would move backwards (New after a fill, Cancelled after Filled) | unchanged | counted as stale |
+
+venueCum is the largest cumQuantity any report carried. A slot is released when the state is terminal and leaves is 0; later reports for it count as unknown. `reconcile(venueId, statuses)`: a live child the venue does not list is closed as cancelled; Cancelled or Rejected closes it; Filled raises venueCum to ordered (the fills are pending); orders the venue lists as working that we do not hold live are cancelled. Every state change and every applied fill writes a ChildOrderTransition (template 82).
+
+Properties (jqwik, `ChildOrderBookPropertiesTest`, 400 tries; `RouterChaosPropertiesTest`, 25 tries against `SimMarket` with delayed, duplicated and reordered reports): no lost quantity (final cum equals the venue's filled quantity), the identity above after every report, cum never above ordered, the venues never fill more than the parent, every parent completes, no anomaly and no self-cross.
+
+### 15.5 Decision messages and reconstruction
+
+One decision is one RouteDecision followed by `venueCount` RouteDecisionVenue frames with rows 0 to venueCount - 1, written to the `FrameSink` before any child order of that decision is sent. Fields are listed in Section 2; together they are exactly `CostTable`. `DecisionCodec.onFrame` rebuilds the table from journal frames and throws `IllegalStateException` on a row out of sequence or a schema mismatch. `DecisionReplayTest` writes a real journal, replays it with `Replayer`, checks that every rebuilt table equals the router's own field by field, and re-runs `Allocator.allocate` on the journaled inputs with the parameters of the journaled config version, reproducing every cost mantissa and the split. The parameters not carried in the journal (\(\sigma_d\), \(y\), \(\alpha\), \(k_A\), \(k_L\), ADV, \(\theta\)) are fixed by `configVersion`.
+
+The messages keep v1's fixed-length rule (a decision is a header plus rows instead of a repeating group) and the schema version stays 0, because they are additions with new template ids (DR-P4-01).
+
+### 15.6 Back-test
+
+`BacktestHarness` runs strategies over seeded synthetic days produced by `SimMarket`; strategy 0 is compared with each other by day. Cost of a parent = side x (average fill price - mid of venue 1 at arrival) + fees per unit, in bps of the arrival mid; cost of a day = quantity-weighted mean over its parents. Interval: moving-block bootstrap of the mean daily saving (`BlockBootstrap`, Kuensch 1989), percentile 95 percent.
+
+Scenario `ust10y_three_venue_v1` (`BacktestScenario.ust10yThreeVenuesV1`, `SimConfig.ust10yThreeVenues`), assumptions:
+
+- One 10-year Treasury on three cash CLOBs, tick 1/64, lot 1 million, starting bid 98.50 (6304 ticks).
+- Venue 1: spread 1 tick, depth 12 + 6k lots at level k, 1.0 one-lot market orders per second each side, latency 250 us, fees 0.0005 taker and 0.0002 maker. Venue 2: 1 tick, 6 + 3k lots, 0.5 per second, 400 us, 0.0004 and 0.0001. Venue 3: 2 ticks, 4 + 2k lots, 0.3 per second, 600 us, 0.0003 and 0.
+- The common price moves one tick up or down at 0.0219 per second each way (about 0.5 points per day of volatility), every book is rebuilt around it; each lot ahead of our resting orders cancels at 0.05 per second; depleted depth refills at 20 percent per second; our aggressive volume moves the price permanently by 0.02 ticks per lot. No informed flow other than the price moves; resting orders fill from the queue or when the price moves through them.
+- 40 days, 15 parents a day, 10 to 60 lots, side random, 30 s apart, seed 20261031 + day; router urgency 0.5 with the default parameters and venue parameters derived from the market (`SimConfig.routerVenues`: same fees and latencies, ADV = 2 x arrival rate x 23400 s, participation cap 0.25, 5 levels).
+- Baselines (`AggressiveBaseline`): single-venue aggressive sends the whole parent to venue 1 as an IOC at the far touch plus 8 ticks; even split sends equal lots to the three venues the same way; both resend any remainder after 0.5 s.
+- Block length 5 days, 2000 resamples.
+
+Result (`BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` (rates-router), run 2026-10-31 on JDK 25.0.5, Windows 11):
+
+| Strategy | Mean cost (bps of price) | Mean saving of the router (bps) | 95% block-bootstrap interval |
+|---|---|---|---|
+| router | -0.1957 | | |
+| single-venue aggressive | 2.6822 | 2.8780 | [2.7210, 2.9855] |
+| even split aggressive | 2.5108 | 2.7065 | [2.5309, 2.8272] |
+
+The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_BPS`). The router's cost is below zero because most of its quantity rests and earns part of the spread in a market whose only adverse selection is the random walk; the number measures the router's logic in this declared world and is not a forecast of desk savings. Refitting the impact and queue parameters from P2 simulator data is deferred (DR-P4-03).
+
+### 15.7 Error behaviour
+
+| Condition | Behaviour |
+|---|---|
+| Parameter outside its range | `IllegalArgumentException` naming the parameter and value, at construction |
+| Parent quantity not a positive multiple of the largest lot, urgency outside [0, 1], negative limit, side not Buy or Sell, duplicate live parent id | `IllegalArgumentException` from `submit`; nothing is sent |
+| Parent or child capacity exhausted | `IllegalStateException` |
+| Report for an unknown clOrdId, duplicate fill, stale status | ignored and counted (`unknown`, `duplicates`, `stale`) |
+| Overfill, venue mismatch, execId at or above 2^43, venueId at or above 2^20, null status | refused and counted as an anomaly |
+| RouteDecisionVenue out of sequence, or wrong schema id, on decode | `IllegalStateException` |
