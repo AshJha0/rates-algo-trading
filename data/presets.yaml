@@ -108,8 +108,8 @@ presets:
         high: -5.0
       rationale: 'Win-probability slope per bp of spread-to-cover. No public source shows losing quotes
         (DR-008), so the slope is declared: central -2.5 per bp (a quote 0.2 bp behind the cover loses
-        0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients
-        pick the best price almost always). Results are reported at all three points.'
+        0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients pick the
+        best price almost always). Results are reported at all three points.'
 - name: usd_rfq_flow
   fitted_from: data/manifests/dtcc_rates_2025-10.json
   data_range:
@@ -226,8 +226,8 @@ presets:
         high: -5.0
       rationale: 'Win-probability slope per bp of spread-to-cover. No public source shows losing quotes
         (DR-008), so the slope is declared: central -2.5 per bp (a quote 0.2 bp behind the cover loses
-        0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients
-        pick the best price almost always). Results are reported at all three points.'
+        0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients pick the
+        best price almost always). Results are reported at all three points.'
   notes: 'Fitted to labels drawn from the declared simulator model, so the fit recovers the assumption;
     it is not a market hit rate (DR-008). The back-tester replaces spread_to_cover_bp by the band value
     of each run. Out-of-sample log-loss on the last 12000 labels: model 0.6146, constant 0.6900.'
