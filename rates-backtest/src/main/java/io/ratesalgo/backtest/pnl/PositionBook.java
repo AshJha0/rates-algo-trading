@@ -20,7 +20,10 @@ import java.util.TreeMap;
  *   position P&amp;L = cash + Q m v  =  spread + hedge + inventory + carry + funding + fees
  * </pre>
  *
- * where {@code v} is the instrument's value per unit. The residual is the difference between the
+ * where {@code v} is the instrument's value per unit. Funding is {@code -Q m v r dt / 360} at the
+ * instrument's funding rate {@code r}; carry is the {@link CarryModel}'s, which for bonds under
+ * {@link CarryModel#bondCoupons} is the coupon accrued over the same interval, so a bond position's
+ * net carry is coupon less funding. The residual is the difference between the
  * two views and is checked to be below one cent on every run (AttributionReconciliationTest).
  */
 public final class PositionBook {
