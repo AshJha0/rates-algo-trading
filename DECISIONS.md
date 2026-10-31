@@ -788,6 +788,8 @@ Decision. Review's guard stays as written. `DeskSettings.quoting()` declares `wi
 
 Also at this merge, `data/presets.yaml`: the review branch changed the hit-rate slope rationale in `ratesresearch/assumptions.py` and edited the same text by hand in the presets file, with different YAML line wrapping. The shipped file was replaced by the output of the project's generator (`ratesresearch.hitrate.main`). The parsed YAML is identical; only the wrapping of four lines changed, so the file is again byte-for-byte reproducible.
 
+Also, `VenueBindingTest.aLostSessionIsPulledOnTheLoopCancelledAtTheVenueAndQuotingResumesAfterLogon` failed once in the first full verify after this merge and once in three idle runs. The D2C simulator logs `cancel-on-disconnect` from its own FIX thread when it notices the closed socket, in wall-clock time, and the test read the log straight after a 200 ms simulated step. The test now waits for the entry for up to 10 s of wall-clock time, stepping 10 ms at a time (`awaitLogged`); every other assertion is unchanged. It passed five runs in a row.
+
 Consequences. A desk configuration whose cap is below its own expected cost now quotes nothing rather than quoting at a loss. Any new desk configuration has to keep `winnersCurseBp`, the hedge cost and the cap consistent, and a smoke day that quotes nothing fails `SmokeTest`.
 
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage

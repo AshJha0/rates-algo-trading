@@ -42,6 +42,22 @@ class VenueBindingTest {
     return p.venues().d2c().eventLog().stream().anyMatch(l -> l.contains(text));
   }
 
+  /**
+   * The venue sees a dropped session on its own FIX thread, in real time, so its log entry can
+   * trail the simulated step; waits up to 10 s of wall-clock time, stepping 10 ms at a time
+   * (DR-INT-05).
+   */
+  private static boolean awaitLogged(final TradingProcess p, final String text) {
+    final long deadline = System.nanoTime() + 10_000_000_000L;
+    while (!logged(p, text)) {
+      if (System.nanoTime() > deadline) {
+        return false;
+      }
+      p.step(10_000_000L, STEP);
+    }
+    return true;
+  }
+
   @Test
   void aBookFeedGapPullsQuotesThroughTheLoopAndTheSnapshotRestoresQuoting() {
     try (TradingProcess p = TradingProcess.start(new TradingProcess.Options(dir, 3L, DeskSettings.defaults()))) {
@@ -80,7 +96,7 @@ class VenueBindingTest {
       p.step(200_000_000L, STEP);
       assertEquals(0, desk.desk().quoting().liveQuotes(), "pulled on the loop when the session went down");
       assertFalse(desk.desk().health().healthy(p.clock().epochNanos()));
-      assertTrue(logged(p, "cancel-on-disconnect " + AppIds.COMP_ID), "the venue cancelled our quote");
+      assertTrue(awaitLogged(p, "cancel-on-disconnect " + AppIds.COMP_ID), "the venue cancelled our quote");
       assertTrue(p.venues().clob().liveOrders(AppIds.COMP_ID).isEmpty(), "nothing resting at the CLOB");
       assertEquals(1, p.d2cSession().disconnects());
 
