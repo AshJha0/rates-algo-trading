@@ -17,4 +17,15 @@
     <Class name="io.ratesalgo.common.time.TimerWheel" />
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
   </Match>
+  <!-- rates-core: the loop builder, the inbound publisher and the runner hold the rings,
+       journal sinks and failure their caller created and shares with them; holding the
+       caller's object is the design (API_SPEC.md Section 9). -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.core.EventLoop$Builder" />
+      <Class name="io.ratesalgo.core.InboundPublisher" />
+      <Class name="io.ratesalgo.core.LoopRunner" />
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2" />
+  </Match>
 </FindBugsFilter>

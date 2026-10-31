@@ -66,9 +66,14 @@ public final class LoopRunner implements AutoCloseable {
     }
   }
 
-  /** The loop thread, for its id (allocation checks) and name. */
-  public Thread thread() {
-    return thread;
+  /** The loop thread's id, for per-thread measurements such as allocated bytes. */
+  public long threadId() {
+    return thread.threadId();
+  }
+
+  /** The loop thread's name. */
+  public String threadName() {
+    return thread.getName();
   }
 
   /** True while the loop thread is cycling. */
@@ -98,9 +103,13 @@ public final class LoopRunner implements AutoCloseable {
 
   /** Asks the loop to finish its cycle, run the end-of-day hook and stop; waits for it. */
   @Override
-  public void close() throws InterruptedException {
+  public void close() {
     running = false;
-    thread.join();
+    try {
+      thread.join();
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   /** Runner settings. */

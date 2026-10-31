@@ -72,7 +72,23 @@ public final class FaultInjector {
     }
   }
 
-  private record Held(byte[] bytes, long releaseAfter) {}
+  private static final class Held {
+    private final byte[] bytes;
+    private final long releaseAfter;
+
+    Held(final byte[] bytes, final long releaseAfter) {
+      this.bytes = bytes;
+      this.releaseAfter = releaseAfter;
+    }
+
+    byte[] bytes() {
+      return bytes;
+    }
+
+    long releaseAfter() {
+      return releaseAfter;
+    }
+  }
 
   private final FaultPlan plan;
   private final Delivery downstream;
