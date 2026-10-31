@@ -30,6 +30,8 @@ Phase 5 (back-testing and research, `API_SPEC.md` Section 16):
 - `notebooks/`: thin wrappers over the modules, executed by `tools/run_notebooks.py` in CI and rendered into the site.
 - `recipes/`: Python cookbook recipes, run by `tools/check_cookbook.py`.
 
+How a fitted preset reaches the quoting engine is drawn in [research to production parameters](../docs/site/pages/diagrams.md#research-to-production-parameters).
+
 ## Run
 
 From the repository root:

@@ -38,6 +38,7 @@ PAGES: dict[str, str] = {
 NOTEBOOKS = ("hitrate", "markouts", "spread", "flow", "backtest_analysis")
 
 _REVERSE: dict[str, str] = {source: page for page, source in PAGES.items()}
+_SITE_PAGES = "docs/site/pages/"
 _LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(\s+\"[^\"]*\")?\)")
 
 
@@ -52,6 +53,9 @@ def _rewrite_links(markdown: str, source_rel: str, repo_url: str) -> str:
         resolved = posixpath.normpath(posixpath.join(source_dir, path)) if path else source_rel
         if resolved in _REVERSE:
             new_target = _REVERSE[resolved]
+        elif resolved.startswith(_SITE_PAGES):
+            # a hand-written site page (for example the diagrams page); mapped pages sit at the root
+            new_target = resolved[len(_SITE_PAGES) :]
         else:
             new_target = f"{repo_url.rstrip('/')}/blob/main/{resolved}"
         if anchor:

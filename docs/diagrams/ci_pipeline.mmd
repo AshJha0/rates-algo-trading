@@ -1,0 +1,37 @@
+%% Title: CI, docs and ops workflows on a pull request and on main
+flowchart LR
+  pr["Pull request or push to main"]
+  subgraph ci["ci.yml"]
+    java["java: Java 25 on ubuntu and windows<br/>mvn verify, coverage, SpotBugs"]
+    python["python: Python 3.12 on ubuntu and windows<br/>ruff, mypy, pytest, check_cookbook.py,<br/>run_notebooks.py"]
+    policy["policy: word policy DR-007,<br/>no file over 2 MB DR-006"]
+    fwd["java-forward: Java 27<br/>informational, DR-003"]
+    lat["latency: rates-bench harness<br/>informational, DR-005"]
+  end
+  subgraph docs["docs.yml"]
+    build["build: run_notebooks.py,<br/>mkdocs build --strict"]
+    deploy["deploy: GitHub Pages<br/>when the Pages source is GitHub Actions"]
+  end
+  subgraph ops["ops.yml"]
+    cfg["config-and-dashboards: validate_config.py,<br/>lint_dashboards.py, bash -n bluegreen.sh"]
+    reh["rehearsal: ConfigValidatorMain,<br/>deploy/rehearsal.py with the kill switch,<br/>images when Docker is available"]
+  end
+  gate{"Gating jobs pass<br/>and one approving review"}
+  merge["Merge to main"]
+  report["latency-report artifact<br/>compared by hand"]
+  release["Release v1.0.0<br/>after integration, STATUS.md P6"]
+
+  pr -->|triggers| ci
+  pr -->|triggers| docs
+  pr -->|triggers| ops
+  java -->|gates| gate
+  python -->|gates| gate
+  policy -->|gates| gate
+  lat -->|uploads| report
+  gate -->|required| merge
+  merge -->|push to main| build
+  build -->|main only| deploy
+  merge -.->|planned| release
+
+  classDef planned stroke-dasharray: 5 5
+  class release planned

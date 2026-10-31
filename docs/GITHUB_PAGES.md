@@ -8,6 +8,8 @@ The `Docs` workflow in `.github/workflows/docs.yml` runs `mkdocs build --strict`
 
 Deployment uses GitHub Actions as the Pages source. Until the repository's Pages setting is switched to "GitHub Actions" (Settings, Pages, Build and deployment, Source), the deploy step has nowhere to publish and the site is built and checked only. Once the source is set, the workflow uploads the built `site/` directory as a Pages artifact and deploys it on pushes to `main`. No `gh-pages` branch is used.
 
+The docs workflow beside the CI and ops workflows is drawn in [CI and release pipeline](../site/pages/diagrams.md#ci-and-release-pipeline).
+
 ## Build locally
 
 From the repository root:

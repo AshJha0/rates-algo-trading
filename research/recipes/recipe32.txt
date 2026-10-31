@@ -1,0 +1,16 @@
+band point                           low             central                high
+declared slope                     -1.25               -2.50               -5.00
+intercept                1.228 +/- 0.077     1.185 +/- 0.081     1.087 +/- 0.092
+spread_to_cover_bp      -1.268 +/- 0.053    -2.490 +/- 0.061    -4.998 +/- 0.089
+log_size_mm             -0.145 +/- 0.015    -0.145 +/- 0.015    -0.141 +/- 0.018
+tenor_years             -0.012 +/- 0.002    -0.012 +/- 0.002    -0.011 +/- 0.002
+fixing_window            0.324 +/- 0.041     0.281 +/- 0.043     0.337 +/- 0.049
+dealer_count            -0.255 +/- 0.016    -0.239 +/- 0.017    -0.223 +/- 0.019
+oos log-loss model                0.6526              0.6014              0.4950
+constant                          0.6888              0.6905              0.6923
+test-set calibration by quintile of predicted win probability (predicted / observed)
+quintile 1                 0.271 / 0.268       0.190 / 0.176       0.078 / 0.067
+quintile 2                 0.383 / 0.367       0.343 / 0.352       0.253 / 0.296
+quintile 3                 0.459 / 0.468       0.462 / 0.443       0.461 / 0.451
+quintile 4                 0.536 / 0.524       0.585 / 0.587       0.684 / 0.703
+quintile 5                 0.657 / 0.638       0.756 / 0.759       0.895 / 0.877

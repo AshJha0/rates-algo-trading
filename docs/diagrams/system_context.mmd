@@ -1,0 +1,34 @@
+%% Title: System context of the platform
+flowchart LR
+  desk["Desk roles<br/>desk head, risk manager,<br/>compliance, operations"]
+  clients["Clients<br/>simulated inside the venues"]
+  subgraph venues["Venues (simulated, rates-venues)"]
+    d2c["D2C RFQ<br/>D2cRfqSimulator"]
+    clob["D2D Treasury CLOB<br/>ClobSimulator"]
+    sef["SEF, RFQ and order book<br/>SefSimulator"]
+  end
+  platform["rates-algo-trading<br/>OpsProcessMain: event loop, quoting,<br/>risk, hedger, router, journal, post-trade"]
+  ccp["Clearing house<br/>ClearingHouseSimulator"]
+  data["Public data sources<br/>data/SOURCES.md: NY Fed, ECB, BoE,<br/>US Treasury, DTCC SDR"]
+  research["Research package<br/>research/ratesresearch"]
+  mon["Monitoring<br/>Prometheus, Grafana"]
+  report["Transparency reporting<br/>APA, SDR Part 43"]
+
+  clients -->|RFQ, accept or pass| d2c
+  clients -->|RFQ to at least three| sef
+  platform <-->|FIX 4.4 quotes| d2c
+  platform <-->|FIX 4.4 orders, SBE book feed| clob
+  platform <-->|FIX 4.4 quotes and orders| sef
+  platform -->|swap trades submitted| ccp
+  ccp -->|accepted, cleared or rejected| platform
+  data -->|downloads pinned by manifests| research
+  data -->|fixings in data/fixtures| platform
+  research -->|fitted presets, data/presets.yaml| platform
+  desk -->|POST /control/kill, config, approvals| platform
+  platform -->|/metrics| mon
+  mon -->|alerts with runbook links| desk
+  platform -->|end-of-day report, breaks, order records| desk
+  platform -.->|planned at integration| report
+
+  classDef planned stroke-dasharray: 5 5
+  class report planned

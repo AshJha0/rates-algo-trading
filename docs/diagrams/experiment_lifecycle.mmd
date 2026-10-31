@@ -3,7 +3,7 @@ flowchart TD
   est["Estimates<br/>ratesresearch.markouts, hitrate, flow<br/>written to the experiment config and presets"]
   cfg["Experiment config<br/>data/experiments/ID.config.yaml"]
   pre["Pre-registration<br/>data/preregs/ID.yaml<br/>hypothesis, metric, periods, holdout,<br/>threshold, band, config_sha256"]
-  commit["Commit before the run"]
+  commit["Commit before the run<br/>signed pre-registration in its own pull request<br/>(CONTRIBUTING.md)"]
   cli{"ExperimentCli<br/>validates"}
   refuse["Refused, exit 2<br/>nothing run, nothing recorded"]
   run["Run on the evaluation sessions<br/>every strategy at low, central, high"]
@@ -12,6 +12,8 @@ flowchart TD
   holdout{"Open the holdout?"}
   once["Holdout run, once<br/>a second attempt is refused"]
   next["New pre-registration<br/>for any changed question"]
+  pyval["ratesresearch.prereg.validate<br/>the same rules in Python"]
+  recompute["ratesresearch.backtest_analysis<br/>recompute_experiment from the ledger line"]
 
   fit --> est --> cfg --> pre --> commit --> cli
   cli -->|missing, invalid, overlap,<br/>hash mismatch, holdout opened| refuse
@@ -19,3 +21,5 @@ flowchart TD
   holdout -->|yes| once --> ledger
   holdout -->|no| next
   ledger --> next
+  pre -->|also validated by| pyval
+  ledger -->|statistics re-derived| recompute
