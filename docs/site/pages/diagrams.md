@@ -113,3 +113,19 @@ The three states of the process-wide kill switch and the four-eyes reset (API_SP
 ```mermaid
 --8<-- "docs/diagrams/kill_switch_state.mmd"
 ```
+
+## Internalisation flow (R2 desk features)
+
+One client RFQ through the desk features of `rates-strategy`: the size envelope, pricing with the feature costs and the axe, the fill into the DV01 ladder where opposing flow nets, and the hedge budget and timing rule that decide what reaches the hedge instrument (API_SPEC.md Section 19, docs/research/DESK_FEATURES.md).
+
+```mermaid
+--8<-- "docs/diagrams/internalisation_flow.mmd"
+```
+
+## Desk P&L waterfall (R2 desk features)
+
+The capture-versus-cost waterfall of the desk report: the lines sum to position P&L less the attribution residual, checked to the cent in `DeskReportTest` (API_SPEC.md Section 19.10).
+
+```mermaid
+--8<-- "docs/diagrams/desk_pnl_waterfall.mmd"
+```

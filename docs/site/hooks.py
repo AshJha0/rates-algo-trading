@@ -32,6 +32,7 @@ PAGES: dict[str, str] = {
     "publishing.md": "docs/GITHUB_PAGES.md",
     "compliance.md": "docs/compliance/RTS6_INVENTORY.md",
     "runbooks.md": "docs/runbooks/README.md",
+    "desk-features.md": "docs/research/DESK_FEATURES.md",
 }
 
 # research notebooks (P5): page notebooks/<name>.md from research/notebooks/<name>.ipynb

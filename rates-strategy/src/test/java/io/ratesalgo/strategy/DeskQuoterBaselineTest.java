@@ -69,5 +69,10 @@ class DeskQuoterBaselineTest {
       assertEquals(first, second, t);
       assertTrue(first != base, t + " sends the same messages as the baseline");
     }
+    final DeskQuoter desk = f.deskDefault();
+    assertEquals(DeskFactory.DESK_DEFAULT, desk.name());
+    assertEquals(
+        new BacktestRunner(cfg).run(f.treatment(DeskFactory.INTERNALISATION, null)).outputChainHash(),
+        new BacktestRunner(cfg).run(desk).outputChainHash());
   }
 }

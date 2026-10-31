@@ -55,6 +55,15 @@ public final class DeskFactory {
   public static final List<String> TREATMENTS =
       List.of(INTERNALISATION, AXES, SIZING, TIERING, TIMING, FUNDING, DESK_ALL);
 
+  /**
+   * Features adopted as the desk default by their pre-registered rule (DR-R2B-07: R2B-001, ledger
+   * seq 2, 2026-10-31). The others stay off until a later pre-registered run supports them.
+   */
+  public static final List<String> ADOPTED = List.of(INTERNALISATION);
+
+  /** Name of the strategy that runs the adopted features. */
+  public static final String DESK_DEFAULT = "desk_default";
+
   private static final String WHERE = "desk experiment config";
 
   private final Map<String, Object> config;
@@ -200,6 +209,12 @@ public final class DeskFactory {
         BASELINE,
         DeskQuoter.baselineFeatures(
             ladder, spread(), num("baseline", "hedge_threshold_dv01"), clientsPerTier, markoutHorizonNanos()));
+  }
+
+  /** The desk default: the baseline with the {@link #ADOPTED} features switched on. */
+  public DeskQuoter deskDefault() {
+    final DeskQuoter q = treatment(ADOPTED.get(0), null);
+    return new DeskQuoter(DESK_DEFAULT, q.features());
   }
 
   /**

@@ -29,6 +29,7 @@ nav:
       - Spread optimisation: notebooks/spread.md
       - Order flow: notebooks/flow.md
       - Back-test analysis: notebooks/backtest_analysis.md
+  - Desk features: desk-features.md
   - Compliance inventory: compliance.md
   - Runbooks: runbooks.md
   - AI use policy: ai-use-policy.md
