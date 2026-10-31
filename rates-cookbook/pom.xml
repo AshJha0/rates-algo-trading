@@ -32,8 +32,20 @@
     <dependency>
       <groupId>io.ratesalgo</groupId>
       <artifactId>rates-analytics</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
       <artifactId>rates-router</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
       <artifactId>rates-backtest</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
       <artifactId>rates-posttrade</artifactId>
       <version>${project.version}</version>
     </dependency>

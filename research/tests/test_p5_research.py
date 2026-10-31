@@ -113,9 +113,10 @@ def test_write_preset_keeps_header_and_replaces_by_name(tmp_path: Path) -> None:
     presets.write_preset(target, p)
     assert target.read_text(encoding="utf-8").startswith(header)
     # other top-level sections (the P4 router block) survive a preset write unchanged
-    assert yaml.safe_load(target.read_text(encoding="utf-8"))["router"] == yaml.safe_load(
-        PRESETS.read_text(encoding="utf-8")
-    )["router"]
+    assert (
+        yaml.safe_load(target.read_text(encoding="utf-8"))["router"]
+        == yaml.safe_load(PRESETS.read_text(encoding="utf-8"))["router"]
+    )
     assert presets.value(presets.get_preset(target, "zz_test"), "a") == 2.0
     assert len([x for x in presets.load_presets(target) if x["name"] == "zz_test"]) == 1
     with pytest.raises(presets.PresetError):

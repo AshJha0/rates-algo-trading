@@ -152,6 +152,8 @@
       <validValue name="Rejected">6</validValue>
       <validValue name="CancelRejected">7</validValue>
       <validValue name="Reconciled">8</validValue>
+    </enum>
+
     <!-- P6 post-trade (template ids 100 to 119, API_SPEC.md Sections 2 and 17). -->
     <enum name="TradeSource" encodingType="uint8" description="Which message created the trade">
       <validValue name="Execution">1</validValue>
@@ -347,6 +349,8 @@
     <field name="leavesQuantity" id="10" type="Quantity"/>
     <field name="cancelledQuantity" id="11" type="Quantity"/>
     <field name="timestampNanos" id="12" type="EpochNanos"/>
+  </sbe:message>
+
   <sbe:message name="PostTradeBust" id="100" description="A venue, clearing house or operator cancels a trade after execution">
     <field name="venueId" id="1" type="VenueId"/>
     <field name="tradeSource" id="2" type="TradeSource"/>
