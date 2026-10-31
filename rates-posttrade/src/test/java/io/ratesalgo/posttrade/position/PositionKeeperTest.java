@@ -114,6 +114,19 @@ class PositionKeeperTest {
   }
 
   @Test
+  void venueTradeBustIsAppliedAsAVenueErrorBust() {
+    final PositionKeeper k = replay(s -> {
+      fill(s, NINE, 1, Side.Buy, "100", 100, NINE);
+      s.venueBust(NINE + 5, 1, 1, 1, 1001, Side.Buy, px("100"), 100);
+      s.venueBust(NINE + 6, 1, 1, 7, 1001, Side.Buy, px("100"), 100);
+    });
+    assertEquals(0, k.position(BOND).netQuantity());
+    assertEquals(TradeStatus.BUSTED, k.trade(E1).status());
+    assertEquals("reason=VenueError", k.audit(AuditKind.BUSTED).get(0).detail());
+    assertEquals(1, k.pendingBusts().size(), "a bust of an unknown execution waits for its fill");
+  }
+
+  @Test
   void bustBeforeFillIsHeldAndApplied() {
     final PositionKeeper k = replay(s -> {
       s.bust(NINE, 1, TradeSource.Execution, 1, 501, 1001, BustReason.VenueError);
