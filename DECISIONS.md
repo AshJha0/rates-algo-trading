@@ -8,9 +8,11 @@ Date: 2026-10-31
 
 Context. The project needs a name that says what it is and a licence that lets anyone read, run and reuse it from the first commit, including people assessing the work.
 
-Decision. The repository is `AshJha0/rates-algo-trading`, public from the first commit, licensed under Apache License 2.0 with copyright 2026 Ashish Jha.
+Decision. The repository is `AshJha0/rates-algo-trading`, licensed under Apache License 2.0 with copyright 2026 Ashish Jha.
 
-Consequences. Everything committed is public immediately, so no raw downloaded data, credentials or third-party licensed content may be committed (see DR-006). Apache 2.0's patent grant and notice requirements apply to contributors.
+Amended 2026-10-31 (owner). The repository was created public and switched to private the same day; it stays private until the owner is satisfied with the finished work, then becomes public. Everything is still written as if public: no raw downloaded data, credentials or third-party licensed content is committed (see DR-006), and the word policy (DR-007) applies throughout.
+
+Consequences. GitHub Pages does not publish from a private repository on a free plan, so the Docs workflow builds the site with `--strict` on every push but the deploy step stays skipped until the repository is public and the Pages source is set to GitHub Actions. Apache 2.0's patent grant and notice requirements apply to contributors.
 
 ## DR-002: Java for the hot path and venue layer, Python for research
 

@@ -27,4 +27,4 @@ Not yet reached. Planned: 10 plan-days, 1 wall-clock day, started 2026-10-31.
 ## Open items
 
 - P0: local verification done on 2026-10-31 (mvn verify on JDK 25.0.5 and JDK 27: 50 Java tests, coverage floor met, SpotBugs clean; ruff, mypy, pytest 16 passed; mkdocs build --strict clean; cookbook recipes recorded and checked by tools/check_cookbook.py). The gate closes when the same jobs are green in GitHub Actions on Linux and Windows.
-- P0: GitHub Pages source must be set to "GitHub Actions" in the repository settings before the site deploys (docs/GITHUB_PAGES.md).
+- P0: the repository is private until the owner is satisfied (DR-001 amendment); the site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md).
