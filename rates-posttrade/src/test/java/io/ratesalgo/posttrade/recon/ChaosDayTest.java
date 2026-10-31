@@ -20,7 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Acceptance: zero unexplained breaks on the synthetic day with injected duplicate, late and
- * busted fills (API_SPEC.md Section 17.8, COOKBOOK.md recipe 20).
+ * busted fills (API_SPEC.md Section 17.8, COOKBOOK.md recipe 21).
  */
 class ChaosDayTest {
 

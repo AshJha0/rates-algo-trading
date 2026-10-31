@@ -6,7 +6,7 @@ The daily reconciliation (`DailyReconciliation`, API_SPEC.md Section 17.8) compa
 
 - The break report's last line, `unexplained breaks: N`, with N above zero.
 - Alert `UnexplainedReconciliationBreaks` from `rates_recon_breaks{explained="false"}`.
-- COOKBOOK.md recipe 20 shows how to read the report.
+- COOKBOOK.md recipe 21 shows how to read the report.
 
 ## Immediate action, by break class
 

@@ -16,10 +16,10 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** COOKBOOK.md recipe 20: run the chaos day and read the break report. */
-public final class Recipe20ChaosBreakReport {
+/** COOKBOOK.md recipe 21: run the chaos day and read the break report. */
+public final class Recipe21ChaosBreakReport {
 
-  private Recipe20ChaosBreakReport() {}
+  private Recipe21ChaosBreakReport() {}
 
   static PositionKeeper keeper(final Path journal, final long lastSequence) {
     final InstrumentCatalogue catalogue = new InstrumentCatalogue()

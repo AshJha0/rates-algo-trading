@@ -100,7 +100,7 @@ public final class SimConfig {
         23_400.0);
   }
 
-  /** The first two venues of {@link #ust10yThreeVenues()}, used by COOKBOOK recipe 16. */
+  /** The first two venues of {@link #ust10yThreeVenues()}, used by COOKBOOK recipe 17. */
   public static SimConfig ust10yTwoVenues() {
     final SimConfig three = ust10yThreeVenues();
     return new SimConfig(

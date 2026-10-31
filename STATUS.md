@@ -49,7 +49,7 @@ Gate checks, all run locally on 2026-10-31 on Windows 11 with JDK 25.0.5 and Pyt
 | Check | Where | Result |
 |---|---|---|
 | Determinism: a second run of a synthetic day reproduces P&L to the cent, same output hash and tables | `DeterminismTest` | passed |
-| Ledger refuses an unregistered run and a holdout overlap | `LedgerTest`, recipe 18 | passed |
+| Ledger refuses an unregistered run and a holdout overlap | `LedgerTest`, recipe 19 | passed |
 | Attribution reconciles to position P&L below one cent on every run | `AttributionReconciliationTest`, `test_java_outputs_reconcile` | passed |
 | First pre-registered experiment recorded whatever its result | `data/ledger/ledger.jsonl` line 1, `FirstExperimentTest` | recorded: not supported |
 | Hit-rate model out-of-sample log-loss below the constant baseline | preset `usd_rfq_hit_rate` | 0.6146 against 0.6900 |

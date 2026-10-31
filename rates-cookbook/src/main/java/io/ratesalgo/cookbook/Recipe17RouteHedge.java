@@ -14,10 +14,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** COOKBOOK.md recipe 16: route a hedge order across two venues and read the decisions. */
-public final class Recipe16RouteHedge {
+/** COOKBOOK.md recipe 17: route a hedge order across two venues and read the decisions. */
+public final class Recipe17RouteHedge {
 
-  private Recipe16RouteHedge() {}
+  private Recipe17RouteHedge() {}
 
   public static void main(final String[] args) {
     final ManualClock clock = new ManualClock();

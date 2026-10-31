@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * The daily break report: one section per reconciliation, then every break (API_SPEC.md Section
- * 17.8). The text form is stable so that COOKBOOK.md recipe 20 can quote it.
+ * 17.8). The text form is stable so that COOKBOOK.md recipe 21 can quote it.
  *
  * @param date business date
  * @param results reconciliations in the order they ran

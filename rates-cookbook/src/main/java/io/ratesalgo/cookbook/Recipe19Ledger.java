@@ -11,10 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
-/** COOKBOOK.md recipe 18: pre-register an experiment, see the refusals, record a run. */
-public final class Recipe18Ledger {
+/** COOKBOOK.md recipe 19: pre-register an experiment, see the refusals, record a run. */
+public final class Recipe19Ledger {
 
-  private Recipe18Ledger() {}
+  private Recipe19Ledger() {}
 
   public static void main(final String[] args) throws IOException {
     // a scratch repository with the real presets and a copy of the P5-001 experiment config

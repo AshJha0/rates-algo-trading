@@ -1,4 +1,4 @@
-"""COOKBOOK.md recipe 19: reconcile a run's attribution to its position-based P&L."""
+"""COOKBOOK.md recipe 20: reconcile a run's attribution to its position-based P&L."""
 
 from pathlib import Path
 

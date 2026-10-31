@@ -1,20 +1,4 @@
-1. no pre-registration:
-   refused:
-   pre-registration not found: <repo>/data/preregs/demo.yaml
-   exit code 2
-2. holdout overlapping the fitting period:
-   refused:
-   holdout date 2026-01-09 overlaps the fitting period 2026-01-05..2026-01-16
-   exit code 2
-3. valid pre-registration:
-   DEMO-001 evaluation look 1: not supported (2 days)
-   recorded in data/ledger/ledger.jsonl
-   exit code 0
-ledger seq 1, prereg_sha256 matches file: true, journals 2, verdict not supported
-4. holdout opened twice:
-   DEMO-001 holdout look 1: not supported (2 days)
-   recorded in data/ledger/ledger.jsonl
-   exit code 0
-   refused: the holdout of DEMO-001 has already been opened once
-   exit code 2
-ledger lines: 2
+journal: 94571 frames, 398 rfqs, chain hash f136c9dbcf88d7b1
+low     won 180 of 398, hedges 11, spread 1601139.62, inventory 2204880.69, hedge -850804.69, fees -54451.50, funding -600.02, P&L 2900164.11, residual below a cent: true
+central won 163 of 398, hedges 14, spread 1639687.50, inventory 1230784.67, hedge -963445.31, fees -61660.50, funding 1292.74, P&L 1846659.10, residual below a cent: true
+high    won 129 of 398, hedges 15, spread 1748176.93, inventory 2386981.21, hedge -1116281.25, fees -71442.00, funding 2740.75, P&L 2950175.63, residual below a cent: true

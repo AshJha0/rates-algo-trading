@@ -19,7 +19,7 @@ import java.util.function.ToLongFunction;
 
 /**
  * A synthetic trading day with injected faults, written to a journal (API_SPEC.md Section 17.8,
- * COOKBOOK.md recipe 20).
+ * COOKBOOK.md recipe 21).
  *
  * <p>Two bond instruments trade by order on venue 1 and one swap trades by RFQ on venue 2. The
  * venue's own record of the day (its drop copy) is produced alongside. Faults injected into our
@@ -61,7 +61,7 @@ public final class SyntheticDay {
    */
   public record Params(int orders, int rfqs, int duplicates, int lateWithinDay, int lateAfterCut,
       int busts, int bustsAfterCut, int dropCopyDuplicates) {
-    /** The day used by the acceptance test and recipe 20. */
+    /** The day used by the acceptance test and recipe 21. */
     public static final Params DEFAULT = new Params(60, 40, 5, 2, 3, 3, 1, 2);
   }
 

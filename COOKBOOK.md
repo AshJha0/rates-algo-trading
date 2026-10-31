@@ -615,9 +615,9 @@ mvn -B -ntp -pl rates-analytics -am test -Dtest=AnalyticsGoldenTest -Dsurefire.f
 
 The figures measured on 2026-10-31 (JDK 25.0.5, Windows 11) are listed in API_SPEC.md Section 7.2. To add a comparison, add the instrument to `research/ratesresearch/goldens/generator.py`, regenerate, and add the assertion with its tolerance named as a constant in the test.
 
-## 16. How do I route a hedge order and read the markout report?
+## 17. How do I route a hedge order and read the markout report?
 
-Numbered 16, as the P4 brief said; it was written as 17 on the P4 branch and renumbered when the phase branches were integrated, because P5 uses 17 to 19 (DECISIONS.md DR-P4-05, amended).
+Numbered 17 in the integrated cookbook: the P4 branch wrote it as 17, and when the phase branches were combined the recipes were renumbered to run contiguously by phase (P2 10 to 13, P3 14 to 16, P4 17, P5 18 to 20, P6 21; DECISIONS.md DR-P4-05, amended).
 
 `SmartOrderRouter` takes a parent order through `ParentOrderSink.submit` (the P3 hedger's `HedgeOrderSink` is bound to it), cuts it into randomised slices, prices every venue with the cost model of API_SPEC.md Section 15.1, allocates each slice, and journals the cost table as RouteDecision (template 80) and RouteDecisionVenue (template 81) frames before any child order goes out. Here the router runs against two in-memory CLOBs (`SimConfig.ust10yTwoVenues()`), and a `DecisionCodec` behind the journal sink decodes each decision as it is written, so the table printed is the one in the journal. The last two lines are a small markout report: the cost against the arrival mid, and the mid's move 30 seconds after the last fill, both in basis points of price.
 
@@ -638,10 +638,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** COOKBOOK.md recipe 16: route a hedge order across two venues and read the decisions. */
-public final class Recipe16RouteHedge {
+/** COOKBOOK.md recipe 17: route a hedge order across two venues and read the decisions. */
+public final class Recipe17RouteHedge {
 
-  private Recipe16RouteHedge() {}
+  private Recipe17RouteHedge() {}
 
   public static void main(final String[] args) {
     final ManualClock clock = new ManualClock();
@@ -728,7 +728,7 @@ filled 20m in 51.0s, average 98.502344, arrival mid 98.507813, cost -0.534 bps i
 
 The first decision placed the 4 million slice passively on both venues, because the queue model gave a fill probability above 0.8 within the 15-second horizon and the passive cost (negative: half the spread is earned) beat crossing. One passive child reached its time limit and its 3 million escalated aggressively. The parent cost about half a basis point less than the arrival mid; the positive markout says the mid rose after we finished buying, which in this synthetic market is the random walk, not information.
 
-## 17. How do I run the back-tester on one synthetic day?
+## 18. How do I run the back-tester on one synthetic day?
 
 `SyntheticDay` writes one session of QuoteRequests, BookUpdates and CurveInputs to a journal from a date and a seed; the presets in `data/presets.yaml` fix the market, the clients and the flow profile fitted from DTCC (API_SPEC.md Section 16.5). `BacktestConfig.fromPresets` builds the outcome models at one point of the declared win-probability band, and `BacktestRunner.run` replays the journal through a `Strategy` and returns fills, RFQ outcomes and the P&L attribution (Section 16.1). Running the same strategy at the three band points is how every result in this project is reported (DR-008).
 
@@ -751,10 +751,10 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 
-/** COOKBOOK.md recipe 17: run the back-tester on one synthetic day at every band point. */
-public final class Recipe17Backtest {
+/** COOKBOOK.md recipe 18: run the back-tester on one synthetic day at every band point. */
+public final class Recipe18Backtest {
 
-  private Recipe17Backtest() {}
+  private Recipe18Backtest() {}
 
   public static void main(final String[] args) throws IOException {
     final Presets presets = Presets.load(RepoRoot.find().resolve("data/presets.yaml"));
@@ -798,7 +798,7 @@ high    won 129 of 398, hedges 15, spread 1748176.93, inventory 2386981.21, hedg
 
 The journal line is the same on every machine because the generator is seeded and the hash is the RAJ1 chain hash. The three band points see the same RFQs, competitors and uniform draws (common random numbers keyed by RFQ id), so the only difference between the rows is the slope of the win probability: the high point, where price matters most, wins the fewest RFQs. Inventory dominates the day's P&L, which is why one session says little and experiments use many (recipe 18).
 
-## 18. How do I pre-register an experiment and record it in the ledger?
+## 19. How do I pre-register an experiment and record it in the ledger?
 
 A pre-registration (API_SPEC.md Section 16.8) is a YAML file that names the hypothesis, metric, baseline, treatments, evaluation period, fitting period, holdout dates, success threshold, assumption band, author, date and the SHA-256 of the experiment config, written before the experiment runs. `ExperimentCli` refuses to run without one, refuses a holdout that overlaps the fitting or evaluation period, refuses a config whose hash has changed, and refuses to open a holdout twice. A run that passes is recorded in the ledger whatever its verdict, with the hashes of the pre-registration, config and journals and a hash chain over the ledger lines.
 
@@ -816,10 +816,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 
-/** COOKBOOK.md recipe 18: pre-register an experiment, see the refusals, record a run. */
-public final class Recipe18Ledger {
+/** COOKBOOK.md recipe 19: pre-register an experiment, see the refusals, record a run. */
+public final class Recipe19Ledger {
 
-  private Recipe18Ledger() {}
+  private Recipe19Ledger() {}
 
   public static void main(final String[] args) throws IOException {
     // a scratch repository with the real presets and a copy of the P5-001 experiment config
@@ -933,12 +933,12 @@ ledger lines: 2
 
 Refused runs read no data and leave the ledger untouched; the two recorded runs (evaluation, then the holdout once) are the two ledger lines. The real experiment of this phase, P5-001, went through the same command on 2026-10-31 and its record is the first line of `data/ledger/ledger.jsonl` (LEARN.md Section 10).
 
-## 19. How do I reconcile attribution to position P&L?
+## 20. How do I reconcile attribution to position P&L?
 
 The runner books every trade twice: as cash and position (position-based P&L is cash plus the final position at the final mid) and as attribution lines (spread capture, inventory mark-to-market, hedge cost, carry and roll, funding, fees). Because valuation is linear in price the two agree identically, and the residual must stay below one cent on every run (API_SPEC.md Section 16.4). This recipe is in Python: `ratesresearch.backtest_analysis.reconcile` checks a run's tables independently of the Java code, rebuilding spread capture, hedge cost and fees from the fills. The input is a fitting-period run committed as a fixture under `data/fixtures/backtest/fitting/`.
 
 ```python
-"""COOKBOOK.md recipe 19: reconcile a run's attribution to its position-based P&L."""
+"""COOKBOOK.md recipe 20: reconcile a run's attribution to its position-based P&L."""
 
 from pathlib import Path
 
@@ -983,7 +983,7 @@ reconciles to the cent: True
 
 The explained lines sum to the position P&L exactly at two decimals, and the sums of fill edges equal the spread-capture and hedge-cost lines. Inventory is the line the fills alone cannot rebuild, since it needs the mid path; it is the difference that the identity pins down. `tools/check_cookbook.py` runs this script in CI and compares its output with the block above.
 
-## 20. How do I run the chaos test and read the break report?
+## 21. How do I run the chaos test and read the break report?
 
 `SyntheticDay.generate(journal, seed, params)` writes a trading day to a journal: two Treasuries traded by order on venue 1 and a USD SOFR swap traded by RFQ on venue 2, with faults injected into our side (duplicate fills, fills delivered out of order, fills delivered after the 17:00 reconciliation cut, busts, one bust that arrives before its fill, a bust after the cut) and duplicate lines in the venue's drop copy. The day depends only on the seed. The program books the journal twice with `PositionKeeper`, once up to the cut sequence and once to the end, submits the cleared swaps to the clearing simulator, and runs `DailyReconciliation`, which prints one line per reconciliation and one line per break. The acceptance test `ChaosDayTest` runs the same day and asserts that nothing is unexplained (API_SPEC.md Section 17.8).
 
@@ -1006,10 +1006,10 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** COOKBOOK.md recipe 20: run the chaos day and read the break report. */
-public final class Recipe20ChaosBreakReport {
+/** COOKBOOK.md recipe 21: run the chaos day and read the break report. */
+public final class Recipe21ChaosBreakReport {
 
-  private Recipe20ChaosBreakReport() {}
+  private Recipe21ChaosBreakReport() {}
 
   static PositionKeeper keeper(final Path journal, final long lastSequence) {
     final InstrumentCatalogue catalogue = new InstrumentCatalogue()

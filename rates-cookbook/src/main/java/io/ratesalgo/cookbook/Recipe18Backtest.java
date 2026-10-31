@@ -16,10 +16,10 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 
-/** COOKBOOK.md recipe 17: run the back-tester on one synthetic day at every band point. */
-public final class Recipe17Backtest {
+/** COOKBOOK.md recipe 18: run the back-tester on one synthetic day at every band point. */
+public final class Recipe18Backtest {
 
-  private Recipe17Backtest() {}
+  private Recipe18Backtest() {}
 
   public static void main(final String[] args) throws IOException {
     final Presets presets = Presets.load(RepoRoot.find().resolve("data/presets.yaml"));
