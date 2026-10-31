@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SpotBugs exclusions. Generated SBE codecs are not ours to lint; everything
+     else is checked at effort Max, threshold Low, and fails the build. -->
+<FindBugsFilter>
+  <Match>
+    <Package name="io.ratesalgo.messages.sbe" />
+  </Match>
+  <!-- The replayer exists to drive a clock shared with the code under replay; holding the
+       caller's ManualClock is the design, not a leak. -->
+  <Match>
+    <Class name="io.ratesalgo.journal.Replayer" />
+    <Bug pattern="EI_EXPOSE_REP2" />
+  </Match>
+  <!-- poll() fires every due timer and then rethrows the first handler failure on purpose
+       (API_SPEC.md Section 4); the rethrow is the contract, not an accident. -->
+  <Match>
+    <Class name="io.ratesalgo.common.time.TimerWheel" />
+    <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
+  </Match>
+</FindBugsFilter>

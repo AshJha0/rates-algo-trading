@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  rates-algo-trading SBE schema, version 1.
+
+  This file is the source of truth for every message that crosses a ring buffer
+  or lands in the journal (API_SPEC.md Section 2). Codecs are generated at build
+  time into io.ratesalgo.messages.sbe. All messages are fixed length in v1; the
+  schema version is bumped, never edited in place, once a version has shipped.
+
+  Units (API_SPEC.md Section 0): prices and rates are int64 mantissas with a
+  fixed exponent of -9 (1.0 == 1_000_000_000); quantities are int64 in minor
+  units of notional or face; times are epoch nanoseconds (int64); instrument,
+  client, venue and account ids are int32 from the securities and party masters.
+-->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="io.ratesalgo.messages.sbe"
+                   id="1"
+                   version="0"
+                   semanticVersion="1.0.0"
+                   description="rates-algo-trading messages v1"
+                   byteOrder="littleEndian">
+
+  <types>
+    <composite name="messageHeader" description="Message identifiers and length of message root">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+
+    <composite name="Decimal9" description="Fixed-point number: mantissa * 10^-9">
+      <type name="mantissa" primitiveType="int64"/>
+      <type name="exponent" primitiveType="int8" presence="constant">-9</type>
+    </composite>
+
+    <type name="Ccy" primitiveType="char" length="3" characterEncoding="ASCII" description="ISO 4217 currency code"/>
+    <type name="Tenor" primitiveType="char" length="4" characterEncoding="ASCII" description="Tenor code such as 10Y, 3M, padded with spaces"/>
+    <type name="EpochNanos" primitiveType="int64" description="Nanoseconds since 1970-01-01T00:00:00Z"/>
+    <type name="Quantity" primitiveType="int64" description="Minor units of notional or face"/>
+    <type name="InstrumentId" primitiveType="int32"/>
+    <type name="PartyId" primitiveType="int32"/>
+    <type name="VenueId" primitiveType="int32"/>
+    <type name="SeqNo" primitiveType="int64"/>
+
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">1</validValue>
+      <validValue name="Sell">2</validValue>
+    </enum>
+
+    <enum name="BookAction" encodingType="uint8">
+      <validValue name="Add">1</validValue>
+      <validValue name="Change">2</validValue>
+      <validValue name="Delete">3</validValue>
+      <validValue name="Clear">4</validValue>
+    </enum>
+
+    <enum name="QuoteStatus" encodingType="uint8" description="Outcome of a quote in an RFQ">
+      <validValue name="Done">1</validValue>
+      <validValue name="TradedAway">2</validValue>
+      <validValue name="Expired">3</validValue>
+      <validValue name="Rejected">4</validValue>
+      <validValue name="Passed">5</validValue>
+    </enum>
+
+    <enum name="OrdStatus" encodingType="uint8">
+      <validValue name="New">0</validValue>
+      <validValue name="PartiallyFilled">1</validValue>
+      <validValue name="Filled">2</validValue>
+      <validValue name="Cancelled">4</validValue>
+      <validValue name="Rejected">8</validValue>
+    </enum>
+
+    <enum name="OrdType" encodingType="uint8">
+      <validValue name="Market">1</validValue>
+      <validValue name="Limit">2</validValue>
+    </enum>
+
+    <enum name="TimeInForce" encodingType="uint8">
+      <validValue name="Day">0</validValue>
+      <validValue name="ImmediateOrCancel">3</validValue>
+      <validValue name="FillOrKill">4</validValue>
+      <validValue name="GoodTillDate">6</validValue>
+    </enum>
+
+    <enum name="CurveInputKind" encodingType="uint8">
+      <validValue name="Fixing">1</validValue>
+      <validValue name="Future">2</validValue>
+      <validValue name="ParSwap">3</validValue>
+      <validValue name="Bond">4</validValue>
+    </enum>
+
+    <enum name="LimitKind" encodingType="uint8">
+      <validValue name="Position">1</validValue>
+      <validValue name="BucketDv01">2</validValue>
+      <validValue name="NetDv01">3</validValue>
+      <validValue name="GrossDv01">4</validValue>
+      <validValue name="DailyLoss">5</validValue>
+      <validValue name="OrderRate">6</validValue>
+      <validValue name="QuoteRate">7</validValue>
+      <validValue name="MaxOrderSize">8</validValue>
+      <validValue name="PriceCollar">9</validValue>
+    </enum>
+
+    <enum name="KillReason" encodingType="uint8">
+      <validValue name="Manual">1</validValue>
+      <validValue name="LimitBreach">2</validValue>
+      <validValue name="FeedGap">3</validValue>
+      <validValue name="SessionLoss">4</validValue>
+      <validValue name="StaleReference">5</validValue>
+    </enum>
+  </types>
+
+  <sbe:message name="Heartbeat" id="1" description="Liveness of a source; also the clock tick in replay">
+    <field name="sourceId" id="1" type="int32"/>
+    <field name="timestampNanos" id="2" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="BookUpdate" id="2" description="One price level change on a CLOB">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="instrumentId" id="2" type="InstrumentId"/>
+    <field name="venueSeqNo" id="3" type="SeqNo"/>
+    <field name="side" id="4" type="Side"/>
+    <field name="action" id="5" type="BookAction"/>
+    <field name="level" id="6" type="uint8"/>
+    <field name="price" id="7" type="Decimal9"/>
+    <field name="quantity" id="8" type="Quantity"/>
+    <field name="orderCount" id="9" type="int32"/>
+    <field name="timestampNanos" id="10" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="CurveInput" id="3" description="A curve instrument quote or fixing used by the bootstrap">
+    <field name="curveId" id="1" type="int32"/>
+    <field name="kind" id="2" type="CurveInputKind"/>
+    <field name="instrumentId" id="3" type="InstrumentId"/>
+    <field name="tenor" id="4" type="Tenor"/>
+    <field name="value" id="5" type="Decimal9" description="Rate, price or fixing in the instrument's own quoting convention"/>
+    <field name="timestampNanos" id="6" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="QuoteRequest" id="10" description="Inbound RFQ from a client via a venue">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="rfqId" id="2" type="int64"/>
+    <field name="clientId" id="3" type="PartyId"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="side" id="5" type="Side" description="Side from the client's point of view"/>
+    <field name="quantity" id="6" type="Quantity"/>
+    <field name="currency" id="7" type="Ccy"/>
+    <field name="dealerCount" id="8" type="uint8" description="Number of dealers in competition, when the venue discloses it"/>
+    <field name="receivedNanos" id="9" type="EpochNanos"/>
+    <field name="expiryNanos" id="10" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="Quote" id="11" description="Our response to an RFQ">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="rfqId" id="2" type="int64"/>
+    <field name="quoteId" id="3" type="int64"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="bidPrice" id="5" type="Decimal9"/>
+    <field name="askPrice" id="6" type="Decimal9"/>
+    <field name="bidQuantity" id="7" type="Quantity"/>
+    <field name="askQuantity" id="8" type="Quantity"/>
+    <field name="referenceNanos" id="9" type="EpochNanos" description="Timestamp of the newest input the price depends on"/>
+    <field name="validUntilNanos" id="10" type="EpochNanos"/>
+    <field name="sentNanos" id="11" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="QuoteResponse" id="12" description="Venue's outcome for one of our quotes">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="rfqId" id="2" type="int64"/>
+    <field name="quoteId" id="3" type="int64"/>
+    <field name="status" id="4" type="QuoteStatus"/>
+    <field name="tradedPrice" id="5" type="Decimal9"/>
+    <field name="tradedQuantity" id="6" type="Quantity"/>
+    <field name="coverPrice" id="7" type="Decimal9" description="Second-best price, when the venue discloses it to the winner"/>
+    <field name="timestampNanos" id="8" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="NewOrder" id="20" description="Outbound order to a CLOB or futures venue">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64"/>
+    <field name="parentId" id="3" type="int64" description="Router parent order, 0 if none"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="side" id="5" type="Side"/>
+    <field name="ordType" id="6" type="OrdType"/>
+    <field name="timeInForce" id="7" type="TimeInForce"/>
+    <field name="price" id="8" type="Decimal9"/>
+    <field name="quantity" id="9" type="Quantity"/>
+    <field name="expireNanos" id="10" type="EpochNanos"/>
+    <field name="sentNanos" id="11" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="ExecutionReport" id="21" description="Order state change or fill from a venue">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64"/>
+    <field name="venueOrderId" id="3" type="int64"/>
+    <field name="execId" id="4" type="int64"/>
+    <field name="instrumentId" id="5" type="InstrumentId"/>
+    <field name="side" id="6" type="Side"/>
+    <field name="ordStatus" id="7" type="OrdStatus"/>
+    <field name="lastPrice" id="8" type="Decimal9"/>
+    <field name="lastQuantity" id="9" type="Quantity"/>
+    <field name="leavesQuantity" id="10" type="Quantity"/>
+    <field name="cumQuantity" id="11" type="Quantity"/>
+    <field name="transactNanos" id="12" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="RiskLimitBreach" id="30" description="A pre-trade or post-trade limit was hit">
+    <field name="limitKind" id="1" type="LimitKind"/>
+    <field name="scopeId" id="2" type="int32" description="Instrument, bucket or account the limit applies to"/>
+    <field name="limitValue" id="3" type="Decimal9"/>
+    <field name="observedValue" id="4" type="Decimal9"/>
+    <field name="rejectedMessageSeqNo" id="5" type="SeqNo" description="Journal sequence of the message rejected, 0 if post-trade"/>
+    <field name="timestampNanos" id="6" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="KillSwitch" id="31" description="Pull every quote, cancel every order, block new ones">
+    <field name="reason" id="1" type="KillReason"/>
+    <field name="scopeId" id="2" type="int32" description="0 for the whole process, else an instrument group"/>
+    <field name="requestedBy" id="3" type="PartyId"/>
+    <field name="timestampNanos" id="4" type="EpochNanos"/>
+  </sbe:message>
+
+</sbe:messageSchema>

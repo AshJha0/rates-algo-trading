@@ -1,0 +1,103 @@
+name: CI
+
+# Gating jobs: Java on JDK 25 LTS (Linux and Windows), Python, and the repository
+# policy check. The JDK 27 job is a forward-compatibility signal and does not gate
+# (DR-003). The docs site is built by docs.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  java:
+    name: Java 25 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Build, test, coverage, SpotBugs
+        run: mvn -B -ntp verify
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-${{ matrix.os }}
+          path: "**/target/site/jacoco/jacoco.xml"
+          if-no-files-found: ignore
+
+  java-forward:
+    name: Java 27 forward-compatibility (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "27"
+          cache: maven
+      - run: mvn -B -ntp verify
+
+  python:
+    name: Python 3.12 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e "research[dev]"
+      - name: Lint and format
+        run: ruff check research && ruff format --check research
+      - name: Type-check
+        working-directory: research
+        run: mypy
+      - name: Tests
+        run: pytest -q research
+      - name: Cookbook quotes its programs and recorded output
+        run: python tools/check_cookbook.py
+
+  policy:
+    name: Repository policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Word policy (DR-007)
+        run: |
+          if git grep -I -i -n -e "interv""iew" -- . ':!.github/workflows/ci.yml'; then
+            echo "::error::role-preparation material must be titled learning or knowledge check (DR-007)"
+            exit 1
+          fi
+      - name: No raw data downloads committed (DR-006)
+        run: |
+          big=$(git ls-files -z | xargs -0 -I{} sh -c 'test -f "{}" && stat -c "%s %n" "{}"' | awk '$1 > 2000000 {print $2}')
+          if [ -n "$big" ]; then
+            echo "::error::files over 2 MB are not committed; fit parameters and small fixtures only: $big"
+            exit 1
+          fi

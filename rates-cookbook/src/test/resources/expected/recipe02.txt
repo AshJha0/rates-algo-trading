@@ -1,0 +1,5 @@
+seq=1 ts=1000 template=1 value=100
+seq=2 ts=2000 template=1 value=200
+seq=3 ts=3000 template=1 value=300
+frames=3 finalHash=c6d0336109f10ed2
+corruption detected at sequence 2

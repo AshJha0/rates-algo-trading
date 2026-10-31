@@ -1,0 +1,30 @@
+sequenceDiagram
+  participant C as Client
+  participant V as Venue (D2C RFQ)
+  participant G as Gateway
+  participant J as Journal
+  participant Q as Quoting engine
+  participant R as Risk engine
+  participant H as Hedger
+  participant S as Router
+
+  C->>V: RFQ (FIX QuoteRequest)
+  V->>G: QuoteRequest
+  G->>J: append QuoteRequest frame (templateId 10)
+  G->>Q: QuoteRequest on ring buffer
+  Q->>R: pre-trade check (size, DV01 headroom)
+  R-->>Q: ok
+  Q->>Q: mid, skew from inventory, spread
+  Q->>G: Quote (templateId 11)
+  G->>J: append Quote frame
+  G->>V: FIX Quote
+  V->>C: dealer quotes
+  C->>V: accept dealer quote
+  V->>G: QuoteResponse (accept, cover price)
+  G->>J: append QuoteResponse frame (templateId 12)
+  G->>Q: QuoteResponse
+  Q->>R: position update
+  R->>H: residual DV01 ladder
+  H->>S: hedge order request
+  S->>G: NewOrder (templateId 20) to chosen venue
+  G->>J: append NewOrder frame

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.ratesalgo</groupId>
+    <artifactId>rates-algo-trading</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>rates-messages</artifactId>
+  <name>rates-messages</name>
+  <description>SBE schema v1 and the codecs generated from it at build time.</description>
+
+  <properties>
+    <sbe.schema>${project.basedir}/src/main/resources/sbe/rates-schema-v1.xml</sbe.schema>
+    <sbe.output>${project.build.directory}/generated-sources/sbe</sbe.output>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.agrona</groupId>
+      <artifactId>agrona</artifactId>
+    </dependency>
+    <dependency>
+      <!-- Only needed to run the generator; not a runtime dependency. -->
+      <groupId>uk.co.real-logic</groupId>
+      <artifactId>sbe-tool</artifactId>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>generate-sbe-codecs</id>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>uk.co.real_logic.sbe.SbeTool</mainClass>
+              <includeProjectDependencies>true</includeProjectDependencies>
+              <classpathScope>compile</classpathScope>
+              <systemProperties>
+                <systemProperty>
+                  <key>sbe.output.dir</key>
+                  <value>${sbe.output}</value>
+                </systemProperty>
+                <systemProperty>
+                  <key>sbe.target.language</key>
+                  <value>Java</value>
+                </systemProperty>
+                <systemProperty>
+                  <key>sbe.validation.stop.on.error</key>
+                  <value>true</value>
+                </systemProperty>
+                <systemProperty>
+                  <key>sbe.java.generate.interfaces</key>
+                  <value>true</value>
+                </systemProperty>
+              </systemProperties>
+              <arguments>
+                <argument>${sbe.schema}</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>build-helper-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>add-sbe-sources</id>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>add-source</goal>
+            </goals>
+            <configuration>
+              <sources>
+                <source>${sbe.output}</source>
+              </sources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <!-- Generated codecs carry javac lint warnings we do not own; keep -Werror
+             for our own code in the other modules and relax it here. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <compilerArgs combine.self="override">
+            <arg>-Xlint:none</arg>
+            <arg>-XDcompilePolicy=simple</arg>
+            <arg>--should-stop=ifError=FLOW</arg>
+            <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*[/\\]generated-sources[/\\].*</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- Generated code is excluded from the coverage floor; our own test of the
+             round trip still runs. -->
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>io/ratesalgo/messages/sbe/**</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

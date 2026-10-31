@@ -1,0 +1,30 @@
+# Fitted parameter presets for the venue simulators and analytics.
+#
+# Phase 0: schema only, no fitted values. Entries are added in P1 and P2 when a
+# source has been downloaded, its manifest committed (data/manifests/), and the
+# fit reproduced from that manifest. Raw data is never committed (DECISIONS.md DR-006).
+#
+# Schema (one list item per preset):
+#
+#   - name:         short identifier used in code and reports, e.g. usd_sofr_rfq_arrivals
+#     fitted_from:  the manifest file under data/manifests/ (or "assumption" for
+#                   declared, unfitted values such as the RFQ win-probability band, DR-008)
+#     data_range:   { start: YYYY-MM-DD, end: YYYY-MM-DD } of the source data
+#     sample_size:  integer count of observations used
+#     method:       one line naming the estimator and the script or notebook that ran it
+#     parameters:   mapping of parameter name to { value: number, standard_error: number }
+#                   standard_error is null for assumptions and for parameters without one
+#     notes:        optional; scaling assumptions (DR-004) and caveats go here
+#
+# Example of the shape (not a real fit; values are placeholders and must not be used):
+#
+#   - name: example_preset
+#     fitted_from: data/manifests/example_manifest.json
+#     data_range: { start: 2026-01-02, end: 2026-06-30 }
+#     sample_size: 0
+#     method: "maximum likelihood, research/ratesresearch/<module>.py::<function>"
+#     parameters:
+#       rate_per_minute: { value: 0.0, standard_error: 0.0 }
+#     notes: "placeholder, replaced in P1"
+
+presets: []

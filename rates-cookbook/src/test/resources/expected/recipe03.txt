@@ -1,0 +1,3 @@
+templateId=10 schemaId=1 version=0 blockLength=49
+rfqId=42 clientId=7 instrumentId=1001 side=Buy quantity=10000000000 currency=USD dealers=4 expiryNanos=1700000030000000000
+encodedLength=57

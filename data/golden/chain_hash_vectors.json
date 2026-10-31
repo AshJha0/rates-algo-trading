@@ -1,0 +1,10 @@
+{
+  "description": "Known answers for the journal chain hash (API_SPEC.md Section 1): FNV-1a 64 over the previous hash as 8 little-endian bytes followed by the payload. Computed independently in Python on 2026-10-31; checked by rates-journal ChainHashTest and research/tests/test_fnv.py.",
+  "offset_basis": "0xcbf29ce484222325",
+  "prime": "0x100000001b3",
+  "vectors": [
+    {"previous": "0x0", "payload_ascii": "", "hash": "0xa8c7f832281a39c5"},
+    {"previous": "0x0", "payload_ascii": "hello", "hash": "0x8fe9535b8a55c92b"},
+    {"previous": "0x8fe9535b8a55c92b", "payload_ascii": "world", "hash": "0xb71f85c4c4115848"}
+  ]
+}

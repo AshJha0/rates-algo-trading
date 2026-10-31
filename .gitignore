@@ -1,0 +1,29 @@
+# Maven
+target/
+dependency-reduced-pom.xml
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+*.egg-info/
+.venv/
+venv/
+
+# MkDocs output
+site/
+
+# Journals (never commit raw journals)
+journals/*.raj
+
+# OS
+.DS_Store
+Thumbs.db

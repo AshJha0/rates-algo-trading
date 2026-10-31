@@ -1,0 +1,41 @@
+graph TD
+  common["rates-common<br/>Clock, ManualClock, TimerWheel<br/>(P0)"]
+  messages["rates-messages<br/>SBE schema v1 codecs<br/>(P0)"]
+  journal["rates-journal<br/>JournalWriter, JournalReader, Replayer<br/>(P0)"]
+  agrona["Agrona (external)"]
+  sbe["SBE runtime (external)"]
+
+  analytics["rates-analytics<br/>curves, swaps, bonds, futures<br/>(planned P1)"]
+  core["rates-core<br/>event loop, market state<br/>(planned P2)"]
+  venues["rates-venues<br/>FIX 4.4, SBE book feed, simulators<br/>(planned P2)"]
+  quoting["rates-quoting<br/>(planned P3)"]
+  risk["rates-risk<br/>risk engine, hedger<br/>(planned P3)"]
+  router["rates-router<br/>(planned P4)"]
+  backtest["rates-backtest<br/>(planned P5)"]
+  posttrade["rates-posttrade<br/>(planned P5)"]
+
+  journal --> common
+  journal --> agrona
+  messages --> sbe
+  messages --> agrona
+
+  analytics -.-> common
+  core -.-> common
+  core -.-> messages
+  core -.-> journal
+  core -.-> analytics
+  venues -.-> messages
+  venues -.-> core
+  quoting -.-> core
+  quoting -.-> analytics
+  risk -.-> core
+  risk -.-> analytics
+  router -.-> core
+  router -.-> venues
+  backtest -.-> journal
+  backtest -.-> core
+  posttrade -.-> journal
+  posttrade -.-> analytics
+
+  classDef planned stroke-dasharray: 5 5
+  class analytics,core,venues,quoting,risk,router,backtest,posttrade planned

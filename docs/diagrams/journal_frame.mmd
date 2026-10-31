@@ -1,0 +1,28 @@
+classDiagram
+  class FileHeader {
+    +char4 magic_RAJ1 : offset 0
+    +uint16 formatVersion_1 : offset 4
+    +uint16 headerLength_32 : offset 6
+    +int32 segmentSize : offset 8
+    +int64 createdEpochNanos : offset 12
+    +byte12 reserved_zero : offset 20
+  }
+  class Frame {
+    +int32 frameLength : offset 0, zero marks end of data
+    +int64 sequence : offset 4, 1-based, plus 1 each frame
+    +int64 timestampNanos : offset 12
+    +uint16 templateId : offset 20
+    +uint16 schemaVersion : offset 22
+    +int64 chainHash : offset 24
+    +bytes payload : offset 32 to frameLength, SBE message with header
+  }
+  class ChainHash {
+    +FNV1a 64 bit
+    +offset basis 0xcbf29ce484222325
+    +prime 0x100000001b3
+    +input = LE8 of previous chainHash then payload
+    +genesis previous chainHash = 0
+  }
+  FileHeader --> Frame : frames start at offset 32
+  Frame --> Frame : next frame at offset plus frameLength
+  Frame ..> ChainHash : chainHash computed by

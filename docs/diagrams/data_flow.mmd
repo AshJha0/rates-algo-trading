@@ -1,0 +1,18 @@
+flowchart LR
+  venue["Venue or venue simulator<br/>FIX 4.4, SBE book feed<br/>(planned P2)"]
+  gateway["Venue gateway<br/>decode to internal SBE<br/>(planned P2)"]
+  ring_in["Inbound ring buffer<br/>Agrona"]
+  loop["Event loop<br/>one thread per instrument group<br/>(planned P2)"]
+  journal["Journal<br/>RAJ1 frames, hash chain<br/>(P0)"]
+  ring_out["Outbound ring buffer"]
+  gateway_out["Venue gateway<br/>encode to venue protocol"]
+  replayer["Replayer<br/>(P0)"]
+  backtest["Back-tester<br/>(planned P5)"]
+  research["Python research<br/>ratesresearch (P0 partial)"]
+
+  venue --> gateway --> ring_in --> loop
+  loop -->|append every input| journal
+  loop --> ring_out --> gateway_out --> venue
+  journal --> replayer --> backtest
+  journal --> research
+  backtest --> research
