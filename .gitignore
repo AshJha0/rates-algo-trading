@@ -23,6 +23,11 @@ venv/
 
 # Journals (never commit raw journals)
 journals/*.raj
+*.raj
+
+# Executed notebook renderings (tools/run_notebooks.py; published by the docs build)
+research/notebooks/_build/
+.ipynb_checkpoints/
 
 # OS
 .DS_Store

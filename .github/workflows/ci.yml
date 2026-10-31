@@ -72,7 +72,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e "research[dev,golden]"
+      - run: python -m pip install -e "research[dev,golden,notebooks]"
       - name: Lint and format
         run: ruff check research && ruff format --check research
       - name: Type-check
@@ -80,8 +80,10 @@ jobs:
         run: mypy
       - name: Tests
         run: pytest -q research
-      - name: Cookbook quotes its programs and recorded output
+      - name: Cookbook quotes its programs and recorded output (runs the Python recipes)
         run: python tools/check_cookbook.py
+      - name: Research notebooks execute
+        run: python tools/run_notebooks.py
 
   policy:
     name: Repository policy

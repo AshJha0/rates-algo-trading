@@ -1,0 +1,12 @@
+spread_capture      1,986,264.94
+inventory_mtm      -1,547,896.30
+hedge_cost         -1,633,546.88
+carry_roll                  0.00
+funding                -1,940.61
+fees                 -104,547.00
+explained          -1,301,665.84
+position_pnl       -1,301,665.84
+residual                0.000000
+client fills 144, sum of edges 1,986,264.94
+hedge fills 13, sum of edges -1,633,546.88
+reconciles to the cent: True

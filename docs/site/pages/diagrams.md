@@ -49,3 +49,11 @@ The router's child order states and the reports and actions that move between th
 ```mermaid
 --8<-- "docs/diagrams/child_order_lifecycle.mmd"
 ```
+
+## Experiment lifecycle
+
+From fitting-period estimates to a pre-registration committed before the run, through the refusals of `ExperimentCli`, to the ledger line that records every run whatever its verdict, and the holdout that is opened once (API_SPEC.md Section 16.8, LEARN.md Section 10).
+
+```mermaid
+--8<-- "docs/diagrams/experiment_lifecycle.mmd"
+```

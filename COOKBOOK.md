@@ -25,7 +25,12 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 17. How do I route a hedge order and read the markout report? (P4, written below)
 18. How do I pre-register a back-test and open the holdout once? (P5)
 19. How do I run the latency job and read the histogram? (P5)
+17. How do I run the back-tester on one synthetic day? (P5, written below)
+18. How do I pre-register an experiment and record it in the ledger? (P5, written below)
+19. How do I reconcile attribution to position P&L? (P5, written below; a Python recipe)
 20. How do I verify a Java journal's hash chain from Python? (P5)
+21. How do I route a hedge order and read the markout report? (P4; was item 17 before P5 took 17 to 19)
+22. How do I run the latency job and read the histogram? (P5 latency harness; was item 19)
 
 ## 1. How do I use the ManualClock and TimerWheel in a test?
 
@@ -721,3 +726,258 @@ filled 20m in 51.0s, average 98.502344, arrival mid 98.507813, cost -0.534 bps i
 ```
 
 The first decision placed the 4 million slice passively on both venues, because the queue model gave a fill probability above 0.8 within the 15-second horizon and the passive cost (negative: half the spread is earned) beat crossing. One passive child reached its time limit and its 3 million escalated aggressively. The parent cost about half a basis point less than the arrival mid; the positive markout says the mid rose after we finished buying, which in this synthetic market is the random walk, not information.
+
+## 17. How do I run the back-tester on one synthetic day?
+
+`SyntheticDay` writes one session of QuoteRequests, BookUpdates and CurveInputs to a journal from a date and a seed; the presets in `data/presets.yaml` fix the market, the clients and the flow profile fitted from DTCC (API_SPEC.md Section 16.5). `BacktestConfig.fromPresets` builds the outcome models at one point of the declared win-probability band, and `BacktestRunner.run` replays the journal through a `Strategy` and returns fills, RFQ outcomes and the P&L attribution (Section 16.1). Running the same strategy at the three band points is how every result in this project is reported (DR-008).
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.backtest.BacktestConfig;
+import io.ratesalgo.backtest.BacktestResult;
+import io.ratesalgo.backtest.BacktestRunner;
+import io.ratesalgo.backtest.RfqRecord;
+import io.ratesalgo.backtest.model.BandPoint;
+import io.ratesalgo.backtest.model.Presets;
+import io.ratesalgo.backtest.pnl.Attribution;
+import io.ratesalgo.backtest.strategy.FixedSpreadStrategy;
+import io.ratesalgo.backtest.synth.SyntheticDay;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 17: run the back-tester on one synthetic day at every band point. */
+public final class Recipe17Backtest {
+
+  private Recipe17Backtest() {}
+
+  public static void main(final String[] args) throws IOException {
+    final Presets presets = Presets.load(RepoRoot.find().resolve("data/presets.yaml"));
+    final Path dir = Files.createTempDirectory("recipe17");
+    final Path journal = dir.resolve("2026-02-02.raj");
+    final LocalDate date = LocalDate.of(2026, 2, 2);
+    final SyntheticDay.Summary day =
+        new SyntheticDay(SyntheticDay.Params.fromPresets(presets))
+            .generate(date, 5_000_000L + date.toEpochDay(), journal, null);
+    System.out.println(
+        "journal: " + day.frames() + " frames, " + day.rfqs() + " rfqs, chain hash " + Long.toHexString(day.chainHash()));
+
+    for (final BandPoint point : BandPoint.values()) {
+      final BacktestConfig config = BacktestConfig.fromPresets(presets, List.of(journal), 7L, point, null);
+      final BacktestResult r =
+          new BacktestRunner(config).run(new FixedSpreadStrategy(0.30, 0.15, 100_000, 4));
+      final long won = r.rfqs().stream().filter(RfqRecord::won).count();
+      final Attribution a = r.total();
+      System.out.println(
+          String.format(
+              Locale.ROOT,
+              "%-7s won %d of %d, hedges %d, spread %.2f, inventory %.2f, hedge %.2f, fees %.2f,"
+                  + " funding %.2f, P&L %.2f, residual below a cent: %b",
+              point.label(), won, r.rfqs().size(), r.hedgeFills(), a.spreadCapture(), a.inventoryMtm(),
+              a.hedgeCost(), a.fees(), a.funding(), a.positionPnl(), Math.abs(a.residual()) < 0.01));
+    }
+    Files.delete(journal);
+    Files.delete(dir);
+  }
+}
+```
+
+Expected output:
+
+```
+journal: 94571 frames, 398 rfqs, chain hash f136c9dbcf88d7b1
+low     won 180 of 398, hedges 11, spread 1601139.62, inventory 2204880.69, hedge -850804.69, fees -54451.50, funding -600.02, P&L 2900164.11, residual below a cent: true
+central won 163 of 398, hedges 14, spread 1639687.50, inventory 1230784.67, hedge -963445.31, fees -61660.50, funding 1292.74, P&L 1846659.10, residual below a cent: true
+high    won 129 of 398, hedges 15, spread 1748176.93, inventory 2386981.21, hedge -1116281.25, fees -71442.00, funding 2740.75, P&L 2950175.63, residual below a cent: true
+```
+
+The journal line is the same on every machine because the generator is seeded and the hash is the RAJ1 chain hash. The three band points see the same RFQs, competitors and uniform draws (common random numbers keyed by RFQ id), so the only difference between the rows is the slope of the win probability: the high point, where price matters most, wins the fewest RFQs. Inventory dominates the day's P&L, which is why one session says little and experiments use many (recipe 18).
+
+## 18. How do I pre-register an experiment and record it in the ledger?
+
+A pre-registration (API_SPEC.md Section 16.8) is a YAML file that names the hypothesis, metric, baseline, treatments, evaluation period, fitting period, holdout dates, success threshold, assumption band, author, date and the SHA-256 of the experiment config, written before the experiment runs. `ExperimentCli` refuses to run without one, refuses a holdout that overlaps the fitting or evaluation period, refuses a config whose hash has changed, and refuses to open a holdout twice. A run that passes is recorded in the ledger whatever its verdict, with the hashes of the pre-registration, config and journals and a hash chain over the ledger lines.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.backtest.prereg.ExperimentCli;
+import io.ratesalgo.backtest.prereg.Ledger;
+import io.ratesalgo.backtest.util.Hashing;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+
+/** COOKBOOK.md recipe 18: pre-register an experiment, see the refusals, record a run. */
+public final class Recipe18Ledger {
+
+  private Recipe18Ledger() {}
+
+  public static void main(final String[] args) throws IOException {
+    // a scratch repository with the real presets and a copy of the P5-001 experiment config
+    final Path repo = Files.createTempDirectory("recipe18");
+    Files.createDirectories(repo.resolve("data/experiments"));
+    Files.createDirectories(repo.resolve("data/preregs"));
+    Files.copy(RepoRoot.find().resolve("data/presets.yaml"), repo.resolve("data/presets.yaml"));
+    Files.copy(
+        RepoRoot.find().resolve("data/experiments/P5-001.config.yaml"),
+        repo.resolve("data/experiments/demo.config.yaml"));
+    final String configSha = Hashing.sha256TextFile(repo.resolve("data/experiments/demo.config.yaml"));
+
+    final String prereg =
+        """
+        prereg_version: 1
+        id: DEMO-001
+        title: cookbook demonstration
+        hypothesis: the model spread earns more than the fixed spread
+        metric: total position P&L per session, USD
+        baseline: fixed_spread
+        treatments: [model_spread]
+        period: {start: 2026-03-02, end: 2026-03-03}
+        fitting_period: {start: 2026-01-05, end: 2026-01-16}
+        holdout: [HOLDOUT]
+        success_threshold: Holm-adjusted Welch p below 0.05 and bootstrap interval above zero at every band point
+        assumption_band: {preset: usd_rfq_hit_rate, parameter: spread_to_cover_bp, points: [low, central, high]}
+        author: cookbook
+        date: 2026-10-31
+        config: data/experiments/demo.config.yaml
+        config_sha256: SHA
+        """
+            .replace("SHA", configSha);
+    final Path file = repo.resolve("data/preregs/demo.yaml");
+
+    System.out.println("1. no pre-registration:");
+    run(repo, "--prereg", "data/preregs/demo.yaml");
+
+    System.out.println("2. holdout overlapping the fitting period:");
+    Files.writeString(file, prereg.replace("HOLDOUT", "2026-01-09, 2026-03-10"), StandardCharsets.UTF_8);
+    run(repo, "--prereg", "data/preregs/demo.yaml");
+
+    System.out.println("3. valid pre-registration:");
+    Files.writeString(file, prereg.replace("HOLDOUT", "2026-03-09, 2026-03-10"), StandardCharsets.UTF_8);
+    run(repo, "--prereg", "data/preregs/demo.yaml", "--commit", "recipe18");
+
+    final Ledger ledger = new Ledger(repo.resolve("data/ledger/ledger.jsonl"));
+    final Map<String, Object> entry = ledger.entries().get(0);
+    System.out.println(
+        "ledger seq "
+            + entry.get("seq")
+            + ", prereg_sha256 matches file: "
+            + Hashing.sha256TextFile(file).equals(entry.get("prereg_sha256"))
+            + ", journals "
+            + ((java.util.List<?>) entry.get("journals")).size()
+            + ", verdict "
+            + entry.get("verdict"));
+
+    System.out.println("4. holdout opened twice:");
+    run(repo, "--prereg", "data/preregs/demo.yaml", "--scope", "holdout", "--commit", "recipe18");
+    run(repo, "--prereg", "data/preregs/demo.yaml", "--scope", "holdout");
+    System.out.println("ledger lines: " + ledger.entries().size());
+  }
+
+  private static void run(final Path repo, final String... args) throws IOException {
+    final Path work = Files.createDirectories(repo.resolve("work"));
+    final String[] all = new String[args.length + 4];
+    System.arraycopy(args, 0, all, 0, args.length);
+    all[args.length] = "--repo";
+    all[args.length + 1] = repo.toString();
+    all[args.length + 2] = "--work";
+    all[args.length + 3] = work.toString();
+    final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    final int code;
+    try (PrintStream out = new PrintStream(bytes, true, StandardCharsets.UTF_8)) {
+      code = ExperimentCli.run(all, out);
+    }
+    final String text =
+        bytes.toString(StandardCharsets.UTF_8).replace(repo.toString(), "<repo>").replace('\\', '/');
+    for (final String line : text.strip().split("\\R", -1)) {
+      System.out.println("   " + line.strip());
+    }
+    System.out.println("   exit code " + code);
+  }
+}
+```
+
+Expected output:
+
+```
+1. no pre-registration:
+   refused:
+   pre-registration not found: <repo>/data/preregs/demo.yaml
+   exit code 2
+2. holdout overlapping the fitting period:
+   refused:
+   holdout date 2026-01-09 overlaps the fitting period 2026-01-05..2026-01-16
+   exit code 2
+3. valid pre-registration:
+   DEMO-001 evaluation look 1: not supported (2 days)
+   recorded in data/ledger/ledger.jsonl
+   exit code 0
+ledger seq 1, prereg_sha256 matches file: true, journals 2, verdict not supported
+4. holdout opened twice:
+   DEMO-001 holdout look 1: not supported (2 days)
+   recorded in data/ledger/ledger.jsonl
+   exit code 0
+   refused: the holdout of DEMO-001 has already been opened once
+   exit code 2
+ledger lines: 2
+```
+
+Refused runs read no data and leave the ledger untouched; the two recorded runs (evaluation, then the holdout once) are the two ledger lines. The real experiment of this phase, P5-001, went through the same command on 2026-10-31 and its record is the first line of `data/ledger/ledger.jsonl` (LEARN.md Section 10).
+
+## 19. How do I reconcile attribution to position P&L?
+
+The runner books every trade twice: as cash and position (position-based P&L is cash plus the final position at the final mid) and as attribution lines (spread capture, inventory mark-to-market, hedge cost, carry and roll, funding, fees). Because valuation is linear in price the two agree identically, and the residual must stay below one cent on every run (API_SPEC.md Section 16.4). This recipe is in Python: `ratesresearch.backtest_analysis.reconcile` checks a run's tables independently of the Java code, rebuilding spread capture, hedge cost and fees from the fills. The input is a fitting-period run committed as a fixture under `data/fixtures/backtest/fitting/`.
+
+```python
+"""COOKBOOK.md recipe 19: reconcile a run's attribution to its position-based P&L."""
+
+from pathlib import Path
+
+from ratesresearch import backtest_analysis as ba
+
+root = Path(__file__).resolve().parents[2]
+run = ba.load_run(root / "data/fixtures/backtest/fitting/2026-01-05")
+total = run.pnl[run.pnl["instrument"] == "TOTAL"].iloc[0]
+
+explained = 0.0
+for line in ba.LINES:
+    explained += float(total[line])
+    print(f"{line:<15} {float(total[line]):>16,.2f}")
+print(f"{'explained':<15} {explained:>16,.2f}")
+print(f"{'position_pnl':<15} {float(total['position_pnl']):>16,.2f}")
+print(f"{'residual':<15} {float(total['residual']):>16,.6f}")
+
+client = run.fills[run.fills["kind"] == "client"]
+hedge = run.fills[run.fills["kind"] == "hedge"]
+print(f"client fills {len(client)}, sum of edges {client['edge'].sum():,.2f}")
+print(f"hedge fills {len(hedge)}, sum of edges {hedge['edge'].sum():,.2f}")
+failures = ba.reconcile(run)
+print("reconciles to the cent:", not failures)
+```
+
+Expected output:
+
+```
+spread_capture      1,986,264.94
+inventory_mtm      -1,547,896.30
+hedge_cost         -1,633,546.88
+carry_roll                  0.00
+funding                -1,940.61
+fees                 -104,547.00
+explained          -1,301,665.84
+position_pnl       -1,301,665.84
+residual                0.000000
+client fills 144, sum of edges 1,986,264.94
+hedge fills 13, sum of edges -1,633,546.88
+reconciles to the cent: True
+```
+
+The explained lines sum to the position P&L exactly at two decimals, and the sums of fill edges equal the spread-capture and hedge-cost lines. Inventory is the line the fills alone cannot rebuild, since it needs the mid path; it is the difference that the identity pins down. `tools/check_cookbook.py` runs this script in CI and compares its output with the block above.

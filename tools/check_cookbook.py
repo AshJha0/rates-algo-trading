@@ -6,12 +6,17 @@ words "Expected output" in that section must equal rates-cookbook's expected fil
 this in the Python job; RecipesTest runs the programs and compares them with the same
 expected files, so the cookbook, the code and the output cannot drift apart.
 
+Python recipes (P5 onward) live in research/recipes/: the first ```python block must equal the
+script, and this checker runs the script and compares its output with the recorded file and
+with the "Expected output" block, so Python recipes are executed here rather than by Maven.
+
 Usage: python tools/check_cookbook.py [repo root]
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,6 +30,12 @@ RECIPES = {
     7: ("Recipe07GiltExDividend.java", "recipe07.txt"),
     8: ("Recipe08Ctd.java", "recipe08.txt"),
     16: ("Recipe16RouteHedge.java", "recipe16.txt"),
+    17: ("Recipe17Backtest.java", "recipe17.txt"),
+    18: ("Recipe18Ledger.java", "recipe18.txt"),
+}
+
+PYTHON_RECIPES = {
+    19: ("recipe19_reconcile.py", "recipe19.txt"),
 }
 
 
@@ -67,8 +78,31 @@ def main(root: Path) -> int:
         if quoted_out.strip() != expected.strip():
             print(f"recipe {number}: output block differs from {expected_name}")
             failures += 1
+    py_dir = root / "research" / "recipes"
+    for number, (script_name, expected_name) in PYTHON_RECIPES.items():
+        sec = section(cookbook, number)
+        script = (py_dir / script_name).read_text(encoding="utf-8").replace("\r\n", "\n")
+        expected = (py_dir / expected_name).read_text(encoding="utf-8").replace("\r\n", "\n")
+        if fenced(sec, "python").strip() != script.strip():
+            print(f"recipe {number}: code block differs from {script_name}")
+            failures += 1
+        if fenced(sec, "", after="Expected output").strip() != expected.strip():
+            print(f"recipe {number}: output block differs from {expected_name}")
+            failures += 1
+        ran = subprocess.run(
+            [sys.executable, str(py_dir / script_name)],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=root,
+        )
+        if ran.returncode != 0 or ran.stdout.replace("\r\n", "\n").strip() != expected.strip():
+            print(f"recipe {number}: running {script_name} does not reproduce {expected_name}")
+            print(ran.stdout + ran.stderr)
+            failures += 1
     if failures == 0:
-        print(f"cookbook: {len(RECIPES)} recipes match their sources and recorded output")
+        total = len(RECIPES) + len(PYTHON_RECIPES)
+        print(f"cookbook: {total} recipes match their sources and recorded output")
     return 1 if failures else 0
 
 

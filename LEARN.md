@@ -4,7 +4,7 @@
 
 Each section follows the same shape. First the plain idea, in a few sentences a newcomer can hold in their head. Then the formal statement, with the conventions and formulas a reviewer would check. Then a glossary definition for each new term, repeated in Section 17. Then one worked example with numbers, with the method stated so the number can be reproduced. Where a number comes from code in this repository, the file and test are named.
 
-Sections 1 and 11 were written in Phase 0 and Sections 2 to 5 in Phase 1. Every other section states what it will cover and which phase writes it, because the material should be written alongside the code that exercises it. Where a section depends on code that does not exist yet, this document says so rather than describing the code as if it did.
+Sections 1 and 11 were written in Phase 0, Sections 2 to 5 in Phase 1, Section 9 in Phase 4 and Section 10 in Phase 5. Every other section states what it will cover and which phase writes it, because the material should be written alongside the code that exercises it. Where a section depends on code that does not exist yet, this document says so rather than describing the code as if it did.
 
 Nothing here is investment advice. All numbers are illustrative or come from simulations against public data.
 
@@ -323,7 +323,78 @@ Markout is the change in mid a fixed time after a fill, signed so that positive 
 
 ## 10. Back-testing honestly: pre-registration, holdouts, attribution
 
-Planned for P5 (back-testing). It will cover pre-registered hypotheses, holdout periods that are opened once, attribution of profit and loss into spread capture, inventory, hedge cost and skew, multiple-comparison discipline, and the replay harness that makes every run reproducible from the journal.
+### Plain idea
+
+A back-test is a replay of history through a strategy, and it is the easiest place in a trading system to fool yourself. Every extra parameter tried, every look at the evaluation data and every number reported at the one assumption that flatters it makes the result less believable. The back-tester in this repository is built to make those mistakes visible: an experiment is written down and hashed before it runs, the holdout days are opened once, every run is recorded in an append-only ledger whatever it shows, P&L is split into lines that must add up to the cent, and every result is reported at three points of the declared assumption band rather than at one.
+
+### Formal statement
+
+**Replay.** `BacktestRunner` (`rates-backtest`, API_SPEC.md Section 16.1) reads RAJ1 journals of SBE messages with `JournalReader`, which verifies the hash chain, and drives a `ManualClock` to each frame's timestamp. Events the back-tester creates itself (RFQ outcomes, order fills, strategy timers) wait in a queue ordered by time and then by scheduling order, and run before any later frame. A run is therefore a function of the journals, the configuration, the seed and the strategy. The fingerprint of a run is the FNV-1a chain hash over every output message (Quote, QuoteResponse, NewOrder, ExecutionReport).
+
+**Outcome models.** The public tape shows trades, never the quotes that lost, so the probability of winning an RFQ is an assumption (DR-008). The back-tester draws the best competing quote (the cover) from a declared competitor model and settles our quote with a logistic in spread-to-cover:
+
+\[
+P(\text{win}) = \frac{1}{1 + e^{-z}}, \qquad
+z = b_0 + b_1 s + b_2 \ln q + b_3 T + b_4 F + b_5 n,
+\]
+
+where \(s\) is our distance from mid minus the cover's, in basis points, \(q\) the size in millions, \(T\) the tenor, \(F\) the fixing-window flag and \(n\) the dealer count. The slope \(b_1\) is taken from the band in `data/presets.yaml` (preset `usd_rfq_hit_rate`, low \(-1.25\), central \(-2.5\), high \(-5.0\) per bp). Random draws come from a SplitMix64 stream keyed by the run seed and the RFQ id, so two strategies replayed over the same journal face the same competitors and the same uniform draw on every RFQ (common random numbers), and the comparison between them is paired.
+
+**Pre-registration.** A pre-registration (API_SPEC.md Section 16.8) states the hypothesis, the metric, the baseline and treatments, the evaluation period, the fitting period, the holdout dates, the success threshold, the assumption band, the author and the date, and pins the SHA-256 of the experiment config. `ExperimentCli` refuses to run when the file is missing or invalid, when a holdout date falls in the fitting or evaluation period, when the evaluation period overlaps the fitting period, when the config has changed since it was hashed, or when the holdout has already been opened.
+
+**Ledger.** `data/ledger/ledger.jsonl` holds one canonical JSON object per run: the pre-registration, config and journal hashes, the code commit, the look number, the results and the verdict. Each line carries the SHA-256 of the line before it, so an edited or deleted past line breaks the chain at that line, and `Ledger.append` refuses to extend a broken chain. A refused run has read no data and is not recorded; a run that started is recorded whatever it shows.
+
+**Attribution.** Valuation is linear in the quoted price, \(V = q \cdot p \cdot v\), with \(v\) the value per unit (annuity times \(10^{-4}\) for swaps, \(10^{-4}\) per 100 of face for bonds and futures). Each event updates two views:
+
+\[
+\underbrace{\text{cash} + Q\,m\,v}_{\text{position P\&L}}
+= \underbrace{\textstyle\sum_{\text{client}} q(m - p)v}_{\text{spread capture}}
++ \underbrace{\textstyle\sum_{\text{mid moves}} Q\,\Delta m\,v}_{\text{inventory}}
++ \underbrace{\textstyle\sum_{\text{hedges}} q(m - p)v}_{\text{hedge cost}}
++ \text{carry} + \text{funding} + \text{fees},
+\]
+
+and the residual, the left side minus the right, is checked below one cent on every run. Carry and roll is a hook that returns zero until the P1 analytics are wired.
+
+**Statistics.** The unit of analysis is one session. Confidence intervals use a moving-block bootstrap over days (blocks of consecutive sessions drawn with replacement; percentile interval with linear interpolation). Two parameter sets are compared with Welch's unequal-variance t-test; when more than one test is made, p-values are adjusted with Holm's step-down method. The Java (`Stats`) and Python (`ratesresearch.stats`) implementations draw the same bootstrap indices from the same generator and agree exactly on `data/fixtures/backtest/stats_crosscheck.json`.
+
+### Glossary
+
+- **Pre-registration**: a hashed, dated statement of an experiment written before it runs.
+- **Holdout**: dates set aside at registration and opened once, after the evaluation record exists.
+- **Look**: one run of an experiment on a set of dates; the ledger counts them.
+- **Spread-to-cover**: our quote's distance from mid minus the best competitor's, in bp.
+- **Common random numbers**: giving two compared strategies the same random draws so that noise cancels in the difference.
+- **Attribution residual**: position-based P&L minus the sum of the attribution lines.
+- **Markout**: the change in mid after a trade, from the dealer's side; negative means the client was right.
+
+### Worked example: the first pre-registered experiment, P5-001
+
+The question: does quoting the half-spread that maximises expected edge under the hit-rate model earn more per session than a fixed half-spread of 0.30 bp on swaps and 0.15 bp on Treasuries, with the same hedging rule? The method, step by step, as it happened on 2026-10-31.
+
+1. *Fit on the fitting period.* The fixed-spread strategy was run on the ten synthetic sessions of 2026-01-05 to 2026-01-16 at the central band point. From its fills, `ratesresearch.markouts` estimated the expected adverse move at one minute by client tier as 0.0241, 0.0667 and 0.1300 bp, and the hedge cost as 0.2459 bp of client DV01. The informed-share estimates by tier, 0.08, 0.23 and 0.41, sit within about 1.5 standard errors of the generator's truth, 0.05, 0.17 and 0.47 (computed in the P5 session on 2026-10-31; two of the sessions are committed as `data/fixtures/backtest/fitting/`, and `test_markouts_rank_tiers_and_estimate_informed_share` repeats the check on them).
+2. *Register.* Those estimates went into `data/experiments/P5-001.config.yaml`; its SHA-256 went into `data/preregs/P5-001.yaml` with the evaluation period 2026-02-02 to 2026-02-13 and the holdout 2026-02-23 to 2026-02-27; the pre-registration was committed (a382bfa) before the run.
+3. *Run once.* `ExperimentCli --prereg data/preregs/P5-001.yaml` generated the ten evaluation sessions, ran both strategies at the three band points and appended the record.
+
+The result (ledger line 1, `data/ledger/ledger.jsonl`, 2026-10-31), mean P&L per session in USD:
+
+| Band point | Fixed spread | Model spread | Difference | 95% interval of difference | Welch p | Holm p | Verdict |
+|---|---|---|---|---|---|---|---|
+| low | 1,167,115.41 | 2,350,531.16 | 1,183,415.75 | 695,877.77 to 1,583,985.75 | 0.0658 | 0.1973 | inconclusive |
+| central | 768,724.15 | 1,832,065.84 | 1,063,341.69 | 244,018.49 to 1,611,698.01 | 0.0832 | 0.1973 | inconclusive |
+| high | 402,722.22 | 617,976.25 | 215,254.03 | -602,863.06 to 1,424,573.17 | 0.7200 | 0.7200 | inconclusive |
+
+The pre-registered verdict is **not supported**. The paired bootstrap intervals lie above zero at the low and central points, but the pre-registered test is Welch's, which ignores the pairing and is swamped by the inventory P&L of each session; no Holm-adjusted p-value is below 0.05. At the high point, where clients almost always take the best price, the model spread wins only 3.6 percent of the RFQs it quotes against 30.9 percent for the fixed spread, and the advantage disappears. The record stands as it is. A paired test would have been the stronger choice and is a candidate for a new pre-registration (P5-002), not a re-analysis of this one. `FirstExperimentTest` re-runs the experiment from its pre-registration in CI and checks that it reproduces the recorded results exactly; the holdout has not been opened.
+
+The table carries its own caveats: the sessions are synthetic, the strategy knows the competitor model the world uses, and the band is declared. Those are written in the pre-registration's `limitations` field before the run, not after.
+
+### Why the band, and not one number
+
+A hit-rate slope fitted to the project's own synthetic labels recovers the slope that generated them (`usd_rfq_hit_rate`: \(-2.57 \pm 0.04\) per bp against a declared \(-2.5\), out-of-sample log-loss 0.6146 against 0.6900 for a constant, `ratesresearch.hitrate.main`, 2026-10-31). That is a consistency check of the pipeline, not a measurement of a market. Reporting at the low, central and high points shows how much of a result depends on the assumption: in P5-001 the treatment's advantage at the high point is a fifth of that at the low point. A result that holds only at one point of the band is a statement about the assumption.
+
+### How the platform uses this
+
+The back-tester reads the same SBE messages the event loop will (P2), so when the loop's replay mode is bound to it, strategies under test run the live code path. The quoting engine (P3) reads the same `usd_rfq_hit_rate` preset, band included. The daily report (`ReportCli`, API_SPEC.md Section 16.9) runs unattended from a journal and a config and covers P&L by product and line, hit rate by tier, markouts at 1 s, 10 s, 1 min and 5 min, hedge slippage, limit utilisation and client analytics; `docs/templates/weekly_review.md` is the template for the weekly review that reads it.
 
 ## 11. Low-latency Java: single writer, off-heap, replay
 

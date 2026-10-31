@@ -33,6 +33,7 @@
       <groupId>io.ratesalgo</groupId>
       <artifactId>rates-analytics</artifactId>
       <artifactId>rates-router</artifactId>
+      <artifactId>rates-backtest</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

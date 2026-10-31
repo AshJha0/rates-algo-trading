@@ -1,0 +1,38 @@
+# Pre-registration P5-001. Written and hashed before the evaluation period was run.
+# Format: API_SPEC.md Section 16.8. Validated by ExperimentCli and ratesresearch.prereg.validate.
+prereg_version: 1
+id: P5-001
+title: Spread from the hit-rate model against a fixed spread, on synthetic USD sessions
+hypothesis: >
+  Quoting each RFQ at the half-spread that maximises expected edge under the hit-rate model
+  (preset usd_rfq_hit_rate, central slope), with adverse selection by client tier and hedge cost
+  estimated on the fitting period, earns more total daily P&L than quoting a fixed half-spread
+  of 0.30 bp on swaps and 0.15 bp on Treasuries, with the same hedging rule.
+metric: >
+  Total position P&L per synthetic session in USD, rounded to cents (cash plus the final position
+  at the final mid; attribution reconciled to it on every run). Unit of analysis: one session.
+baseline: fixed_spread
+treatments: [model_spread]
+period: {start: 2026-02-02, end: 2026-02-13}
+fitting_period: {start: 2026-01-05, end: 2026-01-16}
+holdout: [2026-02-23, 2026-02-24, 2026-02-25, 2026-02-26, 2026-02-27]
+success_threshold: >
+  At each band point (low, central, high): Welch's two-sided test of model_spread against
+  fixed_spread daily P&L, Holm-adjusted over the three band points, below 0.05, and the 95 percent
+  moving-block bootstrap interval (blocks of 2 sessions, 2000 resamples, seed 11) of the paired
+  daily difference entirely above zero. Supported overall only if supported at all three points.
+  Reversed at a point if the adjusted p is below 0.05 and the interval lies below zero.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: data/experiments/P5-001.config.yaml
+config_sha256: 9fd4a3f2ec87ff38867e86e5352e35b8830c50857c6091c1176444353790b951
+limitations: >
+  Synthetic sessions only. The strategy knows the competitor model's form and median (the same
+  declared preset the outcome model uses), which favours the treatment; the win-probability slope
+  is a declared band, not a fit (DR-008). Ten sessions give low power against inventory noise.
+  Whatever the result, the run is recorded in data/ledger/ledger.jsonl. The holdout is opened
+  once, in a later run, only after this record exists.

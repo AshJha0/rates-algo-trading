@@ -1,0 +1,10 @@
+# Config of the unattended daily report (ReportCli, API_SPEC.md Section 16.9).
+experiment_config: data/experiments/P5-001.config.yaml
+strategy: fixed_spread
+outcome_seed: 7
+band_points: [low, central, high]
+limits:
+  net_dv01_usd: 1000000
+  position_mm: 2000
+# written by the latency job when it has run; the report says "not available" otherwise
+latency_json: target/latency/latency.json
