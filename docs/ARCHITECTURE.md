@@ -96,3 +96,39 @@ The workflow files live under `.github/workflows/`.
 3. State the module's contract in API_SPEC.md if other modules or the Python side depend on it.
 4. Add a row to the component table above, the module map, and `docs/diagrams/module_deps.mmd`.
 5. Add tests of each kind in the table that apply, and a CHANGELOG entry.
+
+## Venue layer (P2, workstream W3)
+
+Modules added by the venue half of Phase 2:
+
+```
+rates-refdata   io.ratesalgo.refdata          securities, swap templates, futures, parties, auctions, CalendarSource
+rates-fix       io.ratesalgo.fix.codec        FixParser, FixWriter, FixFramer, FixTime, AsciiNumbers (hot path)
+                io.ratesalgo.fix.session      FixSession, SessionStats (hot path)
+                io.ratesalgo.fix.gateway      VenueGateway, InstrumentMap, MessageSink, MessageSource (hot path)
+                io.ratesalgo.fix.order        OrderStateTracker (hot path)
+                io.ratesalgo.fix.net          TcpInitiator
+rates-venues    io.ratesalgo.venues.sim       VenueSimulator (QuickFIX/J base), VenueHarness, EngineSession, SimRng, presets
+                io.ratesalgo.venues.d2c       D2cRfqSimulator
+                io.ratesalgo.venues.clob      ClobSimulator, ClobBook
+                io.ratesalgo.venues.sef       SefSimulator, FcmLimitHub
+                io.ratesalgo.venues.feed      BookFeedPublisher, BookFeedConsumer, channels
+                io.ratesalgo.venues.md        CompositeBuilder, FixingBook, RejectJournal, JournalSink
+                io.ratesalgo.venues.cert      CertRunner and the certification scripts
+```
+
+Dependencies: `rates-fix` depends on `rates-common`, `rates-messages` and Agrona only. `rates-venues` depends on `rates-fix`, `rates-refdata`, `rates-journal`, QuickFIX/J 3.0.2 (simulators only) and SLF4J's no-op binding. `rates-refdata` depends on nothing outside the JDK. The engine never links QuickFIX/J: its side of every connection is `rates-fix` (DR-P2V-01).
+
+How the pieces connect to the event core. A gateway thread owns one `TcpInitiator`, its `FixSession` and a `VenueGateway`. Inbound FIX becomes SBE messages offered to a `MessageSink`; outbound SBE messages taken from a `MessageSource` become FIX. The coordinator wires the sink to the inbound ring buffer and the source to the outbound ring buffer of API_SPEC.md Section 9; the gateway never sees the ring buffers directly. The book feed consumer is itself a `MessageSink` of `BookUpdate` frames, and the market data composite writes `MarketDataReject` through a `RejectJournal` whose sink can be a `JournalSink` on the journal.
+
+Hot-path packages added to the list of the threading rules above: `io.ratesalgo.fix.codec`, `io.ratesalgo.fix.session`, `io.ratesalgo.fix.gateway`, `io.ratesalgo.fix.order`. `AllocationTest` checks them with `ThreadMXBean.getThreadAllocatedBytes` over one million messages. The simulators are not hot path: they allocate, use QuickFIX/J's threads, and serialise every entry point on one lock so runs are reproducible.
+
+Determinism of simulator tests. Each test owns a `ManualClock`. After every action, `EngineSession.quiesce()` waits until both sides' expected inbound numbers equal the other's next outbound numbers, so assertions never race the network. Heartbeat timers use the system monotonic clock and stamps use the manual clock.
+
+How to add a venue:
+
+1. Subclass `VenueSimulator` (or `ClobSimulator` for an order-book venue, as `SefSimulator` does) and implement `onMessage` and `onCounterpartyLogout`; cancel-on-disconnect belongs in the latter.
+2. Add a preset to `presets.json` and a config record that reads it.
+3. Add a case to `Venues.create` and a standalone `...Main` that delegates to `VenueMain`.
+4. Write certification scripts for each flow under `cert/` and add them to `CertSuiteTest`.
+5. Document new tags in API_SPEC.md Section 10.2 and the venue's rules in Section 11.2, and add a decision record for every rule the simulator simplifies.

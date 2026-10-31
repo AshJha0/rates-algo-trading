@@ -33,3 +33,19 @@ The 32-byte file header, the 32-byte frame header and the chain hash definition,
 ```mermaid
 --8<-- "docs/diagrams/journal_frame.mmd"
 ```
+
+## Venue RFQ flow
+
+One D2C RFQ through the simulator and the engine-side FIX layer, with the outcome each dealer is told (LEARN.md Section 6, API_SPEC.md Section 10.2).
+
+```mermaid
+--8<-- "docs/diagrams/venue_rfq_flow.mmd"
+```
+
+## CLOB workup states
+
+The workup state machine of the Treasury CLOB simulator (API_SPEC.md Section 11.2).
+
+```mermaid
+--8<-- "docs/diagrams/clob_workup_states.mmd"
+```

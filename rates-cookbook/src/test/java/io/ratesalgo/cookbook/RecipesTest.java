@@ -28,7 +28,9 @@ class RecipesTest {
     return Stream.of(
         Arguments.of("recipe01.txt", (Main) Recipe01TimerWheel::main),
         Arguments.of("recipe02.txt", (Main) Recipe02Journal::main),
-        Arguments.of("recipe03.txt", (Main) Recipe03QuoteRequest::main));
+        Arguments.of("recipe03.txt", (Main) Recipe03QuoteRequest::main),
+        Arguments.of("recipe10.txt", (Main) Recipe10VenueSession::main),
+        Arguments.of("recipe11.txt", (Main) Recipe11BookFeed::main));
   }
 
   @ParameterizedTest(name = "{0}")

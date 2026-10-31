@@ -13,10 +13,17 @@ import org.agrona.concurrent.UnsafeBuffer;
 
 /**
  * Publishes price-level book changes as SBE {@code BookUpdate} frames with one sequence number per
- * venue, starting at 1 and increasing by 1 per frame (API_SPEC.md Section 10.5). It keeps a copy
+ * venue, starting at 1 and increasing by 1 per frame (API_SPEC.md Section 10.5). Quantities on the
+ * feed are minor units. It keeps a copy
  * of what it published so that it can serve snapshots consistent with the sequence.
  */
 public final class BookFeedPublisher implements SnapshotService {
+
+  /**
+   * Minor units per currency unit. Venue books hold face in currency units; the feed carries minor
+   * units as API_SPEC.md Section 0 requires (USD, EUR and GBP all have two decimals).
+   */
+  public static final long MINOR_UNITS = 100;
 
   private final int venueId;
   private final FeedChannel channel;
@@ -87,7 +94,7 @@ public final class BookFeedPublisher implements SnapshotService {
         .side(side)
         .action(action)
         .level((short) Math.min(rank, 255))
-        .quantity(quantity)
+        .quantity(quantity * MINOR_UNITS)
         .orderCount((int) orders)
         .timestampNanos(clock.epochNanos());
     encoder.price().mantissa(price);

@@ -201,7 +201,7 @@ class ChaosTest {
       final var rebuilt = consumer.levels(1007, bid ? Side.Buy : Side.Sell);
       assertEquals(venue.size(), rebuilt.size());
       for (final long[] level : venue) {
-        assertEquals(level[1], rebuilt.get(level[0]), "level " + level[0]);
+        assertEquals(level[1] * 100, rebuilt.get(level[0]), "level " + level[0]);
       }
     }
     assertEquals(0, consumer.foreign());

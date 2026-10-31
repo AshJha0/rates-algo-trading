@@ -15,8 +15,8 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 7. How do I compute a gilt's accrued interest inside the ex-dividend period? (P1)
 8. How do I find the CTD and net basis for a Treasury futures contract? (P1)
 9. How do I compare a result to QuantLib within a stated tolerance? (P1)
-10. How do I start a venue simulator and connect a FIX 4.4 session? (P2)
-11. How do I subscribe to the SBE book feed and rebuild a book? (P2)
+10. How do I start a venue simulator and connect a FIX 4.4 session? (P2, written below)
+11. How do I subscribe to the SBE book feed and rebuild a book? (P2, written below)
 12. How do I run the event loop against a journal and check determinism? (P2)
 13. How do I check that a hot-path package allocates nothing? (P2)
 14. How do I configure a quoting parameter and see its effect on skew? (P3)
@@ -243,3 +243,169 @@ encodedLength=57
 
 The block length of 49 is the sum of the fixed fields in the XML (4 + 8 + 4 + 4 + 1 + 8 + 3 + 1 + 8 + 8) and the encoded length adds the 8-byte header. Field names come from the XML, which is the source of truth (API_SPEC.md Section 2).
 
+## 10. How do I start a venue simulator and connect a FIX 4.4 session?
+
+`VenueHarness` starts a simulator in the current process on a free local port with a `ManualClock` that only the harness moves; `harness.connect(compId, handler)` opens an engine-side `FixSession` (our codec, not QuickFIX/J) over TCP and waits for the logon. `engine.quiesce()` waits until each side has processed everything the other sent, so the program can print what arrived without racing the network. Here the D2C RFQ simulator asks four dealers for an offer on 10 million of the 10-year; three simulated dealers answer, we quote by hand through the session, and the client buys from the best offer.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.fix.codec.FixParser;
+import io.ratesalgo.fix.codec.FixTags;
+import io.ratesalgo.fix.codec.MsgType;
+import io.ratesalgo.venues.Venues;
+import io.ratesalgo.venues.d2c.ClientDecision;
+import io.ratesalgo.venues.d2c.D2cRfqSimulator;
+import io.ratesalgo.venues.d2c.RfqSpec;
+import io.ratesalgo.venues.feed.InProcessFeedChannel;
+import io.ratesalgo.venues.sim.EngineSession;
+import io.ratesalgo.venues.sim.Px;
+import io.ratesalgo.venues.sim.VenueHarness;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * COOKBOOK.md recipe 10: start the D2C RFQ simulator, connect an engine-side FIX 4.4 session,
+ * and quote one RFQ by hand.
+ */
+public final class Recipe10VenueSession {
+
+  private static final int[] SHOWN = {35, 131, 117, 54, 38, 9501, 297, 694, 44, 9502, 150, 39, 31, 32};
+
+  private Recipe10VenueSession() {}
+
+  public static void main(final String[] args) {
+    final String isin = "US91282CZG94"; // on-the-run 10-year in data/refdata/v1 on 2026-11-02
+    final ManualClock clock = new ManualClock(Venues.T0);
+    final D2cRfqSimulator venue =
+        (D2cRfqSimulator) Venues.create("d2c", clock, 7, new InProcessFeedChannel());
+    final List<String> received = new ArrayList<>();
+    try (VenueHarness harness = new VenueHarness(venue, clock);
+        EngineSession engine = harness.connect("RALGO", (s, m, possDup) -> received.add(show(m)))) {
+      System.out.println("session " + engine.session().state());
+
+      // A client buys 10mm; three simulated dealers offer 98.03, 98.02 and 98.05.
+      final long rfq =
+          venue.injectRfq(
+              new RfqSpec(isin, true, 10_000_000, 4,
+                  List.of(Px.price("98.03"), Px.price("98.02"), Px.price("98.05")),
+                  2003, ClientDecision.BEST, false));
+      engine.quiesce();
+
+      // Quote by hand: 97.99 bid, 98.015 offer, 10mm each side.
+      engine.session().begin(MsgType.QUOTE)
+          .put(FixTags.QUOTE_REQ_ID, rfq)
+          .put(FixTags.QUOTE_ID, 1)
+          .putText(FixTags.SYMBOL, isin)
+          .putText(FixTags.SECURITY_ID, isin)
+          .putChar(FixTags.SECURITY_ID_SOURCE, (byte) '4')
+          .putDecimal(FixTags.BID_PX, Px.price("97.99"), 9)
+          .putDecimal(FixTags.OFFER_PX, Px.price("98.015"), 9)
+          .put(FixTags.BID_SIZE, 10_000_000)
+          .put(FixTags.OFFER_SIZE, 10_000_000);
+      engine.session().send();
+      engine.quiesce();
+
+      venue.decide(rfq); // the client trades with the best offer
+      engine.quiesce();
+
+      received.forEach(System.out::println);
+      System.out.println("sequence errors " + engine.session().stats().sequenceErrors());
+    }
+  }
+
+  private static String show(final FixParser m) {
+    final StringBuilder sb = new StringBuilder();
+    for (final int tag : SHOWN) {
+      final int i = m.indexOf(tag);
+      if (i >= 0) {
+        sb.append(sb.length() == 0 ? "" : " ").append(tag).append('=').append(m.getStringAt(i));
+      }
+    }
+    return sb.toString();
+  }
+}
+```
+
+Expected output:
+
+```
+session ACTIVE
+35=R 131=1 54=1 38=10000000 9501=4
+35=AI 131=1 117=1 297=0
+35=AJ 131=1 117=1 54=1 38=10000000 694=1 44=98.015 9502=98.02
+35=8 131=1 117=1 54=1 38=10000000 150=F 39=2 31=98.015 32=10000000
+sequence errors 0
+```
+
+We won at 98.015 and the venue disclosed the cover, 98.02: 500 USD was left on the table on 10 million face (LEARN.md Section 6). The QuoteStatusReport with 297=0 acknowledges our quote. The fill (35=8, 150=F) carries the QuoteID and no ClOrdID, which is how the gateway tells an RFQ trade from an order fill. The venue validated our Quote against the QuickFIX/J FIX 4.4 dictionary before accepting it.
+
+## 11. How do I subscribe to the SBE book feed and rebuild a book?
+
+The CLOB publishes every change of a top-five price level as an SBE `BookUpdate` with one sequence number per venue; `BookFeedConsumer` applies the frames in sequence. When a frame is missing, it asks the publisher (which is also the snapshot service) for a snapshot, applies it, and carries on from the snapshot's sequence number. Quantities on the feed are minor units, so 5 million face shows as 500000000.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.venues.Venues;
+import io.ratesalgo.venues.clob.ClobSimulator;
+import io.ratesalgo.venues.feed.BookFeedConsumer;
+import io.ratesalgo.venues.feed.InProcessFeedChannel;
+import io.ratesalgo.venues.sim.Px;
+
+/**
+ * COOKBOOK.md recipe 11: subscribe to the CLOB's SBE book feed, rebuild the book, and recover
+ * from a gap by snapshot.
+ */
+public final class Recipe11BookFeed {
+
+  private Recipe11BookFeed() {}
+
+  public static void main(final String[] args) {
+    final int tenYear = 1007; // US91282CZG94
+    final ManualClock clock = new ManualClock(Venues.T0);
+    final InProcessFeedChannel feed = new InProcessFeedChannel();
+    final ClobSimulator clob = (ClobSimulator) Venues.create("clob", clock, 1, feed);
+    final BookFeedConsumer book = new BookFeedConsumer(clob.feed()); // the feed is also the snapshot service
+
+    clob.submitInternal("DLR-A", tenYear, true, Px.price("97.984375"), 5_000_000, 0);
+    clob.submitInternal("DLR-B", tenYear, false, Px.price("98.015625"), 3_000_000, 0);
+    feed.poll(book, 100);
+    print("after 2 orders", book, tenYear);
+
+    feed.dropNext(2); // lose two frames on the wire
+    clob.submitInternal("DLR-C", tenYear, true, Px.price("98"), 2_000_000, 0);
+    clob.submitInternal("DLR-D", tenYear, false, Px.price("98.0078125"), 4_000_000, 0);
+    clob.submitInternal("DLR-E", tenYear, true, Px.price("97.984375"), 1_000_000, 0);
+    feed.poll(book, 100);
+    print("after a gap", book, tenYear);
+    System.out.println("gaps " + book.gaps() + ", recoveries " + book.recoveries()
+        + ", venue sequence " + clob.feed().lastSequence() + ", consumer sequence " + book.lastSequence());
+  }
+
+  private static void print(final String label, final BookFeedConsumer book, final int instrument) {
+    System.out.println(label + ": bids " + levels(book, instrument, Side.Buy) + " offers "
+        + levels(book, instrument, Side.Sell));
+  }
+
+  private static String levels(final BookFeedConsumer book, final int instrument, final Side side) {
+    final StringBuilder sb = new StringBuilder("[");
+    book.levels(instrument, side).forEach((price, qty) ->
+        sb.append(sb.length() == 1 ? "" : ", ").append(Px.text(price)).append('x').append(qty));
+    return sb.append(']').toString();
+  }
+}
+```
+
+Expected output:
+
+```
+after 2 orders: bids [97.984375x500000000] offers [98.015625x300000000]
+after a gap: bids [98x200000000, 97.984375x600000000] offers [98.0078125x400000000, 98.015625x300000000]
+gaps 1, recoveries 1, venue sequence 5, consumer sequence 5
+```
+
+The two dropped frames were the Add at 98 and the Add at 98.0078125. The next frame, sequence 5, showed a gap; the snapshot at sequence 5 restored both levels and the consumer ends at the venue's sequence.

@@ -1,0 +1,30 @@
+sequenceDiagram
+  participant C as Simulated client
+  participant V as D2C venue (QuickFIX/J acceptor)
+  participant D as Simulated dealers A to E
+  participant G as Engine FixSession and VenueGateway
+  participant E as Engine (SBE messages)
+
+  C->>V: RFQ: instrument, side, size, 3 to 5 dealers
+  V->>G: QuoteRequest R (131, 146 group, 453 client, 9501)
+  G->>E: SBE QuoteRequest (10)
+  V->>D: request
+  D-->>V: quotes after lognormal delays
+  E->>G: SBE Quote (11)
+  G->>V: Quote S (131, 117, 132 to 135)
+  V-->>G: QuoteStatusReport AI 297=0
+  Note over V: window closes or every dealer answered
+  V->>C: every quote
+  C->>V: trade with the best, pass, or trade elsewhere
+  alt we won
+    V->>G: QuoteResponse AJ 694=1, 44, 9502 cover
+    V->>G: ExecutionReport 8 150=F
+    G->>E: SBE QuoteResponse Done, SBE ExecutionReport
+  else another dealer won
+    V->>G: QuoteResponse AJ 694=5 9503=TA
+  else client traded elsewhere
+    V->>G: QuoteResponse AJ 694=5 9503=DA
+  else client passed
+    V->>G: QuoteResponse AJ 694=6
+  end
+  Note over V,G: if our session drops before the decision, our quote is removed (cancel-on-disconnect)
