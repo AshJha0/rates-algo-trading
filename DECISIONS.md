@@ -758,18 +758,37 @@ Consequences. A roll in the trading process no longer maps, creates or allocates
 
 Date: 2026-10-31
 
-Context. `data/ledger/ledger.jsonl` is an append-only hash chain: each line carries `seq` (1-based) and `prev_sha256`, the SHA-256 of the previous line's text, and both readers (`Ledger.entries()` in `rates-backtest`, `prereg.read_ledger` in `research/ratesresearch`) refuse a line whose `seq` is not its position or whose `prev_sha256` does not match. In round 2, several branches ran experiments in parallel and each appended its rows after the same base, P5-001 at seq 1. `claude/r2-edge-research-6aba2e` appended EDGE-E1 to EDGE-E6 as seq 2 to 7, and `claude/r2-pnl-audit-e32be7` appended AUDIT-01 to AUDIT-04 as seq 2 to 5, so the two chains cannot both stand.
+Context. `data/ledger/ledger.jsonl` is an append-only hash chain: each line carries `seq` (1-based) and `prev_sha256`, the SHA-256 of the previous line's text, and both readers (`Ledger.entries()` in `rates-backtest`, `prereg.read_ledger` in `research/ratesresearch`) refuse a line whose `seq` is not its position or whose `prev_sha256` does not match. In round 2, several branches ran experiments in parallel and each appended its rows after the same base, P5-001 at seq 1. `claude/r2-edge-research-6aba2e` appended EDGE-E1 to EDGE-E6 as seq 2 to 7, `claude/r2-pnl-audit-e32be7` appended AUDIT-01 to AUDIT-04 as seq 2 to 5, and `claude/r2-business-6cda18` appended R2B-001 to R2B-007 as seq 2 to 8, so the chains cannot all stand.
 
-Decision. Rows already on `round2-integration` are kept unchanged, and each later branch's rows are appended after them in their original order. The edge rows merged first, onto a ledger that held only seq 1, so they kept seq 2 to 7. The audit rows were re-appended with the project's own `Ledger.append` (`rates-backtest`), which assigns `seq` and `prev_sha256`. Everything else in each row stays as recorded: results, `config_sha256`, `journal_sha256`, `prereg_sha256`, `code_commit`, `code_dirty`, `look`, `recorded_utc` and the journal list. Each written line was checked to be byte-identical to the original with only those two values replaced. The chain verifies end to end in both `Ledger.entries()` and `prereg.read_ledger` (11 rows). `research/audit/summarize.py` re-reads the rows, recomputes every interval and Holm p from the stored daily P&L and asserts them against the rows; it reproduces `research/audit/results/summary.md` except the four headings, which print the new seq. References to the old numbers in `docs/research/PNL_AUDIT.md`, `research/audit/README.md` and `summary.md` were renumbered, with the experiment id added beside each seq. The copies in `research/audit/results/AUDIT-0n.json` carry no seq or chain field and are unchanged.
+Decision. Rows already on `round2-integration` are kept unchanged, and each later branch's rows are appended after them in their original order. The edge rows merged first, onto a ledger that held only seq 1, so they kept seq 2 to 7. The audit rows were re-appended with the project's own `Ledger.append` (`rates-backtest`), which assigns `seq` and `prev_sha256`. Everything else in each row stays as recorded: results, `config_sha256`, `journal_sha256`, `prereg_sha256`, `code_commit`, `code_dirty`, `look`, `recorded_utc` and the journal list. Each written line was checked to be byte-identical to the original with only those two values replaced. The business rows were then re-appended the same way after the audit rows, as seq 12 to 18. The chain verifies end to end in both `Ledger.entries()` and `prereg.read_ledger` (18 rows). `research/audit/summarize.py` re-reads the rows, recomputes every interval and Holm p from the stored daily P&L and asserts them against the rows; it reproduces `research/audit/results/summary.md` except the four headings, which print the new seq. References to the old numbers in `docs/research/PNL_AUDIT.md`, `research/audit/README.md` and `summary.md` were renumbered, with the experiment id added beside each seq. The copies in `research/audit/results/AUDIT-0n.json` carry no seq or chain field and are unchanged. For the business rows, the seq column and the record range in `docs/research/DESK_FEATURES.md`, the CHANGELOG entry, DR-R2B-07's context and the `DeskFactory` comment were renumbered; the R2B pre-registrations cite no seq.
 
-| Experiment | Original seq (audit branch) | Seq on round2-integration | prev_sha256 before | prev_sha256 after |
+| Experiment | Original seq (own branch) | Seq on round2-integration | prev_sha256 before | prev_sha256 after |
 |---|---:|---:|---|---|
 | AUDIT-01 | 2 | 8 | `850a5e40a004...` | `2f8551ce748d...` |
 | AUDIT-02 | 3 | 9 | `f16a70a4cc23...` | `300529794edf...` |
 | AUDIT-03 | 4 | 10 | `05fbad304512...` | `be7e052c8319...` |
 | AUDIT-04 | 5 | 11 | `1d9907487c7a...` | `3ac99a2f43d0...` |
+| R2B-001 | 2 | 12 | `850a5e40a004...` | `79abbbcb0fb2...` |
+| R2B-002 | 3 | 13 | `f37fd5be9247...` | `09d5e8022aa1...` |
+| R2B-003 | 4 | 14 | `f5101a7c10e5...` | `8cf5f04d08ce...` |
+| R2B-004 | 5 | 15 | `481745c8c1ee...` | `e3ebb73c0d0e...` |
+| R2B-005 | 6 | 16 | `a0ca41a043fd...` | `c2af0c8facb2...` |
+| R2B-006 | 7 | 17 | `968558726727...` | `9d5d645bbf1a...` |
+| R2B-007 | 8 | 18 | `62a00dc6e056...` | `ccbaf1e16ff3...` |
 
-Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (r2-business and the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
+Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
+
+## DR-INT-05: The wired desk declares a winner's curse that fits its half-spread cap
+
+Date: 2026-10-31
+
+Context. `claude/r2-review-6e9f43` added a pass to `QuotingEngine.onQuoteRequest`: when the expected cost of filling (client toxicity, plus the winner's curse `winnersCurseBp * sqrt(2 ln dealers) * volRatio`, plus the hedge cost) is at or above `maxHalfSpreadBp`, no spread up to the cap has positive expected edge, so the engine returns `PassReason.NEGATIVE_EDGE` instead of quoting at the cap. `claude/r2-wiring-c31ae4` holds the wired desk's half spread between 0.02 and 0.08 bp so it can compete with the simulated dealers (DR-R2W, `DeskSettings.quoting()`), but it kept the default `winnersCurseBp` of 0.10 bp. With three dealers that term alone is 0.10 * sqrt(2 ln 3) = 0.148 bp, above the 0.08 bp cap. After the merge every RFQ was passed, and `SmokeTest`, `BacktestBindingTest`, `TradingProcessMainTest`, `VenueBindingTest` and recipe 22 failed because the desk never quoted.
+
+Decision. Review's guard stays as written. `DeskSettings.quoting()` declares `winnersCurseBp(0.02)`, which puts the term at about 0.030 bp, inside the desk's 0.02 to 0.08 bp band. Toxicity starts at zero and the guard still passes a client whose learned adverse cost reaches the cap. Like the band itself, 0.02 bp is a declared value for the synthetic smoke day, not a fit. Recipe 22's recorded output (`rates-cookbook/src/test/resources/expected/recipe22.txt` and COOKBOOK.md) and the smoke-day counts in README.md and STATUS.md were re-recorded: 39 RFQs, 34 quotes, 22 RFQ fills, 302 hedge parents and 291 hedge fills, against 43, 43, 25, 261 and 266 before. The other review changes on the quoting and risk path (the reservation-aware risk-reducing check, late fills after expiry, one hit-rate label per RFQ, the ticked CLOB prices) move the counts too.
+
+Also at this merge, `data/presets.yaml`: the review branch changed the hit-rate slope rationale in `ratesresearch/assumptions.py` and edited the same text by hand in the presets file, with different YAML line wrapping. The shipped file was replaced by the output of the project's generator (`ratesresearch.hitrate.main`). The parsed YAML is identical; only the wrapping of four lines changed, so the file is again byte-for-byte reproducible.
+
+Consequences. A desk configuration whose cap is below its own expected cost now quotes nothing rather than quoting at a loss. Any new desk configuration has to keep `winnersCurseBp`, the hedge cost and the cap consistent, and a smoke day that quotes nothing fails `SmokeTest`.
 
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
@@ -974,6 +993,112 @@ Context. SpotBugs reported 17 items on the new module. Twelve were EI_EXPOSE_REP
 Decision. `config/spotbugs-exclude.xml` excludes EI_EXPOSE_REP and EI_EXPOSE_REP2 for `io.ratesalgo.app` and its subpackages, as DR-P2V-07 and DR-P3-09 did for theirs. The other findings are fixed: a private lock object and a volatile driver field, a success flag in `start`, constructor-set fields (an unbound child lookup that throws until the router exists), and `Double.compare` for the quote change test.
 
 Consequences. Every other pattern stays enabled for rates-app.
+
+## DR-R2B-01: Desk features in a new module with a byte-identical baseline
+
+Date: 2026-10-31
+
+Context. The R2 business brief asks for seven desk features measured against today's engine, built while other sessions change `rates-quoting`, `rates-hedge`, `rates-backtest` and the venues on their own branches.
+
+Decision. The features live in a new module `rates-strategy` that depends on the others as libraries and plugs into their existing interfaces (`Strategy`, `CarryModel`, `AxeSource`, `TierTableControl`, `ToxicityTable`); no other module's source changed. Each feature is an interface whose default is today's behaviour. `DeskQuoter` with every default sends the same messages as `ModelSpreadStrategy` (P5-001's treatment, the best tested quoter) on the same journal, and `DeskQuoterBaselineTest` checks the output chain hash, so every experiment compares one feature against today's engine and nothing else.
+
+Consequences. The features run in the back-tester today. The live `QuotingEngine` takes `AxeSource` and `TierTableControl` already; the hedge budget, hedge timing, quote sizer and inventory penalty need extension points in `Hedger` and `QuotingEngine` before they can run live (DR-R2B-09).
+
+## DR-R2B-02: Pre-registrations under data/preregs
+
+Date: 2026-10-31
+
+Context. The brief names `research/prereg/` for the pre-registrations. The repository keeps them in `data/preregs/`, where `PreRegistration`, `ExperimentCli`, `ratesresearch.prereg.validate` and the Python tests look, with configs in `data/experiments/`.
+
+Decision. R2B-001 to R2B-007 are `data/preregs/R2B-00x.yaml`, sharing `data/experiments/R2B.config.yaml`, validated by both validators.
+
+Consequences. One place for every pre-registration; the brief's path is not used.
+
+## DR-R2B-03: The assumption band covers slope, dealer count and informed share together
+
+Date: 2026-10-31
+
+Context. DR-008 requires every simulator result across a declared band. The back-tester's `BandPoint` varies only the win-probability slope; the brief asks for dealer count and informed-flow share too, which change the journals themselves.
+
+Decision. One joint band with three points, declared in the experiment config: slope -1.25, -2.5, -5.0 per bp (preset `usd_rfq_hit_rate`), dealers 2 to 4, 2 to 5, 3 to 6, and informed share of every tier times 0.5, 1.0, 1.5. `BandScenario` applies the market parameters to a copy of `data/presets.yaml` for each point, so each point has its own journals; presets on disk are unchanged.
+
+Consequences. Low is a benign market and high a harsh one; the three parameters move together, so a result at one point cannot be attributed to one of them. A factorial band (27 points) is a possible later experiment.
+
+## DR-R2B-04: Statistics and guards of the desk experiments
+
+Date: 2026-10-31
+
+Context. The seven experiments share journals and the baseline run, and common random numbers pair every session; P5-001 used Welch's unpaired test. The brief asks for Holm across the seven and adoption only without limit breaches.
+
+Decision. Per treatment and band point: a paired t-test of the daily difference of the pre-registered metric, Holm over all 21 (treatment, point) tests, and a moving-block bootstrap interval of the mean difference (blocks 2, 2,000 resamples, seed 11). Supported when improved (adjusted p below 0.05 and the interval above zero) at all three points. Adopted only if supported, no limit breach on a session where the baseline did not breach, and the daily P&L difference interval not entirely below zero, at every point. The relative limit guard was chosen on the fitting period, where the baseline itself breached the 1,000,000 USD per bp net DV01 limit on some sessions (one large RFQ is enough); an absolute guard would have made adoption impossible for any feature that leaves sizing alone.
+
+Consequences. The P&L guard is a non-inferiority screen: it fails only when P&L is significantly worse, so an adopted feature may still have a negative mean P&L difference (R2B-001 at central and high does).
+
+## DR-R2B-05: The learned tiering carries its state across sessions
+
+Date: 2026-10-31
+
+Context. Each client trades about a dozen times a session, below the 30-fill minimum sample, so a tiering that starts empty every session never moves anyone.
+
+Decision. The experiment keeps one `MarkoutTiering` per band point (one for R2B-004, another for R2B-007) and runs the sessions in date order, as a desk's rolling client analytics would.
+
+Consequences. Sessions are no longer independent for the tiering treatments; the paired comparison per session is unaffected, but the bootstrap blocks of 2 sessions understate the dependence of the learning curve. The simulator's static tiers are the truth the market was generated with, so R2B-004 tests the cost of learning against an oracle table.
+
+## DR-R2B-06: No SBE message for the axe list
+
+Date: 2026-10-31
+
+Context. The brief allows an axe-list SBE message in template ids 120 to 129 only if needed.
+
+Decision. None is added. The quoting engine reads axes in-process through `AxeSource`; `AxeBook.publish()` returns the list for the desk report and for a later publisher. API_SPEC Section 2 is unchanged and ids 120 to 129 stay free.
+
+Consequences. Publishing axes to clients or venues (an axe feed) needs a message and a record when it is built.
+
+## DR-R2B-07: Adopt the netting hedge budget as the desk default
+
+Date: 2026-10-31
+
+Context. R2B-001 (ledger seq 12, commit 8c4eacb, 20 sessions 2026-03-02 to 2026-03-27) met its pre-registered rule: hedge slippage improved at all three band points (by 292,958, 136,853 and 43,116 USD per day, Holm p at most 0.0052) with no new limit breach and no significantly worse P&L. R2B-002 to R2B-007 did not.
+
+Decision. `DeskFactory.ADOPTED` is `[internalisation]` and `deskDefault()` builds the baseline with `NettingHedgeBudget` (soft 150,000, hard 400,000, retain 50,000 USD per bp, hold 120 s). The experiment baseline (`baseline()`) stays today's engine so that later experiments remain comparable with these.
+
+Consequences. Mean absolute net DV01 roughly doubles (29,849 to 66,313 USD per bp at central) and the daily P&L difference has a negative mean at central and high with intervals that include zero; risk limits must allow the larger intraday inventory. The holdout (2026-04-06 to 2026-04-10) has not been opened; opening it once is the next check. These are simulator consistency checks (DR-008), not evidence of edge.
+
+## DR-R2B-08: SpotBugs exclusion for shared desk state
+
+Date: 2026-10-31
+
+Context. SpotBugs reports EI_EXPOSE_REP and EI_EXPOSE_REP2 where `AxeBook` and `DeskQuoter.Features` hold the shared `RiskLadder`, and where `DeskReport` holds its `DeskMetrics`.
+
+Decision. A class-level exclusion for those three classes and those two patterns in `config/spotbugs-exclude.xml`, as DR-P3-09 did for the hedger and quoting engine: reading the ladder by reference at call time is the design. Other classes copy what crosses their boundary (`DeskExperiment.Outcome`, `DeskFactory`).
+
+Consequences. Every other pattern stays enabled for the module.
+
+## DR-R2B-09: Extension points the features needed and did not find
+
+Date: 2026-10-31
+
+Context. The brief asks to plug into existing extension points and to note missing ones for the coordinator.
+
+Decision. Worked around inside `rates-strategy`, and listed here:
+1. `StrategyContext.quote` has no quantity and the runner settles the requested size only, so a smaller quoted size can only be a decline (feature 3).
+2. `StrategyContext` exposes net DV01 but no ladder; `DeskQuoter` rebuilds the ladder from positions on every RFQ and fill.
+3. `Experiment` builds strategies from a closed switch and tests only total P&L with Welch; the desk experiments have their own harness (`DeskExperiment`) reusing `BacktestRunner`, `Stats`, `PreRegistration`, `Ledger` and `SyntheticDay`.
+4. `DailyReport` has a router fill-quality hook but no general section hook; the desk section is a separate `desk_report.json` and `desk_report.md`.
+5. `Hedger` has its own trigger and decay schedule with no pluggable budget or timing policy, and `QuotingEngine` has no hook for a size policy (beyond the tier's maximum quantity) or an inventory funding penalty; features 1, 3, 5 and 6 run only in the back-tester until those exist.
+6. The back-tester delivers no Heartbeats to strategies (noted by r2-wiring); `DeskQuoter` does not need them.
+
+Consequences. Each item is a small change in a module another session owns; with items 1 and 5 the adopted and future features can run live.
+
+## DR-R2B-10: Coupon carry in the desk experiments
+
+Date: 2026-10-31
+
+Context. The back-tester's `CarryModel` is `NONE` by default, so bond inventory pays repo but earns no coupon, and every bond position is carry-negative regardless of the curve.
+
+Decision. The desk experiments pass `CouponCarry` with declared coupons (UST 2Y 3.60, UST 10Y 3.95 percent, against the book's 4.25 percent repo) to every run, baseline included. The coupons are in the experiment config and covered by its hash.
+
+Consequences. P&L in these records is not directly comparable with P5-001's, which had no carry; within the R2B records every strategy has the same carry rule.
 
 ## DR-R2R-01: Coupons for carry and basis are selected by record date
 
