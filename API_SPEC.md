@@ -261,9 +261,9 @@ Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on
 
 | Quantity | Asserted tolerance | Measured worst case | Test |
 |---|---|---|---|
-| Swap PV (83 swaps), QuantLib curve | 1e-8 of notional | 1.6e-15 of notional | `swapsMatchQuantLibOnBothCurves` |
-| Swap PV on the Java bootstrap | 1e-8 of notional | 8.5e-15 of notional | same |
-| Par rate | 1e-6 | 3.5e-16 | same |
+| Swap PV (83 swaps), QuantLib curve | 1e-12 of notional (1e-8 before DR-R2R-11) | 1.6e-15 of notional | `swapsMatchQuantLibOnBothCurves` |
+| Swap PV on the Java bootstrap | 1e-12 of notional | 8.5e-15 of notional | same |
+| Par rate | 1e-10 (1e-6 before DR-R2R-11) | 3.5e-16 | same |
 | Curve discount factors, Java versus QuantLib-priced bootstrap | 1e-10 | 8.3e-16 | `javaBootstrapMatchesQuantLibCurvesAndRepricesInstruments` |
 | Curve instrument repricing (round trip) | 1e-10 | 4.3e-14 (golden curves), 9.3e-14 (all interpolations) | same; `CurveBuilderTest` |
 | Parallel DV01, AD versus QuantLib 1bp central bump | 1e-5 relative | 1.4e-6 relative | `parallelDv01ByAlgorithmicDifferentiationMatchesQuantLibBumps` |
@@ -283,7 +283,7 @@ Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on
 
 ### 8.1 Producing the golden file
 
-`python -m ratesresearch.goldens` (from `research/`, with `pip install -e "research[dev,golden]"`, QuantLib pinned at 1.44) writes `data/golden/analytics_golden.json`. The curves are bootstrapped in Python by a sequential Brent search in which every instrument is priced by QuantLib objects built with explicit schedules, calendars and conventions identical to Section 5; the market quotes for 15 January 2025 are declared values (DECISIONS.md DR-P1-08); past fixings are the published ones in `data/fixtures`. `research/tests/test_goldens.py` regenerates the file and compares every number to 1e-12 relative (absolute floor 1e-12); CI runs it on Linux and Windows (DECISIONS.md DR-P1-06).
+`python -m ratesresearch.goldens` (from `research/`, with `pip install -e "research[dev,golden]"`, QuantLib pinned at 1.44) writes `data/golden/analytics_golden.json`. The curves are bootstrapped in Python by a sequential Brent search in which every instrument is priced by QuantLib objects built with explicit schedules, calendars and conventions identical to Section 5; the market quotes for 15 January 2025 are declared values (DECISIONS.md DR-P1-08); past fixings are the published ones in `data/fixtures`. `research/tests/test_goldens.py` regenerates the file and compares every number to 1e-12 relative (absolute floor 1e-6, DR-P1-06 as amended at integration); CI runs it on Linux and Windows (DECISIONS.md DR-P1-06).
 
 ### 8.2 Format (golden_version 1)
 

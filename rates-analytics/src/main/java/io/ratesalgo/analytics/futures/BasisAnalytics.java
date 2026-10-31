@@ -100,7 +100,8 @@ public final class BasisAnalytics {
 
   /**
    * Futures DV01 per contract: the CTD's yield DV01 per 100 at its street yield, divided by its
-   * conversion factor, scaled to the contract face.
+   * conversion factor, scaled to the contract face. Positive for a long contract, the sign of
+   * {@link BondPricer#dv01}, not of the risk ladder.
    */
   public double futuresDv01(
       final FixedRateBond ctd,
