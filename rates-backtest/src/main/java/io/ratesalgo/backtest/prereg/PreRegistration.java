@@ -97,6 +97,12 @@ public final class PreRegistration {
     } else {
       problems.add("holdout must be a non-empty list of dates");
     }
+    if (holdout.size() == 1) {
+      problems.add("holdout needs at least two dates: the daily statistics need two days");
+    }
+    if (period != null && period.businessDays().size() < 2) {
+      problems.add("evaluation period needs at least two business days");
+    }
     date(String.valueOf(raw.get("date")), "date", problems);
     if (period != null && fitting != null && period.overlaps(fitting)) {
       problems.add("evaluation period " + period + " overlaps the fitting period " + fitting);

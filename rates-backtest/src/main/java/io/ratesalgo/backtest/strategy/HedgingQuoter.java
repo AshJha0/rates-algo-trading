@@ -27,10 +27,15 @@ public abstract class HedgingQuoter implements Strategy {
   private final int hedgeInstrument;
   private boolean hedgeInFlight;
 
-  protected HedgingQuoter(final double hedgeThresholdDv01) {
+  /** Subclasses call this before {@code super(...)}; the base constructor does not throw. */
+  protected static double checkThreshold(final double hedgeThresholdDv01) {
     if (!(hedgeThresholdDv01 > 0)) {
-      throw new IllegalArgumentException("hedge threshold must be positive");
+      throw new IllegalArgumentException("hedge threshold must be positive: " + hedgeThresholdDv01);
     }
+    return hedgeThresholdDv01;
+  }
+
+  protected HedgingQuoter(final double hedgeThresholdDv01) {
     this.hedgeThresholdDv01 = hedgeThresholdDv01;
     this.hedgeInstrument = InstrumentSet.TY_FUTURE;
   }

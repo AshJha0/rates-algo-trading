@@ -389,7 +389,7 @@ public final class SyntheticDay {
     final BookUpdateEncoder bookEnc = new BookUpdateEncoder();
     final QuoteRequestEncoder rfqEnc = new QuoteRequestEncoder();
     long venueSeq = 1;
-    long rfqId = 1;
+    long rfqId = date.toEpochDay() * 1_000_000L + 1; // unique across sessions
     int books = 0;
     int curves = 0;
     final StringBuilder truth = new StringBuilder("rfq_id,instrument_id,client_id,informed\n");

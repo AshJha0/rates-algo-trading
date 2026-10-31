@@ -17,4 +17,13 @@
     <Class name="io.ratesalgo.common.time.TimerWheel" />
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
   </Match>
+  <!-- BacktestConfig is a record of immutable model objects (final classes with final
+       primitive fields) and an unmodifiable list; returning them is sharing, not exposure. -->
+  <Match>
+    <Class name="io.ratesalgo.backtest.BacktestConfig" />
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>

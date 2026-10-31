@@ -24,12 +24,12 @@ public final class EventCalendar {
   }
 
   public static EventCalendar forDay(
-      final LocalDate date, final int utcOffsetHours, final double[] minutesEt, final double halfWidthMinutes) {
+      final LocalDate date, final int utcOffsetHours, final java.util.List<Double> minutesEt, final double halfWidthMinutes) {
     final long midnight =
         date.atStartOfDay().toEpochSecond(ZoneOffset.ofHours(utcOffsetHours)) * 1_000_000_000L;
-    final long[] events = new long[minutesEt.length];
-    for (int i = 0; i < minutesEt.length; i++) {
-      events[i] = midnight + Math.round(minutesEt[i] * 60e9);
+    final long[] events = new long[minutesEt.size()];
+    for (int i = 0; i < events.length; i++) {
+      events[i] = midnight + Math.round(minutesEt.get(i) * 60e9);
     }
     return new EventCalendar(events, Math.round(halfWidthMinutes * 60e9));
   }

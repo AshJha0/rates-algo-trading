@@ -88,8 +88,9 @@ public final class Ledger {
         "prev_sha256", existing.isEmpty() ? GENESIS : Hashing.sha256Text(existing.get(existing.size() - 1)));
     final String line = Json.write(full);
     try {
-      if (file.getParent() != null) {
-        Files.createDirectories(file.getParent());
+      final Path parent = file.toAbsolutePath().getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
       }
       Files.writeString(
           file, line + "\n", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);

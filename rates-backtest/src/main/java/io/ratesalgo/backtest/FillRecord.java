@@ -1,5 +1,7 @@
 package io.ratesalgo.backtest;
 
+import java.util.List;
+
 /**
  * One fill booked by the back-tester.
  *
@@ -29,19 +31,14 @@ public record FillRecord(
     long refId,
     int clientId,
     int tier,
-    double[] markouts) {
+    List<Double> markouts) {
 
   public FillRecord {
-    markouts = markouts.clone();
-  }
-
-  @Override
-  public double[] markouts() {
-    return markouts.clone();
+    markouts = List.copyOf(markouts);
   }
 
   public double markout(final int horizonIndex) {
-    return markouts[horizonIndex];
+    return markouts.get(horizonIndex);
   }
 
   /** Edge against mid at fill time, major currency (spread capture or hedge cost). */
@@ -49,37 +46,8 @@ public record FillRecord(
     return signedQuantity * (mid - price) * instrument.valuePerUnit();
   }
 
-  FillRecord withMarkouts(final double[] values) {
+  FillRecord withMarkouts(final List<Double> values) {
     return new FillRecord(
         fillId, timeNanos, instrumentId, signedQuantity, price, mid, fee, hedge, refId, clientId, tier, values);
-  }
-
-  @Override
-  public boolean equals(final Object o) {
-    return o instanceof FillRecord f
-        && fillId == f.fillId
-        && timeNanos == f.timeNanos
-        && instrumentId == f.instrumentId
-        && signedQuantity == f.signedQuantity
-        && Double.compare(price, f.price) == 0
-        && Double.compare(mid, f.mid) == 0
-        && Double.compare(fee, f.fee) == 0
-        && hedge == f.hedge
-        && refId == f.refId
-        && clientId == f.clientId
-        && tier == f.tier
-        && java.util.Arrays.equals(markouts, f.markouts);
-  }
-
-  @Override
-  public int hashCode() {
-    return java.util.Objects.hash(fillId, timeNanos, instrumentId, signedQuantity, refId)
-        * 31
-        + java.util.Arrays.hashCode(markouts);
-  }
-
-  @Override
-  public String toString() {
-    return "FillRecord[" + fillId + " " + instrumentId + " " + signedQuantity + " @ " + price + "]";
   }
 }

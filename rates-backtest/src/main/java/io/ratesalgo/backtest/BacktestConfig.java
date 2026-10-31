@@ -47,51 +47,27 @@ public record BacktestConfig(
     long quoteLatencyNanos,
     long clientDecisionNanos,
     long orderLatencyNanos,
-    long[] markoutHorizonsNanos,
+    List<Long> markoutHorizonsNanos,
     Path outputDir) {
 
   /** Markout horizons of the daily report: 1 s, 10 s, 1 min, 5 min. */
-  public static final long[] DEFAULT_HORIZONS = {
-    1_000_000_000L, 10_000_000_000L, 60_000_000_000L, 300_000_000_000L
-  };
+  public static final List<Long> DEFAULT_HORIZONS =
+      List.of(1_000_000_000L, 10_000_000_000L, 60_000_000_000L, 300_000_000_000L);
 
   /** Labels of {@link #DEFAULT_HORIZONS}. */
   public static final List<String> HORIZON_LABELS = List.of("1s", "10s", "1min", "5min");
 
   /** Scheduled-event times for a session, from preset {@code usd_rfq_flow}. */
-  public record CalendarSpec(int utcOffsetHours, double[] minutesEt, double halfWidthMinutes) {
+  public record CalendarSpec(int utcOffsetHours, List<Double> minutesEt, double halfWidthMinutes) {
     public CalendarSpec {
-      minutesEt = minutesEt.clone();
-    }
-
-    @Override
-    public double[] minutesEt() {
-      return minutesEt.clone();
-    }
-
-    @Override
-    public boolean equals(final Object o) {
-      return o instanceof CalendarSpec c
-          && utcOffsetHours == c.utcOffsetHours
-          && java.util.Arrays.equals(minutesEt, c.minutesEt)
-          && Double.compare(halfWidthMinutes, c.halfWidthMinutes) == 0;
-    }
-
-    @Override
-    public int hashCode() {
-      return java.util.Arrays.hashCode(minutesEt) * 31 + utcOffsetHours;
-    }
-
-    @Override
-    public String toString() {
-      return "CalendarSpec[" + utcOffsetHours + " " + java.util.Arrays.toString(minutesEt) + "]";
+      minutesEt = List.copyOf(minutesEt);
     }
 
     public static CalendarSpec fromPreset(final Preset flow) {
       final int n = (int) flow.value("event_count");
-      final double[] minutes = new double[n];
+      final List<Double> minutes = new java.util.ArrayList<>();
       for (int i = 0; i < n; i++) {
-        minutes[i] = flow.value("event_" + i + "_minute_et");
+        minutes.add(flow.value("event_" + i + "_minute_et"));
       }
       return new CalendarSpec(
           (int) flow.value("utc_offset_hours"), minutes, flow.value("event_half_width_minutes"));
@@ -100,18 +76,13 @@ public record BacktestConfig(
 
   public BacktestConfig {
     journals = List.copyOf(journals);
-    markoutHorizonsNanos = markoutHorizonsNanos.clone();
+    markoutHorizonsNanos = List.copyOf(markoutHorizonsNanos);
     if (journals.isEmpty()) {
       throw new IllegalArgumentException("at least one journal is required");
     }
     if (clientsPerTier <= 0) {
       throw new IllegalArgumentException("clientsPerTier must be positive");
     }
-  }
-
-  @Override
-  public long[] markoutHorizonsNanos() {
-    return markoutHorizonsNanos.clone();
   }
 
   @Override

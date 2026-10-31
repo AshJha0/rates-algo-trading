@@ -48,10 +48,11 @@ public final class ModelSpreadStrategy extends HedgingQuoter {
       final double stepBp,
       final double hedgeThresholdDv01,
       final int clientsPerTier) {
-    super(hedgeThresholdDv01);
+    checkThreshold(hedgeThresholdDv01);
     if (!(stepBp > 0) || !(maxBp > 0)) {
       throw new IllegalArgumentException("spread grid must be positive");
     }
+    super(hedgeThresholdDv01);
     this.hitRate = hitRate;
     this.competitors = competitors;
     this.adverseBpByTier = adverseBpByTier.clone();
@@ -90,7 +91,7 @@ public final class ModelSpreadStrategy extends HedgingQuoter {
   }
 
   /** Expected minimum of k independent standard normals (exact values to four decimals). */
-  static double expectedMinNormal(final int k) {
+  public static double expectedMinNormal(final int k) {
     return switch (k) {
       case 1 -> 0.0;
       case 2 -> -0.5642;

@@ -602,7 +602,7 @@ public final class BacktestRunner {
       fills.add(
           new FillRecord(
               fills.size() + 1L, clock.epochNanos(), instrumentId, signed, price, mid, fee, hedge, refId,
-              clientId, tier, new double[0]));
+              clientId, tier, List.of()));
       maxAbsNetDv01 = Math.max(maxAbsNetDv01, Math.abs(book.netDv01()));
       maxAbsPosition.merge(instrumentId, Math.abs(book.position(instrumentId)), Math::max);
     }
@@ -615,14 +615,14 @@ public final class BacktestRunner {
     }
 
     private BacktestResult finish() {
-      final long[] horizons = config.markoutHorizonsNanos();
+      final List<Long> horizons = config.markoutHorizonsNanos();
       final List<FillRecord> withMarkouts = new ArrayList<>(fills.size());
       for (final FillRecord f : fills) {
         final MidSeries series = mids.get(f.instrumentId());
         final double v = config.instruments().get(f.instrumentId()).valuePerUnit();
-        final double[] m = new double[horizons.length];
-        for (int h = 0; h < horizons.length; h++) {
-          m[h] = f.signedQuantity() * (series.at(f.timeNanos() + horizons[h]) - f.price()) * v;
+        final List<Double> m = new ArrayList<>(horizons.size());
+        for (final long h : horizons) {
+          m.add(f.signedQuantity() * (series.at(f.timeNanos() + h) - f.price()) * v);
         }
         withMarkouts.add(f.withMarkouts(m));
       }

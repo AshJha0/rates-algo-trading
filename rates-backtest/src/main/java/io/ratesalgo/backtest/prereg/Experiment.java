@@ -47,7 +47,12 @@ import java.util.Map;
 public final class Experiment {
 
   /** The verdict and the results map recorded in the ledger. */
-  public record Outcome(String verdict, Map<String, Object> results, List<Map<String, Object>> journals) {}
+  public record Outcome(String verdict, Map<String, Object> results, List<Map<String, Object>> journals) {
+    public Outcome {
+      results = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(results));
+      journals = List.copyOf(journals);
+    }
+  }
 
   private final Path repoRoot;
   private final Map<String, Object> config;

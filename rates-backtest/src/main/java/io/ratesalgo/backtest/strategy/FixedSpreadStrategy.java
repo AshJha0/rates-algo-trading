@@ -22,6 +22,7 @@ public final class FixedSpreadStrategy extends HedgingQuoter {
       final double bondHalfSpreadBp,
       final double hedgeThresholdDv01,
       final int clientsPerTier) {
+    checkThreshold(hedgeThresholdDv01);
     super(hedgeThresholdDv01);
     this.swapHalfSpreadBp = swapHalfSpreadBp;
     this.bondHalfSpreadBp = bondHalfSpreadBp;

@@ -7,14 +7,14 @@ public final class PreRegistrationException extends RuntimeException {
 
   private static final long serialVersionUID = 1L;
 
-  private final transient List<String> problems;
+  private final java.util.ArrayList<String> problems;
 
   public PreRegistrationException(final List<String> problems) {
     super("pre-registration refused: " + String.join("; ", problems));
-    this.problems = List.copyOf(problems);
+    this.problems = new java.util.ArrayList<>(problems);
   }
 
   public List<String> problems() {
-    return problems;
+    return List.copyOf(problems);
   }
 }

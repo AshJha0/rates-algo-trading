@@ -1,0 +1,51 @@
+{
+  "created_utc": "2026-10-31T06:44:24+00:00",
+  "files": [
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_01.zip",
+      "sha256": "524f4f913945395cff261ee0870f2518d7c58af1005a3a0d73ba4c883744ec28",
+      "size": 1206196
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_02.zip",
+      "sha256": "477498a9c9cdc522eeee0fbb456eda9b290e08ccf37bd7cfc81892ba478853c3",
+      "size": 991043
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_03.zip",
+      "sha256": "ed7e43dcb89ca793095419d0d1b08057ddcbeae27c557c0c200081fdfaabede7",
+      "size": 794904
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_06.zip",
+      "sha256": "ae6e6e39d13aa15292e1b6d84a354b99f7d22ee66d26066d3637965f771c504e",
+      "size": 818097
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_07.zip",
+      "sha256": "a5b89fe9b1ceafc2d62937587c299fe332aced12179b21b88780d85386a8ae95",
+      "size": 1031654
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_08.zip",
+      "sha256": "b6a467f4ed4287fdded62202806f8e16ae51b3d0fb30db9845bc9ccda2653e89",
+      "size": 1025872
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_09.zip",
+      "sha256": "6e894334aa9e19c8452d83ad3c3b09d1de53a43a97d1d01a4c06207381a6e4e8",
+      "size": 1523697
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_10.zip",
+      "sha256": "4a5b56006589bb0a40966bb8ee8d2b891aa075e25b6980117280b0430a8c3111",
+      "size": 1159087
+    },
+    {
+      "name": "CFTC_CUMULATIVE_RATES_2025_10_14.zip",
+      "sha256": "dd7f73a0741563d3ec93789af807ffc6937f34ce91d2598b430fa685f4ae3337",
+      "size": 1310491
+    }
+  ],
+  "manifest_version": 1
+}

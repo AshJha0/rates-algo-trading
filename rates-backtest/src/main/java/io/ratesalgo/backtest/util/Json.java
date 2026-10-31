@@ -25,65 +25,56 @@ public final class Json {
   }
 
   private static void append(final StringBuilder out, final Object value) {
-    if (value == null) {
-      out.append("null");
-    } else if (value instanceof String s) {
-      string(out, s);
-    } else if (value instanceof Double d) {
-      number(out, d);
-    } else if (value instanceof Float f) {
-      number(out, f.doubleValue());
-    } else if (value instanceof Number n) {
-      out.append(n.longValue());
-    } else if (value instanceof Boolean b) {
-      out.append(b.booleanValue() ? "true" : "false");
-    } else if (value instanceof Map<?, ?> map) {
-      final TreeMap<String, Object> sorted = new TreeMap<>();
-      for (final Map.Entry<?, ?> e : map.entrySet()) {
-        sorted.put(String.valueOf(e.getKey()), e.getValue());
-      }
-      out.append('{');
-      boolean first = true;
-      for (final Map.Entry<String, Object> e : sorted.entrySet()) {
-        if (!first) {
-          out.append(',');
+    switch (value) {
+      case null -> out.append("null");
+      case String s -> string(out, s);
+      case Double d -> number(out, d);
+      case Float f -> number(out, f.doubleValue());
+      case Number n -> out.append(n.longValue());
+      case Boolean b -> out.append(b.booleanValue() ? "true" : "false");
+      case Map<?, ?> map -> object(out, map);
+      case Collection<?> list -> {
+        out.append('[');
+        boolean first = true;
+        for (final Object item : list) {
+          if (!first) {
+            out.append(',');
+          }
+          first = false;
+          append(out, item);
         }
-        first = false;
-        string(out, e.getKey());
-        out.append(':');
-        append(out, e.getValue());
+        out.append(']');
       }
-      out.append('}');
-    } else if (value instanceof Collection<?> list) {
-      out.append('[');
-      boolean first = true;
-      for (final Object item : list) {
-        if (!first) {
-          out.append(',');
-        }
-        first = false;
-        append(out, item);
-      }
-      out.append(']');
-    } else if (value instanceof double[] arr) {
-      out.append('[');
-      for (int i = 0; i < arr.length; i++) {
-        if (i > 0) {
-          out.append(',');
-        }
-        number(out, arr[i]);
-      }
-      out.append(']');
-    } else {
-      throw new IllegalArgumentException("cannot write " + value.getClass().getName() + " as JSON");
+      default ->
+          throw new IllegalArgumentException(
+              "cannot write " + value.getClass().getName() + " as JSON");
     }
+  }
+
+  private static void object(final StringBuilder out, final Map<?, ?> map) {
+    final TreeMap<String, Object> sorted = new TreeMap<>();
+    for (final Map.Entry<?, ?> e : map.entrySet()) {
+      sorted.put(String.valueOf(e.getKey()), e.getValue());
+    }
+    out.append('{');
+    boolean first = true;
+    for (final Map.Entry<String, Object> e : sorted.entrySet()) {
+      if (!first) {
+        out.append(',');
+      }
+      first = false;
+      string(out, e.getKey());
+      out.append(':');
+      append(out, e.getValue());
+    }
+    out.append('}');
   }
 
   private static void number(final StringBuilder out, final double d) {
     if (Double.isNaN(d) || Double.isInfinite(d)) {
       throw new IllegalArgumentException("non-finite number in JSON output: " + d);
     }
-    if (d == Math.rint(d) && Math.abs(d) < 1e15) {
+    if (Double.compare(d, Math.rint(d)) == 0 && Math.abs(d) < 1e15) {
       out.append(String.format(Locale.ROOT, "%.1f", d));
     } else {
       // "1.5E7" is a string to a YAML 1.1 reader; "1.5E+7" is a number to JSON and YAML alike
