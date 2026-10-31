@@ -47,5 +47,16 @@
       "size": 1310491
     }
   ],
-  "manifest_version": 1
+  "manifest_version": 1,
+  "source": {
+    "dashboard": "https://pddata.dtcc.com/ppd/",
+    "downloaded_utc": "2026-10-31",
+    "excluded": [
+      "CFTC_CUMULATIVE_RATES_2025_10_13.zip (2025-10-13, SIFMA-recommended bond market close)"
+    ],
+    "licence": "DTCC public price dissemination data, published under CFTC Part 43; DTCC terms of use (https://www.dtcc.com/terms-of-use) apply. Raw files are not redistributed; only fitted parameters and a manifest are committed.",
+    "name": "DTCC SDR public dissemination (rates), CFTC end-of-day cumulative slices",
+    "url_pattern": "https://kgc0418-tdw-data-0.s3.amazonaws.com/cftc/eod/CFTC_CUMULATIVE_RATES_{d}.zip",
+    "used_by": "ratesresearch.flow.fit_dtcc -> data/presets.yaml preset usd_rfq_flow"
+  }
 }

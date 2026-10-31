@@ -11,7 +11,8 @@ graph TD
   quoting["rates-quoting<br/>(planned P3)"]
   risk["rates-risk<br/>risk engine, hedger<br/>(planned P3)"]
   router["rates-router<br/>(planned P4)"]
-  backtest["rates-backtest<br/>(planned P5)"]
+  backtest["rates-backtest<br/>runner, outcome models, ledger, report<br/>(P5)"]
+  snakeyaml["SnakeYAML (external)"]
   posttrade["rates-posttrade<br/>(planned P5)"]
 
   journal --> common
@@ -32,10 +33,13 @@ graph TD
   risk -.-> analytics
   router -.-> core
   router -.-> venues
-  backtest -.-> journal
+  backtest --> journal
+  backtest --> messages
+  backtest --> common
+  backtest --> snakeyaml
   backtest -.-> core
   posttrade -.-> journal
   posttrade -.-> analytics
 
   classDef planned stroke-dasharray: 5 5
-  class analytics,core,venues,quoting,risk,router,backtest,posttrade planned
+  class analytics,core,venues,quoting,risk,router,posttrade planned

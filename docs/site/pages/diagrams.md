@@ -33,3 +33,11 @@ The 32-byte file header, the 32-byte frame header and the chain hash definition,
 ```mermaid
 --8<-- "docs/diagrams/journal_frame.mmd"
 ```
+
+## Experiment lifecycle
+
+From fitting-period estimates to a pre-registration committed before the run, through the refusals of `ExperimentCli`, to the ledger line that records every run whatever its verdict, and the holdout that is opened once (API_SPEC.md Section 16.8, LEARN.md Section 10).
+
+```mermaid
+--8<-- "docs/diagrams/experiment_lifecycle.mmd"
+```

@@ -1,0 +1,21 @@
+flowchart TD
+  fit["Fitting period runs<br/>baseline strategy on fitting sessions"]
+  est["Estimates<br/>ratesresearch.markouts, hitrate, flow<br/>written to the experiment config and presets"]
+  cfg["Experiment config<br/>data/experiments/ID.config.yaml"]
+  pre["Pre-registration<br/>data/preregs/ID.yaml<br/>hypothesis, metric, periods, holdout,<br/>threshold, band, config_sha256"]
+  commit["Commit before the run"]
+  cli{"ExperimentCli<br/>validates"}
+  refuse["Refused, exit 2<br/>nothing run, nothing recorded"]
+  run["Run on the evaluation sessions<br/>every strategy at low, central, high"]
+  stats["Statistics<br/>Welch, Holm, block bootstrap"]
+  ledger["Ledger line appended<br/>data/ledger/ledger.jsonl<br/>hashes, results, verdict, prev_sha256"]
+  holdout{"Open the holdout?"}
+  once["Holdout run, once<br/>a second attempt is refused"]
+  next["New pre-registration<br/>for any changed question"]
+
+  fit --> est --> cfg --> pre --> commit --> cli
+  cli -->|missing, invalid, overlap,<br/>hash mismatch, holdout opened| refuse
+  cli -->|valid| run --> stats --> ledger --> holdout
+  holdout -->|yes| once --> ledger
+  holdout -->|no| next
+  ledger --> next

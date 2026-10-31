@@ -15,7 +15,7 @@ This document describes the system as designed and marks, component by component
 | Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | planned P3 |
 | Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | planned P3 |
 | Journal and replay | Append-only hash-chained record of inputs; replayer that drives the same handlers and verifies the chain | exists in P0 (`rates-journal`) |
-| Back-tester | Replay journals or simulated days through the live code path with pre-registered hypotheses and holdouts; attribution | planned P5 |
+| Back-tester | Replay journals or simulated days through the live code path with pre-registered hypotheses and holdouts; attribution | exists from P5 (`rates-backtest`); bound to the P2 loop's replay mode by the coordinator |
 | Analytics (research) | Python: provenance, calibration of simulator parameters, result analysis | partly exists in P0 (`research/ratesresearch`: provenance and chain hash); calibration planned P1, P5 |
 | Control plane | Start, stop, parameter changes with approval, limit changes, kill switch operation; all changes journaled | planned P3 |
 | AI assistants | Draft, review and summarise under `docs/AI_USE_POLICY.md`; never change production parameters without a human-approved PR | policy exists in P0; tooling planned P6 |
@@ -47,6 +47,27 @@ Dependencies: `rates-journal` depends on `rates-common` (for `Clock`) and on Agr
 
 Agrona 2.x reaches `jdk.internal.misc.Unsafe`, so every JVM that runs these modules, tests included, starts with `--add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED` (set for Surefire in the parent `pom.xml`).
 
+## Back-test (P5)
+
+```
+rates-backtest    io.ratesalgo.backtest           BacktestRunner, Strategy, StrategyContext, BacktestConfig, ResultsWriter
+                  io.ratesalgo.backtest.model     HitRateModel, CompetitorModel, RfqOutcomeModel, HedgeCostModel, ClobFillModel, Presets
+                  io.ratesalgo.backtest.pnl       PositionBook, Attribution, CarryModel (hook)
+                  io.ratesalgo.backtest.synth     SyntheticDay, SyntheticDayCli
+                  io.ratesalgo.backtest.strategy  FixedSpreadStrategy, ModelSpreadStrategy (experiment P5-001)
+                  io.ratesalgo.backtest.stats     block bootstrap, Welch, Holm
+                  io.ratesalgo.backtest.prereg    PreRegistration, Ledger, Experiment, ExperimentCli
+                  io.ratesalgo.backtest.report    DailyReport, ReportCli
+```
+
+Dependencies: `rates-common`, `rates-messages`, `rates-journal`, Agrona, and SnakeYAML for presets, pre-registrations and ledger lines (DR-P5-07). The back-tester is off the hot path: it is single-threaded, allocates per event and is not covered by the allocation rule.
+
+Flow of one run. `BacktestRunner` reads journals with `JournalReader` (chain verified), drives a `ManualClock`, decodes the SBE payloads and calls the `Strategy`. The strategy acts through `StrategyContext`: quotes go to `RfqOutcomeModel` (competitors from `CompetitorModel`, win probability from `HitRateModel` at the run's band point, random draws keyed by RFQ id), market orders to `HedgeCostModel`, limit orders to `ClobFillModel`. Fills are booked in `PositionBook`, which keeps cash and position and the attribution lines side by side; their difference is the residual, checked below one cent. Every output message is SBE-encoded and folded into the output chain hash, which is what the determinism test compares (API_SPEC.md Section 16.1).
+
+Inputs until the P2 simulators are bound: `SyntheticDay` journals, generated from the presets with a seed per date. Research reads the outputs (`fills.csv`, `rfqs.csv`, `pnl.csv`, `summary.json`) and the ledger, and writes presets; the two sides share files and pinned formats (API_SPEC.md Section 16), not code. Experiments go through pre-registration and the ledger (`docs/diagrams/experiment_lifecycle.mmd`). The daily report (`ReportCli`) runs unattended from a journal and a config.
+
+Binding to the event loop (planned with the coordinator). The P2 loop's replay mode delivers the same SBE flyweights; an adapter that implements `Strategy` over the loop's handlers, or a `BacktestRunner` input that reads the loop's output journal, is the binding point. The outcome models stay in the back-tester until the venue simulators (P2) settle RFQs themselves, at which point the hit-rate model moves into the simulator and the back-tester reads QuoteResponses from the journal.
+
 ## Threading and memory rules
 
 - Hot-path packages (to be listed here as they appear from P2: the event core, market state, pricing used in the loop, quoting, risk) contain no `synchronized`, no `java.util.concurrent` locks, and no allocation after warm-up.
@@ -74,7 +95,7 @@ Errors that indicate corruption or a contract break (journal hash mismatch, sche
 | Property-based | Wide input spaces: timer ordering, journal round trips, codec round trips | jqwik (Java), hypothesis (Python) | P0 |
 | Golden against QuantLib | Pricing within stated tolerances | fixtures generated on Linux | planned P1 |
 | Conformance | Gateway behaviour against FIX 4.4 and SBE book feed specifications | venue simulators | planned P2 |
-| Replay-hash determinism | Same journal, same output hash, across runs and platforms | `Replayer` plus output journal hash | P0 for the chain check; end-to-end planned P2 |
+| Replay-hash determinism | Same journal, same output hash, across runs and platforms | `Replayer` plus output journal hash | P0 for the chain check; back-tester `DeterminismTest` in P5; end-to-end planned P2 |
 | Latency and allocation | Fixed-rate load, coordinated-omission correction, zero-allocation delta | HdrHistogram, ThreadMXBean | planned P2 (allocation), P5 (latency job) |
 | Chaos | Dropped and duplicated venue messages, late timers, full buffers | fault-injecting simulators | planned P5 |
 
