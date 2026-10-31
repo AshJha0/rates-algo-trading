@@ -23,6 +23,11 @@ dev = [
     "mypy>=1.11",
     "pandas-stubs>=2.1",
 ]
+# QuantLib golden generator (research/ratesresearch/goldens); the version is pinned so the
+# committed golden file regenerates exactly (DECISIONS.md DR-P1-06).
+golden = [
+    "QuantLib==1.44",
+]
 
 [tool.setuptools.packages.find]
 include = ["ratesresearch*"]

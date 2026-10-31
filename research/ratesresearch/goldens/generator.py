@@ -65,9 +65,7 @@ class SwapConv:
 
 CONVS: dict[str, SwapConv] = {
     "USD": SwapConv("USD", US_NY_SWAP, US_NY_SWAP, ql.Sofr, ql.Actual360(), 2, 2),
-    "EUR": SwapConv(
-        "EUR", CALENDARS["TARGET"], CALENDARS["TARGET"], ql.Estr, ql.Actual360(), 2, 1
-    ),
+    "EUR": SwapConv("EUR", CALENDARS["TARGET"], CALENDARS["TARGET"], ql.Estr, ql.Actual360(), 2, 1),
     "GBP": SwapConv(
         "GBP", CALENDARS["LONDON"], CALENDARS["LONDON"], ql.Sonia, ql.Actual365Fixed(), 0, 0
     ),
@@ -91,8 +89,11 @@ def hull_white_ca(t1: float, t2: float) -> float:
     a, s = HW_A, HW_SIGMA
     b12 = (1.0 - math.exp(-a * (t2 - t1))) / a
     b01 = (1.0 - math.exp(-a * t1)) / a
-    return b12 / (t2 - t1) * (b12 * (1.0 - math.exp(-2.0 * a * t1)) + 2.0 * a * b01 * b01) * (
-        s * s / (4.0 * a)
+    return (
+        b12
+        / (t2 - t1)
+        * (b12 * (1.0 - math.exp(-2.0 * a * t1)) + 2.0 * a * b01 * b01)
+        * (s * s / (4.0 * a))
     )
 
 
@@ -555,8 +556,15 @@ def swap_cases(today: Any) -> list[SwapCase]:
             end = ql.Date.nthWeekday(3, ql.Wednesday, nxt.month(), nxt.year())
             cases.append(
                 SwapCase(
-                    f"{ccy}-IMM-{ten}M", ccy, imm_start, end, None, False, kind="imm",
-                    tenor_months=ten, rate_offset=0.001,
+                    f"{ccy}-IMM-{ten}M",
+                    ccy,
+                    imm_start,
+                    end,
+                    None,
+                    False,
+                    kind="imm",
+                    tenor_months=ten,
+                    rate_offset=0.001,
                 )
             )
         for start_iso, ten, rate in (("2024-06-17", 24, 0.0450), ("2024-03-15", 60, 0.0400)):
@@ -716,12 +724,26 @@ def bond_cases() -> list[BondCase]:
             out.append(BondCase(f"{market}-{c:.3f}-{mat}", market, c / 100.0, dated, mat, y))
     # gilts traded inside an ex-dividend period
     out.append(
-        BondCase("GILT-1.000-2032-01-31-XD", "GILT", 0.01, "2021-07-31", "2032-01-31", 0.0452,
-                 "2025-01-24")
+        BondCase(
+            "GILT-1.000-2032-01-31-XD",
+            "GILT",
+            0.01,
+            "2021-07-31",
+            "2032-01-31",
+            0.0452,
+            "2025-01-24",
+        )
     )
     out.append(
-        BondCase("GILT-3.250-2033-01-31-XD", "GILT", 0.0325, "2023-01-31", "2033-01-31", 0.0462,
-                 "2025-01-27")
+        BondCase(
+            "GILT-3.250-2033-01-31-XD",
+            "GILT",
+            0.0325,
+            "2023-01-31",
+            "2033-01-31",
+            0.0462,
+            "2025-01-27",
+        )
     )
     return out
 
@@ -905,17 +927,32 @@ def cme_cf(coupon: float, maturity: str, year: int, month: int, rounding: int) -
     dc = ql.Thirty360(ql.Thirty360.BondBasis)
     bond = ql.FixedRateBond(0, 100.0, sched, [coupon], dc, ql.Unadjusted)
     clean = ql.BondFunctions.cleanPrice(bond, 0.06, dc, ql.Compounded, ql.Semiannual, first)
-    return round(clean / 100.0, 4)
+    return round(float(clean) / 100.0, 4)
 
 
 EUREX = [
-    ("FGBL", "2025-03-10", "BUND", [(2.500, "2024-02-15", "2034-02-15"),
-                                    (2.600, "2024-08-15", "2034-08-15"),
-                                    (2.200, "2023-11-15", "2033-02-15")]),
-    ("FGBM", "2025-03-10", "BUND", [(0.000, "2021-02-15", "2030-02-15"),
-                                    (2.400, "2024-01-15", "2029-10-19")]),
-    ("FGBS", "2025-03-10", "BUND", [(0.500, "2016-02-15", "2026-02-15"),
-                                    (2.200, "2024-03-12", "2026-12-10")]),
+    (
+        "FGBL",
+        "2025-03-10",
+        "BUND",
+        [
+            (2.500, "2024-02-15", "2034-02-15"),
+            (2.600, "2024-08-15", "2034-08-15"),
+            (2.200, "2023-11-15", "2033-02-15"),
+        ],
+    ),
+    (
+        "FGBM",
+        "2025-03-10",
+        "BUND",
+        [(0.000, "2021-02-15", "2030-02-15"), (2.400, "2024-01-15", "2029-10-19")],
+    ),
+    (
+        "FGBS",
+        "2025-03-10",
+        "BUND",
+        [(0.500, "2016-02-15", "2026-02-15"), (2.200, "2024-03-12", "2026-12-10")],
+    ),
 ]
 LONG_GILT = [
     (4.000, "2024-04-22", "2031-10-22"),
@@ -926,9 +963,7 @@ LONG_GILT = [
 ]
 
 
-def bond_clean_at(
-    market: str, coupon: float, dated: str, mat: str, y: float, settle: Any
-) -> float:
+def bond_clean_at(market: str, coupon: float, dated: str, mat: str, y: float, settle: Any) -> float:
     case = BondCase("cf", market, coupon / 100.0, dated, mat, y)
     bond = ql_bond(case, False)
     _, _, months, _ = BOND_MARKETS[market]
