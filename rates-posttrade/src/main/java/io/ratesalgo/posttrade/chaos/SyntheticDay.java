@@ -136,8 +136,8 @@ public final class SyntheticDay {
 
     for (int i = 0; i < p.orders(); i++) {
       final long t = open + span * i / Math.max(1, p.orders());
-      final long clOrdId = 1_000 + i;
-      final long venueOrderId = 500_000 + i;
+      final long clOrdId = 1_000L + i;
+      final long venueOrderId = 500_000L + i;
       final int instrument = i % 2 == 0 ? BOND_A : BOND_B;
       final Side side = rnd.nextBoolean() ? Side.Buy : Side.Sell;
       final long price = 99_500_000_000L + rnd.nextInt(64) * 31_250_000L;
@@ -170,8 +170,8 @@ public final class SyntheticDay {
 
     for (int j = 0; j < p.rfqs(); j++) {
       final long t = open + 7 * MINUTE + span * j / Math.max(1, p.rfqs());
-      final long rfqId = 9_000 + j;
-      final long quoteId = 70_000 + j;
+      final long rfqId = 9_000L + j;
+      final long quoteId = 70_000L + j;
       final Side clientSide = rnd.nextBoolean() ? Side.Buy : Side.Sell;
       final long qty = (5 + rnd.nextInt(46)) * 1_000_000_000L;
       final long mid = 4_200_000_000L + rnd.nextInt(100) * 1_000_000L;

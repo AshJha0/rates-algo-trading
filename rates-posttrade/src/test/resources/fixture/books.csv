@@ -1,0 +1,5 @@
+instrument_id,book,account,algorithm_id
+0,9,90,ALG-UNASSIGNED
+1001,1,10,ALG-UST-MM-01
+1002,1,10,ALG-UST-MM-01
+2001,2,20,ALG-SWP-RFQ-01

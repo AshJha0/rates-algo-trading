@@ -1,0 +1,5 @@
+instrument_id,identifier,currency,price_notation,multiplier
+# 1001: US Treasury 10Y fixture (price per 100); 1002: second Treasury; 2001: USD SOFR 10Y swap (rate in percent, fixed annuity 8.5 years)
+1001,US91282CLF0X,USD,PERC,1
+1002,US91282CLG0X,USD,PERC,1
+2001,USD-SOFR-10Y,USD,PERC,8.5

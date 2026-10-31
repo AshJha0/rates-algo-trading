@@ -17,4 +17,22 @@
     <Class name="io.ratesalgo.common.time.TimerWheel" />
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
   </Match>
+  <!-- P6 post-trade: the restart procedure, the break explainer and the daily reconciliation
+       inputs work on the caller's PositionKeeper on purpose; copying it would defeat them. -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.posttrade.recovery.RestartProcedure" />
+      <Class name="io.ratesalgo.posttrade.recon.KeeperFacts" />
+      <Class name="io.ratesalgo.posttrade.recon.DailyReconciliation$Inputs" />
+      <!-- P6 ops: the quoter and the started-process handle share the process's one journal
+           writer; the schema wraps a map parsed from file and never mutated. -->
+      <Class name="io.ratesalgo.ops.process.SimulatedQuoter" />
+      <Class name="io.ratesalgo.ops.process.OpsProcessMain$Started" />
+      <Class name="io.ratesalgo.ops.config.JsonSchema" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>
