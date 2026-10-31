@@ -83,6 +83,23 @@ class RefDataTest {
     assertThrows(RefDataException.class, () -> c.isHoliday("XX", LocalDate.of(2026, 1, 1)));
   }
 
+  /** DR-R2R-06: 2027 is covered, and a date in an uncovered year is refused, not a business day. */
+  @Test
+  void calendarsCover2027AndRefuseUncoveredYears() {
+    final CalendarSource c = REF.calendars();
+    assertFalse(c.isBusinessDay("US-GS", LocalDate.of(2027, 1, 18)), "MLK day");
+    for (final String cal : new String[] {"US-GS", "UK", "TARGET"}) {
+      assertFalse(c.isBusinessDay(cal, LocalDate.of(2027, 3, 26)), cal + " Good Friday");
+    }
+    assertFalse(c.isBusinessDay("UK", LocalDate.of(2027, 3, 29)));
+    assertFalse(c.isBusinessDay("TARGET", LocalDate.of(2027, 3, 29)));
+    assertFalse(c.isBusinessDay("UK", LocalDate.of(2027, 5, 3)));
+    assertFalse(c.isBusinessDay("US-GS", LocalDate.of(2027, 12, 24)), "Christmas observed");
+    assertTrue(c.isBusinessDay("US-GS", LocalDate.of(2027, 12, 31)));
+    assertThrows(RefDataException.class, () -> c.isHoliday("US-GS", LocalDate.of(2028, 1, 3)));
+    assertThrows(RefDataException.class, () -> c.isHoliday("UK", LocalDate.of(2025, 12, 31)));
+  }
+
   @Test
   void identifiers() {
     assertTrue(Identifiers.isValidIsin("US0378331005"));

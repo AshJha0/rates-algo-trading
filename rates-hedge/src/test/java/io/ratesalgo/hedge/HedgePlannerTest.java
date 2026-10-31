@@ -93,11 +93,43 @@ class HedgePlannerTest {
     assertEquals(TY, f.universe.instrumentId(f.universe.indexOf(TY)));
   }
 
+  /**
+   * DR-R2R-10: one universe instrument without a cost entry used to set the solver's stop
+   * tolerance to about 1e293, so the plan stopped after one iteration, reported converged and
+   * left the risk almost unhedged. It is now left out and the rest of the plan is unchanged.
+   */
+  @Test
+  void anInstrumentWithoutACostEntryIsLeftOutAndThePlanStillConverges() {
+    final HedgeFixture base = new HedgeFixture();
+    base.risk.onFill(B10, 100 * M, base.fair.fairMid(B10));
+    final HedgePlanner pb = base.planner(1e-5);
+    final Dv01Vector rb = ladder(base);
+    assertTrue(pb.plan(rb));
+    final HedgeFixture f = new HedgeFixture();
+    f.universe.add(B30, M, 100);
+    f.risk.onFill(B10, 100 * M, f.fair.fairMid(B10));
+    final HedgePlanner p = f.planner(1e-5);
+    final Dv01Vector r = ladder(f);
+    assertTrue(p.plan(r));
+    assertTrue(p.iterations() > 10, "iterations " + p.iterations());
+    assertEquals(0.0, p.lots(f.universe.size() - 1), 0.0, "the unpriced instrument is not traded");
+    final double[] l = new double[f.universe.size()];
+    p.copyLots(l);
+    final Dv01Vector out = new Dv01Vector(CurrencyCode.USD);
+    p.residualAfter(r, l, out);
+    final double[] lb = new double[base.universe.size()];
+    pb.copyLots(lb);
+    final Dv01Vector outB = new Dv01Vector(CurrencyCode.USD);
+    pb.residualAfter(rb, lb, outB);
+    assertTrue(Math.sqrt(p.variance(out)) < 0.05 * Math.sqrt(p.variance(r)));
+    assertEquals(Math.sqrt(pb.variance(outB)), Math.sqrt(p.variance(out)), 1e-6 * Math.sqrt(pb.variance(rb)));
+  }
+
   @Test
   void costModelAndCovariance() {
     final TableHedgeCostModel c = new TableHedgeCostModel(1).set(7, 2.0, 1.0, 0.5);
     assertEquals(3.0 * 4 + 0.5 * 16, c.cost(7, -4.0), 1e-12);
-    assertTrue(c.linearPerLot(8) > 1e9, "unknown instruments are prohibitively expensive");
+    assertEquals(Double.POSITIVE_INFINITY, c.linearPerLot(8), "unknown instruments are never traded");
     assertEquals(0.0, c.impactPerLot2(8), 0.0);
     assertThrows(IllegalStateException.class, () -> c.set(8, 1.0, 0.0, 0.0));
     assertThrows(IllegalArgumentException.class, () -> c.set(7, -1.0, 0.0, 0.0));

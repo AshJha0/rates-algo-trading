@@ -87,4 +87,20 @@ class KillSwitchControllerTest {
     assertEquals(3.0, b.tokens(10_000_000_000L), 1e-12, "refill caps at capacity");
     assertTrue(b.available(9_000_000_000L), "time going backwards does not refill or fail");
   }
+
+  @Test
+  void aFailingListenerDoesNotStopTheOthersOrTheMessage() {
+    final List<String> calls = new ArrayList<>();
+    kill.register((r, t) -> {
+      throw new IllegalStateException("first");
+    });
+    kill.register((r, t) -> calls.add("second"));
+    final IllegalStateException e =
+        assertThrows(IllegalStateException.class, () -> kill.trigger(KillReason.FeedGap, 0, 7));
+    assertEquals("first", e.getMessage());
+    assertEquals(List.of("second"), calls);
+    assertEquals(KillState.KILLED, kill.state());
+    assertEquals(1, control.count(KillSwitchDecoder.TEMPLATE_ID));
+    assertEquals(1L, kill.listenerFailures());
+  }
 }

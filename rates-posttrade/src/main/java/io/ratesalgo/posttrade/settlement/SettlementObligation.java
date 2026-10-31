@@ -34,6 +34,7 @@ public final class SettlementObligation {
   private final long proceedsMinor;
   private final List<Step> history = new ArrayList<>();
   private SettlementState state = SettlementState.PENDING;
+  /** Date the obligation stopped being outstanding: settled or cancelled. */
   private LocalDate settledOn;
 
   /**
@@ -87,7 +88,7 @@ public final class SettlementObligation {
     history.add(new Step(state, event, to.orElse(state), to.isPresent(), on));
     if (to.isPresent()) {
       state = to.get();
-      if (state == SettlementState.SETTLED) {
+      if (state == SettlementState.SETTLED || state == SettlementState.CANCELLED) {
         settledOn = on;
       }
     }
@@ -96,7 +97,7 @@ public final class SettlementObligation {
 
   /**
    * Calendar days the delivery has been outstanding past the settlement date as of {@code asOf}
-   * (to the cure date once settled). Zero if it never failed.
+   * (to the cure date once settled, or to the cancel date once cancelled). Zero if it never failed.
    */
   public long daysFailed(final LocalDate asOf) {
     final boolean everFailed = history.stream().anyMatch(s -> s.applied() && s.to() == SettlementState.FAILED);

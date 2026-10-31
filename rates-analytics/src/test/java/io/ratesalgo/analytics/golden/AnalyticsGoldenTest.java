@@ -43,11 +43,15 @@ import org.junit.jupiter.api.Test;
  */
 class AnalyticsGoldenTest {
 
-  /** PV tolerance as a fraction of notional (API_SPEC.md Section 7). */
-  static final double PV_TOL = 1e-8;
+  /**
+   * PV tolerance as a fraction of notional (API_SPEC.md Section 7). Tightened from 1e-8 by
+   * DR-R2R-11: 54 of the 83 swaps are spot par swaps with PV near zero, and a payment-lag or
+   * day-count slip moves them by less than 1e-8 of notional; the worst measured is 8.5e-15.
+   */
+  static final double PV_TOL = 1e-12;
 
-  /** Par rate tolerance, decimal (1e-6 is 0.01 bp). */
-  static final double PAR_TOL = 1e-6;
+  /** Par rate tolerance, decimal (1e-10 is 1e-6 bp; tightened from 1e-6 by DR-R2R-11). */
+  static final double PAR_TOL = 1e-10;
 
   /** Bond price tolerance per 100 face. */
   static final double PRICE_TOL = 1e-9;

@@ -111,6 +111,12 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private final long[] parentArrival;
   private int parentCount;
   private long nextParentId;
+  // parents dropped by the last kill: a fill that raced the cancel-all is still booked (DR-R2R-13)
+  private final long[] killedId;
+  private final int[] killedInstrument;
+  private final long[] killedRemaining;
+  private int killedCount;
+  private long lateFills;
 
   private final Dv01Vector residual;
   private final double[] r = new double[K];
@@ -145,6 +151,9 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentInstrument = new int[config.maxParents];
     parentRemaining = new long[config.maxParents];
     parentArrival = new long[config.maxParents];
+    killedId = new long[config.maxParents];
+    killedInstrument = new int[config.maxParents];
+    killedRemaining = new long[config.maxParents];
     nextParentId = config.parentIdBase;
     residual = new Dv01Vector(currency);
   }
@@ -198,21 +207,53 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   public void onHedgeFill(final long id, final long price, final long quantityMinor) {
     final int p = find(id);
     if (p < 0) {
+      if (bookKilledFill(id, price, quantityMinor)) {
+        return;
+      }
       throw new IllegalArgumentException("fill for unknown hedge parent " + id);
     }
     final long remaining = parentRemaining[p];
     final long qty = Math.min(quantityMinor, Math.abs(remaining));
     final long signed = remaining > 0 ? qty : -qty;
     final int instrumentId = parentInstrument[p];
+    final long arrival = parentArrival[p];
     risk.release(instrumentId, signed > 0 ? qty : 0L, signed > 0 ? 0L : qty);
-    risk.onFill(instrumentId, signed, price);
-    final Instrument inst = risk.directory().byId(instrumentId);
-    analytics.onFill(
-        inst, signed, price, parentArrival[p], risk.quotePerBp(instrumentId), risk.unitParallelPv01(instrumentId));
+    // the parent's book entry is brought up to date before the fill reaches the risk engine: a
+    // fill can trip a post-trade limit, and the kill switch then calls onKill, which releases
+    // and drops every parent, so the entry must already match the reservation it describes
     parentRemaining[p] = remaining - signed;
     if (parentRemaining[p] == 0) {
       remove(p);
     }
+    risk.onFill(instrumentId, signed, price);
+    final Instrument inst = risk.directory().byId(instrumentId);
+    analytics.onFill(
+        inst, signed, price, arrival, risk.quotePerBp(instrumentId), risk.unitParallelPv01(instrumentId));
+  }
+
+  /**
+   * A fill on a parent the last kill dropped: the router had already sent it when the cancel-all
+   * went out, so the trade stands. It is booked (the reservation is already released) up to the
+   * parent's remaining quantity; returns false if {@code id} is not such a parent.
+   */
+  private boolean bookKilledFill(final long id, final long price, final long quantityMinor) {
+    for (int k = 0; k < killedCount; k++) {
+      if (killedId[k] == id && killedRemaining[k] != 0) {
+        final long remaining = killedRemaining[k];
+        final long qty = Math.min(quantityMinor, Math.abs(remaining));
+        final long signed = remaining > 0 ? qty : -qty;
+        killedRemaining[k] = remaining - signed;
+        lateFills++;
+        risk.onFill(killedInstrument[k], signed, price);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Fills booked on parents after a kill had dropped them. */
+  public long lateFills() {
+    return lateFills;
   }
 
   /** The router finished a parent without filling the rest (cancelled, expired, rejected). */
@@ -226,6 +267,14 @@ public final class Hedger implements AxeSource, KillSwitchListener {
 
   @Override
   public void onKill(final KillReason reason, final long epochNanos) {
+    // remembered before the cancel-all, since the router may report each parent done inside it
+    killedCount = 0;
+    for (int p = 0; p < parentCount; p++) {
+      killedId[killedCount] = parentId[p];
+      killedInstrument[killedCount] = parentInstrument[p];
+      killedRemaining[killedCount] = parentRemaining[p];
+      killedCount++;
+    }
     sink.cancelAll();
     for (int p = 0; p < parentCount; p++) {
       releaseRemaining(p);
