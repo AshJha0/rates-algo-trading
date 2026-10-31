@@ -91,9 +91,9 @@ public final class LatencyHarness {
     final EventClock clock = new EventClock(live);
     final Path journalDir = cfg.journal() ? Files.createTempDirectory("rates-bench-journal") : null;
     final SegmentedJournal in =
-        cfg.journal() ? SegmentedJournal.create(journalDir, "bench-in", cfg.segmentBytes(), clock) : null;
+        cfg.journal() ? SegmentedJournal.create(journalDir, "bench-in", cfg.segmentBytes(), clock, true) : null;
     final SegmentedJournal out =
-        cfg.journal() ? SegmentedJournal.create(journalDir, "bench-out", cfg.segmentBytes(), clock) : null;
+        cfg.journal() ? SegmentedJournal.create(journalDir, "bench-out", cfg.segmentBytes(), clock, true) : null;
     final ManyToOneRingBuffer inbound =
         RingBufferContract.newInbound(RingBufferContract.DEFAULT_INBOUND_CAPACITY);
     final OneToOneRingBuffer outbound = RingBufferContract.newOutbound(1 << 20);

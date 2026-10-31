@@ -30,6 +30,16 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-bench</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.agrona</groupId>
       <artifactId>agrona</artifactId>
     </dependency>

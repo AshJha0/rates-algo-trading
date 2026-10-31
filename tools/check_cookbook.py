@@ -19,6 +19,8 @@ RECIPES = {
     1: ("Recipe01TimerWheel.java", "recipe01.txt"),
     2: ("Recipe02Journal.java", "recipe02.txt"),
     3: ("Recipe03QuoteRequest.java", "recipe03.txt"),
+    12: ("Recipe12LoopReplay.java", "recipe12.txt"),
+    19: ("Recipe19LatencyHistogram.java", "recipe19.txt"),
 }
 
 

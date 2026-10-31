@@ -28,8 +28,8 @@ public final class LatencyReport {
     return String.format(Locale.ROOT, "%.3f", nanos / 1_000.0);
   }
 
-  /** The JSON object for one interval's histogram (nanosecond values). */
-  static String intervalJson(final Histogram h) {
+  /** The JSON object for one interval's histogram (nanosecond values), as the harness writes it. */
+  public static String intervalJson(final Histogram h) {
     final StringBuilder b = new StringBuilder(256);
     b.append("{\"samples\": ").append(h.getTotalCount());
     if (h.getTotalCount() > 0) {

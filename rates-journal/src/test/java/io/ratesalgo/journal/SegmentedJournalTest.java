@@ -329,4 +329,36 @@ class SegmentedJournalTest {
       Files.delete(d);
     }
   }
+
+  @Test
+  void preallocatedSegmentsGiveTheSameStreamAndTheUnusedOneIsRemoved() {
+    final ManualClock clock = new ManualClock();
+    final long hash;
+    try (SegmentedJournal j = SegmentedJournal.create(dir, "in", 4096, clock, true)) {
+      for (int i = 0; i < 400; i++) {
+        final UnsafeBuffer p = payload(i, 8 + (i % 41));
+        j.append(10, 0, p, 0, p.capacity());
+      }
+      assertTrue(j.segmentIndex() > 3);
+      hash = j.chainHash();
+    }
+    final int[] indices = SegmentedJournal.segmentIndices(dir, "in");
+    try (SegmentedJournalReader r = SegmentedJournalReader.open(dir, "in")) {
+      int n = 0;
+      while (r.next((s, t, id, v, b, o, l) -> {})) {
+        n++;
+      }
+      assertEquals(400, n);
+      assertEquals(hash, r.chainHash());
+      assertEquals(indices.length, r.segmentsRead());
+    }
+    final Path single = dir.resolve("single.raj");
+    try (JournalWriter w = JournalWriter.create(single, 1 << 16, clock)) {
+      for (int i = 0; i < 400; i++) {
+        final UnsafeBuffer p = payload(i, 8 + (i % 41));
+        w.append(10, 0, p, 0, p.capacity());
+      }
+      assertEquals(w.chainHash(), hash);
+    }
+  }
 }

@@ -1,0 +1,31 @@
+sequenceDiagram
+  participant GW as Gateway thread
+  participant IN as Inbound ring (ManyToOne)
+  participant L as EventLoop (loop thread)
+  participant JI as Inbound journal
+  participant H as MessageHandler
+  participant JO as Outbound journal
+  participant OUT as Outbound ring (OneToOne)
+  participant TW as TimerWheel
+  participant BL as BackpressureListener
+
+  GW->>IN: offer(SBE header + body), false if full
+  Note over L: duty cycle starts: EventClock.latch()
+  L->>IN: read(up to readLimit)
+  IN-->>L: record (type = template id)
+  L->>L: check framing and schema
+  L->>JI: append(templateId, version, bytes) at latched time
+  L->>H: onMessage(templateId, buffer, offset, length)
+  H->>L: publish(gatewayId, quote)
+  L->>JO: append(quote)
+  L->>OUT: write(quote), dropped and counted if full
+  alt messages were dropped
+    L->>JI: append(Backpressure)
+    L->>BL: onBackpressure(event)
+  end
+  L->>TW: poll(latched nanoTime)
+  alt timers fired
+    L->>JI: append(clock tick: Heartbeat, sourceId 0)
+  end
+  L->>L: agents doWork()
+  Note over L: idle strategy gets the work count

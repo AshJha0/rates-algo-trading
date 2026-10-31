@@ -59,6 +59,34 @@ jobs:
           cache: maven
       - run: mvn -B -ntp verify
 
+  latency:
+    name: Latency harness (informational)
+    # Hosted runners share hardware, so these numbers never gate (DR-005); the JSON
+    # report is uploaded so runs can be compared by hand.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Build without tests
+        run: mvn -B -ntp -DskipTests -Djacoco.skip=true -Dspotbugs.skip=true install
+      - name: Short latency run (10 s warm-up, 20 s measured, 50,000 per second)
+        run: >
+          mvn -B -ntp -pl rates-bench exec:exec@latency
+          -Dlatency.warmup=10 -Dlatency.measure=20 -Dlatency.idle=yield
+          -Dlatency.label=github-hosted-ubuntu
+      - name: Upload latency report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: latency-report
+          path: rates-bench/target/latency/
+          if-no-files-found: warn
+
   python:
     name: Python 3.12 / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

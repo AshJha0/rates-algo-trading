@@ -6,7 +6,8 @@ graph TD
   sbe["SBE runtime (external)"]
 
   analytics["rates-analytics<br/>curves, swaps, bonds, futures<br/>(planned P1)"]
-  core["rates-core<br/>event loop, market state<br/>(planned P2)"]
+  core["rates-core<br/>event loop, replay, runner<br/>(P2)"]
+  bench["rates-bench<br/>latency harness, JMH<br/>(P2)"]
   venues["rates-venues<br/>FIX 4.4, SBE book feed, simulators<br/>(planned P2)"]
   quoting["rates-quoting<br/>(planned P3)"]
   risk["rates-risk<br/>risk engine, hedger<br/>(planned P3)"]
@@ -20,10 +21,11 @@ graph TD
   messages --> agrona
 
   analytics -.-> common
-  core -.-> common
-  core -.-> messages
-  core -.-> journal
-  core -.-> analytics
+  core --> common
+  core --> messages
+  core --> journal
+  core --> agrona
+  bench --> core
   venues -.-> messages
   venues -.-> core
   quoting -.-> core
@@ -38,4 +40,4 @@ graph TD
   posttrade -.-> analytics
 
   classDef planned stroke-dasharray: 5 5
-  class analytics,core,venues,quoting,risk,router,backtest,posttrade planned
+  class analytics,venues,quoting,risk,router,backtest,posttrade planned

@@ -9,7 +9,12 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Locale;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -28,6 +33,15 @@ import org.agrona.DirectBuffer;
  *
  * <p>{@link #append} does not allocate except when it rolls, which maps a new file. Size segments
  * so that rolls are rare on the hot path (DECISIONS.md DR-P2C-03).
+ *
+ * <p>Creating a segment writes {@code segmentCapacity} zero bytes, which takes hundreds of
+ * milliseconds for a 512 MiB segment. With preallocation on ({@link #create(Path, String, int,
+ * Clock, boolean)}), the journal creates the next segment on its own background thread once the
+ * current one is half full, under a temporary name ({@code name.00000k.raj.pending}) that it
+ * renames atomically when the file is complete; the roll then only maps the ready file. The header
+ * stamp of a preallocated segment is the time it was created, not the time of the roll. An unused
+ * preallocated segment is deleted on {@link #close()}; one left behind by a crash is an empty
+ * segment, which readers and {@link #open} accept.
  */
 public final class SegmentedJournal implements AutoCloseable {
 
@@ -42,9 +56,12 @@ public final class SegmentedJournal implements AutoCloseable {
   private final int segmentCapacity;
   private final Clock clock;
 
+  private final ExecutorService preallocator;
+
   private JournalWriter current;
   private int segmentIndex;
   private boolean closed;
+  private Future<?> pending;
 
   private SegmentedJournal(
       final Path dir,
@@ -52,13 +69,23 @@ public final class SegmentedJournal implements AutoCloseable {
       final int segmentCapacity,
       final Clock clock,
       final JournalWriter current,
-      final int segmentIndex) {
+      final int segmentIndex,
+      final boolean preallocate) {
     this.dir = dir;
     this.name = name;
     this.segmentCapacity = segmentCapacity;
     this.clock = clock;
     this.current = current;
     this.segmentIndex = segmentIndex;
+    this.preallocator =
+        preallocate
+            ? Executors.newSingleThreadExecutor(
+                r -> {
+                  final Thread t = new Thread(r, "journal-preallocate-" + name);
+                  t.setDaemon(true);
+                  return t;
+                })
+            : null;
   }
 
   /** The path of segment {@code index} (1-based) of journal {@code name} in {@code dir}. */
@@ -97,12 +124,27 @@ public final class SegmentedJournal implements AutoCloseable {
    */
   public static SegmentedJournal create(
       final Path dir, final String name, final int segmentCapacity, final Clock clock) {
+    return create(dir, name, segmentCapacity, clock, false);
+  }
+
+  /**
+   * Creates a new segmented journal; with {@code preallocate} the next segment is created on a
+   * background thread before it is needed.
+   *
+   * @throws IllegalArgumentException if any segment of {@code name} already exists in {@code dir}
+   */
+  public static SegmentedJournal create(
+      final Path dir,
+      final String name,
+      final int segmentCapacity,
+      final Clock clock,
+      final boolean preallocate) {
     if (segmentIndices(dir, name).length != 0) {
       throw new IllegalArgumentException("journal " + name + " already exists in " + dir);
     }
     final JournalWriter first =
         JournalWriter.create(segmentPath(dir, name, 1), segmentCapacity, clock, 1L, GENESIS_HASH);
-    return new SegmentedJournal(dir, name, segmentCapacity, clock, first, 1);
+    return new SegmentedJournal(dir, name, segmentCapacity, clock, first, 1, preallocate);
   }
 
   /**
@@ -130,7 +172,7 @@ public final class SegmentedJournal implements AutoCloseable {
     }
     final JournalWriter writer =
         JournalWriter.open(segmentPath(dir, name, last), clock, nextSequence, hash);
-    return new SegmentedJournal(dir, name, segmentCapacity, clock, writer, last);
+    return new SegmentedJournal(dir, name, segmentCapacity, clock, writer, last, false);
   }
 
   /**
@@ -154,7 +196,39 @@ public final class SegmentedJournal implements AutoCloseable {
       }
       roll();
     }
-    return current.append(templateId, schemaVersion, payload, offset, length);
+    final long sequence = current.append(templateId, schemaVersion, payload, offset, length);
+    if (preallocator != null && pending == null && current.remaining() < segmentCapacity / 2) {
+      preallocateNext();
+    }
+    return sequence;
+  }
+
+  private void preallocateNext() {
+    if (segmentIndex == MAX_SEGMENTS) {
+      return;
+    }
+    final Path target = segmentPath(dir, name, segmentIndex + 1);
+    final Path temp = dir.resolve(target.getFileName() + ".pending");
+    pending =
+        preallocator.submit(
+            () -> {
+              try (JournalWriter w = JournalWriter.create(temp, segmentCapacity, clock)) {
+                w.sync();
+              }
+              Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
+              return null;
+            });
+  }
+
+  private static void await(final Future<?> future) {
+    try {
+      future.get();
+    } catch (final InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("interrupted while waiting for a preallocated segment", e);
+    } catch (final ExecutionException e) {
+      throw new IllegalStateException("could not preallocate the next segment", e.getCause());
+    }
   }
 
   private void roll() {
@@ -163,6 +237,14 @@ public final class SegmentedJournal implements AutoCloseable {
     }
     final long nextSequence = current.nextSequence();
     final long hash = current.chainHash();
+    if (pending != null) {
+      await(pending);
+      pending = null;
+      current.close();
+      segmentIndex++;
+      current = JournalWriter.open(segmentPath(dir, name, segmentIndex), clock, nextSequence, hash);
+      return;
+    }
     current.close();
     segmentIndex++;
     current =
@@ -201,6 +283,18 @@ public final class SegmentedJournal implements AutoCloseable {
     if (!closed) {
       closed = true;
       current.close();
+      if (preallocator != null) {
+        if (pending != null) {
+          try {
+            await(pending);
+            Files.deleteIfExists(segmentPath(dir, name, segmentIndex + 1));
+          } catch (final IOException | IllegalStateException e) {
+            // an unused preallocated segment that cannot be removed stays as an empty segment
+          }
+          pending = null;
+        }
+        preallocator.shutdown();
+      }
     }
   }
 
