@@ -34,8 +34,8 @@ Planned: 16 plan-days, 1 to 1.5 wall-clock days. Actual: started and finished on
 - Curve round trip within 1e-10 for all three interpolations (worst 9.3e-14); incremental rebuild equals full rebuild within 1e-10 (worst 7.5e-14) (`CurveBuilderTest`).
 - Key-rate sum equals parallel within 1e-9 relative; AD versus 1bp bump within 1e-4 (worst 1.2e-8).
 - Compounded legs reproduce the 2024 SOFR, EUR STR and SONIA published indices to the last digit (`CompoundedIndexHoldoutTest`).
-- jqwik properties for dates, day counts, conventions and schedules (`DatePropertiesTest`, nine properties, about 11,500 tries per run).
-- `rates-analytics` line coverage 96.1 percent (floor 85); SpotBugs clean; ruff, mypy strict, pytest (63 passed) and `mkdocs build --strict` clean.
+- jqwik properties for dates, day counts, conventions and schedules (`DatePropertiesTest`, nine properties, 10,881 tries per run: 200, 181, 1,500, 1,000, 2,000, 2,000, 2,000, 1,000 and 1,000 as printed by jqwik).
+- `rates-analytics` line coverage 96.1 percent (floor 85); SpotBugs clean; ruff, mypy strict, pytest (63 passed on the P1 branch at its gate; 86 on main after the R2 review, 2026-10-31) and `mkdocs build --strict` clean.
 
 The difference from plan is attributed to reusing QuantLib's published conventions line by line for calendars, schedules and yields, which removed most of the debugging a fresh implementation needs.
 
@@ -57,7 +57,7 @@ Gate checks, all run locally on 2026-10-31 on Windows 11 with JDK 25.0.5 and Pyt
 | First pre-registered experiment recorded whatever its result | `data/ledger/ledger.jsonl` line 1, `FirstExperimentTest` | recorded: not supported |
 | Hit-rate model out-of-sample log-loss below the constant baseline | preset `usd_rfq_hit_rate` | 0.6146 against 0.6900 |
 | Daily report runs unattended | `ReportTest` (`ReportCli`) | passed |
-| Python: ruff, ruff format, mypy strict, pytest, notebooks, cookbook | CI python job commands | 38 tests passed; 5 notebooks executed; 6 recipes match |
+| Python: ruff, ruff format, mypy strict, pytest, notebooks, cookbook | CI python job commands | 38 tests passed at the P2 gate on its branch (86 on main after the R2 review, 2026-10-31); 5 notebooks executed; 6 recipes match |
 | Coverage floor and SpotBugs on `rates-backtest` | `mvn -B -ntp verify` | floor met, 0 bugs |
 
 What the difference between plan and actual is attributed to: the plan assumed the venue simulators and the event loop would be available; building against synthetic journals and the back-tester's own outcome models removed that integration work from this phase and moved it to the coordinator's binding step.
@@ -80,11 +80,11 @@ Planned 9 plan-days and about 0.75 wall-clock days. Actual, 2026-10-31: first co
 
 | Gate item | Result | Where |
 |---|---|---|
-| Zero bytes allocated on the loop thread over one million messages | met: 0 bytes after warm-up | `LoopAllocationTest`, `rates-core` |
+| Zero bytes allocated on the loop thread over one million messages | met at the gate: 0 bytes after warm-up; since DR-INT-02 the test measures three windows of one million messages, the last must allocate 0 bytes and the second and third at most 1,024 each (the per-window bytes are printed only on failure) | `LoopAllocationTest`, `rates-core` |
 | Replay-hash equality property | met | `LoopPropertiesTest`, `LoopReplayTest` |
 | ArchUnit hot-path rules | met, each rule also proven to fail on a violating fixture | `HotPathRulesTest` |
 | Segmented journal round trip and cross-segment corruption | met | `SegmentedJournalTest` |
-| Coverage floor 0.85, SpotBugs clean | met: rates-core 0.98, rates-journal 0.96 lines | `mvn verify` |
+| Coverage floor 0.85, SpotBugs clean | met: rates-core 0.98, rates-journal 0.96 lines at the gate; on main at 4facfef (2026-10-31) rates-core 0.985 and rates-journal 0.928 (321 of 346 lines), still above the floor | `mvn verify`, `target/site/jacoco/jacoco.csv` |
 | Latency harness in CI with JSON artifact | wired, informational | `.github/workflows/ci.yml` job `latency` |
 | p50 under 20 us, p99.9 under 100 us in-process on the laptop | met with journaling off (0.2 us, 6.9 us); with journaling on p50 met (0.5 us), p99.9 not met (271 ms) | docs/BENCHMARKS.md results |
 
@@ -114,6 +114,6 @@ Re-run on 2026-10-31, branch `claude/r2-review-6e9f43`, after the risk-reducing 
 
 ## Open items
 
-- P0: local verification done on 2026-10-31 (mvn verify on JDK 25.0.5 and JDK 27: 50 Java tests, coverage floor met, SpotBugs clean; ruff, mypy, pytest 16 passed; mkdocs build --strict clean; cookbook recipes recorded and checked by tools/check_cookbook.py). The gate closes when the same jobs are green in GitHub Actions on Linux and Windows.
+- P0: local verification done on 2026-10-31 (mvn verify on JDK 25.0.5 and JDK 27: 50 Java tests at P0, 459 on main at 4facfef, coverage floor met, SpotBugs clean; ruff, mypy, pytest 16 passed; mkdocs build --strict clean; cookbook recipes recorded and checked by tools/check_cookbook.py). The gate closes when the same jobs are green in GitHub Actions on Linux and Windows.
 - P0: the repository is private until the owner is satisfied (DR-001 amendment); the site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md).
 - P6 (branch): bind the interfaces in API_SPEC.md Section 17.14 at integration; map P2 `TradeBust` (44) onto `PostTradeBust`; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as planned in docs/compliance/RTS6_INVENTORY.md.
