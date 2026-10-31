@@ -130,6 +130,7 @@
     <Or>
       <Class name="io.ratesalgo.hedge.Hedger" />
       <Class name="io.ratesalgo.hedge.HedgePlanner" />
+      <Class name="io.ratesalgo.hedge.ExposureBasisAttribution" />
       <Class name="io.ratesalgo.quoting.ClobQuoter" />
       <Class name="io.ratesalgo.quoting.Desk" />
       <Class name="io.ratesalgo.quoting.FairValueEngine" />

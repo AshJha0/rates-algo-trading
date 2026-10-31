@@ -47,6 +47,14 @@ Round 2 fixes from the P&L audit, package B (branch `claude/fix-b-clob-68d6c2`, 
 - Audit item 7: `ClobQuoter.inventorySkew(covariance, kappa, maxSkewBp)` moves both CLOB targets by `clamp(kappa u' Sigma p / |U|, maxSkewBp)` bp, the RFQ engine's inventory skew, before the venue tick rounding; off until called; `lastSkewBp()` reads it (DR-FIX-B-01).
 - Audit item 6: the tick rounding itself came with the review (DR-R2R-12); this package adds a test that checks every CLOB price against `ClobBook`'s tick rule for 1/32, 1/128 and 1/256 ticks on flat, long and short books.
 
+Round 2 fixes from the P&L audit, package C (branch `claude/fix-c-controls-1e7782`, commits b0521ec and b69d8c1).
+
+- Audit item 14: a breached PV01 limit may shrink but not grow, for quotes, orders and headroom; a one-sided quote whose fill offsets net PV01 skips only the daily-loss check; `RiskEngine.flattenOnly()` is true while the engine's own daily-loss kill holds, and risk-reducing orders still pass then; `Hedger` keeps its parents and keeps hedging under that kill (`flattenKills()`) (DR-FIX-C-01).
+- Audit item 16: basis and swap-spread limits, `RiskLimits.basisPv01` and `swapSpreadPv01`, refused with `RiskEngine.REJECT_BASIS` (-3) and `REJECT_SWAP_SPREAD` (-4) and counted post-trade by `basisBreaches()`; `ExposureBasisAttribution` (rates-hedge) attributes hedge fills to basis and swap-spread exposure and slippage, wired per currency by `Desk.basisAttribution(currency)` (DR-FIX-C-02).
+- Audit item 15: the router charges a filled passive child an adverse move (`RouterParams.filledAdverseFactor`, in sigma over the expected queue wait) and uses per-instrument volatility (`RouterParams.Volatility`); off by default, `RouterPresets.globalWithControls(volatility)` turns it on at 0.75 sigma (DR-FIX-C-03).
+- Audit item 18: the router charges a cost per order message (`RouterParams.messageCostPoints`, 0.0001 points per lot in `globalWithControls`); `QuoteStuffingDetector` counts cancels, replaces and withdrawals with new messages (`messages(id)`, `cancels(id)`, `instruments()`); `EodReportMain` writes per-instrument message and cancel counts (DR-FIX-C-03).
+- Tests: `RiskControlsTest`, `HedgeControlsTest`, `RouterControlsTest`, `QuoteStuffingCancelsTest`, `DeskWiringTest`; the desk-level oracle in `SinkAuditor` and `ChaosTest` follows the new breach rule.
+
 ### Fixed
 
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).

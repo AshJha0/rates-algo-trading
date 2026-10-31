@@ -893,6 +893,14 @@ After every fill, curve move and re-mark the engine evaluates position, pillar, 
 
 `KillSwitchController`: ACTIVE, KILLED, RESET_PENDING (docs/diagrams/kill_switch_state.mmd). `trigger(reason, scope, requestedBy)` from ACTIVE or RESET_PENDING calls every registered listener in registration order (quoting engine: QuoteWithdraw for every live quote; CLOB quoter: OrderWithdraw for every resting order; hedgers: `HedgeOrderSink.cancelAll` and release of reservations) and then sends one KillSwitch (31); from KILLED it only counts. `requestReset(operator)` moves KILLED to RESET_PENDING; `approveReset(approver, inputsHealthy)` moves to ACTIVE only for a different person with healthy inputs.
 
+### 13.5 Breaches, flatten-only and basis limits (round 2 fix C)
+
+A PV01 limit that is already breached does not freeze the book. A quote or order passes the pillar, net and gross checks when none of those worst-case figures moves further past its limit (each may stay where it is, with a relative tolerance for rounding). Flow that reduces a breach is accepted; flow that adds to it, or overshoots through zero into a new breach, is refused. A one-sided quote whose fill offsets net PV01 skips only the daily-loss check.
+
+`flattenOnly()` is true while the kill switch is not ACTIVE because of this engine's own post-trade daily-loss breach (KILLED, or RESET_PENDING after it) and no other kill has happened since. In that state risk-reducing orders still pass `checkOrder`, so hedgers keep flattening, and every other order and every quote is refused with `REJECT_KILLED`.
+
+`RiskLimits.basisPv01(limit)` and `swapSpreadPv01(limit)` bound basis and swap-spread exposure on positions plus the checked quantity at either extreme (other reservations are left out). An exposure already past its limit may shrink but not grow. A refusal returns `REJECT_BASIS` (-3) or `REJECT_SWAP_SPREAD` (-4) without a breach message, since the schema has no limit kind for them; post-trade breaches are counted by `basisBreaches()`. Risk-reducing orders skip the PV01 envelope but not these two limits.
+
 ## Section 14. Hedger objective and solver tolerances (P3)
 
 `io.ratesalgo.hedge` in `rates-hedge`.
@@ -920,6 +928,12 @@ Default covariance: daily volatilities 6.0, 6.5, 6.8, 7.0, 7.0, 6.8, 6.2, 5.8 bp
 On each timer the hedger measures r; below the trigger nothing happens and the episode ends. Otherwise it plans and sends the first-tranche fraction of each instrument's planned lots (urgency 0, immediate), then on later timers \(1 - 2^{-\Delta t / t_{1/2}}\) of the current plan (urgency now plus the half-life), at least one lot while any is planned. Every parent passes `checkOrder` and reserves its quantity until filled or done. While an episode is active, `axeBp(instrument, side)` is `axeMax * min(1, -corr)` where corr is the \(\Sigma\)-correlation between the trade's PV01 and r, and zero when the trade adds variance. `HedgeAnalytics` records slippage of each fill against the arrival mid (positive is a cost, in currency and PV01-weighted bp), the residual variance and net PV01 at each timer, and calls the `BasisAttribution` hook.
 
 Diagram: [hedge and route](docs/site/pages/diagrams.md#hedge-and-route).
+
+### 14.5 Hedging under the daily-loss kill and basis attribution (round 2 fix C)
+
+A kill cancels every parent of the `Hedger`, except a kill from the risk engine's daily-loss limit (`RiskEngine.flattenOnly()`): then the parents keep working and timers keep sending risk-reducing tranches, each passing `checkOrder`. `flattenKills()` counts such kills.
+
+`ExposureBasisAttribution(risk, currency)` implements `BasisAttribution`. `onHedgeFill(...)` books each hedge fill; `basisAdded()`, `swapSpreadAdded()`, `basisExposure()`, `swapSpreadExposure()`, `slippage(productType)` and `fills()` read the totals. `Desk.basisAttribution(currency)` returns the instance wired for that currency.
 
 ## Section 15. Smart order router (P4)
 
@@ -1068,6 +1082,10 @@ The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_B
 | Report for an unknown clOrdId, duplicate fill, stale status | ignored and counted (`unknown`, `duplicates`, `stale`) |
 | Overfill, venue mismatch, execId at or above 2^43, venueId at or above 2^20, null status | refused and counted as an anomaly |
 | RouteDecisionVenue out of sequence, or wrong schema id, on decode | `IllegalStateException` |
+
+### 15.8 Filled-child adverse cost, message cost and per-instrument volatility (round 2 fix C)
+
+`RouterParams` gains three components. `filledAdverseFactor` is the expected adverse move after a passive child fills, in units of sigma over its expected queue wait (capped at the passive horizon), in [0, 5]. `messageCostPoints` is the cost of one order message (new order or cancel) in price points on one lot of the venue, in [0, 1]. `volatility` (`RouterParams.Volatility.of(instrumentIds, sigmaDailyPoints)`, `NONE` by default) is the daily volatility per instrument; unlisted instruments use `sigmaDailyPoints`. `sigmaDailyPoints(id)` and `sigmaPerSqrtSecond(id)` read it. The constructor without these components sets them to 0 and `NONE`, which is the previous behaviour. `withControls(configVersion, filledAdverseFactor, messageCostPoints, volatility)` returns a copy with them set. `RouterPresets.globalWithControls(volatility)` is `global()` with 0.75 sigma and 0.0001 points per lot per message at `CONTROLS_CONFIG_VERSION` (2). These are assumptions, not in `data/presets.yaml` and not the default.
 
 ## Section 16. Back-tester, outcome models, pre-registration, ledger and report (P5)
 
@@ -1381,6 +1399,10 @@ The list is pinned in `deploy/prometheus/metrics.txt`; `MetricsRegistryTest` che
 | P2 `TradeBust` (44) | rates-posttrade | A case in `PositionKeeper.onFrame` that applies it as a PostTradeBust with reason VenueError |
 
 The 17.14 bindings stand as follows after round 2 (Section 18): `TradeBust` (44) is applied by `PositionKeeper.onFrame` (DR-R2W-06 for the RFQ case); `BookMapper`, `InstrumentCatalogue` and `ValuationConvention` are bound by `io.ratesalgo.app.posttrade.JournalFeed` (catalogue from the pricing binding's directory, books by product); `OpsHttpServer.Control` is bound to `TradingProcess.kill` and `statusJson` (DR-R2W-10); `MessageSink` (stress harness) takes `InboundRouter::offer`. `MarkSource`, `CarrySource`, `BusinessCalendar`, `VenueStatusPort`, `QuotingControl` and the attribution file stay on their fixtures (deferred, STATUS.md).
+
+### 17.15 Message and cancel counts (round 2 fix C)
+
+`QuoteStuffingDetector` counts outbound Quote and NewOrder frames together with the cancels and replaces that go with them (OrderCancel, OrderReplace, QuoteCancel, QuoteWithdraw, OrderWithdraw) per instrument over its sliding window. `messages(instrumentId)` and `cancels(instrumentId)` give the day's totals and `instruments()` lists the instruments seen. `EodReportMain` writes per-instrument message and cancel counts in the end-of-day report.
 
 ## Section 18. Process assembly (round 2)
 

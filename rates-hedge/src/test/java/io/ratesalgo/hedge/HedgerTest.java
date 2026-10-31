@@ -54,8 +54,9 @@ class HedgerTest {
 
   /**
    * DR-R2R-02: a hedge fill that breaches the daily loss limit fires the kill switch from inside
-   * onHedgeFill. The kill must complete: no exception, one KillSwitch message, no parent left
-   * working and no reservation left behind.
+   * onHedgeFill. The kill must complete: no exception, one KillSwitch message, and every parent
+   * still working holds exactly its reservation. Since PNL_AUDIT item 14 a daily-loss kill keeps
+   * the hedges working (HedgeControlsTest); with no parent left nothing is reserved.
    */
   @Test
   void hedgeFillThatTripsTheLossLimitKillsCleanly() {
@@ -70,9 +71,18 @@ class HedgerTest {
     assertEquals(io.ratesalgo.risk.KillState.KILLED, f.kill.state());
     assertEquals(1, f.control.count(io.ratesalgo.messages.sbe.KillSwitchDecoder.TEMPLATE_ID));
     assertEquals(0L, f.kill.listenerFailures());
-    assertEquals(0, h.workingParents());
+    assertEquals(1L, h.flattenKills());
     for (final RecordingHedgeOrderSink.Parent q : f.sink.parents()) {
-      assertEquals(0L, f.risk.pendingBuy(q.instrumentId()) + f.risk.pendingSell(q.instrumentId()));
+      long working = 0L;
+      for (int i = 0; i < h.workingParents(); i++) {
+        final long id = h.workingParentId(i);
+        for (final RecordingHedgeOrderSink.Parent r : f.sink.parents()) {
+          if (r.parentId() == id && r.instrumentId() == q.instrumentId()) {
+            working += Math.abs(h.remaining(id));
+          }
+        }
+      }
+      assertEquals(working, f.risk.pendingBuy(q.instrumentId()) + f.risk.pendingSell(q.instrumentId()));
     }
   }
 

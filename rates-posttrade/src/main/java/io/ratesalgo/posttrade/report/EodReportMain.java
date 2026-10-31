@@ -36,7 +36,7 @@ import java.util.regex.Pattern;
  * The end-of-day report generator process (deploy/report/Dockerfile). Reads a trading journal,
  * books it with the instrument and book reference files, writes official P&amp;L in the
  * attribution format, archives the order records in the retention layout, and writes the
- * surveillance alerts.
+ * surveillance alerts and the per-instrument message and cancel counts.
  *
  * <pre>
  * EodReportMain --journal J --date YYYY-MM-DD --instruments I.csv --books B.csv
@@ -119,6 +119,13 @@ public final class EodReportMain {
         for (final SurveillanceAlert al : alerts) {
           w.write(al.detector() + "," + al.instrumentId() + "," + al.journalSequence() + ","
               + al.timestampNanos() + "," + al.detail().replace(',', ';') + "\n");
+        }
+      }
+      // message counts per instrument, cancels included, for order-to-trade monitoring
+      try (Writer w = Files.newBufferedWriter(outDir.resolve("messages-" + date + ".csv"), StandardCharsets.UTF_8)) {
+        w.write("instrument_id,messages,cancels\n");
+        for (final int id : stuffing.instruments()) {
+          w.write(id + "," + stuffing.messages(id) + "," + stuffing.cancels(id) + "\n");
         }
       }
       out.println("eod " + date + ": positions=" + pnl.size() + " records=" + keeper.orderRecords().size()

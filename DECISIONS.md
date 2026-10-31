@@ -844,6 +844,36 @@ Decision. `ClobQuoter.inventorySkew` applies the RFQ engine's own skew, `kappa *
 
 Consequences. Whether a desk turns the skew on, and at which kappa, is configuration. AUDIT-04 shows that the level matters (gain at L, loss at C for 0.20 bp), so it should be tuned through a pre-registered run rather than set by hand.
 
+## DR-FIX-C-01: A breach may shrink but not grow, and the engine's own daily-loss kill lets hedges flatten
+
+Date: 2026-10-31
+
+Context. P&L audit item 14 (docs/research/PNL_AUDIT.md; code reading of RiskEngine and Hedger): once a PV01 limit was breached, the checks refused flow that would have reduced the breach, and a kill froze the hedger with the loss on the book.
+
+Decision. Each worst-case PV01 figure (pillar, net, gross) may stay where it is when already past its limit, with a relative tolerance for rounding, but may not move further past it or overshoot through zero into a new breach. That applies to quotes, orders and headroom. A one-sided quote whose fill offsets net PV01 skips only the daily-loss check, as a risk-reducing order already did. When the kill comes from the engine's own post-trade daily-loss breach, `flattenOnly()` is true: quotes stay withdrawn and other orders are refused, but risk-reducing orders still pass. The `Hedger` keeps its parents working and keeps sending tranches. Any other kill still cancels everything. `flattenOnly()` is set before the trigger, because the listeners read it during the kill.
+
+Consequences. The desk can always trade its way back inside a limit and flatten after a daily-loss stop. An operator kill or a kill of any other cause is unchanged. The desk-level oracle in `SinkAuditor` and `ChaosTest` follows the new rule.
+
+## DR-FIX-C-02: Basis and swap-spread exposure have their own limits and attribution
+
+Date: 2026-10-31
+
+Context. Item 16 (AUDIT-03, seq 10, `bucketed`; Desk.java): all risk was hedged in one future, and the basis and swap-spread risk this opens was neither limited nor attributed.
+
+Decision. `RiskLimits` gains `basisPv01` and `swapSpreadPv01`, checked on positions plus the checked quantity at either extreme; other reservations are left out because, depending on product, they move the offset either way. An exposure already past its limit may shrink but not grow. The limit schema has no kind for them, so a refusal returns `REJECT_BASIS` or `REJECT_SWAP_SPREAD` without a breach message, and post-trade breaches are counted. Risk-reducing orders skip the PV01 envelope but not these limits, so a futures hedge of swap risk cannot open unlimited spread risk. `ExposureBasisAttribution` attributes each hedge fill's basis and swap-spread exposure and slippage, one per currency in `Desk`; SpotBugs treats its reference to the shared risk engine as it does the Hedger's.
+
+Consequences. The limits default to off until configured. A breach message kind for them is a schema change left for later.
+
+## DR-FIX-C-03: The router prices adverse selection on filled passive children and the cost of each message, off by default
+
+Date: 2026-10-31
+
+Context. Item 15 (AUDIT-03, `passive_ty`): passive hedging at the touch turned the hedge line from -704k to +130k a day at C, but the router valued a filled passive child as free of adverse selection. Item 18: message and cancel costs were not counted anywhere, while venue order-to-trade policies count cancels.
+
+Decision. `RouterParams` gains `filledAdverseFactor` (the expected adverse move after a passive fill, in sigma over the expected queue wait, capped at the passive horizon), `messageCostPoints` (per new order or cancel, per lot) and per-instrument volatility. All three are off in the existing constructor and presets. `RouterPresets.globalWithControls` sets 0.75 sigma and 0.0001 points per lot per message, about 1 USD on one million of cash face. These are assumptions, not fits, and stay out of `data/presets.yaml` until the audit re-run has measured them. `QuoteStuffingDetector` now counts cancels, replaces and withdrawals, and the end-of-day report writes per-instrument message and cancel counts.
+
+Consequences. Routing is unchanged until a desk selects the controls preset. The order-to-trade figures are visible daily either way.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31

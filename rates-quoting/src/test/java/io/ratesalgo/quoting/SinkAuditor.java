@@ -26,6 +26,11 @@ import org.agrona.DirectBuffer;
  * and the sensitivity provider (not from the risk engine's incremental aggregates), and checks the
  * kill switch, the price collar, input age, time to live and the quote rate. Each failure is
  * recorded with a description.
+ *
+ * <p>A limit already breached may be left breached by a message that does not add to it
+ * (PNL_AUDIT.md item 14): a breach counts only where the message's own PV01 pushes the breached
+ * extreme further out. Hedge parents may reach the router during a daily-loss kill when they
+ * reduce net PV01.
  */
 final class SinkAuditor implements HedgeOrderSink {
 
@@ -70,7 +75,8 @@ final class SinkAuditor implements HedgeOrderSink {
       final boolean weBuy = quote.bidQuantity() > 0;
       final long px = weBuy ? quote.bidPrice().mantissa() : quote.askPrice().mantissa();
       quotePrice.put(quote.quoteId(), px);
-      common("quote " + quote.quoteId(), id, px);
+      final double own = m.directory.byId(id).major(weBuy ? quote.bidQuantity() : -quote.askQuantity());
+      common("quote " + quote.quoteId(), id, px, own);
       if (quote.validUntilNanos() > now + m.desk.quoting().config().firmTtlNanos()) {
         fail("quote " + quote.quoteId() + " ttl beyond config");
       }
@@ -85,7 +91,9 @@ final class SinkAuditor implements HedgeOrderSink {
     } else if (templateId == NewOrderDecoder.TEMPLATE_ID) {
       ordersSeen++;
       order.wrap(b, offset + MessageHeaderEncoder.ENCODED_LENGTH, NewOrderDecoder.BLOCK_LENGTH, 0);
-      common("order " + order.clOrdId(), order.instrumentId(), order.price().mantissa());
+      final double own =
+          m.directory.byId(order.instrumentId()).major(order.side() == Side.Buy ? order.quantity() : -order.quantity());
+      common("order " + order.clOrdId(), order.instrumentId(), order.price().mantissa(), own);
       if (order.quantity() > limits.maxOrderSize()) {
         fail("order size");
       }
@@ -102,16 +110,17 @@ final class SinkAuditor implements HedgeOrderSink {
       final long urgencyNanos,
       final long sentNanos) {
     parentsSeen++;
-    if (!m.desk.killSwitch().isActive()) {
-      fail("parent " + parentId + " while killed");
-    }
     positions(instrumentId, "parent " + parentId);
     final Instrument inst = m.directory.byId(instrumentId);
-    final double orderPv01 = unitParallel(instrumentId) * inst.major(side == Side.Buy ? quantityMinor : -quantityMinor);
+    final double own = inst.major(side == Side.Buy ? quantityMinor : -quantityMinor);
+    final double orderPv01 = unitParallel(instrumentId) * own;
     final double net = full(inst.currency()).parallel();
     final boolean reducing = orderPv01 * net < 0.0 && Math.abs(orderPv01) <= Math.abs(net) * (1 + REL);
+    if (!m.desk.killSwitch().isActive() && !(m.desk.risk().flattenOnly() && reducing)) {
+      fail("parent " + parentId + " while killed");
+    }
     if (!reducing) {
-      envelope(inst.currency(), "parent " + parentId);
+      envelope(inst.currency(), "parent " + parentId, instrumentId, own);
     }
     collar("parent " + parentId, instrumentId, limitPrice);
     parents.add(new long[] {parentId, instrumentId, side == Side.Buy ? quantityMinor : -quantityMinor, limitPrice});
@@ -126,12 +135,12 @@ final class SinkAuditor implements HedgeOrderSink {
     parents.clear();
   }
 
-  private void common(final String what, final int id, final long px) {
+  private void common(final String what, final int id, final long px, final double own) {
     if (!m.desk.killSwitch().isActive()) {
       fail(what + " sent while kill switch " + m.desk.killSwitch().state());
     }
     positions(id, what);
-    envelope(m.directory.byId(id).currency(), what);
+    envelope(m.directory.byId(id).currency(), what, id, own);
     collar(what, id, px);
   }
 
@@ -181,7 +190,14 @@ final class SinkAuditor implements HedgeOrderSink {
     return out;
   }
 
-  private void envelope(final CurrencyCode ccy, final String what) {
+  /** {@code own} is the message's signed quantity in major units of instrument {@code sent}. */
+  private void envelope(final CurrencyCode ccy, final String what, final int sent, final double own) {
+    m.sensitivities.pv01(sent, m.directory.byId(sent).minorPerMajor(), v);
+    final double[] mine = new double[K];
+    for (int k = 0; k < K; k++) {
+      mine[k] = v.get(k) * own;
+    }
+    final double mineNet = v.parallel() * own;
     final RiskEngine risk = m.desk.risk();
     final Dv01Vector cur = full(ccy);
     final double[] hi = new double[K];
@@ -206,19 +222,22 @@ final class SinkAuditor implements HedgeOrderSink {
       netLo += Math.min(0.0, Math.min(u * b, -u * s));
     }
     double gross = 0.0;
+    boolean grossGrows = false;
     for (int k = 0; k < K; k++) {
       final double h = cur.get(k) + hi[k];
       final double l = cur.get(k) + lo[k];
       final double lim = limits.bucketPv01(k) * (1 + REL) + 1e-6;
-      if (h > lim || l < -lim) {
+      if ((h > lim && mine[k] > 0.0) || (l < -lim && mine[k] < 0.0)) {
         fail(what + " bucket " + KeyRateTenors.label(k) + " " + l + ".." + h);
       }
       gross += Math.max(Math.abs(h), Math.abs(l));
+      grossGrows |= Math.abs(h) >= Math.abs(l) ? mine[k] > 0.0 : mine[k] < 0.0;
     }
-    if (net + netHi > limits.netPv01() * (1 + REL) + 1e-6 || net + netLo < -limits.netPv01() * (1 + REL) - 1e-6) {
+    final double netLim = limits.netPv01() * (1 + REL) + 1e-6;
+    if ((net + netHi > netLim && mineNet > 0.0) || (net + netLo < -netLim && mineNet < 0.0)) {
       fail(what + " net " + (net + netLo) + ".." + (net + netHi));
     }
-    if (gross > limits.grossPv01() * (1 + REL) + 1e-6) {
+    if (gross > limits.grossPv01() * (1 + REL) + 1e-6 && grossGrows) {
       fail(what + " gross " + gross);
     }
   }
