@@ -124,8 +124,8 @@ public final class FixParser {
     }
     msgType =
         lengths[2] == 1
-            ? buffer.getByte(offsets[2])
-            : (buffer.getByte(offsets[2]) << 8) | buffer.getByte(offsets[2] + 1);
+            ? buffer.getByte(offsets[2]) & 0xFF
+            : ((buffer.getByte(offsets[2]) & 0xFF) << 8) | (buffer.getByte(offsets[2] + 1) & 0xFF);
     return OK;
   }
 
