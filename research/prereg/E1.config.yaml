@@ -1,0 +1,39 @@
+# Configuration of EDGE-E1 (Treasury auction cycle). Hashed into research/prereg/E1.yaml.
+study: EDGE-E1
+programme: research/prereg/edge_programme.yaml
+programme_sha256: a66bde494ac4af654917c497b25c6f6c4ec252f488e189f2b5a5ecbed9750f7c
+sources:
+  par_curve: US Treasury daily par yield curve CSV, one file per year 2015 to 2026
+  auctions: TreasuryDirect TA_WS securities search (Note and Bond), issue dates 2014-12-01 to 2026-07-31
+  gsw: Federal Reserve feds200628.csv (Gurkaynak, Sack and Wright fitted curve), SVENPY par yields
+auctions:
+  keep: nominal fixed-coupon notes and bonds, original issues and reopenings
+  exclude: TIPS (inflationIndexSecurity Yes), FRNs (floatingRate Yes), cash management bills
+  tenor_from: securityTerm rounded to the nearest of 2, 3, 5, 7, 10, 20, 30 years (reopenings
+    take the original term, e.g. 9-Year 10-Month is 10)
+  auction_day: competitiveAuctionCloseDate (auctionDate when present)
+residual:
+  par_fly: >
+    r_T(d) = 100 * (y_T(d) - (w * y_L(d) + (1 - w) * y_R(d))) in bp, linear in maturity with
+    w = (T_R - T) / (T_R - T_L); neighbours 2Y (1Y, 3Y), 3Y (2Y, 5Y), 5Y (3Y, 7Y), 7Y (5Y, 10Y),
+    10Y (7Y, 20Y), 20Y (10Y, 30Y). For 30Y, r_30 = 100 * (y_30 - y_20) in bp.
+  gsw: g_T(d) = 100 * (y_T(d) - SVENPY_T(d)) in bp (secondary, reported only)
+windows:
+  pre: change r_T(A) - r_T(A - k) with k = 5 business days of the par curve (central)
+  post: change r_T(A + h) - r_T(A) with h = 3 business days of the par curve (central)
+  band: {low: {k: 3, h: 2}, central: {k: 5, h: 3}, high: {k: 7, h: 5}}
+unit: >
+  auction week: the mean of the pre (or post) change over the auctions whose auction day falls
+  in the same ISO week; weeks in time order; block length 2 weeks
+predicted_sign: {pre: positive (cheapening), post: negative (richening)}
+economic_threshold_bp: {pre: 0.2, post: 0.2}
+minimum_holdout_weeks: 40
+tests: [E1a pre, E1b post]
+verdict: supported only if both E1a and E1b pass
+preset_if_supported:
+  name: ust_auction_concession
+  parameters: >
+    pre_auction_cheapening_bp and post_auction_richening_bp (pooled holdout means, bp per
+    auction window), the same per tenor (tenor_<T>y_pre_bp, tenor_<T>y_post_bp), window_pre_days,
+    window_post_days
+  engine_use: bond RFQ skew term on the auctioned tenor, spread linearly over the window

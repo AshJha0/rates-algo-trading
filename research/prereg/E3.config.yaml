@@ -1,0 +1,60 @@
+# Configuration of EDGE-E3 (intraday activity and volatility around releases and fixings).
+# Hashed into research/prereg/E3.yaml.
+study: EDGE-E3
+programme: research/prereg/edge_programme.yaml
+programme_sha256: a66bde494ac4af654917c497b25c6f6c4ec252f488e189f2b5a5ecbed9750f7c
+sources:
+  dtcc: >
+    DTCC SDR public dissemination, CFTC end-of-day cumulative rates slices
+    (CFTC_CUMULATIVE_RATES_YYYY_MM_DD.zip), every business day 2025-01-02 to 2026-06-30
+  fomc: Federal Reserve FOMC meeting calendars page (statement days, 14:00 ET)
+  releases: >
+    actual release dates (after any rescheduling) of BLS Employment Situation, BLS CPI, BEA GDP
+    (every estimate) and BEA Personal Income and Outlays, all at 08:30 ET. Order of sources:
+    ALFRED vintage dates, else the BLS and BEA schedule pages; when a page blocks scripted
+    download the dates are transcribed from the page read in a browser and committed with the
+    URL and read date
+trades: >
+  ratesresearch.data.dtcc filter (NEWT, TRAD, USD SOFR OIS, not a package, spot-starting,
+  standard tenor), plus the fixed rate of the trade (Fixed rate-Leg 1, else Fixed rate-Leg 2)
+  in percent; times converted to America/New_York
+buckets: 5-minute buckets from 07:00 to 17:00 ET (120 buckets)
+realised_variance: >
+  per tenor in {2, 5, 10, 30} years, prints in time order within a day; d_i = 100 * (rate_i -
+  rate_(i-1)) in bp when the two prints are at most 30 minutes apart and |d_i| <= 10 bp; d_i^2
+  goes to the bucket of print i; RV_d(bucket) is the mean over the four tenors of the summed d^2
+intensity: count of filtered trades (all standard tenors) per bucket and day
+day_types:
+  release: a business day with at least one listed 08:30 release
+  fomc: an FOMC statement day
+  control_0830: Monday, Tuesday, Wednesday or Friday with no listed release and not an FOMC day
+  control_1400: a business day with no listed release and not an FOMC day
+tests:
+  E3a: >
+    window 08:30 to 08:45 (3 buckets); unit statistic per release day x_d = RVw_d / C - 1, where
+    RVw_d is the window RV per bucket and C the mean window RV per bucket over control_0830
+    days of the same period; null 0; predicted positive; threshold: ratio 1 + mean(x) >= 1.25
+  E3b: >
+    window 14:00 to 14:30 (6 buckets), FOMC days against control_1400 days, otherwise as E3a;
+    threshold ratio >= 1.25
+  E3c: >
+    window 08:00 to 08:05 on control_0830 days against the adjacent buckets 07:45 to 08:00 and
+    08:05 to 08:20 of the same days: x_d = RV_d(08:00) / C_adj - 1, where C_adj is the mean
+    per-bucket RV of the adjacent buckets over the period; predicted positive; threshold > 0
+  E3d: as E3a with trade counts in place of RV; threshold ratio >= 1.25
+band: >
+  the control set: low uses control days within 20 business days of each event day only,
+  central uses all control days of the period, high adds Thursdays to control_0830
+unit: event day (control day for E3c) in time order; block length 2 days
+minimum_holdout_days: {E3a: 25, E3b: 6, E3c: 100, E3d: 25}
+verdict: >
+  supported if E3a or E3b passes (a usable widening schedule exists); each window is promoted
+  only if its own test passed; E3c and E3d are reported with the study
+preset_if_supported:
+  name: usd_time_of_day_spread
+  parameters: >
+    spread multiplier per 5-minute bucket of each passed window, m = sqrt(holdout RV ratio)
+    floored at 1; simulator intensity multiplier per 30-minute bucket 07:00 to 17:00 ET on
+    control days, and the release-day and FOMC-day window intensity ratios when E3d passed
+  engine_use: quoting engine multiplies the half-spread by m inside the window; the simulator
+    scales RFQ arrivals by the intensity profile

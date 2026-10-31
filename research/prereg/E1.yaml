@@ -1,0 +1,52 @@
+# Pre-registration EDGE-E1. Written and hashed on 2026-10-31 before the auction, par-curve and
+# GSW data it tests were downloaded or read for this study (the 2015 to 2025 par-curve fixture of
+# P1 is in the repository, but no auction-window statistic has been computed on it).
+# Format: API_SPEC.md Section 16.8; shared rules: research/prereg/edge_programme.yaml.
+# period is the holdout test period; holdout lists the reserve dates (not read by this programme).
+prereg_version: 1
+id: EDGE-E1
+title: Treasury auction concession on the par curve
+hypothesis: >
+  The auctioned tenor cheapens against its neighbours on the par curve over the 5 business days
+  before a nominal coupon auction and richens over the 3 business days after it (concession and
+  its reversal), by at least 0.2 bp in each window, averaged over auction weeks.
+metric: >
+  Change in the auctioned tenor's par-curve butterfly residual (bp) over the pre-auction window
+  (E1a) and the post-auction window (E1b), averaged within auction weeks; unit one auction week.
+baseline: zero change (no auction-cycle pattern in the residual)
+treatments: [pre_auction_window, post_auction_window]
+period: {start: 2021-01-01, end: 2026-06-30}
+fitting_period: {start: 2015-01-01, end: 2020-12-31}
+holdout: [
+  2026-07-01, 2026-07-02, 2026-07-03, 2026-07-06, 2026-07-07, 2026-07-08, 2026-07-09,
+  2026-07-10, 2026-07-13, 2026-07-14, 2026-07-15, 2026-07-16, 2026-07-17, 2026-07-20,
+  2026-07-21, 2026-07-22, 2026-07-23, 2026-07-24, 2026-07-27, 2026-07-28, 2026-07-29,
+  2026-07-30, 2026-07-31, 2026-08-03, 2026-08-04, 2026-08-05, 2026-08-06, 2026-08-07,
+  2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13, 2026-08-14, 2026-08-17, 2026-08-18,
+  2026-08-19, 2026-08-20, 2026-08-21, 2026-08-24, 2026-08-25, 2026-08-26, 2026-08-27,
+  2026-08-28, 2026-08-31, 2026-09-01, 2026-09-02, 2026-09-03, 2026-09-04, 2026-09-07,
+  2026-09-08, 2026-09-09, 2026-09-10, 2026-09-11, 2026-09-14, 2026-09-15, 2026-09-16,
+  2026-09-17, 2026-09-18, 2026-09-21, 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25,
+  2026-09-28, 2026-09-29, 2026-09-30, 2026-10-01, 2026-10-02, 2026-10-05, 2026-10-06,
+  2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14, 2026-10-15,
+  2026-10-16, 2026-10-19, 2026-10-20, 2026-10-21, 2026-10-22, 2026-10-23, 2026-10-26,
+  2026-10-27, 2026-10-28, 2026-10-29, 2026-10-30,
+]
+success_threshold: >
+  E1a and E1b both pass the programme test rule at the central band point (k = 5, h = 3):
+  predicted sign (E1a positive, E1b negative), 95 percent moving-block bootstrap interval (blocks
+  of 2 weeks, 2000 resamples) excluding zero, Holm-adjusted p below 0.05 over the eleven-test
+  family, and absolute mean at least 0.2 bp.
+assumption_band:
+  parameter: window lengths k (pre) and h (post) in business days
+  points: [low, central, high]
+  values: {low: [3, 2], central: [5, 3], high: [7, 5]}
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/E1.config.yaml
+config_sha256: def86783402b0a086816eb278f4d102d2f8a706b80ea67567e35bb52b8f3c6d8
+limitations: >
+  Daily constant-maturity yields: the par curve is the Treasury's interpolation of on-the-run
+  closing bid yields, so the auctioned tenor's point switches to the new issue after the auction,
+  which can itself move the residual. No intraday information; a daily effect does not show
+  whether it is capturable at the bid-offer of a bond RFQ.

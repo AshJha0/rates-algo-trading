@@ -1,0 +1,32 @@
+# Configuration of EDGE-E2 (month-end index extension). Hashed into research/prereg/E2.yaml.
+study: EDGE-E2
+programme: research/prereg/edge_programme.yaml
+programme_sha256: a66bde494ac4af654917c497b25c6f6c4ec252f488e189f2b5a5ecbed9750f7c
+sources:
+  par_curve: US Treasury daily par yield curve CSV, one file per year 2015 to 2026
+  auctions: TreasuryDirect TA_WS securities search (Note and Bond), issue dates 2014-12-01 to 2026-07-31
+spread: s(d) = 100 * (y_30Y(d) - y_2Y(d)) in bp
+window: >
+  month-end change m = s(L) - s(L - k) with L the last par-curve business day of the month and
+  k = 3 business days (central)
+baseline: >
+  the mean of all k-day changes s(d) - s(d - k) whose window does not touch the last 5 business
+  days of any month, computed over the same period (fitting or holdout) as the month-end changes;
+  the unit statistic is m minus that baseline mean
+extension_proxy: >
+  x(month) = sum over nominal fixed-coupon notes and bonds issued in the month (issueDate in
+  month; TIPS and FRNs excluded) of offeringAmount (USD bn) times the term in years. High
+  extension months are those with x above the 67th percentile of x over the fitting-period
+  months; the threshold is fixed on the fitting period and applied unchanged to the holdout.
+band: {low: {k: 2}, central: {k: 3}, high: {k: 4}}
+unit: one high-extension month; months in time order; block length 3 months
+predicted_sign: negative (2s30s flattens into month end)
+economic_threshold_bp: 0.5
+minimum_holdout_months: 15
+tests: [E2]
+secondary: the same statistic over all months and over low-extension months (reported only)
+verdict: supported only if E2 passes
+preset_if_supported:
+  name: ust_month_end_extension
+  parameters: month_end_flattening_bp, window_days, extension_threshold_bn_years
+  engine_use: curve skew on long-tenor bond RFQs over the last k business days of high-extension months
