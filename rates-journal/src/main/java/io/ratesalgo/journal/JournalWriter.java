@@ -70,6 +70,16 @@ public final class JournalWriter implements AutoCloseable {
    * @throws IllegalArgumentException if the file exists or the capacity cannot hold a header
    */
   public static JournalWriter create(final Path path, final int capacityBytes, final Clock clock) {
+    return create(path, capacityBytes, clock, 1L, GENESIS_HASH);
+  }
+
+  /** Creates a segment whose first frame continues the chain at {@code firstSequence}. */
+  static JournalWriter create(
+      final Path path,
+      final int capacityBytes,
+      final Clock clock,
+      final long firstSequence,
+      final long previousHash) {
     if (capacityBytes < FILE_HEADER_LENGTH + FRAME_HEADER_LENGTH) {
       throw new IllegalArgumentException("capacity too small: " + capacityBytes);
     }
@@ -85,15 +95,27 @@ public final class JournalWriter implements AutoCloseable {
     header.putShort(HEADER_LENGTH_OFFSET, (short) FILE_HEADER_LENGTH);
     header.putInt(CAPACITY_OFFSET, capacityBytes);
     header.putLong(CREATED_OFFSET, clock.epochNanos());
-    return new JournalWriter(mapped, clock, FILE_HEADER_LENGTH, 1L, GENESIS_HASH);
+    return new JournalWriter(mapped, clock, FILE_HEADER_LENGTH, firstSequence, previousHash);
   }
 
   /** Opens an existing journal and positions the writer after its last frame. */
   public static JournalWriter open(final Path path, final Clock clock) {
+    return open(path, clock, 1L, GENESIS_HASH);
+  }
+
+  /** Opens an existing segment whose chain starts at {@code firstSequence}. */
+  static JournalWriter open(
+      final Path path, final Clock clock, final long firstSequence, final long previousHash) {
     final MappedByteBuffer mapped = IoUtil.mapExistingFile(path.toFile(), "journal");
     mapped.order(JournalFormat.BYTE_ORDER);
     final UnsafeBuffer buffer = new UnsafeBuffer(mapped);
-    final JournalReader reader = new JournalReader(buffer);
+    final JournalReader reader;
+    try {
+      reader = new JournalReader(buffer, null, firstSequence, previousHash);
+    } catch (final JournalCorruptionException e) {
+      IoUtil.unmap(mapped);
+      throw e;
+    }
     final long[] tail = reader.scanToEnd();
     return new JournalWriter(mapped, clock, (int) tail[0], tail[1] + 1, tail[2]);
   }
