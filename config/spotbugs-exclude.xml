@@ -169,4 +169,18 @@
       <Bug pattern="EI_EXPOSE_REP2" />
     </Or>
   </Match>
+  <!-- R2 desk features (DR-R2B-08): the risk ladder is the desk's shared state on the single
+       strategy thread; the axe book, the strategy's feature set and the report read it (or the
+       metrics) by reference at call time, which is the design, not a leaked internal. -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.strategy.AxeBook" />
+      <Class name="io.ratesalgo.strategy.DeskQuoter$Features" />
+      <Class name="io.ratesalgo.strategy.report.DeskReport" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>

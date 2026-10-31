@@ -758,18 +758,37 @@ Consequences. A roll in the trading process no longer maps, creates or allocates
 
 Date: 2026-10-31
 
-Context. `data/ledger/ledger.jsonl` is an append-only hash chain: each line carries `seq` (1-based) and `prev_sha256`, the SHA-256 of the previous line's text, and both readers (`Ledger.entries()` in `rates-backtest`, `prereg.read_ledger` in `research/ratesresearch`) refuse a line whose `seq` is not its position or whose `prev_sha256` does not match. In round 2, several branches ran experiments in parallel and each appended its rows after the same base, P5-001 at seq 1. `claude/r2-edge-research-6aba2e` appended EDGE-E1 to EDGE-E6 as seq 2 to 7, and `claude/r2-pnl-audit-e32be7` appended AUDIT-01 to AUDIT-04 as seq 2 to 5, so the two chains cannot both stand.
+Context. `data/ledger/ledger.jsonl` is an append-only hash chain: each line carries `seq` (1-based) and `prev_sha256`, the SHA-256 of the previous line's text, and both readers (`Ledger.entries()` in `rates-backtest`, `prereg.read_ledger` in `research/ratesresearch`) refuse a line whose `seq` is not its position or whose `prev_sha256` does not match. In round 2, several branches ran experiments in parallel and each appended its rows after the same base, P5-001 at seq 1. `claude/r2-edge-research-6aba2e` appended EDGE-E1 to EDGE-E6 as seq 2 to 7, `claude/r2-pnl-audit-e32be7` appended AUDIT-01 to AUDIT-04 as seq 2 to 5, and `claude/r2-business-6cda18` appended R2B-001 to R2B-007 as seq 2 to 8, so the chains cannot all stand.
 
-Decision. Rows already on `round2-integration` are kept unchanged, and each later branch's rows are appended after them in their original order. The edge rows merged first, onto a ledger that held only seq 1, so they kept seq 2 to 7. The audit rows were re-appended with the project's own `Ledger.append` (`rates-backtest`), which assigns `seq` and `prev_sha256`. Everything else in each row stays as recorded: results, `config_sha256`, `journal_sha256`, `prereg_sha256`, `code_commit`, `code_dirty`, `look`, `recorded_utc` and the journal list. Each written line was checked to be byte-identical to the original with only those two values replaced. The chain verifies end to end in both `Ledger.entries()` and `prereg.read_ledger` (11 rows). `research/audit/summarize.py` re-reads the rows, recomputes every interval and Holm p from the stored daily P&L and asserts them against the rows; it reproduces `research/audit/results/summary.md` except the four headings, which print the new seq. References to the old numbers in `docs/research/PNL_AUDIT.md`, `research/audit/README.md` and `summary.md` were renumbered, with the experiment id added beside each seq. The copies in `research/audit/results/AUDIT-0n.json` carry no seq or chain field and are unchanged.
+Decision. Rows already on `round2-integration` are kept unchanged, and each later branch's rows are appended after them in their original order. The edge rows merged first, onto a ledger that held only seq 1, so they kept seq 2 to 7. The audit rows were re-appended with the project's own `Ledger.append` (`rates-backtest`), which assigns `seq` and `prev_sha256`. Everything else in each row stays as recorded: results, `config_sha256`, `journal_sha256`, `prereg_sha256`, `code_commit`, `code_dirty`, `look`, `recorded_utc` and the journal list. Each written line was checked to be byte-identical to the original with only those two values replaced. The business rows were then re-appended the same way after the audit rows, as seq 12 to 18. The chain verifies end to end in both `Ledger.entries()` and `prereg.read_ledger` (18 rows). `research/audit/summarize.py` re-reads the rows, recomputes every interval and Holm p from the stored daily P&L and asserts them against the rows; it reproduces `research/audit/results/summary.md` except the four headings, which print the new seq. References to the old numbers in `docs/research/PNL_AUDIT.md`, `research/audit/README.md` and `summary.md` were renumbered, with the experiment id added beside each seq. The copies in `research/audit/results/AUDIT-0n.json` carry no seq or chain field and are unchanged. For the business rows, the seq column and the record range in `docs/research/DESK_FEATURES.md`, the CHANGELOG entry, DR-R2B-07's context and the `DeskFactory` comment were renumbered; the R2B pre-registrations cite no seq.
 
-| Experiment | Original seq (audit branch) | Seq on round2-integration | prev_sha256 before | prev_sha256 after |
+| Experiment | Original seq (own branch) | Seq on round2-integration | prev_sha256 before | prev_sha256 after |
 |---|---:|---:|---|---|
 | AUDIT-01 | 2 | 8 | `850a5e40a004...` | `2f8551ce748d...` |
 | AUDIT-02 | 3 | 9 | `f16a70a4cc23...` | `300529794edf...` |
 | AUDIT-03 | 4 | 10 | `05fbad304512...` | `be7e052c8319...` |
 | AUDIT-04 | 5 | 11 | `1d9907487c7a...` | `3ac99a2f43d0...` |
+| R2B-001 | 2 | 12 | `850a5e40a004...` | `79abbbcb0fb2...` |
+| R2B-002 | 3 | 13 | `f37fd5be9247...` | `09d5e8022aa1...` |
+| R2B-003 | 4 | 14 | `f5101a7c10e5...` | `8cf5f04d08ce...` |
+| R2B-004 | 5 | 15 | `481745c8c1ee...` | `e3ebb73c0d0e...` |
+| R2B-005 | 6 | 16 | `a0ca41a043fd...` | `c2af0c8facb2...` |
+| R2B-006 | 7 | 17 | `968558726727...` | `9d5d645bbf1a...` |
+| R2B-007 | 8 | 18 | `62a00dc6e056...` | `ccbaf1e16ff3...` |
 
-Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (r2-business and the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
+Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
+
+## DR-INT-05: The wired desk declares a winner's curse that fits its half-spread cap
+
+Date: 2026-10-31
+
+Context. `claude/r2-review-6e9f43` added a pass to `QuotingEngine.onQuoteRequest`: when the expected cost of filling (client toxicity, plus the winner's curse `winnersCurseBp * sqrt(2 ln dealers) * volRatio`, plus the hedge cost) is at or above `maxHalfSpreadBp`, no spread up to the cap has positive expected edge, so the engine returns `PassReason.NEGATIVE_EDGE` instead of quoting at the cap. `claude/r2-wiring-c31ae4` holds the wired desk's half spread between 0.02 and 0.08 bp so it can compete with the simulated dealers (DR-R2W, `DeskSettings.quoting()`), but it kept the default `winnersCurseBp` of 0.10 bp. With three dealers that term alone is 0.10 * sqrt(2 ln 3) = 0.148 bp, above the 0.08 bp cap. After the merge every RFQ was passed, and `SmokeTest`, `BacktestBindingTest`, `TradingProcessMainTest`, `VenueBindingTest` and recipe 22 failed because the desk never quoted.
+
+Decision. Review's guard stays as written. `DeskSettings.quoting()` declares `winnersCurseBp(0.02)`, which puts the term at about 0.030 bp, inside the desk's 0.02 to 0.08 bp band. Toxicity starts at zero and the guard still passes a client whose learned adverse cost reaches the cap. Like the band itself, 0.02 bp is a declared value for the synthetic smoke day, not a fit. Recipe 22's recorded output (`rates-cookbook/src/test/resources/expected/recipe22.txt` and COOKBOOK.md) and the smoke-day counts in README.md and STATUS.md were re-recorded: 39 RFQs, 34 quotes, 22 RFQ fills, 302 hedge parents and 291 hedge fills, against 43, 43, 25, 261 and 266 before. The other review changes on the quoting and risk path (the reservation-aware risk-reducing check, late fills after expiry, one hit-rate label per RFQ, the ticked CLOB prices) move the counts too.
+
+Also at this merge, `data/presets.yaml`: the review branch changed the hit-rate slope rationale in `ratesresearch/assumptions.py` and edited the same text by hand in the presets file, with different YAML line wrapping. The shipped file was replaced by the output of the project's generator (`ratesresearch.hitrate.main`). The parsed YAML is identical; only the wrapping of four lines changed, so the file is again byte-for-byte reproducible.
+
+Consequences. A desk configuration whose cap is below its own expected cost now quotes nothing rather than quoting at a loss. Any new desk configuration has to keep `winnersCurseBp`, the hedge cost and the cap consistent, and a smoke day that quotes nothing fails `SmokeTest`.
 
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
@@ -974,3 +993,249 @@ Context. SpotBugs reported 17 items on the new module. Twelve were EI_EXPOSE_REP
 Decision. `config/spotbugs-exclude.xml` excludes EI_EXPOSE_REP and EI_EXPOSE_REP2 for `io.ratesalgo.app` and its subpackages, as DR-P2V-07 and DR-P3-09 did for theirs. The other findings are fixed: a private lock object and a volatile driver field, a success flag in `start`, constructor-set fields (an unbound child lookup that throws until the router exists), and `Double.compare` for the quote change test.
 
 Consequences. Every other pattern stays enabled for rates-app.
+
+## DR-R2B-01: Desk features in a new module with a byte-identical baseline
+
+Date: 2026-10-31
+
+Context. The R2 business brief asks for seven desk features measured against today's engine, built while other sessions change `rates-quoting`, `rates-hedge`, `rates-backtest` and the venues on their own branches.
+
+Decision. The features live in a new module `rates-strategy` that depends on the others as libraries and plugs into their existing interfaces (`Strategy`, `CarryModel`, `AxeSource`, `TierTableControl`, `ToxicityTable`); no other module's source changed. Each feature is an interface whose default is today's behaviour. `DeskQuoter` with every default sends the same messages as `ModelSpreadStrategy` (P5-001's treatment, the best tested quoter) on the same journal, and `DeskQuoterBaselineTest` checks the output chain hash, so every experiment compares one feature against today's engine and nothing else.
+
+Consequences. The features run in the back-tester today. The live `QuotingEngine` takes `AxeSource` and `TierTableControl` already; the hedge budget, hedge timing, quote sizer and inventory penalty need extension points in `Hedger` and `QuotingEngine` before they can run live (DR-R2B-09).
+
+## DR-R2B-02: Pre-registrations under data/preregs
+
+Date: 2026-10-31
+
+Context. The brief names `research/prereg/` for the pre-registrations. The repository keeps them in `data/preregs/`, where `PreRegistration`, `ExperimentCli`, `ratesresearch.prereg.validate` and the Python tests look, with configs in `data/experiments/`.
+
+Decision. R2B-001 to R2B-007 are `data/preregs/R2B-00x.yaml`, sharing `data/experiments/R2B.config.yaml`, validated by both validators.
+
+Consequences. One place for every pre-registration; the brief's path is not used.
+
+## DR-R2B-03: The assumption band covers slope, dealer count and informed share together
+
+Date: 2026-10-31
+
+Context. DR-008 requires every simulator result across a declared band. The back-tester's `BandPoint` varies only the win-probability slope; the brief asks for dealer count and informed-flow share too, which change the journals themselves.
+
+Decision. One joint band with three points, declared in the experiment config: slope -1.25, -2.5, -5.0 per bp (preset `usd_rfq_hit_rate`), dealers 2 to 4, 2 to 5, 3 to 6, and informed share of every tier times 0.5, 1.0, 1.5. `BandScenario` applies the market parameters to a copy of `data/presets.yaml` for each point, so each point has its own journals; presets on disk are unchanged.
+
+Consequences. Low is a benign market and high a harsh one; the three parameters move together, so a result at one point cannot be attributed to one of them. A factorial band (27 points) is a possible later experiment.
+
+## DR-R2B-04: Statistics and guards of the desk experiments
+
+Date: 2026-10-31
+
+Context. The seven experiments share journals and the baseline run, and common random numbers pair every session; P5-001 used Welch's unpaired test. The brief asks for Holm across the seven and adoption only without limit breaches.
+
+Decision. Per treatment and band point: a paired t-test of the daily difference of the pre-registered metric, Holm over all 21 (treatment, point) tests, and a moving-block bootstrap interval of the mean difference (blocks 2, 2,000 resamples, seed 11). Supported when improved (adjusted p below 0.05 and the interval above zero) at all three points. Adopted only if supported, no limit breach on a session where the baseline did not breach, and the daily P&L difference interval not entirely below zero, at every point. The relative limit guard was chosen on the fitting period, where the baseline itself breached the 1,000,000 USD per bp net DV01 limit on some sessions (one large RFQ is enough); an absolute guard would have made adoption impossible for any feature that leaves sizing alone.
+
+Consequences. The P&L guard is a non-inferiority screen: it fails only when P&L is significantly worse, so an adopted feature may still have a negative mean P&L difference (R2B-001 at central and high does).
+
+## DR-R2B-05: The learned tiering carries its state across sessions
+
+Date: 2026-10-31
+
+Context. Each client trades about a dozen times a session, below the 30-fill minimum sample, so a tiering that starts empty every session never moves anyone.
+
+Decision. The experiment keeps one `MarkoutTiering` per band point (one for R2B-004, another for R2B-007) and runs the sessions in date order, as a desk's rolling client analytics would.
+
+Consequences. Sessions are no longer independent for the tiering treatments; the paired comparison per session is unaffected, but the bootstrap blocks of 2 sessions understate the dependence of the learning curve. The simulator's static tiers are the truth the market was generated with, so R2B-004 tests the cost of learning against an oracle table.
+
+## DR-R2B-06: No SBE message for the axe list
+
+Date: 2026-10-31
+
+Context. The brief allows an axe-list SBE message in template ids 120 to 129 only if needed.
+
+Decision. None is added. The quoting engine reads axes in-process through `AxeSource`; `AxeBook.publish()` returns the list for the desk report and for a later publisher. API_SPEC Section 2 is unchanged and ids 120 to 129 stay free.
+
+Consequences. Publishing axes to clients or venues (an axe feed) needs a message and a record when it is built.
+
+## DR-R2B-07: Adopt the netting hedge budget as the desk default
+
+Date: 2026-10-31
+
+Context. R2B-001 (ledger seq 12, commit 8c4eacb, 20 sessions 2026-03-02 to 2026-03-27) met its pre-registered rule: hedge slippage improved at all three band points (by 292,958, 136,853 and 43,116 USD per day, Holm p at most 0.0052) with no new limit breach and no significantly worse P&L. R2B-002 to R2B-007 did not.
+
+Decision. `DeskFactory.ADOPTED` is `[internalisation]` and `deskDefault()` builds the baseline with `NettingHedgeBudget` (soft 150,000, hard 400,000, retain 50,000 USD per bp, hold 120 s). The experiment baseline (`baseline()`) stays today's engine so that later experiments remain comparable with these.
+
+Consequences. Mean absolute net DV01 roughly doubles (29,849 to 66,313 USD per bp at central) and the daily P&L difference has a negative mean at central and high with intervals that include zero; risk limits must allow the larger intraday inventory. The holdout (2026-04-06 to 2026-04-10) has not been opened; opening it once is the next check. These are simulator consistency checks (DR-008), not evidence of edge.
+
+## DR-R2B-08: SpotBugs exclusion for shared desk state
+
+Date: 2026-10-31
+
+Context. SpotBugs reports EI_EXPOSE_REP and EI_EXPOSE_REP2 where `AxeBook` and `DeskQuoter.Features` hold the shared `RiskLadder`, and where `DeskReport` holds its `DeskMetrics`.
+
+Decision. A class-level exclusion for those three classes and those two patterns in `config/spotbugs-exclude.xml`, as DR-P3-09 did for the hedger and quoting engine: reading the ladder by reference at call time is the design. Other classes copy what crosses their boundary (`DeskExperiment.Outcome`, `DeskFactory`).
+
+Consequences. Every other pattern stays enabled for the module.
+
+## DR-R2B-09: Extension points the features needed and did not find
+
+Date: 2026-10-31
+
+Context. The brief asks to plug into existing extension points and to note missing ones for the coordinator.
+
+Decision. Worked around inside `rates-strategy`, and listed here:
+1. `StrategyContext.quote` has no quantity and the runner settles the requested size only, so a smaller quoted size can only be a decline (feature 3).
+2. `StrategyContext` exposes net DV01 but no ladder; `DeskQuoter` rebuilds the ladder from positions on every RFQ and fill.
+3. `Experiment` builds strategies from a closed switch and tests only total P&L with Welch; the desk experiments have their own harness (`DeskExperiment`) reusing `BacktestRunner`, `Stats`, `PreRegistration`, `Ledger` and `SyntheticDay`.
+4. `DailyReport` has a router fill-quality hook but no general section hook; the desk section is a separate `desk_report.json` and `desk_report.md`.
+5. `Hedger` has its own trigger and decay schedule with no pluggable budget or timing policy, and `QuotingEngine` has no hook for a size policy (beyond the tier's maximum quantity) or an inventory funding penalty; features 1, 3, 5 and 6 run only in the back-tester until those exist.
+6. The back-tester delivers no Heartbeats to strategies (noted by r2-wiring); `DeskQuoter` does not need them.
+
+Consequences. Each item is a small change in a module another session owns; with items 1 and 5 the adopted and future features can run live.
+
+## DR-R2B-10: Coupon carry in the desk experiments
+
+Date: 2026-10-31
+
+Context. The back-tester's `CarryModel` is `NONE` by default, so bond inventory pays repo but earns no coupon, and every bond position is carry-negative regardless of the curve.
+
+Decision. The desk experiments pass `CouponCarry` with declared coupons (UST 2Y 3.60, UST 10Y 3.95 percent, against the book's 4.25 percent repo) to every run, baseline included. The coupons are in the experiment config and covered by its hash.
+
+Consequences. P&L in these records is not directly comparable with P5-001's, which had no carry; within the R2B records every strategy has the same carry rule.
+
+## DR-R2R-01: Coupons for carry and basis are selected by record date
+
+Date: 2026-10-31
+
+Context. `BasisAnalytics` and `BondCarry` counted a coupon when its payment date fell in (settlement, horizon] and settlement preceded the ex-dividend date. A gilt held from before its ex-dividend date to a date inside the ex-dividend period, but before the payment, receives the coupon, while the accrued at the horizon is already negative. The coupon was dropped: on the Long Gilt about 2 per 100 of carry and an implied repo that rules the bond out of the cheapest-to-deliver choice.
+
+Decision. `FixedRateBond.entitlementDate(i)` returns the ex-dividend date when the convention has one and the coupon date otherwise. A position held from s to h is paid coupon i exactly when s < entitlementDate(i) <= h. A coupon paid after h enters at its value at h to first order in the repo rate (the existing linear form, with a negative day count).
+
+Consequences. UST and Bund results are unchanged (record date equals coupon date). The golden basis cases are UST only, so the test is hand-computed (`BondAnalyticsTest.giltHeldIntoTheExDividendPeriodCarriesTheCouponPaidAfterTheHorizon`); gilt and Bund baskets in the golden file remain open.
+
+## DR-R2R-02: A kill completes even when a listener throws
+
+Date: 2026-10-31
+
+Context. `Hedger.onHedgeFill` called `risk.onFill` before updating the parent. A fill that breached the daily loss limit fired the kill switch from inside the call; `onKill` released the pre-fill remainder and `RiskEngine.release` threw. `KillSwitchController.trigger` had already set KILLED, so the exception left the later listeners (other currencies' hedgers) uncalled and no KillSwitch message sent.
+
+Decision. The hedger brings the parent up to date before the fill reaches the risk engine. `trigger` calls every listener inside its own try block, sends the KillSwitch message, counts failures (`listenerFailures`) and then rethrows the first one. SpotBugs' THROWS_METHOD_THROWS_RUNTIMEEXCEPTION is excluded for this class only, as for `TimerWheel`.
+
+Consequences. A listener bug still reaches the caller as an exception, but after the desk is safe.
+
+## DR-R2R-03: A fill after a confirmed cancel is booked and does not shorten the parent
+
+Date: 2026-10-31
+
+Context. When a venue confirmed a cancel with a cumulative quantity above what had been received, the router freed the rest and could route it again. A later fill beyond the child's outstanding quantity was subtracted from the parent's outstanding a second time, so the parent finished while a re-routed child was still live, and its slot could be reused under that child.
+
+Decision. `ChildOrderBook` reports the part of a fill beyond the child's outstanding quantity (`lastOverfill`, `overfills`); the router subtracts only the rest from outstanding. A parent finishes when filled to at least its quantity and nothing is outstanding.
+
+Consequences. The parent can end over-executed by the overfill, which the venue did trade; the counter is there for an operator alert. Cancelling working children to absorb the excess is not done.
+
+## DR-R2R-04: The router's cost model charges a venue's price offset
+
+Date: 2026-10-31
+
+Context. API_SPEC.md Section 15.1 measured every cost from the venue's own mid. Two venues with the same spread and parameters but books a tick apart cost the same, and the tie went to row 0, at the worse price.
+
+Decision. Both costs gain o = s (venueMid - m), with s the side sign and m the consolidated mid (highest bid and lowest ask over the decision's rows with a two-sided quote). The offset is zero when all mids agree.
+
+Consequences. The scenario `ust10y_three_venue_v1` re-run gives a router cost of -0.2565 bps and savings of 2.9388 [2.7792, 3.0631] and 2.7673 [2.5802, 2.9026] bps (before: -0.1957, 2.8780, 2.7065). `SmartOrderRouterTest.bookMovingAwayCancelsAndReroutes` asserted the old behaviour (all quantity back to the venue that had moved two ticks away) and now asserts a split.
+
+## DR-R2R-05: FIX integers, tag numbers and timestamps are parsed strictly
+
+Date: 2026-10-31
+
+Context. Tag numbers were accumulated in an int without a digit limit (4294967345 read as 49, SenderCompID) and accepted leading zeros. Integer fields were parsed as scale-0 decimals, so "34=1.0", "+5" and a checksum of "+05" were accepted and Long.MIN_VALUE refused. A UTCTimestamp accepted day 31 in every month.
+
+Decision. A tag is at most nine digits with no leading zero; an integer field is an optional '-' and digits, accumulated negative so the full long range parses; the day of a timestamp is checked against the month's length with the Gregorian leap rule.
+
+Consequences. A counterparty sending a non-canonical integer is refused with MALFORMED or a format error, the conservative reading of FIX 4.4.
+
+## DR-R2R-06: The holiday fixture covers 2026 and 2027 and refuses other years
+
+Date: 2026-10-31
+
+Context. `holidays.csv` ended on 1 January 2027 and `FixtureCalendarSource` treated every date it did not list as a business day, so 2027 settlement dates ran through MLK Day, Good Friday and Easter Monday.
+
+Decision. `tools/gen_refdata_fixtures.py` writes 2026 and 2027 for US-GS (SIFMA recommended full closes), UK (England and Wales bank holidays) and TARGET. The source refuses a date outside the years between its earliest and latest holiday.
+
+Consequences. Code that asks about 2028 fails loudly until the fixture is extended or the rates-analytics calendars replace it.
+
+## DR-R2R-07: Fail days stop at the cancel date
+
+Date: 2026-10-31
+
+Context. `SettlementObligation.daysFailed` froze its end date only on settlement, so a fail later cancelled kept accruing days, and fail cost, with the as-of date.
+
+Decision. The end date is set on SETTLED or CANCELLED.
+
+Consequences. None beyond the corrected count.
+
+## DR-R2R-08: No quote at negative edge; one hit-rate label per RFQ
+
+Date: 2026-10-31
+
+Context. When the expected adverse cost (toxicity plus winner's curse plus hedge cost) reached `maxHalfSpreadBp`, the optimiser returned the cap and the engine quoted although E(s) = P(s)(s - c) is not positive for any allowed s. A Done with a cover taught the hit-rate model two wins, the second at the cover distance with abs(), so a cover on the wrong side also counted.
+
+Decision. The engine passes with `NEGATIVE_EDGE` when cost >= maxHalfSpreadBp. A Done teaches one win; a cover on the client's side of the trade adds to the mean cover distance only.
+
+Consequences. The online intercept no longer drifts toward its upper band from double counting. `QuotingEngineTest.doneBooksTheFillAndTeachesTheModelIncludingTheCover` asserted two updates and now asserts one.
+
+## DR-R2R-09: The risk-reducing exemption counts working reservations
+
+Date: 2026-10-31
+
+Context. DR-P3-05 exempts an order that offsets the net PV01 "without overshooting" from the PV01 and loss checks. The test used the position only, so with a working hedge parent reserved on the same side a second order could carry the book through zero in the worst case.
+
+Decision. The overshoot test adds the other instruments' worst-case net reservation on the order's side (the instrument's own reservation is left out, as in the envelope check).
+
+Consequences. Some hedge parents are now checked and refused. The P3 gate tests re-run: `MillionRfqTest` 533,266 quotes, 55,600 fills, 3,298 hedge parents, 3,288 risk rejects, 0 violations (before 476,215, 30,933, 4,446, 1,654); `ChaosTest` 9,269 kills and 643 resets (before 9,272 and 646). Less of the envelope is reserved by stacked hedge parents, so more RFQs find capacity.
+
+## DR-R2R-10: An instrument without a hedge cost is not traded
+
+Date: 2026-10-31
+
+Context. `TableHedgeCostModel` priced an unknown instrument at Double.MAX_VALUE / 1e6. `BoxQpSolver` scaled its stop tolerance by max |c_i|, so one missing entry made the stop about 1e293: the solver stopped after one iteration and reported converged with the residual barely reduced (sd 508,293 from 557,600 in the reviewer's probe).
+
+Decision. An unknown instrument costs positive infinity; the planner fixes any instrument without a finite cost at zero lots; the solver's scale is taken over free variables (lo < hi) only.
+
+Consequences. The documented plan (sd 10,352 at cost 62,418) is unchanged.
+
+## DR-R2R-11: Swap golden tolerances sized to what the gate must catch
+
+Date: 2026-10-31
+
+Context. The swap PV tolerance was 1e-8 of notional and the par-rate tolerance 1e-6, against measured worst cases of 8.5e-15 and 3.5e-16. 54 of the 83 golden swaps are spot par swaps, whose PV and par rate move by less than those tolerances under a payment-lag or day-count slip.
+
+Decision. 1e-12 of notional and 1e-10. The Python regeneration test keeps the 1e-6 absolute floor of DR-P1-06, a cross-platform rounding allowance rather than a model tolerance; API_SPEC.md Section 8.1, which said 1e-12, is corrected.
+
+Consequences. Three orders of magnitude of headroom remain on the Java side.
+
+## DR-R2R-12: CLOB quotes are rounded to the venue tick
+
+Date: 2026-10-31
+
+Context. `ClobQuoter` rounded targets to the Decimal9 grid; `ClobBook` refuses a price off its tick, so every order on a 1/128 or 1/256 venue would be rejected.
+
+Decision. `enable(instrumentId, tickMantissa)` takes the venue tick; the bid rounds down and the ask up to it. `enable(instrumentId)` keeps tick 1 so existing callers are unchanged until the wiring passes the tick from reference data.
+
+Consequences. The binding in rates-app must call the two-argument form (handed to r2-wiring).
+
+## DR-R2R-13: Late fills on expired quotes and killed hedge parents are booked
+
+Date: 2026-10-31
+
+Context. A fill can race a quote's expiry or a kill's cancel-all (DR-P3-05 says so). The quoting engine freed an expired quote at once, so a late Done was counted as unmatched and never reached risk; the hedger dropped its parents on a kill, so a late fill threw "unknown hedge parent".
+
+Decision. The quoting engine keeps the last 1,024 expired quotes as tombstones and books a late Done from them once, without teaching the hit-rate model. The hedger remembers the parents dropped by the last kill (recorded before the cancel-all, which may report them done) and books a late fill up to each parent's remainder. A fill matching neither is still unmatched or refused.
+
+Consequences. Positions follow what the venues traded. Both paths are allocation-free (fixed arrays, linear scan).
+
+## DR-R2R-14: SpotBugs exclusions name classes, not packages
+
+Date: 2026-10-31
+
+Context. EI_EXPOSE_REP and EI_EXPOSE_REP2 were excluded for whole packages in rates-router, rates-refdata, rates-fix, rates-hedge and rates-quoting, so a new class that leaked an internal array would pass unnoticed.
+
+Decision. Each match now names the classes SpotBugs flags with the match removed (router: ChildOrderBook, DecisionCodec, SmartOrderRouter, AggressiveBaseline; refdata: RefData; FIX codec: FixParser; hedge: Hedger, HedgePlanner; quoting: ClobQuoter, Desk, FairValueEngine, PackageQuoter, QuotingEngine). The FIX gateway and net packages and rates-venues keep their package matches because other sessions own and are changing them.
+
+Consequences. A new class in these modules that stores or returns a mutable collaborator needs its own entry and a reason.

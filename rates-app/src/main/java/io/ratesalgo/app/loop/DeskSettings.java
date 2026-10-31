@@ -48,10 +48,7 @@ public record DeskSettings(
    * Quoting parameters: firm quotes live for the venue's response window, and the half spread is
    * held between 0.02 and 0.08 bp because the D2C simulator's dealers quote a median half spread
    * of 0.25 bp for swaps and 1/128 of a point for bonds; a desk wider than its competitors never
-   * trades on the smoke day. The winner's-curse scale follows the cap down (0.01 bp, about 0.017
-   * bp at four dealers): at the library default of 0.10 bp the cost alone exceeds the cap and every
-   * RFQ is passed at negative edge (DR-R2R-08). The release calendar and the fair-move withdraw
-   * keep their library defaults.
+   * trades on the smoke day.
    */
   public QuotingConfig quoting() {
     return new QuotingConfig()
@@ -61,7 +58,9 @@ public record DeskSettings(
         .requoteThrottleNanos(0L)
         .minHalfSpreadBp(0.02)
         .maxHalfSpreadBp(0.08)
-        .winnersCurseBp(0.01)
+        // DR-INT-05: the engine passes an RFQ whose expected cost reaches the cap (NEGATIVE_EDGE,
+        // DR-R2R); the default 0.10 bp winner's curse alone is 0.15 bp with three dealers
+        .winnersCurseBp(0.02)
         .kappa(2e-6)
         .maxSkewBp(0.05);
   }

@@ -1,0 +1,45 @@
+# Pre-registration R2B-001. Written and hashed before the evaluation period was run.
+# Format: API_SPEC.md Section 16.8; harness API_SPEC.md Section 19.9. One of seven (R2B-001 to
+# R2B-007) run together by DeskExperimentCli, sharing journals, baseline runs and one Holm family.
+prereg_version: 1
+id: R2B-001
+title: Internalisation and netting against the threshold hedge
+hypothesis: >
+  Holding client risk for 120 s so opposing client flow can net it in the DV01 ladder, and
+  hedging only the residual beyond a soft budget of 150,000 USD per bp (back to 50,000; at once
+  beyond a hard budget of 400,000), costs less in hedging than hedging all net DV01 into the
+  10-year note future whenever it exceeds 100,000 USD per bp.
+metric: >
+  Hedge slippage per synthetic session in USD (hedge cost against mid plus hedge fees, negative);
+  larger is better. Reported beside it: hedge orders, hedge ratio, mean absolute net DV01.
+baseline: baseline
+treatments: [internalisation]
+period: {start: 2026-03-02, end: 2026-03-27}
+fitting_period: {start: 2026-02-16, end: 2026-02-27}
+holdout: [2026-04-06, 2026-04-07, 2026-04-08, 2026-04-09, 2026-04-10]
+success_threshold: >
+  At each band point (low, central, high), with d_i the daily difference of the metric oriented so
+  that positive is better: a paired t-test of mean(d) against zero, two-sided, Holm-adjusted over
+  the 21 tests of R2B-001 to R2B-007 (7 treatments times 3 band points), below 0.05, and the 95
+  percent moving-block bootstrap interval of mean(d) (blocks of 2 sessions, 2000 resamples, seed
+  11) entirely above zero. Supported only if this holds at all three points. Adopted as the
+  default only if supported and, at every point, (a) no limit breach (absolute net DV01 above
+  1,000,000 USD per bp or a position above 2,000 million) on a session where the baseline did not
+  breach, and (b) the bootstrap interval of the paired daily P&L difference is not entirely below
+  zero. The verdict is recorded in data/ledger/ledger.jsonl whatever it is.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+  # with dealers_min, dealers_max and informed_share_multiplier at the same point (config band)
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: data/experiments/R2B.config.yaml
+config_sha256: 2bbd29c7445a6395cff31bc57432e7f869d79e147a74101200751b6fbd91fbad
+limitations: >
+  Synthetic sessions only: competitors, the win-probability slope and informed-flow share are
+  declared assumptions reported across a band (DR-008), so the result is a simulator consistency
+  check, never evidence of edge. The baseline and the treatment know the competitor model's form.
+  The hedge instrument is the 10-year note future only. 20 sessions give low power against
+  inventory noise. Parameters were chosen on the fitting period (2026-02-16 to 2026-02-27) before
+  this file was written; the holdout is opened once, later, only after this record exists.
