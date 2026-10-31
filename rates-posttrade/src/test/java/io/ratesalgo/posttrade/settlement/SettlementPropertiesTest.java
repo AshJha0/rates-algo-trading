@@ -19,7 +19,7 @@ import net.jqwik.api.constraints.Size;
 import org.junit.jupiter.api.Test;
 
 /** The settlement lifecycle and the cost of a fail (API_SPEC.md Section 17.7). */
-class SettlementProperties {
+class SettlementPropertiesTest {
 
   private static final TradeKey KEY = new TradeKey(1, TradeSource.Execution, 9);
   private static final LocalDate TRADE_DATE = LocalDate.of(2026, 10, 30);
@@ -59,6 +59,17 @@ class SettlementProperties {
     assertTrue(d1.compareTo(d) >= 0);
     assertEquals(d.negate(), FailCost.fundingMinor(Side.Sell, proceeds, rate, days));
     assertTrue(FailCost.failsChargeMinor(Side.Sell, proceeds, rate, days).signum() <= 0);
+  }
+
+  /** a cancelled fail stops counting fail days on the cancel date. */
+  @Test
+  void failDaysStopAtTheCancelDate() {
+    final LocalDate settle = BusinessCalendar.WEEKENDS_ONLY.addBusinessDays(TRADE_DATE, 1);
+    final SettlementObligation o = new SettlementObligation(KEY, Side.Sell, settle, 1_000_000);
+    assertTrue(o.apply(SettlementEvent.FAIL, settle));
+    assertTrue(o.apply(SettlementEvent.CANCEL, settle.plusDays(4)));
+    assertEquals(4, o.daysFailed(settle.plusDays(4)));
+    assertEquals(4, o.daysFailed(settle.plusDays(40)));
   }
 
   @Test

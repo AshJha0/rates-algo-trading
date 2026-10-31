@@ -62,6 +62,15 @@ def test_student_p_matches_scipy(t: float, df: float) -> None:
     assert stats.student_two_sided_p(t, df) == pytest.approx(
         2 * float(scipy_stats.t.sf(t, df)), rel=1e-9, abs=1e-15
     )
+    # two-sided: symmetric in t, so a negative statistic gives the same p-value
+    assert stats.student_two_sided_p(-t, df) == stats.student_two_sided_p(t, df)
+
+
+def test_student_p_at_zero_and_welch_sign() -> None:
+    assert stats.student_two_sided_p(0.0, 7.0) == pytest.approx(1.0, abs=1e-15)
+    w = stats.welch([1.0, 2.0, 3.0, 4.0], [3.0, 5.0, 4.0, 6.0])
+    assert w.t < 0
+    assert w.p == pytest.approx(stats.welch([3.0, 5.0, 4.0, 6.0], [1.0, 2.0, 3.0, 4.0]).p)
 
 
 def test_holm_and_bootstrap_edges() -> None:

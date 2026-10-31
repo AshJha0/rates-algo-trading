@@ -106,6 +106,36 @@ class CostModelTest {
     close(hs + impact + 0.0005 + latency, chosen, REL);
   }
 
+  /**
+   * DR-R2R-04: two venues with identical parameters and spreads, venue 2's book one tick lower.
+   * A buyer pays one tick less on venue 2, so the whole slice goes there; a seller gets one tick
+   * more on venue 1. Before the offset term every cost was equal and the tie went to row 0.
+   */
+  @Test
+  void aVenueQuotingAtABetterPriceWinsTheSlice() {
+    final RouterParams rp = RouterPresets.global();
+    final CostTable buy = table(4 * MM, 0);
+    buy.sameSideDepth[1] = buy.sameSideDepth[0];
+    buy.oppositeDepth[1] = buy.oppositeDepth[0];
+    buy.tradeRate[1] = buy.tradeRate[0];
+    buy.bestBid[1] -= RouterPresets.TICK_64TH;
+    buy.bestAsk[1] -= RouterPresets.TICK_64TH;
+    final VenueParams[] same = {RouterPresets.clob(1), RouterPresets.clob(1)};
+    final Allocator a = new Allocator();
+    close(RouterPresets.TICK_64TH / 1e9,
+        a.evaluate(buy, 0, MM, rp, same[0]) - a.evaluate(buy, 1, MM, rp, same[1]), REL);
+    a.allocate(buy, rp, same);
+    assertEquals(0L, buy.allocated[0], buy.format());
+    assertEquals(4 * MM, buy.allocated[1], buy.format());
+    final CostTable sell = new CostTable();
+    sell.copyFrom(buy);
+    sell.side = Side.Sell;
+    a.allocate(sell, rp, same);
+    assertEquals(4 * MM, sell.allocated[0], sell.format());
+    assertEquals(0L, sell.allocated[1], sell.format());
+    assertEquals(0.0, Allocator.venueOffset(table(MM, 0), 0));
+  }
+
   @Test
   void passiveIsChosenWhenTheQueueIsShortAndTheHorizonLong() {
     final RouterParams rp = RouterPresets.global();

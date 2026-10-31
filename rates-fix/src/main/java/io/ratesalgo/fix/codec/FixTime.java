@@ -73,7 +73,8 @@ public final class FixTime {
     final int hour = digits(buffer, offset + 9, 2, tag);
     final int minute = digits(buffer, offset + 12, 2, tag);
     final int second = digits(buffer, offset + 15, 2, tag);
-    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60) {
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month) || hour > 23
+        || minute > 59 || second > 60) {
       throw new FixFormatException(tag, "UTCTimestamp field out of range");
     }
     long fraction = 0;
@@ -84,6 +85,14 @@ public final class FixTime {
     return daysFromCivil(year, month, day) * NANOS_PER_DAY
         + ((hour * 60L + minute) * 60L + second) * 1_000_000_000L
         + fraction;
+  }
+
+  private static int daysInMonth(final int year, final int month) {
+    if (month == 2) {
+      final boolean leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+      return leap ? 29 : 28;
+    }
+    return month == 4 || month == 6 || month == 9 || month == 11 ? 30 : 31;
   }
 
   private static int digits(final DirectBuffer b, final int offset, final int n, final int tag) {

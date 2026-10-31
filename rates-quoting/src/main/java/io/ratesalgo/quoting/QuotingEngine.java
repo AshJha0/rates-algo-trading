@@ -51,6 +51,8 @@ public final class QuotingEngine implements KillSwitchListener {
 
   private static final int K = KeyRateTenors.COUNT;
   private static final int MARKOUTS = 4096;
+  /** Expired quotes remembered so a Done that raced the expiry is still booked (DR-R2R-13). */
+  private static final int TOMBSTONES = 1024;
   private static final int DEFAULT_DEALERS = 3;
 
   private final InstrumentDirectory directory;
@@ -129,6 +131,12 @@ public final class QuotingEngine implements KillSwitchListener {
   private long expiries;
   private long pulls;
   private long unmatchedResponses;
+  private long lateFills;
+  private final long[] tQuoteId = new long[TOMBSTONES];
+  private final int[] tInstrument = new int[TOMBSTONES];
+  private final boolean[] tBuy = new boolean[TOMBSTONES];
+  private final long[] tQty = new long[TOMBSTONES];
+  private int tHead;
   private double coverDistanceBp;
   private long coverObservations;
 
@@ -288,6 +296,10 @@ public final class QuotingEngine implements KillSwitchListener {
     final double base =
         hitRate.base(
             (double) qty / inst.typicalQuantity(), inst.tenorYears(), liquidSession(inst.currency(), now), dealers);
+    if (cost >= config.maxHalfSpreadBp) {
+      // E(s) = P(s) (s - c) is not positive for any s up to the cap: quoting would lose on average
+      return pass(PassReason.NEGATIVE_EDGE);
+    }
     final double optimal = spread.optimal(base, cost, config.maxHalfSpreadBp);
     final double widened =
         optimal * config.eventMultiplier(now)
@@ -386,15 +398,19 @@ public final class QuotingEngine implements KillSwitchListener {
   }
 
   /**
-   * The venue's outcome for one of our quotes. Done books the fill (our side from the quote),
-   * teaches the hit-rate model a win, and with a disclosed cover price also teaches it that the
-   * quote would still have won at the cover. TradedAway teaches a loss. Every outcome releases the
-   * quote's reservation and frees it.
+   * The venue's outcome for one of our quotes. Done books the fill (our side from the quote) and
+   * teaches the hit-rate model one win; a disclosed cover worse for the client than our price adds
+   * its distance to the cover statistics, but is not a second observation (one RFQ, one label;
+   * DR-R2R-08). TradedAway teaches a loss. Every outcome releases the quote's reservation and frees
+   * it.
    */
   public void onQuoteResponse(
       final long quoteId, final QuoteStatus status, final long tradedPrice, final long tradedQuantity, final long coverPrice) {
     final int slot = (int) quoteSlot.get(quoteId);
     if (slot < 0) {
+      if (status == QuoteStatus.Done && bookLateFill(quoteId, tradedPrice, tradedQuantity)) {
+        return;
+      }
       unmatchedResponses++;
       return;
     }
@@ -405,11 +421,16 @@ public final class QuotingEngine implements KillSwitchListener {
       release(slot);
       risk.onFill(instrumentId, sBuy[slot] ? qty : -qty, tradedPrice);
       hitRate.update(sBase[slot], sDistance[slot], true);
-      if (coverPrice != 0L && coverPrice != tradedPrice) {
-        final double gap = Math.abs(Decimal9.toDouble(tradedPrice) - Decimal9.toDouble(coverPrice)) / risk.quotePerBp(instrumentId);
-        coverDistanceBp += gap;
-        coverObservations++;
-        hitRate.update(sBase[slot], sDistance[slot] + gap, true);
+      if (coverPrice != 0L) {
+        // the cover is the client's next best price: below our bid when we buy, above our offer
+        // when we sell; one on the wrong side of the trade is inconsistent and not recorded
+        final double signed =
+            Decimal9.toDouble(sBuy[slot] ? tradedPrice - coverPrice : coverPrice - tradedPrice)
+                / risk.quotePerBp(instrumentId);
+        if (signed > 0.0) {
+          coverDistanceBp += signed;
+          coverObservations++;
+        }
       }
       scheduleMarkout(slot, tradedPrice);
     } else {
@@ -437,6 +458,7 @@ public final class QuotingEngine implements KillSwitchListener {
         if (sValidUntil[s] <= nowNanos) {
           expiries++;
           release(s);
+          remember(s);
           free(s);
           continue;
         }
@@ -551,6 +573,11 @@ public final class QuotingEngine implements KillSwitchListener {
     return pulls;
   }
 
+  /** Done responses booked for quotes that had already expired here. */
+  public long lateFills() {
+    return lateFills;
+  }
+
   /** Responses for quotes the engine no longer holds. */
   public long unmatchedResponses() {
     return unmatchedResponses;
@@ -647,6 +674,34 @@ public final class QuotingEngine implements KillSwitchListener {
 
   private void release(final int s) {
     risk.release(sInstrument[s], sBuy[s] ? sQty[s] : 0L, sBuy[s] ? 0L : sQty[s]);
+  }
+
+  private void remember(final int s) {
+    tQuoteId[tHead] = sQuoteId[s];
+    tInstrument[tHead] = sInstrument[s];
+    tBuy[tHead] = sBuy[s];
+    tQty[tHead] = sQty[s];
+    tHead = (tHead + 1) % TOMBSTONES;
+  }
+
+  /**
+   * A Done for a quote that expired here first: the venue accepted the client's lift before our
+   * expiry reached it, so the trade stands and is booked (its reservation was already released).
+   * The hit-rate model is not taught, the quote's features being gone. Returns false if the quote
+   * is not among the last {@code TOMBSTONES} expiries.
+   */
+  private boolean bookLateFill(final long quoteId, final long tradedPrice, final long tradedQuantity) {
+    for (int k = 0; k < TOMBSTONES; k++) {
+      if (tQuoteId[k] == quoteId && tQty[k] > 0) {
+        final long qty = Math.min(Math.max(tradedQuantity, 0L), tQty[k]);
+        tQty[k] = 0;
+        lateFills++;
+        fills++;
+        risk.onFill(tInstrument[k], tBuy[k] ? qty : -qty, tradedPrice);
+        return true;
+      }
+    }
+    return false;
   }
 
   private void free(final int s) {

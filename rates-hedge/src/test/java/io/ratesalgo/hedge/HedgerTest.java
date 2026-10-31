@@ -53,6 +53,30 @@ class HedgerTest {
   }
 
   /**
+   * DR-R2R-02: a hedge fill that breaches the daily loss limit fires the kill switch from inside
+   * onHedgeFill. The kill must complete: no exception, one KillSwitch message, no parent left
+   * working and no reservation left behind.
+   */
+  @Test
+  void hedgeFillThatTripsTheLossLimitKillsCleanly() {
+    final HedgeFixture f = new HedgeFixture(new RiskLimits().dailyLoss(50_000.0));
+    final Hedger h = f.hedger(Hedger.config());
+    f.risk.onFill(B10, 100 * M * 100, Decimal9.round(98.25));
+    assertTrue(h.onTimer(f.clock.epochNanos()) > 0);
+    final RecordingHedgeOrderSink.Parent p = f.sink.parents().get(0);
+    final long five = Decimal9.round(5.0);
+    final long bad = p.side() == Side.Sell ? p.limitPrice() - five : p.limitPrice() + five;
+    h.onHedgeFill(p.parentId(), bad, p.quantityMinor());
+    assertEquals(io.ratesalgo.risk.KillState.KILLED, f.kill.state());
+    assertEquals(1, f.control.count(io.ratesalgo.messages.sbe.KillSwitchDecoder.TEMPLATE_ID));
+    assertEquals(0L, f.kill.listenerFailures());
+    assertEquals(0, h.workingParents());
+    for (final RecordingHedgeOrderSink.Parent q : f.sink.parents()) {
+      assertEquals(0L, f.risk.pendingBuy(q.instrumentId()) + f.risk.pendingSell(q.instrumentId()));
+    }
+  }
+
+  /**
    * Staged execution against the same plan executed at once: with quadratic impact, trading in
    * tranches costs less in the model.
    */
@@ -112,6 +136,27 @@ class HedgerTest {
       assertEquals(0L, f.risk.pendingBuy(id) + f.risk.pendingSell(id));
     }
     assertEquals(0, h.onTimer(f.clock.epochNanos()), "nothing while killed");
+  }
+
+  /** DR-R2R-13: a fill that raced the kill's cancel-all is booked, not refused as unknown. */
+  @Test
+  void aFillThatRacedTheKillIsBooked() {
+    final HedgeFixture f = new HedgeFixture();
+    final Hedger h = f.hedger(Hedger.config().triggerStdDev(1_000.0));
+    f.risk.onFill(B10, 100 * M, f.fair.fairMid(B10));
+    assertTrue(h.onTimer(f.clock.epochNanos()) > 0);
+    final RecordingHedgeOrderSink.Parent p = f.sink.parents().get(0);
+    final long before = f.risk.position(p.instrumentId());
+    f.kill.trigger(KillReason.Manual, 0, 1);
+    assertEquals(0, h.workingParents());
+    h.onHedgeFill(p.parentId(), p.limitPrice(), p.quantityMinor());
+    final long signed = p.side() == Side.Buy ? p.quantityMinor() : -p.quantityMinor();
+    assertEquals(before + signed, f.risk.position(p.instrumentId()));
+    assertEquals(1, h.lateFills());
+    assertEquals(0L, f.risk.pendingBuy(p.instrumentId()) + f.risk.pendingSell(p.instrumentId()));
+    // the parent is used up: a further fill on it is an error
+    assertThrows(IllegalArgumentException.class,
+        () -> h.onHedgeFill(p.parentId(), p.limitPrice(), p.quantityMinor()));
   }
 
   @Test
