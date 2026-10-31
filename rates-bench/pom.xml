@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.ratesalgo</groupId>
+    <artifactId>rates-algo-trading</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>rates-bench</artifactId>
+  <name>rates-bench</name>
+  <description>Fixed-rate latency harness for the event core (HdrHistogram, coordinated-omission correction, JSON and Markdown reports) and JMH microbenchmarks of the ring-buffer publish and the journal append.</description>
+
+  <properties>
+    <!-- Versions used only by this module, so the parent pom keeps one line per module. -->
+    <hdrhistogram.version>2.2.2</hdrhistogram.version>
+    <jmh.version>1.37</jmh.version>
+
+    <!-- Harness settings for `mvn -pl rates-bench exec:exec@latency`; defaults follow
+         docs/BENCHMARKS.md (60 s warm-up, 5 min measured). CI passes shorter durations. -->
+    <latency.rate>50000</latency.rate>
+    <latency.warmup>60</latency.warmup>
+    <latency.measure>300</latency.measure>
+    <latency.idle>busy-spin</latency.idle>
+    <latency.journal>true</latency.journal>
+    <latency.cpu>-1</latency.cpu>
+    <latency.label>local</latency.label>
+    <latency.out>${project.build.directory}/latency</latency.out>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-core</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-messages</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-journal</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.agrona</groupId>
+      <artifactId>agrona</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.hdrhistogram</groupId>
+      <artifactId>HdrHistogram</artifactId>
+      <version>${hdrhistogram.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.openjdk.jmh</groupId>
+      <artifactId>jmh-core</artifactId>
+      <version>${jmh.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <annotationProcessorPaths combine.children="append">
+            <path>
+              <groupId>org.openjdk.jmh</groupId>
+              <artifactId>jmh-generator-annprocess</artifactId>
+              <version>${jmh.version}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- JMH generates its harness classes into target/classes; they are not ours to cover. -->
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <configuration>
+          <excludes>
+            <exclude>**/jmh_generated/**</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <!-- The latency harness: mvn -pl rates-bench exec:exec@latency -->
+            <id>latency</id>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <phase>none</phase>
+            <configuration>
+              <executable>${java.home}/bin/java</executable>
+              <arguments>
+                <argument>-Xms1g</argument>
+                <argument>-Xmx1g</argument>
+                <argument>-XX:+AlwaysPreTouch</argument>
+                <argument>-XX:+UseParallelGC</argument>
+                <argument>--add-opens</argument>
+                <argument>java.base/jdk.internal.misc=ALL-UNNAMED</argument>
+                <argument>--add-opens</argument>
+                <argument>java.base/sun.nio.ch=ALL-UNNAMED</argument>
+                <argument>--add-opens</argument>
+                <argument>java.base/java.nio=ALL-UNNAMED</argument>
+                <argument>-classpath</argument>
+                <classpath />
+                <argument>io.ratesalgo.bench.LatencyHarness</argument>
+                <argument>--rate=${latency.rate}</argument>
+                <argument>--warmup-seconds=${latency.warmup}</argument>
+                <argument>--measure-seconds=${latency.measure}</argument>
+                <argument>--idle=${latency.idle}</argument>
+                <argument>--journal=${latency.journal}</argument>
+                <argument>--cpu=${latency.cpu}</argument>
+                <argument>--label=${latency.label}</argument>
+                <argument>--out=${latency.out}</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <!-- The microbenchmarks: mvn -pl rates-bench exec:exec@jmh -->
+            <id>jmh</id>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <phase>none</phase>
+            <configuration>
+              <executable>${java.home}/bin/java</executable>
+              <arguments>
+                <argument>--add-opens</argument>
+                <argument>java.base/jdk.internal.misc=ALL-UNNAMED</argument>
+                <argument>--add-opens</argument>
+                <argument>java.base/sun.nio.ch=ALL-UNNAMED</argument>
+                <argument>--add-opens</argument>
+                <argument>java.base/java.nio=ALL-UNNAMED</argument>
+                <argument>-classpath</argument>
+                <classpath />
+                <argument>org.openjdk.jmh.Main</argument>
+                <argument>-f</argument>
+                <argument>1</argument>
+                <argument>-wi</argument>
+                <argument>3</argument>
+                <argument>-i</argument>
+                <argument>5</argument>
+                <argument>-jvmArgsAppend</argument>
+                <argument>--add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED</argument>
+                <argument>-rf</argument>
+                <argument>json</argument>
+                <argument>-rff</argument>
+                <argument>${project.build.directory}/jmh-result.json</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

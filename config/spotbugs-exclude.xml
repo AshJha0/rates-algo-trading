@@ -28,4 +28,19 @@
     </Or>
     <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2" />
   </Match>
+  <!-- JMH writes its harness classes into rates-bench's target/classes; not ours to lint. -->
+  <Match>
+    <Package name="~.*\.jmh_generated" />
+  </Match>
+  <!-- rates-bench is a measurement tool, not product code: the harness hands its histograms and
+       the generator's schedule array to the caller on purpose, MachineInfo reads Linux /proc and
+       /sys paths by design, and JMH state classes are initialised in @Setup, not constructors. -->
+  <Match>
+    <Package name="io.ratesalgo.bench" />
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2,DMI_HARDCODED_ABSOLUTE_FILENAME" />
+  </Match>
+  <Match>
+    <Package name="io.ratesalgo.bench.jmh" />
+    <Bug pattern="UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR" />
+  </Match>
 </FindBugsFilter>
