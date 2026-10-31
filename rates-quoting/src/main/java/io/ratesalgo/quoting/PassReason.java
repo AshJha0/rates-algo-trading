@@ -14,5 +14,7 @@ public enum PassReason {
   STALE_INPUT,
   NO_RISK_CAPACITY,
   BOOK_FULL,
+  /** The expected adverse cost is at or above the widest allowed half spread: no spread earns. */
+  NEGATIVE_EDGE,
   RISK_REJECT
 }

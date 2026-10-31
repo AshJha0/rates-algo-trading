@@ -209,6 +209,22 @@ class RiskEngineTest {
     expect(f, LimitKind.BucketDv01, f.risk.checkOrder(FUT10, Side.Sell, 200 * M, f.fairMid(FUT10), 4));
   }
 
+  /**
+   * DR-R2R-09: an order that reduces the book's net PV01 on its own but would overshoot through
+   * zero once a working reservation on the same side fills is not exempt from the limits.
+   */
+  @Test
+  void riskReducingExemptionCountsWorkingReservations() {
+    final RiskFixture f = new RiskFixture(new RiskLimits().netPv01(20_000.0));
+    f.risk.onFill(BOND10, 100 * M, f.fairMid(BOND10)); // -82k, in breach of 20k
+    assertEquals(RiskEngine.OK, f.risk.checkOrder(BOND10, Side.Sell, 50 * M, f.fairMid(BOND10), 1));
+    f.risk.reserve(FUT10, 0L, 100 * M); // a working hedge worth +65k
+    // -82k + 65k + 41k = +24k: overshoots, so the order is checked and refused
+    expect(f, LimitKind.NetDv01, f.risk.checkOrder(BOND10, Side.Sell, 50 * M, f.fairMid(BOND10), 2));
+    // a smaller order that stays on the same side of zero is still exempt: -82k + 65k + 8.2k
+    assertEquals(RiskEngine.OK, f.risk.checkOrder(BOND10, Side.Sell, 10 * M, f.fairMid(BOND10), 3));
+  }
+
   @Test
   void curveMovesRevalueAndAlert() {
     final RiskFixture f = new RiskFixture(new RiskLimits().bucketPv01(83_000.0));

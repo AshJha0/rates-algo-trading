@@ -24,7 +24,7 @@ import net.jqwik.api.constraints.Size;
  * of the remainder at that mark. Tolerance: 1e-6 minor units absolute, which bounds the
  * 34-digit intermediate rounding.
  */
-class PositionCalculatorProperties {
+class PositionCalculatorPropertiesTest {
 
   private static final PositionKey KEY = new PositionKey(1, 1, 1001);
   private static final BookAssignment BOOK = new BookAssignment(1, 1, "ALG-TEST");
