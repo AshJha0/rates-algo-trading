@@ -19,7 +19,7 @@ __pycache__/
 venv/
 
 # MkDocs output
-site/
+/site/
 
 # Journals (never commit raw journals)
 journals/*.raj
