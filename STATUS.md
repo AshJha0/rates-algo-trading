@@ -16,7 +16,7 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 | P4 | Smart order router | 8 | 0.5 to 1 | 1 (one working session, on branch `claude/p4-router-43caad`) | 2026-10-31 | gate open |
 | P5 | Back-tester with pre-registration (W7), Python quant research (W10); latency jobs | 18 | 1.5 | 0.3 (branch work, 2026-10-31) | 2026-10-31 | gate open |
 | P6 | Documentation, regulation mapping, knowledge check, release | 16 (this branch: 11) | 1 | 0.3 for the branch share (see below) | 2026-10-31 | in progress: post-trade, compliance inventory, operations and regulation chapters done on the branch; knowledge check, final documentation pass and release after integration |
-| R2 | Wiring: one trading process from the phase modules (`rates-app`), smoke test, replay-hash and back-test bindings, deploy, docs | not planned in plan-days | 1 (as briefed) | about 0.1 (one session of about 2.5 hours on 2026-10-31) | 2026-10-31 | gate open: local verify green, CI pending |
+| R2 | Wiring: one trading process from the phase modules (`rates-app`), smoke test, replay-hash and back-test bindings, deploy, docs | not planned in plan-days | 1 (as briefed) | about 0.1 (one session of about 2.5 hours on 2026-10-31) | 2026-10-31 | gate open: mvn verify, Python, docs and rehearsal green locally; CI pending |
 
 ## Estimate versus actual
 
@@ -121,12 +121,13 @@ Planned: one wall-clock day as briefed. Actual: about 2.5 hours in one session o
 | Kill switch through the control endpoint pulls everything | `SmokeTest` | 0 live quotes, 0 router children, nothing resting at the CLOB, KillSwitch on the control ring |
 | Positions from the journals, reconciled with both venues | `SmokeTest` | 291 trades in 9 positions; 291 ours, 291 theirs, 291 matched, 0 breaks |
 | Replay hash of the smoke day | `SmokeTest` | 97,044 inbound frames, 308 of 308 outbound messages, hash equal |
-| Replay hash of a day run with the loops on their own threads | `BacktestBindingTest` | equal (about 256 outbound messages; the count varies run to run) |
+| Replay hash of a day run with the loops on their own threads | `BacktestBindingTest` | equal in every run (258, 256 and 103 outbound messages in three runs; the threaded day is not reproducible step for step) |
 | Daily report on the recorded journal | `BacktestBindingTest`, recipe 22 | written and deterministic; recipe 22: 43 RFQs, 22 client fills, 268 hedge fills |
 | Pricing binding against direct analytics | `PricingBindingTest` | par rate and PV within 1e-12, ladder within 1e-12 of the parallel DV01 |
 | Feed gap and lost session pull quotes through the loop | `VenueBindingTest` | pulled, cancelled at the venue, quoting resumed |
 | Loop allocation with the real desk | `WiredLoopAllocationTest` | windows after warm-up within 1,024 bytes, at least one 0 (DR-R2W-12) |
 | Hot-path rules on the process classes | `AppHotPathRulesTest` | met |
+| Process-mode rehearsal with rates-app | `python deploy/rehearsal.py --mode process` | 12 checks passed (2026-10-31, Windows 11) |
 | `LoopAllocationTest` and `HotPathRulesTest` in rates-core | `mvn -B -ntp verify` | unchanged, met |
 
 ## Open items
