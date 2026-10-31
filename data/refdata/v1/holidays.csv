@@ -1,4 +1,4 @@
-# Holiday fixture for 2026 (and 1 January 2027) for the calendars the venues use. Replaced by rates-analytics calendars once merged.
+# Holiday fixture for 2026 and 2027 for the calendars the venues use; a date outside the years listed is refused. Replaced by rates-analytics calendars once merged.
 calendar,date,name
 US-GS,2026-01-01,New Year
 US-GS,2026-01-19,Martin Luther King Jr Day
@@ -13,6 +13,17 @@ US-GS,2026-11-11,Veterans Day
 US-GS,2026-11-26,Thanksgiving
 US-GS,2026-12-25,Christmas
 US-GS,2027-01-01,New Year
+US-GS,2027-01-18,Martin Luther King Jr Day
+US-GS,2027-02-15,Presidents Day
+US-GS,2027-03-26,Good Friday
+US-GS,2027-05-31,Memorial Day
+US-GS,2027-06-18,Juneteenth observed
+US-GS,2027-07-05,Independence Day observed
+US-GS,2027-09-06,Labor Day
+US-GS,2027-10-11,Columbus Day
+US-GS,2027-11-11,Veterans Day
+US-GS,2027-11-25,Thanksgiving
+US-GS,2027-12-24,Christmas observed
 UK,2026-01-01,New Year
 UK,2026-04-03,Good Friday
 UK,2026-04-06,Easter Monday
@@ -22,6 +33,13 @@ UK,2026-08-31,Summer bank holiday
 UK,2026-12-25,Christmas
 UK,2026-12-28,Boxing Day observed
 UK,2027-01-01,New Year
+UK,2027-03-26,Good Friday
+UK,2027-03-29,Easter Monday
+UK,2027-05-03,Early May bank holiday
+UK,2027-05-31,Spring bank holiday
+UK,2027-08-30,Summer bank holiday
+UK,2027-12-27,Christmas observed
+UK,2027-12-28,Boxing Day observed
 TARGET,2026-01-01,New Year
 TARGET,2026-04-03,Good Friday
 TARGET,2026-04-06,Easter Monday
@@ -29,3 +47,8 @@ TARGET,2026-05-01,Labour Day
 TARGET,2026-12-25,Christmas
 TARGET,2026-12-26,St Stephen
 TARGET,2027-01-01,New Year
+TARGET,2027-03-26,Good Friday
+TARGET,2027-03-29,Easter Monday
+TARGET,2027-05-01,Labour Day
+TARGET,2027-12-25,Christmas
+TARGET,2027-12-26,St Stephen

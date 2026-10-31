@@ -271,9 +271,9 @@ Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on
 
 | Quantity | Asserted tolerance | Measured worst case | Test |
 |---|---|---|---|
-| Swap PV (83 swaps), QuantLib curve | 1e-8 of notional | 1.6e-15 of notional | `swapsMatchQuantLibOnBothCurves` |
-| Swap PV on the Java bootstrap | 1e-8 of notional | 8.5e-15 of notional | same |
-| Par rate | 1e-6 | 3.5e-16 | same |
+| Swap PV (83 swaps), QuantLib curve | 1e-12 of notional (1e-8 before DR-R2R-11) | 1.6e-15 of notional | `swapsMatchQuantLibOnBothCurves` |
+| Swap PV on the Java bootstrap | 1e-12 of notional | 8.5e-15 of notional | same |
+| Par rate | 1e-10 (1e-6 before DR-R2R-11) | 3.5e-16 | same |
 | Curve discount factors, Java versus QuantLib-priced bootstrap | 1e-10 | 8.3e-16 | `javaBootstrapMatchesQuantLibCurvesAndRepricesInstruments` |
 | Curve instrument repricing (round trip) | 1e-10 | 4.3e-14 (golden curves), 9.3e-14 (all interpolations) | same; `CurveBuilderTest` |
 | Parallel DV01, AD versus QuantLib 1bp central bump | 1e-5 relative | 1.4e-6 relative | `parallelDv01ByAlgorithmicDifferentiationMatchesQuantLibBumps` |
@@ -293,7 +293,7 @@ Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on
 
 ### 8.1 Producing the golden file
 
-`python -m ratesresearch.goldens` (from `research/`, with `pip install -e "research[dev,golden]"`, QuantLib pinned at 1.44) writes `data/golden/analytics_golden.json`. The curves are bootstrapped in Python by a sequential Brent search in which every instrument is priced by QuantLib objects built with explicit schedules, calendars and conventions identical to Section 5; the market quotes for 15 January 2025 are declared values (DECISIONS.md DR-P1-08); past fixings are the published ones in `data/fixtures`. `research/tests/test_goldens.py` regenerates the file and compares every number to 1e-12 relative (absolute floor 1e-12); CI runs it on Linux and Windows (DECISIONS.md DR-P1-06).
+`python -m ratesresearch.goldens` (from `research/`, with `pip install -e "research[dev,golden]"`, QuantLib pinned at 1.44) writes `data/golden/analytics_golden.json`. The curves are bootstrapped in Python by a sequential Brent search in which every instrument is priced by QuantLib objects built with explicit schedules, calendars and conventions identical to Section 5; the market quotes for 15 January 2025 are declared values (DECISIONS.md DR-P1-08); past fixings are the published ones in `data/fixtures`. `research/tests/test_goldens.py` regenerates the file and compares every number to 1e-12 relative (absolute floor 1e-6, DR-P1-06 as amended at integration); CI runs it on Linux and Windows (DECISIONS.md DR-P1-06).
 
 ### 8.2 Format (golden_version 1)
 
@@ -708,7 +708,7 @@ SEF (`SefSimulator`): the order book of the CLOB without workup, plus RFQ. An RF
 | auctions.csv | market, tenor, isin, announcementDate, auctionDate, issueDate (must agree with bonds.csv) |
 | holidays.csv | calendar (US-GS, UK, TARGET), date, name |
 
-Rules: instrument ids are positive and unique across bonds, swaps and futures; ISIN and CUSIP check digits are validated and a CUSIP must equal ISIN characters 3 to 11; dates satisfy announcement before or on auction, auction before or on issue, issue before first coupon, first coupon before maturity. On-the-run: for a market and tenor, the bond with the latest `onTheRunFromDate` on or before the date (and not matured); a bond is when-issued from its announcement date until it is on the run, so the on-the-run rolls on the new issue's issue date. `CalendarSource` is the hook for `rates-analytics` calendars; `FixtureCalendarSource` reads `holidays.csv` and refuses unknown calendar names.
+Rules: instrument ids are positive and unique across bonds, swaps and futures; ISIN and CUSIP check digits are validated and a CUSIP must equal ISIN characters 3 to 11; dates satisfy announcement before or on auction, auction before or on issue, issue before first coupon, first coupon before maturity. On-the-run: for a market and tenor, the bond with the latest `onTheRunFromDate` on or before the date (and not matured); a bond is when-issued from its announcement date until it is on the run, so the on-the-run rolls on the new issue's issue date. `CalendarSource` is the hook for `rates-analytics` calendars; `FixtureCalendarSource` reads `holidays.csv` and refuses unknown calendar names and dates outside the calendar years the file lists (2026 and 2027).
 
 ### 11.5 Market data quality and reject reason codes
 
@@ -833,9 +833,9 @@ Bonds and futures: microprice of the composite book, \((b \cdot A + a \cdot B) /
 
 ### 12.6 RFQ decision order and lifecycle
 
-For each QuoteRequest, after `poll`: duplicate (venue, rfqId) within the window; kill switch ACTIVE; inputs healthy (heartbeats, sessions, feed sequence); instrument known and quantity positive; request not expired; client tier not blocked; re-quote throttle; fair value present; oldest input within `maxInputAgeNanos`; size reduced to `min(request, tier max, risk headroom)` rounded down to the step, pass if zero; capacity of the live book; spread, skew, axe; risk pre-trade check (Section 13.2). A failure at any step is a PASS with the `PassReason` in `RfqOutcome`. Otherwise the quantity is reserved and a Quote sent: FIRM with `validUntilNanos = min(now + firmTtl, request expiry)`, or SUBJECT with `validUntilNanos = 0` (DR-P3-10). The diagram is docs/diagrams/rfq_decision.mmd.
+For each QuoteRequest, after `poll`: duplicate (venue, rfqId) within the window; kill switch ACTIVE; inputs healthy (heartbeats, sessions, feed sequence); instrument known and quantity positive; request not expired; client tier not blocked; re-quote throttle; fair value present; oldest input within `maxInputAgeNanos`; size reduced to `min(request, tier max, risk headroom)` rounded down to the step, pass if zero; capacity of the live book; expected adverse cost below `maxHalfSpreadBp`, else no spread up to the cap has positive expected value and the engine passes with `NEGATIVE_EDGE`; spread, skew, axe; risk pre-trade check (Section 13.2). A failure at any step is a PASS with the `PassReason` in `RfqOutcome`. Otherwise the quantity is reserved and a Quote sent: FIRM with `validUntilNanos = min(now + firmTtl, request expiry)`, or SUBJECT with `validUntilNanos = 0` (DR-P3-10). The diagram is docs/diagrams/rfq_decision.mmd.
 
-`poll(now)` expires quotes with `validUntilNanos <= now` and releases their reservation; sends QuoteWithdraw (reason StaleInput) for any live quote whose oldest input is older than `maxInputAgeNanos`; sends QuoteWithdraw for every live quote when inputs turn unhealthy (reasons HeartbeatLoss, SessionLoss, FeedGap); and measures due markouts. A withdrawn quote keeps its reservation until answered or expired. On QuoteResponse: Done books the fill at the traded price, teaches a win and, with a disclosed cover, a win at the cover distance; TradedAway teaches a loss; every status releases and frees the quote.
+`poll(now)` expires quotes with `validUntilNanos <= now` and releases their reservation; sends QuoteWithdraw (reason StaleInput) for any live quote whose oldest input is older than `maxInputAgeNanos`; sends QuoteWithdraw for every live quote when inputs turn unhealthy (reasons HeartbeatLoss, SessionLoss, FeedGap); and measures due markouts. A withdrawn quote keeps its reservation until answered or expired. On QuoteResponse: Done books the fill at the traded price, teaches one win (a disclosed cover on the client's side of the trade adds to the mean cover distance and is not a second observation, DR-R2R-08); TradedAway teaches a loss; every status releases and frees the quote.
 
 Diagram: [RFQ end to end with timings](docs/site/pages/diagrams.md#rfq-end-to-end-with-timings).
 
@@ -845,7 +845,7 @@ Diagram: [RFQ end to end with timings](docs/site/pages/diagrams.md#rfq-end-to-en
 
 ### 12.8 CLOB quoting
 
-`ClobQuoter` rests a bid and an ask at fair plus or minus `halfSpreadBp` (default 0.25 bp). It keeps an order while the target is within `requoteThresholdBp` (0.10 bp) to keep queue priority, and tracks the quantity ahead from the displayed size at its level. It cancels both sides for `cooldownNanos` (1 s) when the futures signal moves more than `futuresJumpBp` (0.5 bp) between updates, and the threatened side when book imbalance \((B - A) / (B + A)\) exceeds 0.6 in absolute value. It replaces at most once per side per `minRequoteNanos` (50 ms), rests at most `participation` (0.25) of the displayed size at the best price and never more than the risk headroom, and never places a buy at or above its own resting sell or a sell at or below its own resting buy. Orders are NewOrder (20), Limit, Day; cancels are OrderWithdraw (61). Reservations are released on the venue's ExecutionReport.
+`ClobQuoter` rests a bid and an ask at fair plus or minus `halfSpreadBp` (default 0.25 bp), the bid rounded down and the ask up to the venue tick given to `enable(instrumentId, tickMantissa)` (DR-R2R-12; `enable(instrumentId)` keeps the Decimal9 grid). It keeps an order while the target is within `requoteThresholdBp` (0.10 bp) to keep queue priority, and tracks the quantity ahead from the displayed size at its level. It cancels both sides for `cooldownNanos` (1 s) when the futures signal moves more than `futuresJumpBp` (0.5 bp) between updates, and the threatened side when book imbalance \((B - A) / (B + A)\) exceeds 0.6 in absolute value. It replaces at most once per side per `minRequoteNanos` (50 ms), rests at most `participation` (0.25) of the displayed size at the best price and never more than the risk headroom, and never places a buy at or above its own resting sell or a sell at or below its own resting buy. Orders are NewOrder (20), Limit, Day; cancels are OrderWithdraw (61). Reservations are released on the venue's ExecutionReport.
 
 ## Section 13. Risk limit semantics and check order (P3)
 
@@ -871,7 +871,7 @@ Per instrument: position (minor units), reserved buy and sell quantity, the PV01
 10. DailyLoss: P&L since `startOfDay` below minus `dailyLoss`.
 11. QuoteRate or OrderRate, then MessageRate: token buckets of `rate * burstSeconds` tokens.
 
-A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting skip 7 to 10 (DR-P3-05). Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
+A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting, counting every other working reservation on the same side as filled, skip 7 to 10 (DR-P3-05, DR-R2R-09). Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
 
 ### 13.3 Post-trade alerts
 
@@ -957,13 +957,13 @@ Parameters, config version 1 (`RouterParams`, `VenueParams`; defaults in `Router
 For row \(v\) of a decision and quantity \(q\), with bid \(b\), ask \(a\), same-side displayed depth \(Q\), trade rate \(r\) (quantity per second, both sides), lot \(\lambda\), passive horizon \(T\) (0 when passive is not allowed) and \(\sigma_s = \sigma_d/\sqrt{D}\):
 
 \[
-h = \tfrac{a-b}{2},\quad I(q) = y\,\sigma_d\,(q/\mathrm{ADV})^{\alpha},\quad L = k_L\,\sigma_s\sqrt{\ell},\quad A = k_A\,\sigma_s\sqrt{T}
+o = s\,\big(\tfrac{a+b}{2} - m\big),\quad h = \tfrac{a-b}{2},\quad I(q) = y\,\sigma_d\,(q/\mathrm{ADV})^{\alpha},\quad L = k_L\,\sigma_s\sqrt{\ell},\quad A = k_A\,\sigma_s\sqrt{T}
 \]
 \[
-c_{aggr}(q) = h + I(q) + f_t + L,\qquad c_{pass}(q) = P\,(-h + I(q) + f_m) + (1-P)\,(A + h + I(q) + f_t) + L
+c_{aggr}(q) = o + h + I(q) + f_t + L,\qquad c_{pass}(q) = o + P\,(-h + I(q) + f_m) + (1-P)\,(A + h + I(q) + f_t) + L
 \]
 
-where \(P\) is `QueueFillModel.probability(ceil(Q/λ), ceil(q/λ), r/(2λ), θ, T)` (complete-fill probability, Cont, Stoikov and Talreja 2010, uniformisation as in the owner's earlier library, API_SPEC.md Section 13.1 there; tolerance 1e-10 against the Poisson tail when \(\theta = 0\), `CostModelTest`). The chosen cost is \(c_{pass}\) if passive is allowed and either aggressive is not allowed or \(c_{pass} < c_{aggr}\); otherwise \(c_{aggr}\). The expected queue wait reported is \((\lceil Q/\lambda\rceil + \lceil q/\lambda\rceil)/(r/2\lambda)\), capped at 1e6 s. All doubles are rounded to Decimal9 with `Math.round(x * 1e9)` when written to the table; inputs that enter the model as doubles (trade rate, fees) are taken from the rounded table values, so a decision re-evaluated from the journal reproduces every mantissa.
+where \(s\) is +1 for a buy and -1 for a sell, \(m\) is the consolidated mid (the mid of the highest bid and lowest ask over the decision's rows with a two-sided quote), so the venue offset \(o\) charges a venue whose book sits at a worse price than the others (zero when all mids agree; DR-R2R-04, `CostModelTest.aVenueQuotingAtABetterPriceWinsTheSlice`), \(P\) is `QueueFillModel.probability(ceil(Q/λ), ceil(q/λ), r/(2λ), θ, T)` (complete-fill probability, Cont, Stoikov and Talreja 2010, uniformisation as in the owner's earlier library, API_SPEC.md Section 13.1 there; tolerance 1e-10 against the Poisson tail when \(\theta = 0\), `CostModelTest`). The chosen cost is \(c_{pass}\) if passive is allowed and either aggressive is not allowed or \(c_{pass} < c_{aggr}\); otherwise \(c_{aggr}\). The expected queue wait reported is \((\lceil Q/\lambda\rceil + \lceil q/\lambda\rceil)/(r/2\lambda)\), capped at 1e6 s. All doubles are rounded to Decimal9 with `Math.round(x * 1e9)` when written to the table; inputs that enter the model as doubles (trade rate, fees) are taken from the rounded table values, so a decision re-evaluated from the journal reproduces every mantissa.
 
 ### 15.2 Routing objective and allocation
 
@@ -1038,9 +1038,11 @@ Result (`BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` (rates-route
 
 | Strategy | Mean cost (bps of price) | Mean saving of the router (bps) | 95% block-bootstrap interval |
 |---|---|---|---|
-| router | -0.1957 | | |
-| single-venue aggressive | 2.6822 | 2.8780 | [2.7210, 2.9855] |
-| even split aggressive | 2.5108 | 2.7065 | [2.5309, 2.8272] |
+| router | -0.2565 | | |
+| single-venue aggressive | 2.6822 | 2.9388 | [2.7792, 3.0631] |
+| even split aggressive | 2.5108 | 2.7673 | [2.5802, 2.9026] |
+
+Re-run 2026-10-31 after the venue offset of DR-R2R-04 was added to the cost model; the P4 gate run before it gave a router cost of -0.1957 and savings of 2.8780 [2.7210, 2.9855] and 2.7065 [2.5309, 2.8272] bps.
 
 The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_BPS`). The router's cost is below zero because most of its quantity rests and earns part of the spread in a market whose only adverse selection is the random walk; the number measures the router's logic in this declared world and is not a forecast of desk savings. Refitting the impact and queue parameters from P2 simulator data is deferred (DR-P4-03).
 
@@ -1213,7 +1215,7 @@ Rules:
 - **Late fills.** Positions are computed from live trades in transaction-time order (ties by journal sequence, then key), so a fill that arrives after a later one lands where it belongs. It is flagged `late` and audited `LATE_FILL`.
 - **Busts.** A busted trade stays in the records and leaves the position. A second bust is audited `DUPLICATE_BUST` and changes nothing. A bust still waiting for its fill at the end of the day is a `pending-busts` break.
 - **Amendments.** Each amendment is a new version (`versions(key)`) with the party id of the person who made it and the reason in the audit trail. An amendment of an unknown or busted trade, or to a non-positive quantity, is refused and audited `AMEND_REJECTED`.
-- **Average cost.** Weighted average cost. A trade in the direction of the position adds `price * quantity` to the cost; a trade against it realises `closed * (price - average)` through the valuation convention and removes the closed share of the cost; a trade through zero closes the old position and opens the remainder at its own price. Intermediate values carry 34 significant digits (`MathContext.DECIMAL128`). The property test `PositionCalculatorProperties` checks that realised plus unrealised P&L equals the trades' cash flow plus the remainder at the mark, to 1e-6 minor units, for random trade sequences.
+- **Average cost.** Weighted average cost. A trade in the direction of the position adds `price * quantity` to the cost; a trade against it realises `closed * (price - average)` through the valuation convention and removes the closed share of the cost; a trade through zero closes the old position and opens the remainder at its own price. Intermediate values carry 34 significant digits (`MathContext.DECIMAL128`). The property test `PositionCalculatorPropertiesTest` checks that realised plus unrealised P&L equals the trades' cash flow plus the remainder at the mark, to 1e-6 minor units, for random trade sequences.
 - **Audit.** Every decision, including the decision not to book, leaves an `AuditEntry` (sequence, timestamp, kind, key, actor, detail): BOOKED, DUPLICATE_IGNORED, DUPLICATE_CONFLICT, LATE_FILL, BUSTED, BUST_PENDING, DUPLICATE_BUST, AMENDED, AMEND_REJECTED, OPENING_POSITION.
 
 Positions are kept per book, account and instrument (`PositionKey`). The `BookMapper` assigns each trade a book, an account and the algorithm inventory id.
@@ -1287,7 +1289,7 @@ date,book,account,instrument_id,component,amount_minor
 
 ### 17.6 Clearing lifecycle (swaps)
 
-States NEW, SUBMITTED, ACCEPTED, CLEARED, REJECTED; events SUBMIT, ACCEPT, CLEAR, REJECT. Transitions: NEW to SUBMITTED on SUBMIT; SUBMITTED to ACCEPTED on ACCEPT; ACCEPTED to CLEARED on CLEAR; SUBMITTED or ACCEPTED to REJECTED on REJECT. Every other pair is refused: the state does not change and the refusal is kept in the history. CLEARED and REJECTED are terminal. A rejection voids the trade; the caller journals a `PostTradeBust` with reason ClearingRejected. `ClearingHouseSimulator` accepts within a per-account gross notional limit, rejects beyond it, and clears accepted trades at the end of the cycle. Property tests (`ClearingLifecycleProperties`): terminal states absorb every event, a refusal never changes state, CLEARED is reached only through NEW, SUBMITTED, ACCEPTED, and replaying the history through the pure transition function reaches the same state.
+States NEW, SUBMITTED, ACCEPTED, CLEARED, REJECTED; events SUBMIT, ACCEPT, CLEAR, REJECT. Transitions: NEW to SUBMITTED on SUBMIT; SUBMITTED to ACCEPTED on ACCEPT; ACCEPTED to CLEARED on CLEAR; SUBMITTED or ACCEPTED to REJECTED on REJECT. Every other pair is refused: the state does not change and the refusal is kept in the history. CLEARED and REJECTED are terminal. A rejection voids the trade; the caller journals a `PostTradeBust` with reason ClearingRejected. `ClearingHouseSimulator` accepts within a per-account gross notional limit, rejects beyond it, and clears accepted trades at the end of the cycle. Property tests (`ClearingLifecyclePropertiesTest`): terminal states absorb every event, a refusal never changes state, CLEARED is reached only through NEW, SUBMITTED, ACCEPTED, and replaying the history through the pure transition function reaches the same state.
 
 ### 17.7 Settlement lifecycle (bonds) and the cost of a fail
 
@@ -1298,7 +1300,7 @@ Cost of a fail (`FailCost`, actual/360, from our point of view):
 - funding: `proceeds * fundingRate * days / 360`, a loss if we are the failing deliverer, a gain if we are failed to;
 - TMPG fails charge for Treasuries: `proceeds * max(3% - referenceRate, 0) * days / 360`, paid by the failing deliverer.
 
-Worked example (`SettlementProperties.workedFailExample`): proceeds 9,950,000.00 USD failing for 3 days with funding at 4.30% costs 3,565.42 USD; the fails charge is zero at a 4.00% reference rate and 1,658.33 USD at 1.00%.
+Worked example (`SettlementPropertiesTest.workedFailExample`): proceeds 9,950,000.00 USD failing for 3 days with funding at 4.30% costs 3,565.42 USD; the fails charge is zero at a 4.00% reference rate and 1,658.33 USD at 1.00%.
 
 ### 17.8 Reconciliations and break classes
 
@@ -1445,3 +1447,47 @@ The first dispatched message of any template starts the desk: it requires the cu
 | `PricingBindingTest` | Section 18.3 tolerances |
 | `VenueBindingTest` | a feed gap and a lost session pull quotes through the loop and the venue; quoting resumes after the snapshot and after logon; injected GatewayStatus faults |
 | `WiredLoopAllocationTest`, `AppHotPathRulesTest` | DR-R2W-12 |
+
+## Section 19. Desk features (rates-strategy, R2)
+
+Module `rates-strategy`, package `io.ratesalgo.strategy`. Section 18 is reserved for `rates-app` (branch `claude/r2-wiring-c31ae4`); this section is numbered 19 so the two merge without renumbering. Each feature sits behind an interface whose default reproduces today's engine; the measured results are in docs/research/DESK_FEATURES.md and the decisions in DR-R2B-01 to DR-R2B-10. Units: DV01 in major currency per 1 bp rise (positive gains when rates rise), positions in minor units, spreads and premiums in bp, times in epoch nanoseconds. Every method named allocation-free allocates nothing after warm-up (`DeskQuoterAllocationTest`).
+
+### 19.1 RiskLadder
+
+`RiskLadder(List<Instrument>)`: positions per instrument and their DV01 ladder. Buckets: 0 = 2Y (tenor up to 3 years), 1 = 5Y (up to 7), 2 = 10Y (up to 15), 3 = 30Y. `setPosition(index, minor)`, `recompute()`, `net()`, `bucket(b)`, `ladderNorm()` (Euclidean norm of the buckets), `tradeDv01(index, weBuy, quantity)`, `indexOf(instrumentId)` (dense index or -1). Swaps, bonds and futures share one ladder, so opposing flow nets across products before any hedge. Allocation-free.
+
+### 19.2 HedgeBudget (feature 1)
+
+`double excessDv01(RiskLadder, long nanosSinceClientFill)`: DV01 to remove now with the sign of the exposure (the hedge sent is `-excess`), zero for none. `long holdNanos()`: when to ask again after a client fill, zero for never. Default `HedgeBudget.threshold(t)` (`ThresholdHedgeBudget`): `|net| > t` gives `net`. `NettingHedgeBudget(soft, hard, retain, holdNanos)`, `0 <= retain <= soft <= hard`: `|net| > hard` gives `net - sign(net) * soft`; `|net| > soft` and age at least `hold` gives `net - sign(net) * retain`; otherwise zero.
+
+### 19.3 Axes (feature 2)
+
+`AxeBook(RiskLadder, maxBp, budgetDv01, bucketWeight)` implements `io.ratesalgo.hedge.AxeSource`: `axeBp(instrumentId, ourSide) = maxBp * min(1, |e| / budget)` when trading `ourSide` reduces `e = (1 - w) * net + w * bucket(instrument)`, else 0; `axeQuantity` is `|e| / |dv01PerUnit|` on the axed side; `publish()` returns `List<Axe(instrumentId, ourSide, improveBp, quantity)>` in ascending instrument order (allocates). Default `AxeSource.NONE`. No SBE message: template ids 120 to 129 stay unused (DR-R2B-06).
+
+### 19.4 QuoteSizer (feature 3)
+
+`long maxQuantity(RiskLadder, index, tradeDv01, requested)` and `double premiumBp(RiskLadder, index, tradeDv01, sizeMillions)` (never negative). A D2C RFQ is all-or-none in the back-tester, so a maximum below the request is a decline. Default `QuoteSizer.UNLIMITED`. `EnvelopeSizer(limitDv01, softUtil, hardUtil, riskPremiumBp, blockSizeMm, blockPremiumBp)`: with `post = |net + tradeDv01|` and `u = post / limit`, a risk-reducing request (`post <= |net|`) gets full size and no risk premium; `u > hardUtil` declines; otherwise the premium is `riskPremiumBp * min(1, (u - softUtil) / (hardUtil - softUtil))^2` when `u > softUtil`, plus `blockPremiumBp * ln(size / blockSizeMm)` when `size > blockSizeMm`. `lognormalQuantileMm(mu, sigma, z) = exp(mu + z sigma)`.
+
+### 19.5 ClientTiering (feature 4)
+
+`int tier(clientId)` (1 best, allocation-free), `boolean wantsMarkouts()`, `void onMarkout(clientId, markoutBp, now)` (allocation-free), `void review(now)` (may publish a table version and allocate; runs at the review cadence). The markout is `sign(q) * (mid(t + h) - mid(t)) / |priceChangePerBp|`, bp of value from our side. Default `StaticTiering(clientsPerTier)`: `1 + (clientId - 1) / clientsPerTier`. `MarkoutTiering(tiers, demoteBelow[], promoteAbove[], minSample, alpha, startIndex, reviewIntervalNanos, proposerId, approverId, capacity)`: requires `promoteAbove[t] > demoteBelow[t - 1]` and `proposerId != approverId`; publishes through `io.ratesalgo.quoting.TierTableControl.propose` and `approve`, versions strictly increasing from 1.
+
+### 19.6 HedgeTiming (feature 5)
+
+`Action decide(excessDv01, now)` with `Action` IMMEDIATE, STAGED (send `1 / slices()` now, ask again after `sliceIntervalNanos()`) and WAIT (ask again after `waitNanos()`); `onClientFill(tradeDv01, now)`; `reset()`. Default `HedgeTiming.ALWAYS_IMMEDIATE`. `OptimalStoppingTiming(FlowRateEstimator, gamma, sigmaBpPerSqrtSecond, hedgeCostPerDv01, impactPerDv01Squared, waitStepNanos, maxWaitNanos, slices, sliceIntervalNanos)`: WAIT when `c * min(a, lambda dt) > gamma / 2 * sigma^2 * a^2 * dt` and the wait so far plus `dt` is within `maxWait`; else STAGED when `k a^2 (1 - 1/n) > gamma / 2 * sigma^2 * a^2 * ds * sum_{j=1}^{n-1} ((n - j) / n)^2`; else IMMEDIATE. `FlowRateEstimator(tauSeconds, priorDv01PerSecond)`: decaying rates of DV01-raising and DV01-lowering client fills; `opposingRate(exposure, now)`.
+
+### 19.7 InventoryPenalty (feature 6)
+
+`double penaltyBp(RiskLadder, index, weBuy, quantity)`: cost in bp of the trade's DV01, negative for a trade that reduces inventory. Default `InventoryPenalty.NONE`. `FundingPenalty(ladder, couponByIndex[], bondBsPerYear, swapBsPerYear, holdingDays)`: bonds `((repo - coupon) * dPos + bsBond * dGross) * 100 * v * H / 360`, swaps `bsSwap * dGross * 0.01 * H / 360`, futures 0, divided by `quantity * |dv01PerUnit|`; `repo` is the instrument's funding rate. `CouponCarry(Map<Integer, Double>)` implements the back-tester's `CarryModel`: bonds accrue `position * 100 * v * coupon * dt / 360 days`.
+
+### 19.8 DeskQuoter
+
+`DeskQuoter(name, Features)` implements the back-tester's `Strategy`; `Features(ladder, SpreadOptimizer, HedgeBudget, HedgeTiming, AxeSource, QuoteSizer, ClientTiering, InventoryPenalty, markoutHorizonNanos)`. `baselineFeatures(ladder, spread, threshold, clientsPerTier, horizon)` sets every default. Per RFQ: refresh the ladder from the context; decline if the sizer's maximum is below the request; `extra = premiumBp + penaltyBp`; `s = SpreadOptimizer.optimalHalfSpreadBp(instrument, size, tier, dealers, inWindow, extra)` with `E[edge](s) = P(s) (s - adverse(tier) - hedgeCost - extra)`; half-spread `max(0, s - axeBp)` around mid, rounded to tick outward. Per client fill: feed the timing, schedule a markout when the tiering wants one, then ask the budget and the timing; one hedge in flight at a time, into the 10-year note future. With the defaults the output chain hash equals that of `ModelSpreadStrategy` on the same journal. Counters: `quotes`, `sizeDeclines`, `clientFills`, `hedgesSent`, `waits`, `stagedSlices`, `markoutsRecorded`.
+
+### 19.9 Experiments
+
+`DeskFactory(config, presets, instruments)`: `baseline()`, `treatment(name, tiering)` for `internalisation`, `axes`, `sizing`, `tiering`, `timing`, `funding` and `desk_all`, and `deskDefault()` (the baseline with the adopted features, `ADOPTED`). `DeskExperiment(repoRoot, configFile).run(days, workDir)` and `DeskExperimentCli --preregs a.yaml,...,g.yaml [--ledger] [--repo] [--work] [--scope evaluation|holdout] [--commit] [--dirty]`: refuses (exit 2, nothing recorded) unless every pre-registration is valid (Section 16.8), they share config, period and holdout, each has baseline `baseline` and one known treatment, and a holdout has not been opened; then runs once and appends one ledger record per pre-registration. Config `data/experiments/R2B.config.yaml`: `band` (`dealers_min`, `dealers_max`, `informed_share_multiplier` at `low`, `central`, `high`; the slope comes from preset `usd_rfq_hit_rate` at the same point), `limits`, `carry`, `baseline`, one section per feature, `statistics`. Record `results`: `treatment`, `baseline`, `metric`, `metric_unit`, `orientation`, `days`, `band.<point>` (`baseline_mean`, `treatment_mean`, `difference_mean`, `improvement_mean`, `improvement_ci_low`, `improvement_ci_high`, `paired_p`, `holm_p`, `verdict` improved, worse or inconclusive, `pnl_difference_mean`, `pnl_difference_ci_low`, `pnl_difference_ci_high`, `pnl_guard`, `limit_breach_days`, `new_limit_breach_days`, `secondary_means`), `statistics`, `guards`, `adopted_as_default`; the record's `verdict` is `supported` or `not supported`.
+
+### 19.10 Desk report (feature 7)
+
+`DeskMetrics.of(BacktestResult, InstrumentSet, Settings(limitDv01, positionLimitMm, horizonIndex, gamma, sigma, bondBsPerYear, swapBsPerYear))`: scalar metrics by name (`pnl`, `client_dv01_traded`, `hedge_dv01_traded`, `pnl_per_dv01`, `capture_per_dv01`, `hedge_ratio`, `spread_capture`, `adverse_selection`, `other_inventory`, `hedge_cost`, `carry`, `funding`, `fees`, `residual`, `hedges`, `hedge_slippage`, `hedge_slippage_per_dv01`, `risk_charge`, `risk_adjusted_hedge_cost`, `mean_abs_net_dv01`, `max_abs_net_dv01`, `limit_utilisation`, `balance_sheet_charge`, `funding_net`, `inventory_half_life_s`, `limit_breach`, `adverse_tier_1` to `adverse_tier_3`) and `hitRateCounts()` by tier, then product and tenor bucket. Waterfall: `spread_capture + adverse_selection + other_inventory + hedge_cost + carry + funding + fees = position P&L - residual`. `DeskReport(date, strategy, metrics)`: `toMap`, `toJson`, `toMarkdown`. `DeskReportCli --config --date [--strategy] [--band] [--repo] [--out]` writes `desk_report.json` and `desk_report.md`.

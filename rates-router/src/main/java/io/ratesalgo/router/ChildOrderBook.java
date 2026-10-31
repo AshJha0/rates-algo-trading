@@ -81,6 +81,8 @@ public final class ChildOrderBook {
 
   private int lastSlot = -1;
   private long lastFill;
+  private long lastOverfill;
+  private long overfills;
   private long lastFillPrice;
   private long lastFreed;
 
@@ -203,6 +205,7 @@ public final class ChildOrderBook {
       final long lastQuantity,
       final long cumQuantity) {
     lastFill = 0;
+    lastOverfill = 0;
     lastFreed = 0;
     lastSlot = -1;
     final int s = (int) slotById.get(id);
@@ -304,6 +307,7 @@ public final class ChildOrderBook {
       final long id, final boolean venueKnows, final OrdStatus status, final long venueCumQuantity) {
     lastFreed = 0;
     lastFill = 0;
+    lastOverfill = 0;
     final int s = (int) slotById.get(id);
     if (s < 0 || isTerminal(state[s])) {
       return 0;
@@ -360,6 +364,14 @@ public final class ChildOrderBook {
       return ANOMALY;
     }
     execSeen.add(key);
+    // quantity beyond what the child still had outstanding was already freed by a cancel (and
+    // possibly routed again): the venue traded it anyway, so it is booked, but it was no longer
+    // part of the parent's outstanding quantity
+    final long outstanding = ordered[s] - cum[s] - cancelled[s];
+    if (qty > outstanding) {
+      lastOverfill = qty - outstanding;
+      overfills += lastOverfill;
+    }
     cum[s] += qty;
     notional[s] += (double) lastPrice * qty;
     lastFill = qty;
@@ -561,5 +573,18 @@ public final class ChildOrderBook {
   /** Reports that contradicted the book. */
   public long anomalies() {
     return anomalies;
+  }
+
+  /**
+   * Of the last report's fill, the quantity beyond the child's outstanding quantity: a fill
+   * reported after a cancel that the venue had confirmed for that quantity.
+   */
+  public long lastOverfill() {
+    return lastOverfill;
+  }
+
+  /** Total quantity filled after the venue had confirmed it cancelled, since construction. */
+  public long overfills() {
+    return overfills;
   }
 }

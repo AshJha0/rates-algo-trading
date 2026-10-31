@@ -132,7 +132,7 @@ Engine diagnostics (AUDIT-01), per day:
 | skew_0p05 | high | 932,113 | 212,559 to 1,739,874 | 2,132,542 | 0.039 | 1,103,782 | 867,216 | -296,599 | 380,818 | -18,982 |
 | skew_0p20 | high | 972,567 | 244,452 to 1,774,823 | 2,112,802 | 0.042 | 1,125,572 | 867,377 | -287,003 | 410,899 | -18,368 |
 
-### AUDIT-11 (ledger seq 12, commit 04edc03)
+### AUDIT-11 (ledger seq 19, commit 04edc03)
 
 | variant | band | mean diff USD/day | 95% CI | per 1mm DV01 traded | bp notional | Holm p | verdict |
 |---|---|---:|---|---:|---:|---:|---|
@@ -161,7 +161,7 @@ Engine diagnostics (AUDIT-01), per day:
 | engine | high | -105,217 | -152,606 to -55,909 | 177,325 | 0.511 | 622,909 | 73,866 | -53,404 | -124,689 | -986 |
 | unclamped | high | 0 | 0 to 0 | 0 | 0.000 | 0 | 0 | 0 | 0 | 0 |
 
-### AUDIT-12 (ledger seq 13, commit 04edc03)
+### AUDIT-12 (ledger seq 20, commit 04edc03)
 
 | variant | band | mean diff USD/day | 95% CI | per 1mm DV01 traded | bp notional | Holm p | verdict |
 |---|---|---:|---|---:|---:|---:|---|
@@ -184,7 +184,7 @@ Engine diagnostics (AUDIT-01), per day:
 | widen_0p05 | high | -83,573 | -136,865 to -32,509 | 188,787 | 0.438 | 551,384 | 92,082 | -45,941 | -128,865 | -848 |
 | widen_0p10 | high | -49,607 | -96,501 to -5,456 | 157,962 | 0.367 | 472,699 | 104,206 | -39,426 | -113,655 | -731 |
 
-### AUDIT-13 (ledger seq 14, commit 04edc03)
+### AUDIT-13 (ledger seq 21, commit 04edc03)
 
 | variant | band | mean diff USD/day | 95% CI | per 1mm DV01 traded | bp notional | Holm p | verdict |
 |---|---|---:|---|---:|---:|---:|---|
@@ -219,7 +219,7 @@ Engine diagnostics (AUDIT-01), per day:
 | max_lots_100 | high | -105,760 | -152,998 to -55,936 | 177,885 | 0.510 | 622,812 | 73,301 | -53,451 | -124,619 | -987 |
 | max_lots_2000 | high | -105,217 | -152,606 to -55,909 | 177,325 | 0.511 | 622,909 | 73,866 | -53,404 | -124,689 | -986 |
 
-### AUDIT-14 (ledger seq 15, commit 04edc03)
+### AUDIT-14 (ledger seq 22, commit 04edc03)
 
 | variant | band | mean diff USD/day | 95% CI | per 1mm DV01 traded | bp notional | Holm p | verdict |
 |---|---|---:|---|---:|---:|---:|---|

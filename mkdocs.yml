@@ -37,6 +37,7 @@ nav:
       - E4 trade size: notebooks/edge_e4_size.md
       - E5 swap spread: notebooks/edge_e5_swapspread.md
       - E6 carry tilt: notebooks/edge_e6_carry.md
+  - Desk features: desk-features.md
   - Compliance inventory: compliance.md
   - Runbooks: runbooks.md
   - AI use policy: ai-use-policy.md

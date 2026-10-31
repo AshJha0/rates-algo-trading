@@ -21,7 +21,7 @@ SLOPE_BAND = {"low": -1.25, "central": -2.5, "high": -5.0}
 SLOPE_RATIONALE = (
     "Win-probability slope per bp of spread-to-cover. No public source shows losing quotes "
     "(DR-008), so the slope is declared: central -2.5 per bp (a quote 0.2 bp behind the cover "
-    "loses about 0.6 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 "
+    "loses 0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 "
     "(clients pick the best price almost always). Results are reported at all three points."
 )
 

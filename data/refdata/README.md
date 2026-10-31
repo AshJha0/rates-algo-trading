@@ -10,6 +10,6 @@ Provenance (DECISIONS.md DR-006):
 | swap_templates.csv | Market conventions as described in LEARN.md Section 1; MAT flags and block thresholds are declared assumptions, not the CFTC's published values | Apache 2.0 |
 | futures.csv | Contract sizes and tick sizes from the exchanges' published contract specifications (CBOT Treasury futures, Eurex Euro-Bund); contract months are examples | facts, no data copied |
 | parties.csv | Invented names | Apache 2.0 |
-| holidays.csv | Holiday dates for 2026 from the SIFMA US recommendation, UK bank holidays and the TARGET2 calendar | facts, no data copied |
+| holidays.csv | Holiday dates for 2026 and 2027 (a date outside those years is refused) from the SIFMA US recommendation, UK bank holidays and the TARGET2 calendar | facts, no data copied |
 
 No downloaded file is committed. When P1 calendars land, `CalendarSource` is implemented over them and `holidays.csv` remains only as a test fixture.

@@ -89,7 +89,36 @@ public final class AsciiNumbers {
   /** Parses a signed integer. */
   public static long parseLong(
       final DirectBuffer buffer, final int offset, final int length, final int tag) {
-    return parseDecimal(buffer, offset, length, 0, tag);
+    // strict: an optional '-' then digits; no '+', no decimal point, so "34=1.0" or a checksum
+    // of "+05" is refused rather than read as 1 or 5
+    int i = offset;
+    final int end = offset + length;
+    final boolean negative = length > 0 && buffer.getByte(i) == '-';
+    if (negative) {
+      i++;
+    }
+    if (i >= end) {
+      throw new FixFormatException(tag, "no digits");
+    }
+    long value = 0;
+    for (; i < end; i++) {
+      final byte c = buffer.getByte(i);
+      if (c < '0' || c > '9') {
+        throw new FixFormatException(tag, "not an integer");
+      }
+      // accumulated negative, so Long.MIN_VALUE parses
+      if (value < (Long.MIN_VALUE + (c - '0')) / 10) {
+        throw new FixFormatException(tag, "integer out of range");
+      }
+      value = value * 10 - (c - '0');
+    }
+    if (!negative) {
+      if (value == Long.MIN_VALUE) {
+        throw new FixFormatException(tag, "integer out of range");
+      }
+      return -value;
+    }
+    return value;
   }
 
   /**
