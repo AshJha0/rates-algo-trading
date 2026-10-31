@@ -251,7 +251,96 @@ Against the golden file, all 38 conversion factors (CBOT, Eurex and ICE) match e
 
 ## 6. How rates trade electronically: RFQ versus CLOB, SEFs, workup
 
-Planned for P2 (venues). It will cover dealer-to-client request for quote with its timers and cover prices, dealer-to-dealer central limit order books with the workup protocol, swap execution facilities under Dodd-Frank, and how the project's venue simulators model each with declared parameters.
+### Plain idea
+
+Rates trade on two kinds of electronic venue. On a dealer-to-client (D2C) venue a client asks a few dealers for a price, the dealers answer within seconds, and the client trades with the best answer or with nobody: this is request for quote, RFQ. On a dealer-to-dealer (D2D) venue dealers post anonymous bids and offers in a central limit order book, CLOB, and trade with each other by hitting or lifting them. US Treasuries trade in both places. Interest rate swaps traded by US persons must, for the most liquid tenors, trade on a swap execution facility, SEF, which offers both an order book and RFQ under rules written by the CFTC.
+
+Two details shape almost everything a dealer's quoting engine does. In RFQ, what the venue tells each dealer after the trade differs: the winner usually learns the cover (the second-best price), losers learn only that they lost. In the Treasury CLOB, a trade is followed by a workup: for a few seconds more size can trade at the same price, first among the original parties and then among anyone, so the visible book understates how much trades at a price.
+
+### RFQ
+
+Formal statement. An RFQ names an instrument, a side from the client's point of view, a size and the dealers in competition. Each dealer may answer once (and may replace its answer) before a response window closes. The client then either accepts one quote, passes, or lets the request expire; on some platforms the client may also report that it traded elsewhere. With quotes \(p_1, \dots, p_n\) on the client's side, a client buying chooses \(\min_i p_i\) and a client selling chooses \(\max_i p_i\); ties go to the earlier quote. The cover is the second-best of the same set. What is disclosed after the outcome is a platform choice:
+
+| Outcome | Winner is told | Other quoting dealers are told | Dealers who did not quote |
+|---|---|---|---|
+| Client trades on the venue | traded, at its price, and on many platforms the cover | traded away (no price) | nothing or expired |
+| Client trades elsewhere | done away | done away | nothing or expired |
+| Client passes | passed | passed | nothing or expired |
+| No quotes in time | expired | expired | expired |
+
+The cover tells the winner how much it left on the table; a winner that repeatedly wins by a wide margin is quoting too aggressively. Losers learn that they lost but not by how much, which is why win-probability models cannot be fitted from a dealer's own records alone (DECISIONS.md DR-008).
+
+How `rates-venues` models it. `D2cRfqSimulator` sends each RFQ to every logged-on engine dealer and to simulated competitors, three to five dealers in total. Simulated half spreads are lognormal around a median (0.0078125 in price for Treasuries, 0.0025 in rate for SOFR swaps), response times are lognormal around 800 ms, and the client trades with the best quote if it is within a lognormal tolerance of mid, passes otherwise, and trades elsewhere with probability 0.05. RFQ arrivals follow an intensity that rises around 08:00, 08:30, 10:00, 13:00 and 15:00 New York time (fixings, data releases, auction results, the close). A share of clients is informed: after an informed client trades, mid moves in the client's favour, so the dealer's markout on those trades is worse. Every number is a declared assumption in `rates-venues/src/main/resources/io/ratesalgo/venues/presets.json`, not a fit (DR-P2V-05). On the wire the winner gets QuoteResponse with QuoteRespType 1 and the cover in tag 9502, losers get QuoteRespType 5 with 9503=TA, a done-away RFQ gives 9503=DA (API_SPEC.md Section 10.2).
+
+### CLOB and workup
+
+Formal statement. A CLOB keeps bids and offers by price, and within a price by arrival time (price-time priority). An incoming order that crosses the best opposite price trades against resting orders in that priority until it is filled or no longer crosses; the rest of it rests (or is cancelled, if immediate-or-cancel). Participants are anonymous to each other. A Treasury CLOB adds a minimum size (here 1 million face, in multiples of 1 million), a tick (1/128 of a point here) and iceberg orders, which show only a slice \(\min(\text{display}, \text{remaining})\) and go to the back of the queue each time a slice is refilled.
+
+Workup. After a trade at price \(P\), the book enters a workup at \(P\) for a duration \(W\). During the first \(E \le W\) seconds (the exclusive window) only the participants of the opening trade may trade more at \(P\); others who arrive with marketable orders wait. After \(E\), anyone may trade at \(P\). Each further trade may restart the timer. When the timer expires, normal matching resumes. Fleming, Mizrach and Nguyen (2018) describe the protocol on BrokerTec and how much of the platform's volume trades in workups; for a quoting engine the consequence is that displayed depth understates what can trade at the touch.
+
+How `rates-venues` models it. `ClobBook` applies these rules with \(W = 5\) s and \(E = 2\) s by default; during workup a marketable order trades only at \(P\) and any remainder rests at \(P\), and an order that would trade at another price waits until the workup ends (a simplification stated in API_SPEC.md Section 11.2). Execution reports carry the workup state in tag 9504: N normal, X exclusive window, W open workup. Self-match prevention cancels the resting order of the same participant by default. Every book change is published on an SBE price-level feed with one sequence number per venue (API_SPEC.md Section 10.5).
+
+### Swap execution facilities
+
+Formal statement. Under the Dodd-Frank Act, swaps subject to the CFTC clearing mandate that a SEF or designated contract market has made available to trade (MAT) must be executed on a SEF or DCM (17 CFR 37.10 sets the MAT process). These are Required Transactions. 17 CFR 37.9 allows two methods for them: the order book, or an RFQ system that sends the request to at least three participants, operated together with the order book (RFQ-to-3). Every other swap on a SEF is a Permitted Transaction and may use any method, including RFQ to one dealer or voice. Block trades, at or above the appropriate minimum block size published under 17 CFR 43.6, are not bound by the Required Transaction methods. Before a trade is executed, the clearing futures commission merchant (FCM) must be able to screen it against the risk-based limits it sets for its customer (17 CFR 1.73), and the SEF must support that screening (17 CFR 37.702(b)); a trade that would be rejected for clearing should never be executed. The industry term for this is clearing certainty.
+
+How `rates-venues` models it. `SefSimulator` reads the MAT flag and block threshold of each swap template from `data/refdata/v1/swap_templates.csv`. An RFQ for a Required Transaction below block size to fewer than three dealers is refused before any dealer sees it; the QuoteRequest an engine dealer receives carries 9506=Q (required) or P (permitted) and 9507=Y for a block. `FcmLimitHub` assigns each party an FCM with a notional limit; an order whose notional would breach its FCM's limit is rejected at entry (venue reject code 6), and an RFQ acceptance that would breach either side's limit is rejected with code 7. The limits, the party mapping and the block thresholds are declared assumptions, not the published CFTC block sizes, which change with each annual recalculation.
+
+### What each venue discloses
+
+| | D2C RFQ (Tradeweb or Bloomberg style) | D2D CLOB (BrokerTec style) | SEF RFQ |
+|---|---|---|---|
+| Counterparty identity before the trade | the client is named to the dealers it asks | anonymous | the requester is named to the dealers it asks |
+| Number in competition | often shown to dealers (tag 9501 here) | not applicable | shown (tag 9501 here) |
+| Prices of other dealers | not shown; the winner may receive the cover | the whole book is visible, without names | not shown; the winner may receive the cover |
+| Outcome for losing dealers | traded away or done away, no price | not applicable | traded away |
+| Public post-trade information | US Treasuries: FINRA TRACE, published in aggregate | trades are visible on the feed | swaps: public dissemination through a swap data repository |
+
+### Glossary
+
+- RFQ: request for quote; a client asks named dealers for a price on a stated size and side.
+- CLOB: central limit order book; anonymous bids and offers matched by price-time priority.
+- Cover price: the second-best quote on the client's side of an RFQ.
+- Traded away: the client traded with another dealer on the same RFQ.
+- Done away: the client reports trading the RFQ elsewhere.
+- Workup: a period after a CLOB trade during which more size can trade at the same price, first exclusively for the trade's participants.
+- Iceberg order: an order that displays only part of its size and refills from the hidden rest.
+- Self-match prevention: a venue rule that stops a participant's orders from trading with each other.
+- SEF: swap execution facility, a CFTC-registered venue for swaps.
+- MAT: made available to trade; a swap a SEF or DCM has certified as required to trade on a SEF or DCM.
+- Required Transaction: a MAT swap, which must use the order book or RFQ-to-3 unless it is a block.
+- Permitted Transaction: any other swap on a SEF; any execution method.
+- Block trade: a swap at or above the appropriate minimum block size; exempt from the Required Transaction methods and given delayed public reporting.
+- FCM: futures commission merchant; the clearing member that guarantees a customer's cleared trades.
+- Clearing certainty: assurance before execution that a trade will be accepted for clearing.
+
+### Worked example: what the cover price tells the winner
+
+COOKBOOK.md recipe 10 (`rates-cookbook/src/main/java/io/ratesalgo/cookbook/Recipe10VenueSession.java`, output recorded on 2026-10-31) sends a client RFQ to buy 10 million face of the 10-year note `US91282CZG94` to four dealers. Three simulated dealers offer 98.03, 98.02 and 98.05; we offer 98.015. The client buys from us at 98.015, and the venue discloses the cover, 98.02.
+
+Method. Prices are per 100 of face. The money left on the table is the cover minus our price, times face over 100:
+
+\[
+(98.02 - 98.015) \times \frac{10{,}000{,}000}{100} = 0.005 \times 100{,}000 = 500 \text{ USD}.
+\]
+
+We would still have won at any offer below 98.02, so up to 500 USD more was available on this trade. The cover does not say whether the trade will be profitable: that depends on where mid goes next, which is what the markout measures. In the simulator, `D2cModelTest.informedClientsHaveWorseMarkoutsForTheDealer` (`rates-venues/src/test/java/io/ratesalgo/venues/d2c/D2cModelTest.java`) checks that the mean dealer markout at the five-minute horizon is lower on trades with informed clients than with uninformed ones, which is the winner's curse the quoting engine has to price (Section 7).
+
+### Worked example: a workup
+
+The certification script `rates-venues/src/main/resources/io/ratesalgo/venues/cert/clob-workup.json` (run by `CertSuiteTest`, green on 2026-10-31) rests a 10 million offer at 98 from dealer A, then our 2 million bid at 98 lifts it: execution report with 9504=N, and a workup opens at 98. Dealer B, not a participant, then bids 98 and waits. We bid 98.0078125 inside the exclusive window: as a participant we trade, but at the workup price 98, with 9504=X. After 2.5 seconds the exclusive window has closed: dealer B's bid trades at 98 and our next bid trades with 9504=W. Six seconds later the workup has ended and our next bid at 98 is a normal trade again (9504=N). Five trades printed at 98 although only one order was ever displayed on the offer side.
+
+### Sources
+
+- CFTC, 17 CFR 37.9, methods of execution for Required and Permitted Transactions: <https://www.ecfr.gov/current/title-17/section-37.9>
+- CFTC, 17 CFR 37.10, process for a swap to be made available to trade: <https://www.ecfr.gov/current/title-17/section-37.10>
+- CFTC, 17 CFR 43.6, appropriate minimum block sizes: <https://www.ecfr.gov/current/title-17/section-43.6>
+- CFTC, 17 CFR 1.73, clearing FCM risk management: <https://www.ecfr.gov/current/title-17/section-1.73>
+- CFTC, 17 CFR 37.702, general financial integrity requirements for SEFs: <https://www.ecfr.gov/current/title-17/section-37.702>
+- FIX Trading Community, FIX 4.4 specification: <https://www.fixtrading.org/standards/fix-4-4/>
+- M. Fleming, B. Mizrach and G. Nguyen (2018), "The microstructure of a U.S. Treasury ECN: The BrokerTec platform", Journal of Financial Markets 40.
+- T. Hendershott and A. Madhavan (2015), "Click or call? Auction versus search in the over-the-counter market", Journal of Finance 70(1).
+- L. Riggs, E. Onur, D. Reiffen and H. Zhu (2020), "Swap trading after Dodd-Frank: Evidence from index CDS", Journal of Financial Economics 137(3).
 
 ## 7. Dealer market making: inventory, skew, cover prices, winner's curse
 

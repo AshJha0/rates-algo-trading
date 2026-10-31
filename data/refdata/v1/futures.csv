@@ -1,0 +1,7 @@
+# Futures contract specifications (CBOT Treasury futures and Eurex Bund), from the exchanges' published specifications.
+id,symbol,exchange,underlying,currency,contractSize,tickSize,notionalCoupon,deliveryMonth,firstDeliveryDate,lastTradingDate
+3001,TUZ6,CBOT,UST-2Y,USD,200000,0.0078125,6,2026-12,2026-12-01,2026-12-31
+3002,FVZ6,CBOT,UST-5Y,USD,100000,0.0078125,6,2026-12,2026-12-01,2026-12-31
+3003,TYZ6,CBOT,UST-10Y,USD,100000,0.015625,6,2026-12,2026-12-01,2026-12-21
+3004,USZ6,CBOT,UST-BOND,USD,100000,0.03125,6,2026-12,2026-12-01,2026-12-21
+3005,FGBLZ6,EUREX,BUND-10Y,EUR,100000,0.01,6,2026-12,2026-12-10,2026-12-08

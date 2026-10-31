@@ -1,0 +1,16 @@
+{
+  "venue": "d2c",
+  "flow": "rfq",
+  "description": "We do not quote; when the response window closes the client trades with a competitor and we are told the RFQ expired for us.",
+  "steps": [
+    {"venue": {"action": "rfq", "instrument": "US91282CZJ34", "side": "2", "qty": "10000000", "dealers": 4, "competitors": ["97.2", "97.21", "97.19"], "decision": "BEST"}},
+    {"expect": {"35": "R", "54": "2", "9501": "4"}},
+    {"advance": 4999},
+    {"expectNone": true},
+    {"advance": 1},
+    {"expect": {"35": "AJ", "131": "$rfq", "694": "3", "117": null}},
+    {"send": {"35": "S", "131": "$131", "117": "4", "55": "US91282CZJ34", "48": "US91282CZJ34", "22": "4", "132": "97.25", "134": "10000000"}},
+    {"expect": {"35": "AI", "117": "4", "297": "5", "58": "RFQ closed"}},
+    {"expectNone": true}
+  ]
+}

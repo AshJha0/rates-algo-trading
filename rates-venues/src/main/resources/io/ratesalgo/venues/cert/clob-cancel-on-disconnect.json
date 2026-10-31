@@ -1,0 +1,15 @@
+{
+  "venue": "clob",
+  "flow": "cancel-on-disconnect",
+  "description": "A resting order is cancelled when the session drops; after reconnecting, mass status shows no orders and a crossing order does not trade with us.",
+  "steps": [
+    {"send": {"35": "D", "11": "1", "55": "US91282CZG94", "48": "US91282CZG94", "22": "4", "54": "1", "60": "@now+0", "38": "2000000", "40": "2", "44": "97.5"}},
+    {"expect": {"35": "8", "11": "1", "150": "0"}},
+    {"do": "disconnect"},
+    {"do": "reconnect"},
+    {"send": {"35": "AF", "584": "1", "585": "7"}},
+    {"expect": {"35": "8", "150": "I", "911": "0"}},
+    {"venue": {"action": "internal", "owner": "DLR-A", "instrument": "US91282CZG94", "side": "2", "price": "97.5", "qty": "2000000"}},
+    {"expectNone": true}
+  ]
+}

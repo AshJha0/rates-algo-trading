@@ -1,0 +1,14 @@
+{
+  "venue": "d2c",
+  "flow": "rfq",
+  "description": "Client trades elsewhere; quoting dealers are told done away.",
+  "steps": [
+    {"venue": {"action": "rfq", "instrument": "USD-SOFR-10Y", "side": "1", "qty": "50000000", "dealers": 3, "competitors": ["3.705", "3.7055"], "decision": "DONE_AWAY"}},
+    {"expect": {"35": "R", "55": "USD-SOFR-10Y", "54": "1", "38": "50000000"}},
+    {"send": {"35": "S", "131": "$131", "117": "2", "55": "USD-SOFR-10Y", "48": "USD-SOFR-10Y", "22": "8", "132": "3.69", "133": "3.704", "134": "50000000", "135": "50000000"}},
+    {"expect": {"35": "AI", "117": "2", "297": "0"}},
+    {"venue": {"action": "decide"}},
+    {"expect": {"35": "AJ", "117": "2", "694": "5", "9503": "DA"}},
+    {"expectNone": true}
+  ]
+}

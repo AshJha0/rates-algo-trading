@@ -1,0 +1,9 @@
+# Swap templates per market. blockThreshold in currency units of notional; madeAvailableToTrade marks CFTC MAT tenors.
+id,market,currency,index,tenor,fixedFrequency,fixedDayCount,floatFrequency,floatDayCount,paymentLagDays,calendar,spotLagDays,madeAvailableToTrade,blockThreshold
+2001,USD-SOFR,USD,SOFR,2Y,1,ACT/360,1,ACT/360,2,US-GS,2,true,440000000
+2002,USD-SOFR,USD,SOFR,5Y,1,ACT/360,1,ACT/360,2,US-GS,2,true,300000000
+2003,USD-SOFR,USD,SOFR,10Y,1,ACT/360,1,ACT/360,2,US-GS,2,true,170000000
+2004,USD-SOFR,USD,SOFR,30Y,1,ACT/360,1,ACT/360,2,US-GS,2,true,110000000
+2005,USD-SOFR,USD,SOFR,12Y,1,ACT/360,1,ACT/360,2,US-GS,2,false,170000000
+2006,EUR-ESTR,EUR,ESTR,10Y,1,ACT/360,1,ACT/360,1,TARGET,2,false,150000000
+2007,GBP-SONIA,GBP,SONIA,10Y,1,ACT/365F,1,ACT/365F,0,UK,0,false,120000000

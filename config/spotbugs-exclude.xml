@@ -94,4 +94,16 @@
     <Package name="io.ratesalgo.bench.jmh" />
     <Bug pattern="UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR" />
   </Match>
+  <!-- P2 venues (DR-P2V-07): components in these packages are wired together by reference at
+       start-up and owned by one thread; returning or storing a collaborator (a master, a session,
+       a clock, a sink) is the wiring, not a leaked internal. Arrays and buffers that are internal
+       state are still copied or kept private, and every other pattern stays enabled. -->
+  <Match>
+    <Or>
+      <Package name="io.ratesalgo.refdata" />
+      <Package name="~io\.ratesalgo\.fix(\..*)?" />
+      <Package name="~io\.ratesalgo\.venues(\..*)?" />
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2" />
+  </Match>
 </FindBugsFilter>

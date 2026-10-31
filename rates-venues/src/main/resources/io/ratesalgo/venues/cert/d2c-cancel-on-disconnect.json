@@ -1,0 +1,17 @@
+{
+  "venue": "d2c",
+  "flow": "cancel-on-disconnect",
+  "description": "We quote, lose the connection before the client decides; the venue removes our quote; after reconnecting the quote status shows cancel-on-disconnect.",
+  "steps": [
+    {"venue": {"action": "rfq", "instrument": "US91282CZG94", "side": "1", "qty": "10000000", "dealers": 3, "competitors": ["98.03"], "decision": "BEST"}},
+    {"expect": {"35": "R"}},
+    {"send": {"35": "S", "131": "$131", "117": "1", "55": "US91282CZG94", "48": "US91282CZG94", "22": "4", "133": "98.015", "135": "10000000"}},
+    {"expect": {"35": "AI", "117": "1", "297": "0"}},
+    {"do": "disconnect"},
+    {"venue": {"action": "decide"}},
+    {"do": "reconnect"},
+    {"send": {"35": "a", "649": "1", "117": "1", "55": "US91282CZG94", "48": "US91282CZG94", "22": "4"}},
+    {"expect": {"35": "AI", "117": "1", "297": "6", "9503": "CD"}},
+    {"expectNone": true}
+  ]
+}

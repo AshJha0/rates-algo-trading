@@ -473,3 +473,122 @@ Decision. The repository wins: the two recipes are 12 (run the event loop agains
 Consequences. No collision with the P1 recipes. The P5 session should extend recipe 19 rather than write a new one.
 
 Amendment (2026-10-31, branch integration). The P5 branch used 18 and 19 for its own recipes, and the combined cookbook is renumbered to run contiguously by phase (DR-P4-05 amendment). The latency recipe is now 13 (`Recipe13LatencyHistogram`, `expected/recipe13.txt`), next to the event-loop recipe 12; its content is unchanged. The rate sweep P5 was to add belongs in recipe 13.
+## DR-P2V-01: Engine-side FIX codec of our own; QuickFIX/J only in the simulators
+
+Date: 2026-10-31
+
+Context. The engine must not allocate per message (CONTRIBUTING.md coding rules). QuickFIX/J builds a `Message` object graph with `String` and boxed field values for every message, so it cannot meet that rule on the engine side. It is, however, a mature FIX engine with dictionary validation, which is exactly what a venue simulator should have, because certification against a strict counterparty is the point.
+
+Decision. The engine side of every FIX connection is `rates-fix`: a flyweight parser and writer over Agrona buffers for the tags in API_SPEC.md Section 10.2, and a session layer. The simulators are QuickFIX/J 3.0.2 acceptors with FIX 4.4 dictionary validation on.
+
+Consequences. Our session layer is tested against a different implementation in every certification script, which caught one fault (DR-P2V-04). We own a FIX session implementation and its edge cases; the rules are pinned in API_SPEC.md Section 10.1 and tested in `FixSessionTest`. Tags outside our set are carried by the parser but not interpreted.
+
+## DR-P2V-02: New SBE messages without a schema version bump
+
+Date: 2026-10-31
+
+Context. The venue layer needs a market data reject message, outbound cancel, replace and quote-cancel messages, a trade bust, and a done-away RFQ status. API_SPEC.md Section 2 says adding a field to an existing message increments the schema version. The brief for this work said to bump the version to 1 for new fields. Recipe 3 prints the schema version, and other sessions edit the same schema in parallel.
+
+Decision. Add messages 40 to 44, the enum `MdRejectReason` and `QuoteStatus.DoneAway` as additions only, and keep the schema version at 0. No existing field changes, so a v0 decoder decodes every message it knew exactly as before.
+
+Consequences. An old decoder reading `QuoteStatus` 6 gets the null value, which only matters for a journal written after this change and read by older code; no journal has been released. If a later change adds fields to an existing message, that change bumps the version as Section 2 requires. Recorded as a deviation from the brief, where the repository's own rule takes precedence.
+
+## DR-P2V-03: The engine answers resend requests with a gap fill, never by resending
+
+Date: 2026-10-31
+
+Context. FIX allows a session to resend application messages on request. A resent quote or order would arrive late, stamped as a possible duplicate, and could trade at a price the engine no longer wants.
+
+Decision. `FixSession` answers every ResendRequest with one SequenceReset-GapFill to its next outbound number. Inbound, it requests resends and accepts resent messages from the venue.
+
+Consequences. After a gap the venue never sees our stale messages; the engine re-establishes intent explicitly (quote again, or query with QuoteStatusRequest or OrderMassStatusRequest). Venues that require application resends of orders are out of scope until one needs it.
+
+## DR-P2V-04: Simulator-defined tags and the FIX 4.4 QuoteCancel
+
+Date: 2026-10-31
+
+Context. FIX 4.4 has no standard tags for dealer count, cover price, the traded-away or done-away distinction, the CLOB workup state, SEF transaction class and block flag, or a venue reject code, and real venues define their own. FIX 4.4 also has no QuoteCancelType for cancelling one quote by QuoteID (value 5 arrived in FIX 5.0); QuickFIX/J's dictionary rejected our first QuoteCancel with 298=5.
+
+Decision. Use user-defined tags 9501 to 9510 (API_SPEC.md Section 10.2). Cancel a single quote with QuoteCancelType 1, the QuoteID and one NoQuoteEntries instrument.
+
+Consequences. A real venue's certification document replaces these tags with its own; the gateway's translation tables are the only place that changes.
+
+## DR-P2V-05: Simulator parameters are declared assumptions
+
+Date: 2026-10-31
+
+Context. Spreads, response times, client tolerance, informed share and arrival bumps of competing dealers cannot be fitted from public data (DR-008), and the free public tapes (DTCC SDR, TRACE aggregates) have not been downloaded yet.
+
+Decision. Every simulator parameter lives in `rates-venues/src/main/resources/io/ratesalgo/venues/presets.json` as a named preset, documented in API_SPEC.md Section 11.3, and is described as an assumption wherever it is used. Arrival times and size distributions are replaced by fits from the SDR and TRACE manifests in P5, through `data/presets.yaml`.
+
+Consequences. Results from the simulators speak about the engine's behaviour under stated conditions, not about any real venue's market. Outcome shares in the synthetic day (536 of 568 RFQs done) reflect the declared client tolerance and the auto-quoter, nothing else.
+
+## DR-P2V-06: Price-level book feed keyed by price, recovery by snapshot
+
+Date: 2026-10-31
+
+Context. The schema's `BookUpdate` carries one price level with an action and a level number. A level-number feed requires the consumer to shift levels on insert and delete, which is a common source of book corruption after a missed frame.
+
+Decision. Levels are keyed by price: Add, Change and Delete name a price; `level` is the rank and is informational. One sequence number per venue across instruments. A consumer that sees a gap recovers by requesting a full snapshot, never by retransmission of incrementals.
+
+Consequences. The consumer is simple and its state after recovery equals the venue's book (`ChaosTest.feedGapsDuplicatesAndReorderingRecoverToTheVenueBook`). Only the top five levels are published, so a consumer cannot see deeper liquidity.
+
+## DR-P2V-07: SpotBugs exposure warnings excluded in the venue packages
+
+Date: 2026-10-31
+
+Context. SpotBugs reports EI_EXPOSE_REP and EI_EXPOSE_REP2 whenever a constructor stores, or a getter returns, a mutable object. In these packages that is how components are wired: a gateway holds its session, a simulator its clock, a master its maps.
+
+Decision. `config/spotbugs-exclude.xml` excludes only those two patterns for `io.ratesalgo.refdata`, `io.ratesalgo.fix` and `io.ratesalgo.venues`, with the reason in a comment. Internal arrays and buffers stay private or are copied.
+
+Consequences. A genuinely leaked internal array would not be reported in these packages; code review covers it. Every other SpotBugs pattern stays enabled at effort Max, threshold Low.
+
+## DR-P2V-08: One lock per simulator, quiescence in tests
+
+Date: 2026-10-31
+
+Context. QuickFIX/J delivers messages on its own thread while tests move time on theirs. Without coordination the order of events, and so the random draws, would depend on thread timing.
+
+Decision. Every simulator entry point (message, logon, logout, time) runs under the simulator's monitor; the acceptor is the single-threaded `SocketAcceptor`. Tests advance a `ManualClock` under the same lock and call `EngineSession.quiesce()` after every action.
+
+Consequences. Same seed, same messages and same clock give the same run (`D2cModelTest.sameSeedSameDay`). Simulators are test infrastructure, so the lock is not subject to the hot-path rules.
+
+## DR-P2V-09: Simplified workup rules
+
+Date: 2026-10-31
+
+Context. BrokerTec's workup has more detail than the engine needs at this stage (separate phases, size priority for the trade's participants, behaviour at other prices).
+
+Decision. The simulator implements: a trade at P opens a workup at P; an exclusive window for the opening trade's participants; during workup marketable orders trade and rest at P, orders that would trade at another price wait; each trade restarts the timer; held orders run in arrival order when their window ends (API_SPEC.md Section 11.2).
+
+Consequences. Fill sizes in workup are realistic in shape but not in allocation detail. A quoting or routing result that depends on workup allocation needs a richer model first.
+
+## DR-P2V-10: FIX quantities in currency units, SBE quantities in minor units
+
+Date: 2026-10-31
+
+Context. Venues quote face and notional in currency units (OrderQty 10000000 for 10 million). API_SPEC.md Section 0 pins SBE quantities to minor units.
+
+Decision. The gateway scales FIX quantities by exactly 10^2 in both directions with the same integer decimal routine it uses for prices; the feed publisher does the same for book quantities.
+
+Consequences. A currency with a different minor unit (none in scope: USD, EUR, GBP) needs a per-instrument scale from the securities master.
+
+## DR-P2V-11: Numeric FIX identifiers
+
+Date: 2026-10-31
+
+Context. The SBE messages carry rfqId, quoteId, clOrdId, venueOrderId and execId as int64. Converting free text to int64 by hashing would lose the original and could collide.
+
+Decision. The gateway requires QuoteReqID, QuoteID, ClOrdID, OrigClOrdID, OrderID, ExecID and ExecRefID to be numeric text and parses them exactly; the simulators generate numeric ids.
+
+Consequences. A venue with alphanumeric ids needs an id map in the gateway; that is local to `VenueGateway`.
+
+## DR-P2V-12: Cookbook recipe 11 follows the repository plan
+
+Date: 2026-10-31
+
+Context. The brief asked for recipe 11 to show adding a venue. COOKBOOK.md already plans recipe 11 as "How do I subscribe to the SBE book feed and rebuild a book?".
+
+Decision. Recipe 11 is the book feed recipe, as planned in the repository. Adding a venue is documented as a procedure in docs/ARCHITECTURE.md, venue layer.
+
+Consequences. The planned list stays as published; anyone looking for how to add a venue finds it next to the module map.

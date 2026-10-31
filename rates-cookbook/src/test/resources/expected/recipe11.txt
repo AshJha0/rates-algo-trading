@@ -1,0 +1,3 @@
+after 2 orders: bids [97.984375x500000000] offers [98.015625x300000000]
+after a gap: bids [98x200000000, 97.984375x600000000] offers [98.0078125x400000000, 98.015625x300000000]
+gaps 1, recoveries 1, venue sequence 5, consumer sequence 5

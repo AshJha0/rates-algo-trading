@@ -32,6 +32,9 @@
     <module>rates-ops</module>
     <module>rates-core</module>
     <module>rates-bench</module>
+    <module>rates-refdata</module>
+    <module>rates-fix</module>
+    <module>rates-venues</module>
     <module>rates-cookbook</module>
   </modules>
 

@@ -1,0 +1,16 @@
+{
+  "venue": "d2c",
+  "flow": "rfq",
+  "description": "Client sells; a competitor bids higher; we are told traded away without the winning price.",
+  "steps": [
+    {"venue": {"action": "rfq", "instrument": "US91282CZC80", "side": "2", "qty": "25000000", "dealers": 3, "competitors": ["99.49", "99.5"], "decision": "BEST"}},
+    {"expect": {"35": "R", "54": "2", "38": "25000000", "9501": "3"}},
+    {"send": {"35": "S", "131": "$131", "117": "7", "55": "US91282CZC80", "48": "US91282CZC80", "22": "4", "132": "99.4921875", "134": "25000000"}},
+    {"expect": {"35": "AI", "117": "7", "297": "0"}},
+    {"venue": {"action": "decide"}},
+    {"expect": {"35": "AJ", "117": "7", "694": "5", "9503": "TA", "44": null, "9502": null}},
+    {"send": {"35": "a", "649": "1", "117": "7", "55": "US91282CZC80", "48": "US91282CZC80", "22": "4"}},
+    {"expect": {"35": "AI", "649": "1", "117": "7", "297": "6", "9503": "TA"}},
+    {"expectNone": true}
+  ]
+}
