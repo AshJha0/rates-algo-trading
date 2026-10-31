@@ -35,6 +35,10 @@
     <module>rates-refdata</module>
     <module>rates-fix</module>
     <module>rates-venues</module>
+    <module>rates-api</module>
+    <module>rates-risk</module>
+    <module>rates-hedge</module>
+    <module>rates-quoting</module>
     <module>rates-cookbook</module>
   </modules>
 

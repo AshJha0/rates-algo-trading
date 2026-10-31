@@ -1,0 +1,3 @@
+flat book FIRM Sell 25m at 98.404645: half 0.938bp, skew +0.000bp, size 0.948bp, distance 1.886bp, P(win) 0.049
+long 150m FIRM Sell 25m at 98.240645: half 0.938bp, skew +2.000bp, size 0.948bp, distance -0.114bp, P(win) 0.558
+long 150m FIRM Buy 25m at 97.931355: half 0.938bp, skew +2.000bp, size 0.948bp, distance 3.886bp, P(win) 0.002

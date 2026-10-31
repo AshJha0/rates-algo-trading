@@ -97,3 +97,19 @@ The workup state machine of the Treasury CLOB simulator (API_SPEC.md Section 11.
 ```mermaid
 --8<-- "docs/diagrams/clob_workup_states.mmd"
 ```
+
+## RFQ decision flow (P3)
+
+What the quoting engine does with one request for quote, in the order the checks run, and what happens to the quote afterwards (API_SPEC.md Section 12.6).
+
+```mermaid
+--8<-- "docs/diagrams/rfq_decision.mmd"
+```
+
+## Kill-switch state machine (P3)
+
+The three states of the process-wide kill switch and the four-eyes reset (API_SPEC.md Section 13.4).
+
+```mermaid
+--8<-- "docs/diagrams/kill_switch_state.mmd"
+```

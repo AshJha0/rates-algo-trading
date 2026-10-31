@@ -1,0 +1,27 @@
+flowchart TD
+  rfq["QuoteRequest (template 10)"] --> poll["poll: expire quotes at TTL, pull stale or unhealthy, markouts"]
+  poll --> dup{"duplicate venue + rfqId?"}
+  dup -- yes --> pass["PASS (reason recorded)"]
+  dup -- no --> kill{"kill switch ACTIVE?"}
+  kill -- no --> pass
+  kill -- yes --> health{"heartbeats, sessions, feeds healthy?"}
+  health -- no --> pass
+  health -- yes --> inst{"instrument known, request unexpired?"}
+  inst -- no --> pass
+  inst -- yes --> tier{"client tier blocked or re-quote throttled?"}
+  tier -- yes --> pass
+  tier -- no --> fv["fair value: microprice (bonds, futures) or curve par rate plus futures signal (swaps), plus validated signal"]
+  fv --> age{"oldest input within max age?"}
+  age -- no --> pass
+  age -- yes --> size["size = min(request, tier max, risk headroom), rounded down to the quote step"]
+  size --> zero{"size > 0?"}
+  zero -- no --> pass
+  zero -- yes --> spread["half-spread s* = argmax P(win|s) (s - c); c = toxicity + winner's curse + hedge cost; widen for vol and events; times tier multiplier"]
+  spread --> skew["skew = kappa u'Sigma p / |U| (bounded), size term, minus hedger axe; never more than maxImprove through fair"]
+  skew --> check{"risk pre-trade check: size, fat finger, collar, position, pillar, net, gross, daily loss, rates"}
+  check -- breach --> breach["RiskLimitBreach to control; PASS"]
+  check -- ok --> reserve["reserve quantity; Quote (template 11): FIRM with TTL, or SUBJECT (validUntil 0)"]
+  reserve --> resp{"QuoteResponse?"}
+  resp -- Done --> fill["book fill, release reservation, learn win and cover, schedule markout"]
+  resp -- TradedAway --> loss["release, learn loss"]
+  resp -- "none by TTL" --> expire["expire at validUntil, release"]

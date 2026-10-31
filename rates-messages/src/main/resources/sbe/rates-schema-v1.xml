@@ -100,6 +100,8 @@
       <validValue name="QuoteRate">7</validValue>
       <validValue name="MaxOrderSize">8</validValue>
       <validValue name="PriceCollar">9</validValue>
+      <validValue name="MessageRate">10</validValue>
+      <validValue name="FatFinger">11</validValue>
     </enum>
 
     <enum name="KillReason" encodingType="uint8">
@@ -187,6 +189,18 @@
       <validValue name="SequenceGap">10</validValue>
       <validValue name="OutOfOrder">11</validValue>
       <validValue name="UnknownInstrument">12</validValue>
+    </enum>
+
+    <enum name="CancelReason" encodingType="uint8" description="Why a quote or order was withdrawn (P3, DR-P3-04)">
+      <validValue name="Expired">1</validValue>
+      <validValue name="StaleInput">2</validValue>
+      <validValue name="FeedGap">3</validValue>
+      <validValue name="HeartbeatLoss">4</validValue>
+      <validValue name="SessionLoss">5</validValue>
+      <validValue name="KillSwitch">6</validValue>
+      <validValue name="AdverseSignal">7</validValue>
+      <validValue name="Requote">8</validValue>
+      <validValue name="Manual">9</validValue>
     </enum>
   </types>
 
@@ -438,6 +452,28 @@
     <field name="price" id="6" type="Decimal9"/>
     <field name="quantity" id="7" type="Quantity"/>
     <field name="timestampNanos" id="8" type="EpochNanos"/>
+  </sbe:message>
+
+  <!-- P3 quoting engine withdrawals, template ids 60 to 79 (API_SPEC.md Sections 2 and 12). Named
+       QuoteWithdraw and OrderWithdraw at integration because P2 venues already define QuoteCancel (43)
+       and OrderCancel (41), the gateway requests (DECISIONS.md DR-INT-01). -->
+  <sbe:message name="QuoteWithdraw" id="60" description="Withdraw one of our live RFQ quotes before its time to live (P3)">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="rfqId" id="2" type="int64"/>
+    <field name="quoteId" id="3" type="int64"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="reason" id="5" type="CancelReason"/>
+    <field name="sentNanos" id="6" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="OrderWithdraw" id="61" description="Cancel one of our resting CLOB orders (P3)">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64" description="Id of this cancel request"/>
+    <field name="origClOrdId" id="3" type="int64" description="Id of the order to cancel"/>
+    <field name="instrumentId" id="4" type="InstrumentId"/>
+    <field name="side" id="5" type="Side"/>
+    <field name="reason" id="6" type="CancelReason"/>
+    <field name="sentNanos" id="7" type="EpochNanos"/>
   </sbe:message>
 
 </sbe:messageSchema>

@@ -1,0 +1,14 @@
+stateDiagram-v2
+  [*] --> ACTIVE
+  ACTIVE --> KILLED: trigger(reason) / listeners pull quotes, cancel orders, cancel hedge parents; send KillSwitch
+  KILLED --> KILLED: trigger / counted only
+  KILLED --> RESET_PENDING: requestReset(operator)
+  RESET_PENDING --> RESET_PENDING: approveReset by the same person, or inputs unhealthy / refused
+  RESET_PENDING --> ACTIVE: approveReset(second person) and inputs healthy
+  RESET_PENDING --> KILLED: trigger(reason) / full kill, KillSwitch sent
+  note right of KILLED
+    Risk engine refuses every quote and order
+    (REJECT_KILLED) unless the state is ACTIVE.
+    Post-trade daily-loss breach triggers with
+    reason LimitBreach when configured.
+  end note
