@@ -288,6 +288,10 @@ public final class QuotingEngine implements KillSwitchListener {
     final double base =
         hitRate.base(
             (double) qty / inst.typicalQuantity(), inst.tenorYears(), liquidSession(inst.currency(), now), dealers);
+    if (cost >= config.maxHalfSpreadBp) {
+      // E(s) = P(s) (s - c) is not positive for any s up to the cap: quoting would lose on average
+      return pass(PassReason.NEGATIVE_EDGE);
+    }
     final double optimal = spread.optimal(base, cost, config.maxHalfSpreadBp);
     final double widened =
         optimal * config.eventMultiplier(now)
@@ -386,10 +390,11 @@ public final class QuotingEngine implements KillSwitchListener {
   }
 
   /**
-   * The venue's outcome for one of our quotes. Done books the fill (our side from the quote),
-   * teaches the hit-rate model a win, and with a disclosed cover price also teaches it that the
-   * quote would still have won at the cover. TradedAway teaches a loss. Every outcome releases the
-   * quote's reservation and frees it.
+   * The venue's outcome for one of our quotes. Done books the fill (our side from the quote) and
+   * teaches the hit-rate model one win; a disclosed cover worse for the client than our price adds
+   * its distance to the cover statistics, but is not a second observation (one RFQ, one label;
+   * DR-R2R-08). TradedAway teaches a loss. Every outcome releases the quote's reservation and frees
+   * it.
    */
   public void onQuoteResponse(
       final long quoteId, final QuoteStatus status, final long tradedPrice, final long tradedQuantity, final long coverPrice) {
@@ -405,11 +410,16 @@ public final class QuotingEngine implements KillSwitchListener {
       release(slot);
       risk.onFill(instrumentId, sBuy[slot] ? qty : -qty, tradedPrice);
       hitRate.update(sBase[slot], sDistance[slot], true);
-      if (coverPrice != 0L && coverPrice != tradedPrice) {
-        final double gap = Math.abs(Decimal9.toDouble(tradedPrice) - Decimal9.toDouble(coverPrice)) / risk.quotePerBp(instrumentId);
-        coverDistanceBp += gap;
-        coverObservations++;
-        hitRate.update(sBase[slot], sDistance[slot] + gap, true);
+      if (coverPrice != 0L) {
+        // the cover is the client's next best price: below our bid when we buy, above our offer
+        // when we sell; one on the wrong side of the trade is inconsistent and not recorded
+        final double signed =
+            Decimal9.toDouble(sBuy[slot] ? tradedPrice - coverPrice : coverPrice - tradedPrice)
+                / risk.quotePerBp(instrumentId);
+        if (signed > 0.0) {
+          coverDistanceBp += signed;
+          coverObservations++;
+        }
       }
       scheduleMarkout(slot, tradedPrice);
     } else {

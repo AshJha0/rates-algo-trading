@@ -198,6 +198,17 @@ class QuotingEngineTest {
     assertEquals(CancelReason.SessionLoss, m.desk.health().reason());
   }
 
+  /** DR-R2R-08: a cover on the wrong side of the trade is inconsistent and not recorded. */
+  @Test
+  void aCoverBetterThanOurTradedPriceIsNotRecorded() {
+    ask(2, TestMarket.UST10, Side.Buy, 25 * FACE_1M);
+    final RfqOutcome o = engine.outcome();
+    final long wrong = o.price() - Decimal9.round(0.5 * risk.quotePerBp(TestMarket.UST10));
+    engine.onQuoteResponse(o.quoteId(), QuoteStatus.Done, o.price(), 25 * FACE_1M, wrong);
+    assertEquals(1, engine.hitRate().updates());
+    assertEquals(0.0, engine.meanCoverDistanceBp());
+  }
+
   @Test
   void doneBooksTheFillAndTeachesTheModelIncludingTheCover() {
     ask(2, TestMarket.UST10, Side.Buy, 25 * FACE_1M);
@@ -208,7 +219,7 @@ class QuotingEngineTest {
     assertEquals(-25 * FACE_1M, risk.position(TestMarket.UST10));
     assertEquals(0L, risk.pendingSell(TestMarket.UST10));
     assertTrue(engine.hitRate().coefficient(HitRateModel.INTERCEPT) > b0);
-    assertEquals(2, engine.hitRate().updates());
+    assertEquals(1, engine.hitRate().updates(), "one RFQ is one label, the cover is not a second win");
     assertEquals(0.5, engine.meanCoverDistanceBp(), 1e-6);
     assertEquals(0, engine.heldQuotes());
 
@@ -239,6 +250,23 @@ class QuotingEngineTest {
     assertTrue(engine.toxicity().observations(1) >= 6);
     ask(1, TestMarket.UST10, Side.Buy, 25 * FACE_1M);
     assertTrue(engine.outcome().costBp() > before, "toxic client pays more: " + engine.outcome().reason() + " " + engine.outcome().costBp() + " vs " + before + " tox " + engine.toxicity().adverseBp(1));
+  }
+
+  /**
+   * DR-R2R-08: once a client's adverse cost reaches the widest allowed half spread, no spread has
+   * positive expected value and the engine passes instead of quoting at the cap.
+   */
+  @Test
+  void passesWhenTheCostExceedsTheWidestSpread() {
+    for (int i = 0; i < 400 && engine.toxicity().adverseBp(1) < 12.0; i++) {
+      engine.toxicity().record(1, -40.0);
+    }
+    assertTrue(engine.toxicity().adverseBp(1) >= 10.0, "tox " + engine.toxicity().adverseBp(1));
+    assertEquals(RfqDecision.PASS, ask(1, TestMarket.UST10, Side.Buy, 10 * FACE_1M));
+    assertEquals(PassReason.NEGATIVE_EDGE, engine.outcome().reason());
+    assertEquals(0, m.gateway.size());
+    assertEquals(0L, risk.pendingSell(TestMarket.UST10));
+    assertEquals(RfqDecision.FIRM, ask(2, TestMarket.UST10, Side.Buy, 10 * FACE_1M));
   }
 
   @Test
