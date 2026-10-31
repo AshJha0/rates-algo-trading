@@ -15,8 +15,9 @@ import org.agrona.concurrent.UnsafeBuffer;
  * <ul>
  *   <li>ACTIVE to KILLED on {@link #trigger}: every listener withdraws what it has outstanding, in
  *       registration order, then one KillSwitch message is sent to the control sink. Triggering
- *       while KILLED or RESET_PENDING does nothing more than count the request; while
- *       RESET_PENDING it returns to KILLED.
+ *       while KILLED only counts the request.
+ *   <li>RESET_PENDING to KILLED on {@link #trigger}: a new kill during a pending reset cancels the
+ *       reset and is a full kill, with listeners called and a KillSwitch message sent.
  *   <li>KILLED to RESET_PENDING on {@link #requestReset} by an operator.
  *   <li>RESET_PENDING to ACTIVE on {@link #approveReset} by a different person, and only when the
  *       caller says inputs are healthy. Otherwise the state stays RESET_PENDING.
@@ -57,13 +58,9 @@ public final class KillSwitchController {
     listeners[listenerCount++] = listener;
   }
 
-  /** Fires the switch. Returns true if this call moved it from ACTIVE to KILLED. */
+  /** Fires the switch. Returns true if this call moved it to KILLED. */
   public boolean trigger(final KillReason reason, final int scopeId, final int requestedBy) {
     triggerRequests++;
-    if (state == KillState.RESET_PENDING) {
-      state = KillState.KILLED;
-      return false;
-    }
     if (state == KillState.KILLED) {
       return false;
     }

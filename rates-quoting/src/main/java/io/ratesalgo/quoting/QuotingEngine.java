@@ -104,7 +104,7 @@ public final class QuotingEngine implements KillSwitchListener {
   private final long[] seenRing;
   private int seenHead;
   private int seenCount;
-  private final Long2LongHashMap lastQuoteTime = new Long2LongHashMap(8192, 0.5f, Long.MIN_VALUE);
+  private final Long2LongHashMap lastQuoteTime;
 
   // markouts
   private final int[] mInstrument = new int[MARKOUTS];
@@ -186,6 +186,7 @@ public final class QuotingEngine implements KillSwitchListener {
     quoteSlot = new Long2LongHashMap(capacity * 4, 0.5f, -1L);
     seen = new LongHashSet(config.duplicateWindow * 4);
     seenRing = new long[config.duplicateWindow];
+    lastQuoteTime = new Long2LongHashMap(Math.max(64, config.duplicateWindow * 2), 0.5f, Long.MIN_VALUE);
   }
 
   /** Sets the daily realised volatility of a currency's rates, bp (supplied by market state). */
