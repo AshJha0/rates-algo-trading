@@ -1,0 +1,50 @@
+# Pre-registration AUDIT-01, part of the P&L audit (docs/research/PNL_AUDIT.md). Written, hashed
+# and committed before the evaluation period was run. Format: API_SPEC.md Section 16.8, validated
+# by PreRegistration.requireValid and ratesresearch.prereg.validate. Run with
+# research/audit/run_audit.sh, which records one ledger row whatever the result.
+prereg_version: 1
+id: AUDIT-01
+title: "Spread setting against the cover distribution: what the model_spread engine leaves on the table"
+hypothesis: >
+  The engine (the back-tester's model_spread, P5-001 inputs) sets each half-spread from the
+  hit-rate model at its central slope with the cover replaced by a point estimate. Two
+  corrections earn more total daily P&L than the engine: (a) slope_known, the same optimiser
+  with the hit-rate slope of the band point the run is settled at; (b) cover_integrated, the
+  win probability averaged over the distribution of the cover (minimum of dealers - 1
+  lognormals) instead of evaluated at its expected minimum. fixed_p5 (0.30 bp swaps, 0.15 bp
+  Treasuries) is run for context and is expected to earn less than the engine.
+metric: >
+  Total position P&L per synthetic session in USD, rounded to cents (cash plus the final position
+  at the final mid; attribution reconciled to it on every run). Unit of analysis: one session.
+  Each difference is also reported per 1,000,000 USD of client DV01 traded and in bp of client
+  notional, both normalised by the engine's mean per day at that band point.
+baseline: engine
+treatments: [slope_known, cover_integrated, fixed_p5]
+period: {start: 2026-03-02, end: 2026-03-27}
+fitting_period: {start: 2026-01-05, end: 2026-01-16}
+holdout: [2026-04-06, 2026-04-07, 2026-04-08, 2026-04-09, 2026-04-10]
+success_threshold: >
+  Per variant and band point (low, central, high): Welch's two-sided test of variant against
+  engine daily P&L, Holm-adjusted over every (variant, band point) test of this pre-registration,
+  below 0.05, and the 95 percent moving-block bootstrap interval (blocks of 2 sessions, 2000
+  resamples, seed 11) of the paired daily difference entirely above zero: supported. Adjusted p
+  below 0.05 and interval entirely below zero: reversed. Otherwise inconclusive. The size of the
+  leak is the paired mean difference with its interval, reported whatever the verdict. The row is
+  void if the engine variant does not reproduce the back-tester's model_spread to the cent on
+  every run (results.replica_check.mismatches must be 0).
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/AUDIT-01.config.yaml
+config_sha256: 33892ce2dc9f9abbb8c4d3bacbe0f8a1a7c13f9d18288325a3638ca9a2e93707
+limitations: >
+  Synthetic sessions only (DR-008): competitors, informed flow and the win-probability slope are
+  declared assumptions, so every number is a simulator consistency check, not edge. The
+  back-tester runs a simplified quoter (model_spread), not rates-quoting's QuotingEngine. The
+  engine's pricing inputs were estimated on the fitting period by P5; nothing is re-estimated
+  here. A pilot on fitting-period days (2026-01-05..2026-01-09) with a scratch ledger checked the
+  harness before this file was committed; its numbers are not used. The holdout is not opened by
+  this audit.
