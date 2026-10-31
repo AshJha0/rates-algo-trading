@@ -27,3 +27,6 @@ journals/*.raj
 # OS
 .DS_Store
 Thumbs.db
+
+# Raw downloads (never committed, DECISIONS.md DR-006)
+data/raw/

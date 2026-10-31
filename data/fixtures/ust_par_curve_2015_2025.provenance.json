@@ -1,0 +1,114 @@
+{
+  "fixture": "ust_par_curve_2015_2025.csv",
+  "created_utc": "2026-10-31T01:29:34+00:00",
+  "sha256": "ec2825d21f88d180ddc9033dbe1f2b1322886577def04e730153cbe3d9748759",
+  "size": 197473,
+  "rows": 2750,
+  "columns": [
+    "date",
+    "1 Mo",
+    "2 Mo",
+    "3 Mo",
+    "4 Mo",
+    "6 Mo",
+    "1 Yr",
+    "2 Yr",
+    "3 Yr",
+    "5 Yr",
+    "7 Yr",
+    "10 Yr",
+    "20 Yr",
+    "30 Yr"
+  ],
+  "date_range": [
+    "2015-01-02",
+    "2025-12-31"
+  ],
+  "source": {
+    "key": "treasury_par_curve",
+    "name": "US Treasury daily par yield curve",
+    "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+    "terms_url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/TextView?type=daily_treasury_yield_curve&field_tdr_date_value=2024"
+  },
+  "raw_files": [
+    {
+      "name": "ust_par_curve_2015.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2015/all?type=daily_treasury_yield_curve&field_tdr_date_value=2015&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:25:06+00:00",
+      "sha256": "b7665d1ce46d6ed6d08fbda34aae1831de38e274e3c7caed81904042aac9b5bc",
+      "size": 16650
+    },
+    {
+      "name": "ust_par_curve_2016.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2016/all?type=daily_treasury_yield_curve&field_tdr_date_value=2016&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:25:24+00:00",
+      "sha256": "b4d0a8d86e2734bc64d84d9a9824434d841737621582daeac58f13c7129f325c",
+      "size": 16584
+    },
+    {
+      "name": "ust_par_curve_2017.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2017/all?type=daily_treasury_yield_curve&field_tdr_date_value=2017&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:25:41+00:00",
+      "sha256": "56074da7c32103a28cf4ba2bdf5eaa12f98fd49852047aef1a6eb16e64bd6e83",
+      "size": 16584
+    },
+    {
+      "name": "ust_par_curve_2018.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2018/all?type=daily_treasury_yield_curve&field_tdr_date_value=2018&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:25:59+00:00",
+      "sha256": "e8375524a7a8d3e8091bbe7690d0378b9365be09efff5b18b8eefddc25f718d3",
+      "size": 16978
+    },
+    {
+      "name": "ust_par_curve_2019.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2019/all?type=daily_treasury_yield_curve&field_tdr_date_value=2019&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:26:18+00:00",
+      "sha256": "83fc47c17325e222c45fd3a1eb26c69ae01f62d33b793030b4b8b350ca0a290b",
+      "size": 17841
+    },
+    {
+      "name": "ust_par_curve_2020.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2020/all?type=daily_treasury_yield_curve&field_tdr_date_value=2020&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:26:36+00:00",
+      "sha256": "edcf1c8be9622f3cd92eb7de1847aefc3977e2118e2ff9af67f46614a5c306a7",
+      "size": 17912
+    },
+    {
+      "name": "ust_par_curve_2021.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2021/all?type=daily_treasury_yield_curve&field_tdr_date_value=2021&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:26:53+00:00",
+      "sha256": "1be57e49c63a99f6002431a1030c8fbe539b71066c3eaf14f9f58ddc34492cea",
+      "size": 17912
+    },
+    {
+      "name": "ust_par_curve_2022.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2022/all?type=daily_treasury_yield_curve&field_tdr_date_value=2022&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:27:12+00:00",
+      "sha256": "c33cb2758e5e34c2c23b7ab759d18681091860f3f9e5960112859f64f31cd814",
+      "size": 18226
+    },
+    {
+      "name": "ust_par_curve_2023.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2023/all?type=daily_treasury_yield_curve&field_tdr_date_value=2023&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:27:30+00:00",
+      "sha256": "edb7f3904e11dcaa502cdcc03ad9b1b16c893802d166ce9bc5fa1118251249d4",
+      "size": 19098
+    },
+    {
+      "name": "ust_par_curve_2024.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2024/all?type=daily_treasury_yield_curve&field_tdr_date_value=2024&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:27:47+00:00",
+      "sha256": "6775840b76cd7fd41121f61d6f6c60184eca6b2ba49954ec7372c463cbeef34d",
+      "size": 19098
+    },
+    {
+      "name": "ust_par_curve_2025.csv",
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2025/all?type=daily_treasury_yield_curve&field_tdr_date_value=2025&page&_format=csv",
+      "downloaded_utc": "2026-10-31T01:28:06+00:00",
+      "sha256": "cf2fa3da7f160384b63d2ead698532b1d76cd9f789ce4911e2304db85b14e6d5",
+      "size": 20155
+    }
+  ],
+  "transformation": "Concatenated the yearly CSVs, converted Date to ISO, took the union of tenor columns 1 Mo to 30 Yr (empty where not published), sorted ascending; rates copied as published.",
+  "produced_by": "ratesresearch.data.fixtures"
+}

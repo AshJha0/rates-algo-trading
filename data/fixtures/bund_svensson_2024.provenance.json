@@ -1,0 +1,72 @@
+{
+  "fixture": "bund_svensson_2024.csv",
+  "created_utc": "2026-10-31T01:29:34+00:00",
+  "sha256": "a67c5cd1fabf443b41ba39d8652ae3a911713e484646e5e4d3c0da9c09f173f7",
+  "size": 15518,
+  "rows": 254,
+  "columns": [
+    "date",
+    "beta0",
+    "beta1",
+    "beta2",
+    "beta3",
+    "tau1",
+    "tau2"
+  ],
+  "date_range": [
+    "2024-01-02",
+    "2024-12-30"
+  ],
+  "source": {
+    "key": "bundesbank_svensson",
+    "name": "Bundesbank Svensson parameters for listed Federal securities",
+    "licence": "Bundesbank website terms of use, section 4.1, and the ESCB terms for the reuse of statistics: free reuse of publicly released statistics on condition that the source is quoted ('Source: Deutsche Bundesbank') and the statistics are not modified. Read 2026-10-31.",
+    "terms_url": "https://www.bundesbank.de/en/homepage/user-information"
+  },
+  "raw_files": [
+    {
+      "name": "bundesbank_svensson_b0.csv",
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B0.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en",
+      "downloaded_utc": "2026-10-31T01:28:12+00:00",
+      "sha256": "715043e38c535c2bb6dfa680ce73629f36333bcb33d73b7563c6d96ef2574251",
+      "size": 253167
+    },
+    {
+      "name": "bundesbank_svensson_b1.csv",
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B1.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en",
+      "downloaded_utc": "2026-10-31T01:28:14+00:00",
+      "sha256": "0dfb0053487d8ed5e29acdc0b0d3c9c559ae8002ea17e6f083afb57789378a61",
+      "size": 259696
+    },
+    {
+      "name": "bundesbank_svensson_b2.csv",
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B2.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en",
+      "downloaded_utc": "2026-10-31T01:28:16+00:00",
+      "sha256": "a03af35806781b1ad2b8cf1171b75a341abf57fe8054c5d563ff45c0e4d15346",
+      "size": 260112
+    },
+    {
+      "name": "bundesbank_svensson_b3.csv",
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B3.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en",
+      "downloaded_utc": "2026-10-31T01:28:18+00:00",
+      "sha256": "34d39d207af4a8520a12814938acb6d4a4f856140ebc3abab2f48e3c35eeefc3",
+      "size": 259722
+    },
+    {
+      "name": "bundesbank_svensson_t1.csv",
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.T1.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en",
+      "downloaded_utc": "2026-10-31T01:28:20+00:00",
+      "sha256": "9624c257e339cb92db92b3173614c93cf744b74215b52be69d9fec3b8c3d7edf",
+      "size": 253698
+    },
+    {
+      "name": "bundesbank_svensson_t2.csv",
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.T2.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en",
+      "downloaded_utc": "2026-10-31T01:28:21+00:00",
+      "sha256": "7067d9418d498367cd7c44f81afd895d500488e97846f34dc2820901d4390697",
+      "size": 253971
+    }
+  ],
+  "transformation": "Parsed the six BBSIS parameter CSVs (skipping metadata lines and '.' placeholders), joined on date, kept 2024 days with at least one value; values copied as published.",
+  "produced_by": "ratesresearch.data.fixtures"
+}

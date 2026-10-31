@@ -1,0 +1,259 @@
+{
+  "created_utc": "2026-10-31T01:24:46+00:00",
+  "downloads": [
+    {
+      "downloaded_utc": "2026-10-31T01:24:46+00:00",
+      "licence": "NY Fed Terms of Use (last updated 6/9/2023): non-exclusive licence to use, copy, distribute and make derivative works of website Content, keeping copyright notices and citing the source as '(c) [year] Federal Reserve Bank of New York'. Read 2026-10-31.",
+      "name": "nyfed_sofr.csv",
+      "path": "data/raw/nyfed_sofr.csv",
+      "sha256": "56f3a6fed718f7c20a5e590f2359f511978291b74c270338e50a69fe41100213",
+      "size": 19327,
+      "url": "https://markets.newyorkfed.org/api/rates/secured/sofr/search.csv?startDate=2023-10-01&endDate=2025-01-31"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:24:46+00:00",
+      "licence": "NY Fed Terms of Use (last updated 6/9/2023): non-exclusive licence to use, copy, distribute and make derivative works of website Content, keeping copyright notices and citing the source as '(c) [year] Federal Reserve Bank of New York'. Read 2026-10-31.",
+      "name": "nyfed_sofrai.csv",
+      "path": "data/raw/nyfed_sofrai.csv",
+      "sha256": "23b4fba98bd06643c5ba3b2db99728cfb17686db25220c0753420acf1c9c5bbd",
+      "size": 22324,
+      "url": "https://markets.newyorkfed.org/api/rates/secured/sofrai/search.csv?startDate=2023-10-01&endDate=2025-01-31"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:24:46+00:00",
+      "licence": "NY Fed Terms of Use (last updated 6/9/2023): non-exclusive licence to use, copy, distribute and make derivative works of website Content, keeping copyright notices and citing the source as '(c) [year] Federal Reserve Bank of New York'. Read 2026-10-31.",
+      "name": "nyfed_secured_all.csv",
+      "path": "data/raw/nyfed_secured_all.csv",
+      "sha256": "a14004812dddcb2a880c08be20dd5a395c401ed730edad9212be1e60c6f244ae",
+      "size": 68731,
+      "url": "https://markets.newyorkfed.org/api/rates/secured/all/search.csv?startDate=2023-12-01&endDate=2025-01-31"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:24:47+00:00",
+      "licence": "ECB Disclaimer & copyright: free use of information obtained from the website provided it appears accurately, the ECB is cited as the source and any modification by the user is stated explicitly. Read 2026-10-31.",
+      "name": "ecb_estr_rate.csv",
+      "path": "data/raw/ecb_estr_rate.csv",
+      "sha256": "b59feaa5a0851ce98487af387ceb7d422231507dc5deaf46bf7e5224d7ad6135",
+      "size": 92378,
+      "url": "https://data-api.ecb.europa.eu/service/data/EST/B.EU000A2X2A25.WT?format=csvdata&startPeriod=2023-12-01&endPeriod=2025-01-31"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:24:48+00:00",
+      "licence": "ECB Disclaimer & copyright: free use of information obtained from the website provided it appears accurately, the ECB is cited as the source and any modification by the user is stated explicitly. Read 2026-10-31.",
+      "name": "ecb_estr_index.csv",
+      "path": "data/raw/ecb_estr_index.csv",
+      "sha256": "06ec5e5c509b41d06d61d68b0655a4700b5fabf3fd4a970205a4499eda02b669",
+      "size": 86718,
+      "url": "https://data-api.ecb.europa.eu/service/data/EST/B.EU000A2QQF08.CI?format=csvdata&startPeriod=2023-12-01&endPeriod=2025-01-31"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:24:48+00:00",
+      "licence": "Bank of England Database terms (bankofengland.co.uk/legal): reproduction of Database data is subject to the UK Open Government Licence v3.0. Required attribution: 'SONIA and/or SONIA Compounded Index data licensed under the Open Government Licence v3.0 and copyright the Governor and Company of the Bank of England.' Read 2026-10-31.",
+      "name": "boe_sonia.csv",
+      "path": "data/raw/boe_sonia.csv",
+      "sha256": "364681cc69d8b0bf56e2a85936838b8b05824c804593887bc031cef5da5106c7",
+      "size": 9223,
+      "url": "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?csv.x=yes&Datefrom=01/Dec/2023&Dateto=31/Jan/2025&SeriesCodes=IUDSOIA,IUDZOS2&CSVF=TN&UsingCodes=Y&VPD=Y&VFD=N"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:25:06+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2015.csv",
+      "path": "data/raw/ust_par_curve_2015.csv",
+      "sha256": "b7665d1ce46d6ed6d08fbda34aae1831de38e274e3c7caed81904042aac9b5bc",
+      "size": 16650,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2015/all?type=daily_treasury_yield_curve&field_tdr_date_value=2015&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:25:24+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2016.csv",
+      "path": "data/raw/ust_par_curve_2016.csv",
+      "sha256": "b4d0a8d86e2734bc64d84d9a9824434d841737621582daeac58f13c7129f325c",
+      "size": 16584,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2016/all?type=daily_treasury_yield_curve&field_tdr_date_value=2016&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:25:41+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2017.csv",
+      "path": "data/raw/ust_par_curve_2017.csv",
+      "sha256": "56074da7c32103a28cf4ba2bdf5eaa12f98fd49852047aef1a6eb16e64bd6e83",
+      "size": 16584,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2017/all?type=daily_treasury_yield_curve&field_tdr_date_value=2017&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:25:59+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2018.csv",
+      "path": "data/raw/ust_par_curve_2018.csv",
+      "sha256": "e8375524a7a8d3e8091bbe7690d0378b9365be09efff5b18b8eefddc25f718d3",
+      "size": 16978,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2018/all?type=daily_treasury_yield_curve&field_tdr_date_value=2018&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:26:18+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2019.csv",
+      "path": "data/raw/ust_par_curve_2019.csv",
+      "sha256": "83fc47c17325e222c45fd3a1eb26c69ae01f62d33b793030b4b8b350ca0a290b",
+      "size": 17841,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2019/all?type=daily_treasury_yield_curve&field_tdr_date_value=2019&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:26:36+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2020.csv",
+      "path": "data/raw/ust_par_curve_2020.csv",
+      "sha256": "edcf1c8be9622f3cd92eb7de1847aefc3977e2118e2ff9af67f46614a5c306a7",
+      "size": 17912,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2020/all?type=daily_treasury_yield_curve&field_tdr_date_value=2020&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:26:53+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2021.csv",
+      "path": "data/raw/ust_par_curve_2021.csv",
+      "sha256": "1be57e49c63a99f6002431a1030c8fbe539b71066c3eaf14f9f58ddc34492cea",
+      "size": 17912,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2021/all?type=daily_treasury_yield_curve&field_tdr_date_value=2021&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:27:12+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2022.csv",
+      "path": "data/raw/ust_par_curve_2022.csv",
+      "sha256": "c33cb2758e5e34c2c23b7ab759d18681091860f3f9e5960112859f64f31cd814",
+      "size": 18226,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2022/all?type=daily_treasury_yield_curve&field_tdr_date_value=2022&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:27:30+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2023.csv",
+      "path": "data/raw/ust_par_curve_2023.csv",
+      "sha256": "edb7f3904e11dcaa502cdcc03ad9b1b16c893802d166ce9bc5fa1118251249d4",
+      "size": 19098,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2023/all?type=daily_treasury_yield_curve&field_tdr_date_value=2023&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:27:47+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2024.csv",
+      "path": "data/raw/ust_par_curve_2024.csv",
+      "sha256": "6775840b76cd7fd41121f61d6f6c60184eca6b2ba49954ec7372c463cbeef34d",
+      "size": 19098,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2024/all?type=daily_treasury_yield_curve&field_tdr_date_value=2024&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:06+00:00",
+      "licence": "US Department of the Treasury: work of the US federal government, public domain (17 U.S.C. 105); the download page carries no licence statement. Read 2026-10-31.",
+      "name": "ust_par_curve_2025.csv",
+      "path": "data/raw/ust_par_curve_2025.csv",
+      "sha256": "cf2fa3da7f160384b63d2ead698532b1d76cd9f789ce4911e2304db85b14e6d5",
+      "size": 20155,
+      "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2025/all?type=daily_treasury_yield_curve&field_tdr_date_value=2025&page&_format=csv"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:08+00:00",
+      "licence": "TreasuryDirect (Bureau of the Fiscal Service) Terms & Conditions: no copyright restriction stated; work of the US federal government, public domain (17 U.S.C. 105). Read 2026-10-31.",
+      "name": "treasurydirect_notes.json",
+      "path": "data/raw/treasurydirect_notes.json",
+      "sha256": "d46daec128e96882f152734c1414f9ab9594c93822db57fe757c52d67603217e",
+      "size": 476693,
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=12/01/2023&endDate=01/31/2025"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:09+00:00",
+      "licence": "TreasuryDirect (Bureau of the Fiscal Service) Terms & Conditions: no copyright restriction stated; work of the US federal government, public domain (17 U.S.C. 105). Read 2026-10-31.",
+      "name": "treasurydirect_bonds.json",
+      "path": "data/raw/treasurydirect_bonds.json",
+      "sha256": "86442573d40a86824281120ac7fb2209e62fc5c01d394b88538efaf015f18098",
+      "size": 192063,
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=12/01/2023&endDate=01/31/2025"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:10+00:00",
+      "licence": "TreasuryDirect (Bureau of the Fiscal Service) Terms & Conditions: no copyright restriction stated; work of the US federal government, public domain (17 U.S.C. 105). Read 2026-10-31.",
+      "name": "treasurydirect_bills.json",
+      "path": "data/raw/treasurydirect_bills.json",
+      "sha256": "1dea95467de299bf0fc964954db10098542ab1a0b9f51be879c5018aca867965",
+      "size": 2606035,
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bill&dateFieldName=issueDate&startDate=12/01/2023&endDate=01/31/2025"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:12+00:00",
+      "licence": "Bundesbank website terms of use, section 4.1, and the ESCB terms for the reuse of statistics: free reuse of publicly released statistics on condition that the source is quoted ('Source: Deutsche Bundesbank') and the statistics are not modified. Read 2026-10-31.",
+      "name": "bundesbank_svensson_b0.csv",
+      "path": "data/raw/bundesbank_svensson_b0.csv",
+      "sha256": "715043e38c535c2bb6dfa680ce73629f36333bcb33d73b7563c6d96ef2574251",
+      "size": 253167,
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B0.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:14+00:00",
+      "licence": "Bundesbank website terms of use, section 4.1, and the ESCB terms for the reuse of statistics: free reuse of publicly released statistics on condition that the source is quoted ('Source: Deutsche Bundesbank') and the statistics are not modified. Read 2026-10-31.",
+      "name": "bundesbank_svensson_b1.csv",
+      "path": "data/raw/bundesbank_svensson_b1.csv",
+      "sha256": "0dfb0053487d8ed5e29acdc0b0d3c9c559ae8002ea17e6f083afb57789378a61",
+      "size": 259696,
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B1.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:16+00:00",
+      "licence": "Bundesbank website terms of use, section 4.1, and the ESCB terms for the reuse of statistics: free reuse of publicly released statistics on condition that the source is quoted ('Source: Deutsche Bundesbank') and the statistics are not modified. Read 2026-10-31.",
+      "name": "bundesbank_svensson_b2.csv",
+      "path": "data/raw/bundesbank_svensson_b2.csv",
+      "sha256": "a03af35806781b1ad2b8cf1171b75a341abf57fe8054c5d563ff45c0e4d15346",
+      "size": 260112,
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B2.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:18+00:00",
+      "licence": "Bundesbank website terms of use, section 4.1, and the ESCB terms for the reuse of statistics: free reuse of publicly released statistics on condition that the source is quoted ('Source: Deutsche Bundesbank') and the statistics are not modified. Read 2026-10-31.",
+      "name": "bundesbank_svensson_b3.csv",
+      "path": "data/raw/bundesbank_svensson_b3.csv",
+      "sha256": "34d39d207af4a8520a12814938acb6d4a4f856140ebc3abab2f48e3c35eeefc3",
+      "size": 259722,
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.B3.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:20+00:00",
+      "licence": "Bundesbank website terms of use, section 4.1, and the ESCB terms for the reuse of statistics: free reuse of publicly released statistics on condition that the source is quoted ('Source: Deutsche Bundesbank') and the statistics are not modified. Read 2026-10-31.",
+      "name": "bundesbank_svensson_t1.csv",
+      "path": "data/raw/bundesbank_svensson_t1.csv",
+      "sha256": "9624c257e339cb92db92b3173614c93cf744b74215b52be69d9fec3b8c3d7edf",
+      "size": 253698,
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.T1.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:21+00:00",
+      "licence": "Bundesbank website terms of use, section 4.1, and the ESCB terms for the reuse of statistics: free reuse of publicly released statistics on condition that the source is quoted ('Source: Deutsche Bundesbank') and the statistics are not modified. Read 2026-10-31.",
+      "name": "bundesbank_svensson_t2.csv",
+      "path": "data/raw/bundesbank_svensson_t2.csv",
+      "sha256": "7067d9418d498367cd7c44f81afd895d500488e97846f34dc2820901d4390697",
+      "size": 253971,
+      "url": "https://api.statistiken.bundesbank.de/rest/download/BBSIS/D.I.ZST.T2.EUR.S1311.B.A604._Z.R.A.A._Z._Z.A?format=csv&lang=en"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:22+00:00",
+      "licence": "Office of Financial Research: work of the US federal government, public domain; the metadata 'rights' field is empty and the dataset page gives the suggested citation 'Office of Financial Research, OFR Short-term Funding Monitor, refreshed daily, https://www.financialresearch.gov/short-term-funding-monitor/ (accessed 2026-10-31)'. Read 2026-10-31.",
+      "name": "ofr_repo_tri_ar_oo_p.json",
+      "path": "data/raw/ofr_repo_tri_ar_oo_p.json",
+      "sha256": "54a032704c7e85162de47bfe78cc52b602686d9257bcf8bd5cccbd2fa4ab7783",
+      "size": 66162,
+      "url": "https://data.financialresearch.gov/v1/series/timeseries?mnemonic=REPO-TRI_AR_OO-P"
+    },
+    {
+      "downloaded_utc": "2026-10-31T01:28:22+00:00",
+      "licence": "Office of Financial Research: work of the US federal government, public domain; the metadata 'rights' field is empty and the dataset page gives the suggested citation 'Office of Financial Research, OFR Short-term Funding Monitor, refreshed daily, https://www.financialresearch.gov/short-term-funding-monitor/ (accessed 2026-10-31)'. Read 2026-10-31.",
+      "name": "ofr_repo_dvp_ar_oo_p.json",
+      "path": "data/raw/ofr_repo_dvp_ar_oo_p.json",
+      "sha256": "83a277a9e3df71f87830e080bdb67a970b1627714f9535c8985f27231512298f",
+      "size": 46467,
+      "url": "https://data.financialresearch.gov/v1/series/timeseries?mnemonic=REPO-DVP_AR_OO-P"
+    }
+  ],
+  "manifest_version": 1,
+  "updated_utc": "2026-10-31T01:28:22+00:00"
+}

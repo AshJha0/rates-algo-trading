@@ -1,0 +1,33 @@
+{
+  "fixture": "sonia_2024.csv",
+  "created_utc": "2026-10-31T01:29:34+00:00",
+  "sha256": "493a2333d31d4c4199e99425f1d47fe48e1aa1b6f6e67530c7841749e5286b75",
+  "size": 8635,
+  "rows": 295,
+  "columns": [
+    "date",
+    "rate_percent",
+    "index"
+  ],
+  "date_range": [
+    "2023-12-01",
+    "2025-01-31"
+  ],
+  "source": {
+    "key": "boe_sonia",
+    "name": "Bank of England SONIA and SONIA Compounded Index",
+    "licence": "Bank of England Database terms (bankofengland.co.uk/legal): reproduction of Database data is subject to the UK Open Government Licence v3.0. Required attribution: 'SONIA and/or SONIA Compounded Index data licensed under the Open Government Licence v3.0 and copyright the Governor and Company of the Bank of England.' Read 2026-10-31.",
+    "terms_url": "https://www.bankofengland.co.uk/legal"
+  },
+  "raw_files": [
+    {
+      "name": "boe_sonia.csv",
+      "url": "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?csv.x=yes&Datefrom=01/Dec/2023&Dateto=31/Jan/2025&SeriesCodes=IUDSOIA,IUDZOS2&CSVF=TN&UsingCodes=Y&VPD=Y&VFD=N",
+      "downloaded_utc": "2026-10-31T01:24:48+00:00",
+      "sha256": "364681cc69d8b0bf56e2a85936838b8b05824c804593887bc031cef5da5106c7",
+      "size": 9223
+    }
+  ],
+  "transformation": "Renamed DATE,IUDSOIA,IUDZOS2 to date,rate_percent,index, converted 'DD Mon YYYY' to ISO, kept 2023-12-01 to 2025-01-31; values copied as published.",
+  "produced_by": "ratesresearch.data.fixtures"
+}

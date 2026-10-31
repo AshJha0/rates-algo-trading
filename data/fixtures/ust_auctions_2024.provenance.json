@@ -1,0 +1,54 @@
+{
+  "fixture": "ust_auctions_2024.csv",
+  "created_utc": "2026-10-31T01:29:34+00:00",
+  "sha256": "9171bacb36f306591e93681264e6f020d1f641ffd1b7300c366a26185ab8ac0e",
+  "size": 31326,
+  "rows": 416,
+  "columns": [
+    "cusip",
+    "type",
+    "term",
+    "auction_date",
+    "issue_date",
+    "maturity_date",
+    "interest_rate",
+    "high_yield",
+    "price_per_100",
+    "high_discount_rate"
+  ],
+  "date_range": [
+    "2024-01-02",
+    "2024-12-30"
+  ],
+  "source": {
+    "key": "treasurydirect_auctions",
+    "name": "TreasuryDirect auction results",
+    "licence": "TreasuryDirect (Bureau of the Fiscal Service) Terms & Conditions: no copyright restriction stated; work of the US federal government, public domain (17 U.S.C. 105). Read 2026-10-31.",
+    "terms_url": "https://www.treasurydirect.gov/legal-information/terms/"
+  },
+  "raw_files": [
+    {
+      "name": "treasurydirect_notes.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Note&dateFieldName=issueDate&startDate=12/01/2023&endDate=01/31/2025",
+      "downloaded_utc": "2026-10-31T01:28:08+00:00",
+      "sha256": "d46daec128e96882f152734c1414f9ab9594c93822db57fe757c52d67603217e",
+      "size": 476693
+    },
+    {
+      "name": "treasurydirect_bonds.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bond&dateFieldName=issueDate&startDate=12/01/2023&endDate=01/31/2025",
+      "downloaded_utc": "2026-10-31T01:28:09+00:00",
+      "sha256": "86442573d40a86824281120ac7fb2209e62fc5c01d394b88538efaf015f18098",
+      "size": 192063
+    },
+    {
+      "name": "treasurydirect_bills.json",
+      "url": "https://www.treasurydirect.gov/TA_WS/securities/search?format=json&type=Bill&dateFieldName=issueDate&startDate=12/01/2023&endDate=01/31/2025",
+      "downloaded_utc": "2026-10-31T01:28:10+00:00",
+      "sha256": "1dea95467de299bf0fc964954db10098542ab1a0b9f51be879c5018aca867965",
+      "size": 2606035
+    }
+  ],
+  "transformation": "From the search endpoint (dateFieldName=issueDate, 2023-12-01 to 2025-01-31) kept records whose competitiveAuctionCloseDate falls in 2024; columns cusip, type, securityTerm, auction/issue/maturity dates (ISO), interestRate and highYield for notes and bonds, highRate (discount rate) for bills, highPrice (per 100) for all.",
+  "produced_by": "ratesresearch.data.fixtures"
+}
