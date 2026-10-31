@@ -1,0 +1,21 @@
+{
+  "fixture": "dtcc_cluster.csv",
+  "created_utc": "2026-10-31T14:02:20+00:00",
+  "sha256": "502b5e10d93b088566a4193ef232485662c5c14fd235c0dbd123bea95ff2e71e",
+  "size": 31474,
+  "rows": 1119,
+  "columns": [
+    "date",
+    "band",
+    "n_large",
+    "excess_sum"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_dtcc.json"
+  ],
+  "raw_file_count": 436,
+  "raw_files": "listed in the manifests",
+  "transformation": "Per day and band point: large trades (notional at or above the fitting-period p90 of the tenor's censored lognormal for that band) in 2, 5, 10, 30Y between 07:00 and 17:00 ET; n_large and the sum over them of (same-tenor trades in the next 300 s minus the period mean count of that tenor in the large trade's 5-minute bucket).",
+  "produced_by": "ratesresearch.edge.build"
+}

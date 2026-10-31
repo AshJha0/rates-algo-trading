@@ -1,0 +1,52 @@
+{
+  "fixture": "cot_ust10y.csv",
+  "created_utc": "2026-10-31T13:47:28+00:00",
+  "sha256": "4c5b6b9f349ee8d151e11920b456bf88ac558610ada10c8c84268e2531eae52b",
+  "size": 9109,
+  "rows": 183,
+  "columns": [
+    "report_date",
+    "open_interest",
+    "lev_long",
+    "lev_short",
+    "am_long",
+    "am_short"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_cot.json"
+  ],
+  "raw_file_count": 4,
+  "raw_files": [
+    {
+      "name": "fut_fin_txt_2023.zip",
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2023.zip",
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "sha256": "43c3dbdd4d01fceefad5e457003751cdc0974c7cf46097b322e26e9e2fe44d7a",
+      "size": 506931
+    },
+    {
+      "name": "fut_fin_txt_2024.zip",
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2024.zip",
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "sha256": "3f00585741a7cf76c207df640951d644dd91ff22a1106b38ca37a2469c765637",
+      "size": 563591
+    },
+    {
+      "name": "fut_fin_txt_2025.zip",
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2025.zip",
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "sha256": "2ea0cda6395f7dd6501c27422be3763e1f2f5b41b768cfd36b871f092a07d438",
+      "size": 627068
+    },
+    {
+      "name": "fut_fin_txt_2026.zip",
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2026.zip",
+      "downloaded_utc": "2026-10-31T13:42:07+00:00",
+      "sha256": "d2ebb15f9f0ea6acd21314fde082b5bc694cfca09466161ad2decec3cfecf5f7",
+      "size": 616753
+    }
+  ],
+  "transformation": "CFTC Traders in Financial Futures, futures only, UST 10Y NOTE (code 043602): open interest, leveraged-funds and asset-manager long and short contracts, report (Tuesday) dates 2023 to 2026-06-30.",
+  "produced_by": "ratesresearch.edge.build"
+}

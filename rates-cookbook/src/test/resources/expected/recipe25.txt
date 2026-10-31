@@ -1,0 +1,7 @@
+91282CLW9 settle 2025-01-16 clean 96.790759 yield 4.660%
+horizon     days  repo%   fwd clean   carry    roll    total   be yield%  be chg bp
+2025-02-18    33  4.248   96.783065  +0.0077  +0.0262  +0.0339    4.6640     +0.40
+2025-04-16    90  4.210   96.760513  +0.0302  +0.0713  +0.1015    4.6729     +1.29
+2025-07-16   181  4.150   96.697193  +0.0936  +0.1425  +0.2361    4.6904     +3.04
+3m carry at GC +0.0302, 50 bp special +0.1521, difference 0.1219 per 100
+funding saved on the dirty price 0.1219 per 100

@@ -46,6 +46,20 @@ public final class RouterPresets {
         32);
   }
 
+  /** Config version of {@link #globalWithControls}. */
+  public static final int CONTROLS_CONFIG_VERSION = 2;
+
+  /**
+   * {@link #global} plus the round-2 cost controls (PNL_AUDIT.md items 15 and 18): an adverse
+   * move of 0.75 sigma over the expected queue wait on a filled passive child, about half a 1/64
+   * tick for a 10-year future at 0.5 points a day and a 10 second wait, and 0.0001 points per lot
+   * per message (about 1 USD on one million of cash face). Assumptions, not fits; not yet in
+   * {@code data/presets.yaml} and not the default until the audit re-run has measured them.
+   */
+  public static RouterParams globalWithControls(final RouterParams.Volatility volatility) {
+    return global().withControls(CONTROLS_CONFIG_VERSION, 0.75, 0.0001, volatility);
+  }
+
   /** Defaults for a cash Treasury central limit order book. */
   public static VenueParams clob(final int venueId) {
     return new VenueParams(

@@ -307,6 +307,32 @@ class VenueGatewayTest {
   }
 
   @Test
+  void quotingEngineWithdrawalsBecomeFixCancels() {
+    final io.ratesalgo.messages.sbe.QuoteWithdrawEncoder qw = new io.ratesalgo.messages.sbe.QuoteWithdrawEncoder();
+    qw.wrapAndApplyHeader(out, 0, headerEncoder).venueId(101).rfqId(42).quoteId(7).instrumentId(1008)
+        .reason(io.ratesalgo.messages.sbe.CancelReason.KillSwitch).sentNanos(clock.epochNanos());
+    assertTrue(gateway.offer(out, 0, MessageHeaderEncoder.ENCODED_LENGTH + qw.encodedLength()));
+    assertTrue(venue.last().contains("|35=Z|") && venue.last().contains("|131=42|117=7|298=1|295=1|55=" + ISIN), venue.last());
+
+    final NewOrderEncoder no = new NewOrderEncoder();
+    no.wrapAndApplyHeader(out, 0, headerEncoder).venueId(102).clOrdId(5).instrumentId(1008).side(Side.Buy)
+        .ordType(OrdType.Limit).timeInForce(TimeInForce.Day).quantity(2_500_000_000L).sentNanos(clock.epochNanos());
+    no.price().mantissa(99_500_000_000L);
+    assertTrue(gateway.offer(out, 0, MessageHeaderEncoder.ENCODED_LENGTH + no.encodedLength()));
+    final io.ratesalgo.messages.sbe.OrderWithdrawEncoder ow = new io.ratesalgo.messages.sbe.OrderWithdrawEncoder();
+    ow.wrapAndApplyHeader(out, 0, headerEncoder).venueId(102).clOrdId(6).origClOrdId(5).instrumentId(1008)
+        .side(Side.Buy).reason(io.ratesalgo.messages.sbe.CancelReason.KillSwitch).sentNanos(clock.epochNanos());
+    assertTrue(gateway.offer(out, 0, MessageHeaderEncoder.ENCODED_LENGTH + ow.encodedLength()));
+    assertTrue(venue.last().contains("|35=F|") && venue.last().contains("|41=5|11=6|"), venue.last());
+    assertTrue(venue.last().contains("|38=25000000|"), venue.last());
+    ow.instrumentId(55);
+    assertFalse(gateway.offer(out, 0, MessageHeaderEncoder.ENCODED_LENGTH + ow.encodedLength()));
+    qw.instrumentId(55);
+    assertFalse(gateway.offer(out, 0, MessageHeaderEncoder.ENCODED_LENGTH + qw.encodedLength()));
+    assertEquals(0L, gateway.orders().orderQuantity(99));
+  }
+
+  @Test
   void outboundSbeBecomesFix() {
     final QuoteEncoder q = new QuoteEncoder();
     q.wrapAndApplyHeader(out, 0, headerEncoder).venueId(101).rfqId(42).quoteId(7).instrumentId(1008)

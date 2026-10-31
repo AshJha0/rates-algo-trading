@@ -1,0 +1,58 @@
+# Pre-registration EDGE-E4. Written and hashed on 2026-10-31 before the DTCC files of
+# 2025-01-02 to 2026-06-30 were downloaded or read for this study (P5 fitted the preset
+# usd_rfq_flow on nine DTCC days of 2025-10-01 to 2025-10-14, inside this holdout; that fit
+# pooled tenors and is not reused here).
+# Format: API_SPEC.md Section 16.8; shared rules: research/prereg/edge_programme.yaml.
+# period is the holdout test period; holdout lists the reserve dates (not read by this programme).
+prereg_version: 1
+id: EDGE-E4
+title: Swap trade size by tenor and clustering after large trades
+hypothesis: >
+  A censored lognormal fitted per tenor (2, 5, 10, 30 years) on the fitting period keeps its
+  95th percentile calibrated out of sample: the daily share of holdout trades at or above it is
+  between 2.5 and 10 percent (E4a). After a trade at or above the fitted 90th percentile, the
+  same tenor sees at least 0.1 more trades in the next 5 minutes than its time-of-day average
+  (E4b).
+metric: >
+  E4a: mean over holdout days of the share of trades at or above the fitted p95 of their tenor.
+  E4b: mean over holdout days of the per-large-trade excess count in the next 5 minutes.
+baseline: >
+  E4a: nominal 5 percent exceedance (equivalence band 2.5 to 10 percent). E4b: the time-of-day
+  expected count (excess zero).
+treatments: [p95_calibration, post_large_trade_clustering]
+period: {start: 2025-07-01, end: 2026-06-30}
+fitting_period: {start: 2025-01-02, end: 2025-06-30}
+holdout: [
+  2026-07-01, 2026-07-02, 2026-07-03, 2026-07-06, 2026-07-07, 2026-07-08, 2026-07-09,
+  2026-07-10, 2026-07-13, 2026-07-14, 2026-07-15, 2026-07-16, 2026-07-17, 2026-07-20,
+  2026-07-21, 2026-07-22, 2026-07-23, 2026-07-24, 2026-07-27, 2026-07-28, 2026-07-29,
+  2026-07-30, 2026-07-31, 2026-08-03, 2026-08-04, 2026-08-05, 2026-08-06, 2026-08-07,
+  2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13, 2026-08-14, 2026-08-17, 2026-08-18,
+  2026-08-19, 2026-08-20, 2026-08-21, 2026-08-24, 2026-08-25, 2026-08-26, 2026-08-27,
+  2026-08-28, 2026-08-31, 2026-09-01, 2026-09-02, 2026-09-03, 2026-09-04, 2026-09-07,
+  2026-09-08, 2026-09-09, 2026-09-10, 2026-09-11, 2026-09-14, 2026-09-15, 2026-09-16,
+  2026-09-17, 2026-09-18, 2026-09-21, 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25,
+  2026-09-28, 2026-09-29, 2026-09-30, 2026-10-01, 2026-10-02, 2026-10-05, 2026-10-06,
+  2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14, 2026-10-15,
+  2026-10-16, 2026-10-19, 2026-10-20, 2026-10-21, 2026-10-22, 2026-10-23, 2026-10-26,
+  2026-10-27, 2026-10-28, 2026-10-29, 2026-10-30,
+]
+success_threshold: >
+  E4a: two one-sided bootstrap tests against 0.025 and 0.10, p = the larger, Holm-adjusted p
+  below 0.05 and the 95 percent interval inside [0.025, 0.10]. E4b: the programme test rule with
+  threshold 0.1 trades. Moving-block bootstrap over days, blocks of 5, 2000 resamples, central
+  band point (capped prints censored). The study is supported if E4a passes; E4b is promoted
+  only if it passes.
+assumption_band:
+  parameter: treatment of capped notionals
+  points: [low, central, high]
+  values: {low: drop capped prints, central: right-censor at the cap, high: cap as exact value}
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/E4.config.yaml
+config_sha256: 55d791bf328d6eef6c8200afff5f447078d0dbc76731caf775a404b12e58fb40
+limitations: >
+  Disseminated notionals above the CFTC caps are shown as the cap, so the upper tail above the
+  cap is not observed and the lognormal extrapolates it. Prints are executions across all
+  dealers and venues, not the RFQs one dealer sees. FINRA Treasury trades are expected to be
+  unavailable without an account; a synthetic fixture stands in and is used for no inference.

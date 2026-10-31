@@ -7,7 +7,11 @@ Modes:
   docker   bring up deploy/compose.yaml and run the same checks against the published ports.
 
 Before process mode, package the jars:
-    mvn -B -ntp -DskipTests package -pl rates-ops -am
+    mvn -B -ntp -DskipTests package -pl rates-app -am
+
+The trading process is rates-app's TradingProcessMain (API_SPEC.md Section 18.1): the D2C and
+CLOB simulators run inside it on simulated time from 08:25 New York, paced at ten times real
+time, so RFQs arrive within seconds of readiness.
 
 Usage: python deploy/rehearsal.py --mode process [--java PATH] [--timeout SECONDS]
 Exit status 0 when every check passes.
@@ -108,9 +112,15 @@ def classpath(module: str) -> str:
 
 
 def checks(r: Rehearsal, trading: str, venue: str, token: str, journal_dir: Path | None) -> None:
-    status, body = http("GET", f"{trading}/control/status")
-    state = json.loads(body) if status == 200 else {}
-    r.check("trading process quoting before the kill", state.get("liveQuotes", 0) > 0, body.strip())
+    # A quote lives for the venue's five-second response window, so poll until one is live.
+    seen: dict[str, object] = {}
+
+    def quoting() -> bool:
+        status, body = http("GET", f"{trading}/control/status")
+        seen.update(json.loads(body) if status == 200 else {})
+        return int(str(seen.get("liveQuotes", 0))) > 0
+
+    r.check("trading process quoting before the kill", wait_until(quoting, 60.0), json.dumps(seen))
     r.check("venue simulator ready", http("GET", f"{venue}/health/ready")[0] == 200)
     status, _ = http("POST", f"{trading}/control/kill")
     r.check("kill refused without the control token", status == 403, f"status {status}")
@@ -125,7 +135,7 @@ def checks(r: Rehearsal, trading: str, venue: str, token: str, journal_dir: Path
     r.check("metrics show the kill switch engaged", "\nrates_kill_switch_engaged 1\n" in metrics)
     r.check("still live after the kill", http("GET", f"{trading}/health/live")[0] == 200)
     if journal_dir is not None:
-        journals = sorted(journal_dir.glob("*.raj"))
+        journals = sorted(journal_dir.glob("*/in.*.raj"))
         templates = journal_templates(journals[0]) if journals else []
         r.check("kill switch journaled", KILL_SWITCH_TEMPLATE in templates, f"templates {templates}")
 
@@ -136,8 +146,8 @@ def run_process_mode(java: str, timeout: float) -> int:
     token = secrets.token_hex(16)
     procs: list[subprocess.Popen[bytes]] = []
     try:
-        cp = classpath("rates-ops")
-        main = "io.ratesalgo.ops.process.OpsProcessMain"
+        cp = classpath("rates-app")
+        main = "io.ratesalgo.app.TradingProcessMain"
 
         bad = work / "bad.yaml"
         bad.write_text((ROOT / "deploy/config/trading-blue.yaml").read_text(encoding="utf-8")

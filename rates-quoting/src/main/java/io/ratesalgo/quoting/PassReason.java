@@ -6,6 +6,8 @@ public enum PassReason {
   DUPLICATE,
   KILLED,
   UNHEALTHY,
+  /** Within the pull window around a scheduled release (QuotingConfig.releaseCalendar). */
+  RELEASE_WINDOW,
   UNKNOWN_INSTRUMENT,
   EXPIRED_REQUEST,
   CLIENT_BLOCKED,
@@ -14,5 +16,7 @@ public enum PassReason {
   STALE_INPUT,
   NO_RISK_CAPACITY,
   BOOK_FULL,
+  /** The expected adverse cost is at or above the widest allowed half spread: no spread earns. */
+  NEGATIVE_EDGE,
   RISK_REJECT
 }

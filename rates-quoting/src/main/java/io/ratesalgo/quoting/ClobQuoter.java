@@ -1,12 +1,16 @@
 package io.ratesalgo.quoting;
 
 import io.ratesalgo.api.BookSource;
+import io.ratesalgo.api.CurrencyCode;
 import io.ratesalgo.api.Decimal9;
+import io.ratesalgo.api.Dv01Vector;
 import io.ratesalgo.api.FairValueSource;
 import io.ratesalgo.api.Instrument;
 import io.ratesalgo.api.InstrumentDirectory;
+import io.ratesalgo.api.KeyRateTenors;
 import io.ratesalgo.api.OutboundSink;
 import io.ratesalgo.common.time.Clock;
+import io.ratesalgo.hedge.KeyRateCovariance;
 import io.ratesalgo.messages.sbe.CancelReason;
 import io.ratesalgo.messages.sbe.KillReason;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
@@ -39,6 +43,13 @@ import org.agrona.concurrent.UnsafeBuffer;
  *       at or below our own resting buy.
  *   <li>Every order passes {@link RiskEngine#checkOrder} and reserves its quantity until the venue
  *       reports it filled, cancelled or rejected. Cancels are never rate limited.
+ *   <li>Prices are on the venue's tick: the bid target rounds down and the ask target up to a
+ *       multiple of the tick given to {@link #enable(int, long)} (DR-R2R-12); a venue refuses an
+ *       order off its tick.
+ *   <li>Inventory skew, off until {@link #inventorySkew} is called: both targets move by {@code
+ *       kappa * u' Sigma p / |U|} bp, the RFQ engine's skew (QuotingEngine), so a long book lowers
+ *       the bid and the ask together and sells more readily. The skew is applied before the tick
+ *       rounding, so the prices stay on the tick.
  * </ul>
  *
  * Allocation-free after construction; up to 32 instruments.
@@ -122,7 +133,16 @@ public final class ClobQuoter implements KillSwitchListener {
   private final long maxInputAgeNanos;
 
   private final int[] ids = new int[MAX];
+  private final long[] tick = new long[MAX];
   private int count;
+  private static final int K = KeyRateTenors.COUNT;
+  private KeyRateCovariance covariance;
+  private double kappa;
+  private double maxSkewBp;
+  private final Dv01Vector ladder = new Dv01Vector(CurrencyCode.USD);
+  private final double[] p = new double[K];
+  private final double[] u = new double[K];
+  private double lastSkewBp;
   // per instrument and side (index 2*i for bid, 2*i+1 for ask)
   private final long[] clOrdId = new long[2 * MAX];
   private final long[] price = new long[2 * MAX];
@@ -171,14 +191,42 @@ public final class ClobQuoter implements KillSwitchListener {
     return new Config();
   }
 
-  /** Starts quoting an instrument. */
+  /**
+   * Starts quoting an instrument on the Decimal9 grid (tick 1 mantissa). A venue with a coarser
+   * tick needs {@link #enable(int, long)}.
+   */
   public void enable(final int instrumentId) {
-    if (count == MAX || directory.byId(instrumentId) == null) {
-      throw new IllegalArgumentException("cannot enable " + instrumentId);
+    enable(instrumentId, 1L);
+  }
+
+  /** Starts quoting an instrument whose venue tick is {@code tickMantissa} (Decimal9). */
+  public void enable(final int instrumentId, final long tickMantissa) {
+    if (count == MAX || directory.byId(instrumentId) == null || tickMantissa <= 0) {
+      throw new IllegalArgumentException("cannot enable " + instrumentId + " tick " + tickMantissa);
     }
     ids[count] = instrumentId;
+    tick[count] = tickMantissa;
     lastSignalMid[count] = Double.NaN;
     count++;
+  }
+
+  /**
+   * Turns on inventory skew with the RFQ engine's parameters ({@code QuotingConfig.kappa()} and
+   * {@code maxSkewBp()}) and covariance, so both channels lean the same way on the same book.
+   * Kappa 0 turns it off.
+   */
+  public void inventorySkew(final KeyRateCovariance covariance, final double kappa, final double maxSkewBp) {
+    if (covariance == null || !(kappa >= 0.0) || !(maxSkewBp >= 0.0)) {
+      throw new IllegalArgumentException("skew needs a covariance, kappa >= 0 and maxSkewBp >= 0");
+    }
+    this.covariance = covariance;
+    this.kappa = kappa;
+    this.maxSkewBp = maxSkewBp;
+  }
+
+  /** Inventory skew at the last update, bp; positive lowers both sides. */
+  public double lastSkewBp() {
+    return lastSkewBp;
   }
 
   /** Re-evaluates one instrument: pulls, keeps, re-quotes or places. */
@@ -227,8 +275,13 @@ public final class ClobQuoter implements KillSwitchListener {
     if (suppressBid) {
       adversePulls += cancelSide(2 * i, CancelReason.AdverseSignal, nowNanos) ? 1 : 0;
     }
-    final long bidTarget = Decimal9.floor(fair - config.halfSpreadBp * qpb);
-    final long askTarget = Decimal9.ceil(fair + config.halfSpreadBp * qpb);
+    final double skew = skewBp(inst);
+    lastSkewBp = skew;
+    final long t = tick[i];
+    final long bidTarget =
+        Math.floorDiv(Decimal9.floor(fair - (config.halfSpreadBp + skew) * qpb), t) * t;
+    final long askTarget =
+        -Math.floorDiv(-Decimal9.ceil(fair + (config.halfSpreadBp - skew) * qpb), t) * t;
     if (!suppressBid) {
       side(i, true, bidTarget, bs, qpb, nowNanos);
     }
@@ -430,6 +483,25 @@ public final class ClobQuoter implements KillSwitchListener {
       risk.release(instrumentId, buy ? r : 0L, buy ? 0L : r);
       reserved[s] -= r;
     }
+  }
+
+  /** kappa * u' Sigma p / |U|, clamped to maxSkewBp; 0 while skew is off. */
+  private double skewBp(final Instrument inst) {
+    if (covariance == null || kappa == 0.0) {
+      return 0.0;
+    }
+    final int instrumentId = inst.id();
+    final double unitPar = Math.abs(risk.unitParallelPv01(instrumentId));
+    if (unitPar == 0.0) {
+      return 0.0;
+    }
+    risk.ladder(inst.currency(), ladder);
+    ladder.copyTo(p);
+    for (int a = 0; a < K; a++) {
+      u[a] = risk.unitPv01(instrumentId, a);
+    }
+    final double skew = kappa * covariance.quadratic(u, p) / unitPar;
+    return Math.max(-maxSkewBp, Math.min(maxSkewBp, skew));
   }
 
   private double mid(final int id) {

@@ -1,0 +1,30 @@
+{
+  "created_utc": "2026-10-31T13:42:10+00:00",
+  "files": [
+    {
+      "downloaded_utc": "2026-10-31T13:42:08+00:00",
+      "name": "bea_schedule.htm",
+      "sha256": "5bd969473cb24aacd462da8bdc727579509a983fa25d3e397b5f98255d3b274e",
+      "size": 70556,
+      "url": "https://www.bea.gov/news/schedule"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:09+00:00",
+      "name": "bea_schedule_2025.htm",
+      "sha256": "b84c04b8834f9e25b34d5a7e8d58cd194cd5922bac02adb24318f786f17a4ec7",
+      "size": 126224,
+      "url": "https://www.bea.gov/news/schedule/full?year=2025"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:10+00:00",
+      "name": "bea_schedule_2026.htm",
+      "sha256": "b84c04b8834f9e25b34d5a7e8d58cd194cd5922bac02adb24318f786f17a4ec7",
+      "size": 126224,
+      "url": "https://www.bea.gov/news/schedule/full?year=2026"
+    }
+  ],
+  "licence": "BEA release schedule: work of the US federal government, public domain.",
+  "manifest_version": 1,
+  "missing": [],
+  "source": "bea"
+}

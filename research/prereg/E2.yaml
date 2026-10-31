@@ -1,0 +1,51 @@
+# Pre-registration EDGE-E2. Written and hashed on 2026-10-31 before the data it tests were
+# downloaded or read for this study (the P1 par-curve fixture 2015 to 2025 is in the repository;
+# no month-end statistic has been computed on it).
+# Format: API_SPEC.md Section 16.8; shared rules: research/prereg/edge_programme.yaml.
+# period is the holdout test period; holdout lists the reserve dates (not read by this programme).
+prereg_version: 1
+id: EDGE-E2
+title: Month-end index extension and the 2s30s curve
+hypothesis: >
+  In months with large duration added to the Treasury index (coupon issuance weighted by term in
+  the top third of the fitting-period distribution), the 30Y par yield falls against the 2Y over
+  the last 3 business days of the month by at least 0.5 bp more than an ordinary 3-day window.
+metric: >
+  Month-end 3-day change of 100 * (y30 - y2) in bp minus the mean 3-day change outside month
+  ends, per high-extension month.
+baseline: the mean 3-business-day change of 2s30s away from month ends in the same period
+treatments: [month_end_window_high_extension]
+period: {start: 2021-01-01, end: 2026-06-30}
+fitting_period: {start: 2015-01-01, end: 2020-12-31}
+holdout: [
+  2026-07-01, 2026-07-02, 2026-07-03, 2026-07-06, 2026-07-07, 2026-07-08, 2026-07-09,
+  2026-07-10, 2026-07-13, 2026-07-14, 2026-07-15, 2026-07-16, 2026-07-17, 2026-07-20,
+  2026-07-21, 2026-07-22, 2026-07-23, 2026-07-24, 2026-07-27, 2026-07-28, 2026-07-29,
+  2026-07-30, 2026-07-31, 2026-08-03, 2026-08-04, 2026-08-05, 2026-08-06, 2026-08-07,
+  2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13, 2026-08-14, 2026-08-17, 2026-08-18,
+  2026-08-19, 2026-08-20, 2026-08-21, 2026-08-24, 2026-08-25, 2026-08-26, 2026-08-27,
+  2026-08-28, 2026-08-31, 2026-09-01, 2026-09-02, 2026-09-03, 2026-09-04, 2026-09-07,
+  2026-09-08, 2026-09-09, 2026-09-10, 2026-09-11, 2026-09-14, 2026-09-15, 2026-09-16,
+  2026-09-17, 2026-09-18, 2026-09-21, 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25,
+  2026-09-28, 2026-09-29, 2026-09-30, 2026-10-01, 2026-10-02, 2026-10-05, 2026-10-06,
+  2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14, 2026-10-15,
+  2026-10-16, 2026-10-19, 2026-10-20, 2026-10-21, 2026-10-22, 2026-10-23, 2026-10-26,
+  2026-10-27, 2026-10-28, 2026-10-29, 2026-10-30,
+]
+success_threshold: >
+  E2 passes the programme test rule at the central band point (k = 3): negative mean, 95
+  percent moving-block bootstrap interval (blocks of 3 months, 2000 resamples) below zero,
+  Holm-adjusted p below 0.05, mean at most -0.5 bp.
+assumption_band:
+  parameter: window length k in business days
+  points: [low, central, high]
+  values: {low: 2, central: 3, high: 4}
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/E2.config.yaml
+config_sha256: 8c8908ee1e93269db6ce5b407d0e6e207a06e4e933773351a6179dd6888e4f94
+limitations: >
+  The index extension itself is proprietary (index providers publish it to subscribers); the
+  proxy is term-weighted coupon issuance settling in the month, which misses maturing and
+  called debt and index rule changes. Daily closes only; 66 holdout months give about 22
+  high-extension months, so only a large effect can pass.

@@ -108,8 +108,8 @@ presets:
         high: -5.0
       rationale: 'Win-probability slope per bp of spread-to-cover. No public source shows losing quotes
         (DR-008), so the slope is declared: central -2.5 per bp (a quote 0.2 bp behind the cover loses
-        about 0.6 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients
-        pick the best price almost always). Results are reported at all three points.'
+        0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients pick the
+        best price almost always). Results are reported at all three points.'
 - name: usd_rfq_flow
   fitted_from: data/manifests/dtcc_rates_2025-10.json
   data_range:
@@ -226,11 +226,109 @@ presets:
         high: -5.0
       rationale: 'Win-probability slope per bp of spread-to-cover. No public source shows losing quotes
         (DR-008), so the slope is declared: central -2.5 per bp (a quote 0.2 bp behind the cover loses
-        about 0.6 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients
-        pick the best price almost always). Results are reported at all three points.'
+        0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients pick the
+        best price almost always). Results are reported at all three points.'
   notes: 'Fitted to labels drawn from the declared simulator model, so the fit recovers the assumption;
     it is not a market hit rate (DR-008). The back-tester replaces spread_to_cover_bp by the band value
     of each run. Out-of-sample log-loss on the last 12000 labels: model 0.6146, constant 0.6900.'
+- name: usd_sofr_ois_size_by_tenor
+  fitted_from: data/manifests/edge_dtcc.json
+  data_range:
+    start: '2025-07-01'
+    end: '2026-06-30'
+  sample_size: 250
+  method: censored lognormal MLE per tenor (EM), holdout fit, research/ratesresearch/edge/e4_size.py::run
+  parameters:
+    tenor_2y_log_mu:
+      value: 3.756236828
+      standard_error: 0.0123202
+    tenor_2y_log_sigma:
+      value: 1.544898473
+      standard_error: 0.00871171
+    tenor_2y_p50_mm:
+      value: 42.78710737
+      standard_error: null
+    tenor_2y_p90_mm:
+      value: 309.8548258
+      standard_error: null
+    tenor_2y_p95_mm:
+      value: 543.1408527
+      standard_error: null
+    tenor_2y_p99_mm:
+      value: 1556.520414
+      standard_error: null
+    tenor_2y_trades_per_day:
+      value: 63.436
+      standard_error: null
+    tenor_5y_log_mu:
+      value: 3.145038854
+      standard_error: 0.00952313
+    tenor_5y_log_sigma:
+      value: 1.515225731
+      standard_error: 0.00673387
+    tenor_5y_p50_mm:
+      value: 23.22057766
+      standard_error: null
+    tenor_5y_p90_mm:
+      value: 161.8837948
+      standard_error: null
+    tenor_5y_p95_mm:
+      value: 280.7215894
+      standard_error: null
+    tenor_5y_p99_mm:
+      value: 788.3806344
+      standard_error: null
+    tenor_5y_trades_per_day:
+      value: 102.208
+      standard_error: null
+    tenor_10y_log_mu:
+      value: 2.79228655
+      standard_error: 0.00798013
+    tenor_10y_log_sigma:
+      value: 1.431359591
+      standard_error: 0.0056428
+    tenor_10y_p50_mm:
+      value: 16.31828976
+      standard_error: null
+    tenor_10y_p90_mm:
+      value: 102.1709791
+      standard_error: null
+    tenor_10y_p95_mm:
+      value: 171.8571426
+      standard_error: null
+    tenor_10y_p99_mm:
+      value: 455.8331725
+      standard_error: null
+    tenor_10y_trades_per_day:
+      value: 129.976
+      standard_error: null
+    tenor_30y_log_mu:
+      value: 2.190011696
+      standard_error: 0.0108122
+    tenor_30y_log_sigma:
+      value: 1.385057876
+      standard_error: 0.00764537
+    tenor_30y_p50_mm:
+      value: 8.935317619
+      standard_error: null
+    tenor_30y_p90_mm:
+      value: 52.72210332
+      standard_error: null
+    tenor_30y_p95_mm:
+      value: 87.20216573
+      standard_error: null
+    tenor_30y_p99_mm:
+      value: 224.1102552
+      standard_error: null
+    tenor_30y_trades_per_day:
+      value: 66.06
+      standard_error: null
+    post_large_trade_excess_5min:
+      value: 0.1657311571
+      standard_error: 0.0356889
+  notes: 'Holdout estimate (out of sample) of pre-registered study EDGE-E4 (research/prereg/E4.yaml),
+    ledger seq 5, holdout verdict supported: E4a passed (Holm p 0.005497), E4b passed (Holm p 0.005497).
+    Values are holdout means with bootstrap standard errors; docs/research/EDGE_STUDIES.md.'
 - name: usd_synthetic_market
   fitted_from: assumption
   data_range:
@@ -384,6 +482,135 @@ presets:
     scaled to 0.66 of RFQs; Treasuries take the rest. Tier 1 is real money (mostly uninformed), tier 3
     fast money (45 percent informed over 60 s). Informed share and horizon are what ratesresearch.markouts
     tries to recover.
+- name: usd_time_of_day_spread
+  fitted_from: data/manifests/edge_dtcc.json, data/manifests/edge_alfred.json, data/manifests/edge_fomc.json
+  data_range:
+    start: '2025-07-01'
+    end: '2026-06-30'
+  sample_size: 37
+  method: event-day over control-day realised variance and trade counts per 5-minute bucket, research/ratesresearch/edge/e3_intraday.py::run
+  parameters:
+    release_0830_spread_multiplier:
+      value: 2.355175216
+      standard_error: 0.222983
+    release_0835_spread_multiplier:
+      value: 1.866224972
+      standard_error: 0.241146
+    release_0840_spread_multiplier:
+      value: 1.922237291
+      standard_error: 0.296059
+    release_0845_spread_multiplier:
+      value: 1.112702995
+      standard_error: 0.165418
+    release_0850_spread_multiplier:
+      value: 1.450090879
+      standard_error: 0.18609
+    release_0855_spread_multiplier:
+      value: 1.50166383
+      standard_error: 0.304684
+    fomc_1400_spread_multiplier:
+      value: 1.445714114
+      standard_error: 0.318755
+    fomc_1405_spread_multiplier:
+      value: 1.0
+      standard_error: 0.163348
+    fomc_1410_spread_multiplier:
+      value: 1.997934214
+      standard_error: 0.70952
+    fomc_1415_spread_multiplier:
+      value: 1.070946095
+      standard_error: 0.162327
+    fomc_1420_spread_multiplier:
+      value: 1.613230309
+      standard_error: 0.339969
+    fomc_1425_spread_multiplier:
+      value: 1.517726924
+      standard_error: 0.264602
+    fomc_1430_spread_multiplier:
+      value: 1.0
+      standard_error: 0.262589
+    fomc_1435_spread_multiplier:
+      value: 1.778057551
+      standard_error: 0.277575
+    fomc_1440_spread_multiplier:
+      value: 1.72431733
+      standard_error: 0.163457
+    fomc_1445_spread_multiplier:
+      value: 1.588048806
+      standard_error: 0.293954
+    fomc_1450_spread_multiplier:
+      value: 1.82271958
+      standard_error: 0.467032
+    fomc_1455_spread_multiplier:
+      value: 1.994194367
+      standard_error: 0.444414
+    intensity_0700_multiplier:
+      value: 0.3549640718
+      standard_error: 0.0249021
+    intensity_0730_multiplier:
+      value: 0.581051606
+      standard_error: 0.0307072
+    intensity_0800_multiplier:
+      value: 0.9185221271
+      standard_error: 0.031212
+    intensity_0830_multiplier:
+      value: 1.03521961
+      standard_error: 0.0371151
+    intensity_0900_multiplier:
+      value: 1.060242031
+      standard_error: 0.0400278
+    intensity_0930_multiplier:
+      value: 1.170074957
+      standard_error: 0.0452821
+    intensity_1000_multiplier:
+      value: 1.298287182
+      standard_error: 0.0460653
+    intensity_1030_multiplier:
+      value: 1.376233129
+      standard_error: 0.055303
+    intensity_1100_multiplier:
+      value: 1.782349229
+      standard_error: 0.0443134
+    intensity_1130_multiplier:
+      value: 1.336152969
+      standard_error: 0.0367479
+    intensity_1200_multiplier:
+      value: 1.100986503
+      standard_error: 0.0359434
+    intensity_1230_multiplier:
+      value: 0.9712242164
+      standard_error: 0.0324348
+    intensity_1300_multiplier:
+      value: 0.9176363777
+      standard_error: 0.0270984
+    intensity_1330_multiplier:
+      value: 0.9185221271
+      standard_error: 0.0780759
+    intensity_1400_multiplier:
+      value: 0.8574054186
+      standard_error: 0.043981
+    intensity_1430_multiplier:
+      value: 0.8662629126
+      standard_error: 0.030387
+    intensity_1500_multiplier:
+      value: 1.126451799
+      standard_error: 0.042655
+    intensity_1530_multiplier:
+      value: 0.9426587983
+      standard_error: 0.035323
+    intensity_1600_multiplier:
+      value: 0.8193181944
+      standard_error: 0.0313965
+    intensity_1630_multiplier:
+      value: 0.5664367409
+      standard_error: 0.0257442
+    release_0830_intensity_ratio:
+      value: 2.524369206
+      standard_error: 0.228624
+  notes: 'Holdout estimate (out of sample) of pre-registered study EDGE-E3 (research/prereg/E3.yaml),
+    ledger seq 4, holdout verdict supported: E3a passed (Holm p 0.005497), E3b passed (Holm p 0.005497),
+    E3c failed (Holm p 0.8776), E3d passed (Holm p 0.005497). Values are holdout means with bootstrap
+    standard errors; docs/research/EDGE_STUDIES.md.'
 
 # Smart order router (P4), config version 1. Read by rates-router: RouterPresets holds the same
 # values and RouterPresetsTest fails if they differ. These are declared assumptions, not fits

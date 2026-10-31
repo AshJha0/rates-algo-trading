@@ -1,0 +1,40 @@
+# Configuration of EDGE-E5 (swap spread and futures positioning). Hashed into research/prereg/E5.yaml.
+study: EDGE-E5
+programme: research/prereg/edge_programme.yaml
+programme_sha256: a66bde494ac4af654917c497b25c6f6c4ec252f488e189f2b5a5ecbed9750f7c
+sources:
+  dtcc: >
+    DTCC SDR cumulative rates slices for the first business day of every week 2024-01-01 to
+    2026-06-30 (and every business day of 2025-01-02 to 2026-06-30, shared with EDGE-E3)
+  par_curve: US Treasury daily par yield curve, 10 Yr column
+  cot: >
+    CFTC Traders in Financial Futures, futures only, yearly files fut_fin_txt_2023.zip to
+    fut_fin_txt_2026.zip; market UST 10Y NOTE (CFTC contract market code 043602)
+swap_spread: >
+  ss(d) = 100 * (OIS10(d) - y_10Y(d)) in bp, where OIS10(d) is the median fixed rate of the
+  EDGE-E3 trade filter's 10Y prints executed 14:30 to 16:00 ET on day d (at least 5 prints,
+  else the week is missing) and y_10Y the par curve 10 Yr yield of day d
+week: >
+  w indexes the first business day of each week (Monday unless a holiday); target
+  t_w = ss(next first business day) - ss(this first business day)
+predictors: >
+  known before the first business day of week w: x1 = the change in leveraged-funds net
+  position (long minus short) as a share of open interest between the last two reports
+  released before that day (reports are released on Friday for the Tuesday); x2 = ss(w) -
+  ss(w-1), the last week's spread change
+model: OLS of t_w on (1, x1, x2) fitted on fitting-period weeks; forecast f_w on holdout weeks
+test_statistic: >
+  unit statistic per holdout week u_w = f_w * t_w, standardised by the fitting-period variance
+  of f; equivalent to the sign of the forecast-realised covariance. Predicted positive;
+  threshold: out-of-sample R^2 = 1 - sum (t - f)^2 / sum (t - mean_fit t)^2 > 0
+band: >
+  the OIS fixing window: low 15:00 to 15:30 ET, central 14:30 to 16:00 ET, high the whole day
+unit: week in time order; block length 4 weeks
+minimum_holdout_weeks: 50
+tests: [E5]
+prior: weak or no predictability expected; the result is recorded whatever it is
+verdict: supported only if E5 passes
+preset_if_supported:
+  name: usd_swap_spread_weekly_forecast
+  parameters: intercept, slope_cot_change, slope_lagged_change
+  engine_use: weekly skew on swap-spread package RFQs

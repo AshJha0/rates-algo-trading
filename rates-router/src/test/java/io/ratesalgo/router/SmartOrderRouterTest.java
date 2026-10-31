@@ -115,6 +115,63 @@ class SmartOrderRouterTest {
     assertEquals(0, r.children().anomalies());
   }
 
+  /**
+   * DR-R2R-03: the venue confirms a cancel with a cumulative quantity of 1 MM on a 2 MM child,
+   * the router re-routes the freed 1 MM, and then a fill for the whole 2 MM arrives on the
+   * cancelled child. The extra 1 MM was no longer outstanding: the parent stays open until the
+   * re-routed child resolves, finishes then, and the overfill is counted.
+   */
+  @Test
+  void aFillBeyondTheConfirmedCancelKeepsParentAccountingWhole() {
+    passiveFriendlyVenue2();
+    final SmartOrderRouter r = router(oneSlice(5_000_000_000L));
+    r.submit(7, 10, Side.Buy, 2 * MM, 0.0, 0L);
+    final StubVenues.Order passive = venues.last();
+    report(r, passive, OrdStatus.New, 0, 0);
+    clock.advance(5_001_000_000L);
+    r.poll();
+    report(r, passive, OrdStatus.Cancelled, 0, MM);
+    final StubVenues.Order aggressive = venues.last();
+    assertEquals(MM, aggressive.qty());
+    report(r, passive, OrdStatus.Filled, 2 * MM, 2 * MM);
+    assertEquals(MM, r.children().lastOverfill());
+    assertTrue(r.isActive(7), "the re-routed child is still working");
+    assertEquals(0, r.parentsCompleted());
+    report(r, aggressive, OrdStatus.Filled, MM, MM);
+    assertFalse(r.isActive(7));
+    assertEquals(1, r.parentsCompleted());
+    assertEquals(MM, r.children().overfills());
+  }
+
+  @Test
+  void cancellingAParentCancelsItsChildrenAndKeepsTheirFills() {
+    passiveFriendlyVenue2();
+    final SmartOrderRouter r = router(oneSlice(30_000_000_000L));
+    r.submit(21, 10, Side.Buy, 3 * MM, 0.0, 0L);
+    final StubVenues.Order passive = venues.last();
+    report(r, passive, OrdStatus.New, 0, 0);
+    report(r, passive, OrdStatus.PartiallyFilled, MM, MM);
+    final int sentBefore = venues.orders.size();
+    assertTrue(r.cancel(21));
+    assertTrue(r.cancel(21), "a second cancel of a cancelling parent is accepted");
+    assertEquals(1, venues.cancels.size());
+    assertTrue(r.isActive(21), "live until the venue confirms the cancel");
+    report(r, passive, OrdStatus.Cancelled, 0, MM);
+    assertFalse(r.isActive(21));
+    assertEquals(sentBefore, venues.orders.size(), "nothing re-routed after the cancel");
+    assertFalse(r.cancel(21));
+
+    r.submit(22, 10, Side.Buy, 2 * MM, 0.0, 0L);
+    r.submit(23, 10, Side.Sell, 2 * MM, 0.0, 0L);
+    assertEquals(2, r.cancelAll());
+    for (final StubVenues.Order o : new ArrayList<>(venues.orders.subList(sentBefore, venues.orders.size()))) {
+      report(r, o, OrdStatus.Cancelled, 0, 0);
+    }
+    assertFalse(r.isActive(22));
+    assertFalse(r.isActive(23));
+    assertEquals(0, r.cancelAll());
+  }
+
   @Test
   void bookMovingAwayCancelsAndReroutes() {
     passiveFriendlyVenue2();
@@ -138,7 +195,12 @@ class SmartOrderRouterTest {
     assertEquals(BID + 2 * TICK, again.price());
     final int slot = r.children().slotOf(passive.id());
     assertEquals(-1, slot, "the replaced child is released");
-    assertEquals(3 * MM, again.qty());
+    // venue 2's book is now two ticks above venue 1's, so the re-route no longer sends the whole
+    // 3 MM back to venue 2: the cheaper venue takes part of it (DR-R2R-04)
+    final CostTable reroute = tables.get(tables.size() - 1);
+    assertEquals(3 * MM, reroute.allocatedQuantity, reroute.format());
+    assertTrue(reroute.allocated[0] > 0, reroute.format());
+    assertTrue(again.qty() < 3 * MM);
   }
 
   @Test

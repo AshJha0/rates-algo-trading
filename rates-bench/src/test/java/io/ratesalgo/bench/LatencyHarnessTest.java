@@ -14,13 +14,16 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.HdrHistogram.Histogram;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class LatencyHarnessTest {
 
   @TempDir Path dir;
 
-  @Test
-  void shortRunWritesAReportWhoseHistogramsReadBack() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"direct", "ring"})
+  void shortRunWritesAReportWhoseHistogramsReadBack(final String mode) throws Exception {
     final HarnessConfig cfg =
         HarnessConfig.parse(
             new String[] {
@@ -29,6 +32,8 @@ class LatencyHarnessTest {
               "--measure-seconds=2",
               "--idle=backoff",
               "--journal=true",
+              "--journal-mode=" + mode,
+              "--ring-bytes=1048576",
               "--segment-bytes=1048576",
               "--cpu=-1",
               "--label=unit-test",
@@ -41,10 +46,20 @@ class LatencyHarnessTest {
     assertTrue(r.scheduledToEncode().getTotalCount() <= 40_000L);
     assertTrue(r.scheduledToEncode().getTotalCount() >= measured - r.generatorDropped());
     assertTrue(r.decodeToEncode().getTotalCount() >= r.scheduledToEncode().getTotalCount());
-    assertEquals(r.generated() - r.generatorDropped(), seen.get());
     final String json = Files.readString(r.jsonFile(), StandardCharsets.UTF_8);
+    // Exact accounting on every path a message can leave by (DR-INT-06). Under machine load the
+    // gateway thread can fall behind, and the loop then drops Quotes on a full outbound ring
+    // (backpressure, counted), so the gateway sees fewer than the loop processed.
+    final long inbound = count(json, "inbound");
+    final long outbound = count(json, "outbound");
+    final long outboundDropped = count(json, "outboundDropped");
+    assertEquals(r.generated() - r.generatorDropped(), inbound, json);
+    assertEquals(inbound, outbound + outboundDropped, json);
+    assertEquals(outbound, seen.get(), json);
     assertTrue(json.contains("\"schema\": \"rates-bench-latency/1\""));
     assertTrue(json.contains("\"tickToWire\": null"));
+    assertTrue(json.contains("\"journalMode\": \"" + mode + "\""), json);
+    assertTrue(json.contains("\"gcCollections\": "), json);
     final Histogram back = LatencyReport.readHistogram(json, "decodeToEncode");
     assertEquals(r.decodeToEncode().getTotalCount(), back.getTotalCount());
     assertEquals(r.decodeToEncode().getValueAtPercentile(99.0), back.getValueAtPercentile(99.0));
@@ -53,6 +68,13 @@ class LatencyHarnessTest {
     assertEquals(2, rows.size());
     assertTrue(rows.get(0).contains("core decode-to-encode"));
     assertTrue(rows.get(1).contains("scheduled-to-encode"));
+  }
+
+  private static long count(final String json, final String name) {
+    final java.util.regex.Matcher m =
+        java.util.regex.Pattern.compile("\"" + name + "\": (\\d+)").matcher(json);
+    assertTrue(m.find(), "no count " + name + " in " + json);
+    return Long.parseLong(m.group(1));
   }
 
   @Test
@@ -85,6 +107,12 @@ class LatencyHarnessTest {
     assertThrows(IllegalArgumentException.class, () -> HarnessConfig.parse(new String[] {"--journal=yes"}));
     assertThrows(IllegalArgumentException.class, () -> HarnessConfig.parse(new String[] {"--rate=0"}));
     assertThrows(IllegalArgumentException.class, () -> HarnessConfig.parse(new String[] {"--measure-seconds=0"}));
+    assertEquals("direct", d.journalMode());
+    assertEquals(64 << 20, d.ringBytes());
+    final HarnessConfig ring = HarnessConfig.parse(new String[] {"--journal-mode=ring", "--ring-bytes=65536"});
+    assertEquals("ring", ring.journalMode());
+    assertEquals(65_536, ring.ringBytes());
+    assertThrows(IllegalArgumentException.class, () -> HarnessConfig.parse(new String[] {"--journal-mode=async"}));
   }
 
   @Test

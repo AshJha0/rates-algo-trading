@@ -20,8 +20,13 @@ import static io.ratesalgo.journal.JournalFormat.alignedFrameLength;
 
 import io.ratesalgo.common.time.Clock;
 import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import org.agrona.DirectBuffer;
 import org.agrona.IoUtil;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -38,6 +43,15 @@ import org.agrona.concurrent.UnsafeBuffer;
  * verifying the chain on the way.
  */
 public final class JournalWriter implements AutoCloseable {
+
+  /** The page size {@link #pretouch()} steps by; 4 KiB on x86-64 Windows and Linux. */
+  static final int PAGE_SIZE = 4096;
+
+  /** Pages {@link #pretouch()} touches between two safepoint checks. */
+  static final int PRETOUCH_PAGES_PER_CHECK = 16;
+
+  /** Bytes written per channel write when a new file is zero-filled. */
+  private static final int ZERO_FILL_CHUNK = 1 << 20;
 
   private final MappedByteBuffer mapped;
   private final UnsafeBuffer buffer;
@@ -87,7 +101,7 @@ public final class JournalWriter implements AutoCloseable {
     if (file.exists()) {
       throw new IllegalArgumentException("journal already exists: " + path);
     }
-    final MappedByteBuffer mapped = IoUtil.mapNewFile(file, capacityBytes, true);
+    final MappedByteBuffer mapped = mapNewZeroFilled(path, capacityBytes);
     mapped.order(JournalFormat.BYTE_ORDER);
     final UnsafeBuffer header = new UnsafeBuffer(mapped);
     header.putInt(MAGIC_OFFSET, MAGIC);
@@ -96,6 +110,31 @@ public final class JournalWriter implements AutoCloseable {
     header.putInt(CAPACITY_OFFSET, capacityBytes);
     header.putLong(CREATED_OFFSET, clock.epochNanos());
     return new JournalWriter(mapped, clock, FILE_HEADER_LENGTH, firstSequence, previousHash);
+  }
+
+  /**
+   * Creates a file of {@code capacityBytes} zero bytes and maps it. The zeros are written with
+   * {@link FileChannel#write}, not stored through the mapping: a store through a fresh mapping
+   * takes a page fault per page in Java code, and a long run of those in one compiled loop holds
+   * every other thread of the process at the next safepoint until it ends (DECISIONS.md DR-R2J-01).
+   * A channel write runs in native code, where the thread does not delay a safepoint.
+   */
+  private static MappedByteBuffer mapNewZeroFilled(final Path path, final int capacityBytes) {
+    try (FileChannel channel =
+        FileChannel.open(
+            path, StandardOpenOption.CREATE_NEW, StandardOpenOption.READ, StandardOpenOption.WRITE)) {
+      final ByteBuffer zeros = ByteBuffer.allocateDirect(Math.min(ZERO_FILL_CHUNK, capacityBytes));
+      long written = 0;
+      while (written < capacityBytes) {
+        zeros.clear().limit((int) Math.min(zeros.capacity(), capacityBytes - written));
+        while (zeros.hasRemaining()) {
+          written += channel.write(zeros, written);
+        }
+      }
+      return channel.map(FileChannel.MapMode.READ_WRITE, 0, capacityBytes);
+    } catch (final IOException e) {
+      throw new UncheckedIOException("cannot create journal " + path, e);
+    }
   }
 
   /** Opens an existing journal and positions the writer after its last frame. */
@@ -132,6 +171,24 @@ public final class JournalWriter implements AutoCloseable {
       final DirectBuffer payload,
       final int offset,
       final int length) {
+    return append(templateId, schemaVersion, clock.epochNanos(), payload, offset, length);
+  }
+
+  /**
+   * Appends one frame stamped with {@code timestampNanos} instead of a reading of the writer's
+   * clock. A writer that drains frames produced on another thread uses this to keep the stamp the
+   * producer saw (API_SPEC.md Section 9.7).
+   *
+   * @return the sequence number assigned to the frame
+   * @throws JournalFullException if the file has no room; nothing is written in that case
+   */
+  public long append(
+      final int templateId,
+      final int schemaVersion,
+      final long timestampNanos,
+      final DirectBuffer payload,
+      final int offset,
+      final int length) {
     ensureOpen();
     if (length < 0) {
       throw new IllegalArgumentException("negative length: " + length);
@@ -153,7 +210,7 @@ public final class JournalWriter implements AutoCloseable {
       buffer.setMemory(frame + FRAME_HEADER_LENGTH + length, padding, (byte) 0);
     }
     buffer.putLong(frame + SEQUENCE_OFFSET, sequence);
-    buffer.putLong(frame + TIMESTAMP_OFFSET, clock.epochNanos());
+    buffer.putLong(frame + TIMESTAMP_OFFSET, timestampNanos);
     buffer.putShort(frame + TEMPLATE_ID_OFFSET, (short) templateId);
     buffer.putShort(frame + SCHEMA_VERSION_OFFSET, (short) schemaVersion);
     buffer.putLong(frame + CHAIN_HASH_OFFSET, hash);
@@ -163,6 +220,49 @@ public final class JournalWriter implements AutoCloseable {
     nextSequence = sequence + 1;
     chainHash = hash;
     return sequence;
+  }
+
+  /**
+   * Makes an empty segment continue a chain: its first frame will carry {@code firstSequence} and
+   * chain to {@code previousHash}. Used when a segment prepared ahead of time becomes current.
+   *
+   * @throws IllegalStateException if a frame has been appended
+   */
+  void continueChain(final long firstSequence, final long previousHash) {
+    if (position != FILE_HEADER_LENGTH) {
+      throw new IllegalStateException("segment already holds frames");
+    }
+    nextSequence = firstSequence;
+    chainHash = previousHash;
+  }
+
+  /**
+   * Writes a zero byte into the last byte of every page from the one holding the write position to
+   * the end of the file, so that the operating system maps each page now, for writing, rather than
+   * on the appending thread's first store to it. Called before the writer is handed to the
+   * appending thread. Every byte written lies after the last frame and is zero already, so the file
+   * reads the same afterwards.
+   *
+   * <p>Each store can take a page fault in Java code, during which this thread cannot reach a
+   * safepoint. The loop therefore yields every {@link #PRETOUCH_PAGES_PER_CHECK} pages: {@code
+   * Thread.yield()} is a native call, and the return from native code is a safepoint check, so a
+   * safepoint waits for at most that many faults (DR-R2J-01). A plain counted loop has no
+   * safepoint check at all under the Parallel collector.
+   *
+   * @return the number of pages touched
+   */
+  // The yield is for its safepoint check on the return from native code, not for scheduling.
+  @SuppressWarnings("ThreadPriorityCheck")
+  int pretouch() {
+    ensureOpen();
+    int pages = 0;
+    for (long page = position & -PAGE_SIZE; page < capacity; page += PAGE_SIZE) {
+      buffer.putByte((int) (Math.min(page + PAGE_SIZE, capacity) - 1), (byte) 0);
+      if (++pages % PRETOUCH_PAGES_PER_CHECK == 0) {
+        Thread.yield();
+      }
+    }
+    return pages;
   }
 
   /** The sequence the next appended frame will get. */

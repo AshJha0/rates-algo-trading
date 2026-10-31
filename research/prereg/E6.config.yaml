@@ -1,0 +1,35 @@
+# Configuration of EDGE-E6 (carry and roll-down inventory tilt). Hashed into research/prereg/E6.yaml.
+study: EDGE-E6
+programme: research/prereg/edge_programme.yaml
+programme_sha256: a66bde494ac4af654917c497b25c6f6c4ec252f488e189f2b5a5ecbed9750f7c
+sources:
+  par_curve: US Treasury daily par yield curve CSV, one file per year 2015 to 2026
+tenors: [2, 3, 5, 7, 10, 20, 30]
+rebalance: last par-curve business day of each month (t); held one month to the next month end
+funding: >
+  f(t) = 1 Mo par yield plus a funding spread (central 10 bp; the 1-month bill trades below
+  general collateral repo), applied to the inventory's market value for the month
+expected_return: >
+  for tenor T, a par bond of DV01 one bp: carry_roll_T(t) = 1e4 * (y_T(t) - f(t)) / 12 / D_T(t)
+  + 1e4 * (y_T(t) - y_(T - 1/12)(t)), in bp per month per unit DV01, with D_T the modified
+  duration of a par bond, (1 - (1 + y/2)^(-2T)) / y, and y_(T - 1/12) the par yield linearly
+  interpolated in maturity
+realised_return: >
+  pnl_T = 1e4 * (y_T(t) - f(t)) / 12 / D_T(t) - 1e4 * (y_(T - 1/12)(t+1) - y_T(t)), bp per
+  unit DV01 (price change to first order plus coupon carry less funding)
+inventories: >
+  baseline: one unit DV01 in each of the seven tenors. Tilt: weights w_T = max(0, 1 + k * z_T)
+  rescaled to sum to 7, with z_T the cross-sectional z-score of carry_roll at t and k = 0.5;
+  same total DV01 as the baseline
+unit_statistic: monthly P&L of the tilt minus the baseline, bp per unit DV01 summed over tenors
+band: {low: {funding_spread_bp: 0}, central: {funding_spread_bp: 10}, high: {funding_spread_bp: 25}}
+unit: month in time order; block length 3 months
+predicted_sign: positive
+economic_threshold_bp: 0.1
+minimum_holdout_months: 40
+tests: [E6]
+verdict: supported only if E6 passes
+preset_if_supported:
+  name: ust_carry_roll_inventory_tilt
+  parameters: tilt_k, mean_excess_bp_per_month, carry_roll_<T>y_bp_at_end (last holdout month)
+  engine_use: inventory skew that keeps carry-rich tenors (skew = k * z_T times the base skew)

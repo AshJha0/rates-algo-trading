@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.ratesalgo.journal.SegmentedJournal;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.io.TempDir;
 
 class LoopReplayTest {
@@ -16,7 +18,12 @@ class LoopReplayTest {
 
   /** A live run with timers, backpressure, a disconnect and several journal segments. */
   private TestRig liveRun(final QuoteApp app) {
-    final TestRig rig = new TestRig(dir, app, 4096, RingBufferContract.MIN_CAPACITY);
+    return liveRun(app, null);
+  }
+
+  /** As {@link #liveRun(QuoteApp)} with journals in {@code mode}, or plain ones if it is null. */
+  private TestRig liveRun(final QuoteApp app, final JournalMode mode) {
+    final TestRig rig = new TestRig(dir, app, 4096, RingBufferContract.MIN_CAPACITY, mode);
     long rfq = 1;
     for (int round = 0; round < 12; round++) {
       for (int i = 0; i < 40; i++) {
@@ -40,10 +47,11 @@ class LoopReplayTest {
     return rig;
   }
 
-  @Test
-  void replayReproducesTheOutboundStreamExactly() {
+  @ParameterizedTest
+  @ValueSource(strings = {"plain", "DIRECT", "RING"})
+  void replayReproducesTheOutboundStreamExactly(final String journals) {
     final QuoteApp live = new QuoteApp(true);
-    final TestRig rig = liveRun(live);
+    final TestRig rig = liveRun(live, "plain".equals(journals) ? null : JournalMode.valueOf(journals));
     assertTrue(live.backpressureEvents > 0, "run should hit backpressure");
     assertTrue(live.timersFired > 0);
     assertEquals(1L, live.statusEvents);
@@ -53,7 +61,7 @@ class LoopReplayTest {
     final ReplayResult r = rig.replay(replayed);
     assertTrue(r.matches(), r.toString());
     assertEquals(rig.loop.counters().get(LoopCounters.OUTBOUND), r.outboundProduced());
-    assertEquals(rig.out.chainHash(), r.recordedHash());
+    assertEquals(rig.recordedOutboundHash(), r.recordedHash());
     assertEquals(live.quotes, replayed.quotes);
     assertEquals(live.timersFired, replayed.timersFired);
     assertEquals(live.backpressureEvents, replayed.backpressureEvents);

@@ -1,0 +1,52 @@
+%% Title: UK RTS 6 controls mapped to the components that implement them
+flowchart LR
+  subgraph pre["Pre-trade, Art 15"]
+    chk["RiskEngine checkQuote and checkOrder<br/>collar, size, position, DV01, loss"]
+    tb["TokenBucket<br/>quote, order and message rates"]
+  end
+  subgraph rt["Real-time monitoring, Art 16"]
+    alerts["RiskEngine post-trade alerts<br/>RiskLimitBreach (30)"]
+    prom["MetricsRegistry, Prometheus alerts.yml,<br/>Grafana rates-trading dashboard"]
+  end
+  subgraph kill["Kill functionality, Art 12"]
+    ks["KillSwitchController<br/>ACTIVE, KILLED, RESET_PENDING"]
+    ep["POST /control/kill<br/>OpsHttpServer"]
+  end
+  subgraph post["Post-trade, Art 17 and 28"]
+    pk["PositionKeeper<br/>books from journal frames"]
+    recon["DailyReconciliation<br/>classified breaks, BreakReport"]
+    rec["OrderRecord and RecordArchive<br/>Annex II, five to seven years"]
+  end
+  subgraph surv["Surveillance and stress, Art 10 and 13"]
+    sd["SurveillanceDetector<br/>QuoteStuffingDetector, SelfTradeDetector"]
+    sr["StressReplayer<br/>busiest window at twice the rate"]
+  end
+  subgraph chg["Change management, Art 5, 8, 11 and 14"]
+    cicheck["ci.yml and pull request review"]
+    cfgv["ConfigValidatorMain<br/>versioned deploy/config"]
+    bg["deploy/bluegreen.sh<br/>RestartProcedure"]
+    standby["Warm standby over Aeron<br/>warm-standby-design.md"]
+  end
+  journal[("Journal<br/>every inbound and outbound message")]
+  op["Operator<br/>runbooks, party id"]
+
+  chk -->|refusal sends RiskLimitBreach| alerts
+  tb -->|rate checks inside| chk
+  alerts -->|new daily loss breach triggers| ks
+  op -->|token and party id| ep
+  ep -.->|bound to the real engines at integration| ks
+  ks -->|"KillSwitch (31) journaled"| journal
+  chk -->|checked messages journaled| journal
+  prom -->|"KillSwitchEngaged, QuotesLiveAfterKill"| op
+  journal -->|frames| pk
+  journal -->|frames| sd
+  journal -->|replayed by| sr
+  pk -->|positions and trades| recon
+  pk -->|order records| rec
+  recon -->|unexplained breaks metric| prom
+  cicheck -->|tested before deployment| cfgv
+  cfgv -->|valid config only| bg
+  bg -.->|planned at integration| standby
+
+  classDef planned stroke-dasharray: 5 5
+  class standby planned

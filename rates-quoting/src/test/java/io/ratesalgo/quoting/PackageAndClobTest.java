@@ -4,11 +4,13 @@ import static io.ratesalgo.quoting.TestMarket.FACE_1M;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.api.CurrencyCode;
 import io.ratesalgo.api.Decimal9;
 import io.ratesalgo.api.Dv01Vector;
+import io.ratesalgo.hedge.KeyRateCovariance;
 import io.ratesalgo.messages.sbe.KillReason;
 import io.ratesalgo.messages.sbe.NewOrderDecoder;
 import io.ratesalgo.messages.sbe.OrdStatus;
@@ -39,23 +41,30 @@ class PackageAndClobTest {
     assertTrue(Decimal9.toDouble(r.legPrice(1)) < m.levelOf(TestMarket.SW10));
   }
 
+  /** Steps past the client re-quote throttle, which packages pass like single RFQs. */
+  private PackageQuoter.PackageRequest next(final PackageQuoter.PackageRequest pkg) {
+    m.clock.advance(300_000_000L);
+    m.refreshAll(m.clock.epochNanos());
+    return pkg;
+  }
+
   @Test
   void everyStructuredTypeBuildsAndPrices() {
     final PackageQuoter pq = m.desk.packages();
     final PackageQuoter.Result r = new PackageQuoter.Result();
-    assertTrue(pq.quote(pq.butterfly(TestMarket.SW2, TestMarket.SW5, 50 * FACE_1M, TestMarket.SW10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.butterfly(TestMarket.SW2, TestMarket.SW5, 50 * FACE_1M, TestMarket.SW10)), 1, 3, r).quoted());
     assertEquals(PackageQuoter.Type.BUTTERFLY, pq.butterfly(TestMarket.SW2, TestMarket.SW5, FACE_1M, TestMarket.SW10).type());
-    assertTrue(pq.quote(pq.neutralPair(PackageQuoter.Type.SPREAD_OVER, TestMarket.UST10, 50 * FACE_1M, TestMarket.SW10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SPREAD_OVER, TestMarket.UST10, 50 * FACE_1M, TestMarket.SW10)), 1, 3, r).quoted());
     assertTrue(r.hedgeSaving() > 0.0, "asset swap nets: long bond, pay fixed");
-    assertTrue(pq.quote(pq.neutralPair(PackageQuoter.Type.INVOICE_SPREAD, TestMarket.TY, 50 * FACE_1M, TestMarket.SW10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.neutralPair(PackageQuoter.Type.INVOICE_SPREAD, TestMarket.TY, 50 * FACE_1M, TestMarket.SW10)), 1, 3, r).quoted());
     final PackageQuoter.PackageRequest roll = pq.neutralPair(PackageQuoter.Type.IMM_ROLL, TestMarket.TY, 50 * FACE_1M, TestMarket.TY);
     assertEquals(-50 * FACE_1M, roll.clientQuantity(1));
-    assertTrue(pq.quote(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10)), 1, 3, r).quoted());
     assertEquals(2, roll.legs());
     // mixed currencies are refused
-    assertFalse(pq.quote(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST10, 50 * FACE_1M, TestMarket.BUND10), 1, 3, r).quoted());
+    assertFalse(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST10, 50 * FACE_1M, TestMarket.BUND10)), 1, 3, r).quoted());
     risk.limits().priceCollarBp(0.01);
-    assertFalse(pq.quote(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10), 1, 3, r).quoted());
+    assertFalse(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10)), 1, 3, r).quoted());
     assertNotEquals(0, r.rejection());
   }
 
@@ -93,6 +102,107 @@ class PackageAndClobTest {
     clob.update(TestMarket.UST10, m.clock.epochNanos());
     assertTrue(clob.restingOrder(TestMarket.UST10, true) != 0L);
     assertTrue(clob.throttled() > 0);
+  }
+
+  /**
+   * DR-R2R-12: on a venue with a 1/256 tick the bid rounds down and the ask up to the tick, each
+   * within one tick of the Decimal9 target, so the venue does not refuse the order as off-tick.
+   */
+  @Test
+  void clobPricesAreOnTheVenueTick() {
+    final long tick = Decimal9.round(1.0 / 256);
+    final ClobQuoter fine = new TestMarket().desk.clob();
+    final ClobQuoter coarse = m.desk.clob();
+    fine.enable(TestMarket.UST5);
+    coarse.enable(TestMarket.UST5, tick);
+    fine.update(TestMarket.UST5, m.clock.epochNanos());
+    coarse.update(TestMarket.UST5, m.clock.epochNanos());
+    final long fineBid = fine.restingPrice(TestMarket.UST5, true);
+    final long fineAsk = fine.restingPrice(TestMarket.UST5, false);
+    final long bid = coarse.restingPrice(TestMarket.UST5, true);
+    final long ask = coarse.restingPrice(TestMarket.UST5, false);
+    assertTrue(fineBid % tick != 0 || fineAsk % tick != 0, "the Decimal9 targets are off the tick");
+    assertEquals(0L, bid % tick);
+    assertEquals(0L, ask % tick);
+    assertTrue(bid <= fineBid && fineBid - bid < tick, bid + " vs " + fineBid);
+    assertTrue(ask >= fineAsk && ask - fineAsk < tick, ask + " vs " + fineAsk);
+    assertThrows(IllegalArgumentException.class, () -> coarse.enable(TestMarket.UST10, 0L));
+  }
+
+  /**
+   * ClobBook.validate's tick rule ({@code price > 0 && price % tickSize == 0}), restated here because
+   * rates-quoting does not depend on rates-venues: no CLOB price may break it, for any tick, any
+   * Treasury, and a flat, long or short book with skew on (audit item 6).
+   */
+  @Test
+  void everyClobPricePassesTheVenueTickRule() {
+    final long[] ticks = {Decimal9.round(1.0 / 32), Decimal9.round(1.0 / 128), Decimal9.round(1.0 / 256)};
+    final int[] treasuries = {TestMarket.UST2, TestMarket.UST5, TestMarket.UST10, TestMarket.UST30};
+    final long[] positions = {0L, 50 * FACE_1M, -50 * FACE_1M};
+    int priced = 0;
+    for (final long tick : ticks) {
+      for (final long position : positions) {
+        final TestMarket t = new TestMarket();
+        final ClobQuoter clob = t.desk.clob();
+        clob.inventorySkew(KeyRateCovariance.assumedDefault(), 2e-6, 2.0);
+        for (final int id : treasuries) {
+          if (position != 0L) {
+            t.desk.risk().onFill(id, position, Decimal9.round(t.levelOf(id)));
+          }
+          clob.enable(id, tick);
+          clob.update(id, t.clock.epochNanos());
+          for (final boolean bid : new boolean[] {true, false}) {
+            final long px = clob.restingPrice(id, bid);
+            if (clob.restingOrder(id, bid) != 0L) {
+              assertTrue(px > 0 && px % tick == 0, id + " " + bid + " " + px + " tick " + tick);
+              priced++;
+            }
+          }
+        }
+      }
+    }
+    assertTrue(priced >= 48, "priced " + priced);
+  }
+
+  /**
+   * Audit item 7: with the RFQ engine's skew on, a long book lowers both CLOB prices and a short
+   * book raises them, by the same skew the RFQ engine applies ({@code kappa u' Sigma p / |U|}).
+   */
+  @Test
+  void clobInventorySkewLeansBothSides() {
+    final long[] bid = new long[3];
+    final long[] ask = new long[3];
+    final double[] skew = new double[3];
+    final long[] positions = {0L, 5 * FACE_1M, -5 * FACE_1M};
+    for (int k = 0; k < 3; k++) {
+      final TestMarket t = new TestMarket();
+      final ClobQuoter clob = t.desk.clob();
+      clob.inventorySkew(KeyRateCovariance.assumedDefault(), 2e-6, 2.0);
+      if (positions[k] != 0L) {
+        t.desk.risk().onFill(TestMarket.UST10, positions[k], Decimal9.round(t.levelOf(TestMarket.UST10)));
+      }
+      clob.enable(TestMarket.UST10);
+      clob.update(TestMarket.UST10, t.clock.epochNanos());
+      bid[k] = clob.restingPrice(TestMarket.UST10, true);
+      ask[k] = clob.restingPrice(TestMarket.UST10, false);
+      skew[k] = clob.lastSkewBp();
+    }
+    assertEquals(0.0, skew[0], 0.0);
+    assertTrue(skew[1] > 0.0 && skew[1] < 2.0 && skew[2] < 0.0, skew[1] + " " + skew[2] + ", unclamped");
+    assertTrue(bid[1] < bid[0] && ask[1] < ask[0], "long lowers both");
+    assertTrue(bid[2] > bid[0] && ask[2] > ask[0], "short raises both " + java.util.Arrays.toString(bid) + java.util.Arrays.toString(ask) + java.util.Arrays.toString(skew));
+    final double qpb = risk.quotePerBp(TestMarket.UST10);
+    assertEquals(skew[1] * qpb, Decimal9.toDouble(bid[0] - bid[1]), 2e-9);
+    assertEquals(skew[1] * qpb, Decimal9.toDouble(ask[0] - ask[1]), 2e-9);
+    // kappa 0 is off; bad arguments are refused
+    final ClobQuoter off = new TestMarket().desk.clob();
+    off.inventorySkew(KeyRateCovariance.assumedDefault(), 0.0, 2.0);
+    off.enable(TestMarket.UST10);
+    off.update(TestMarket.UST10, m.clock.epochNanos());
+    assertEquals(bid[0], off.restingPrice(TestMarket.UST10, true));
+    assertThrows(IllegalArgumentException.class, () -> off.inventorySkew(null, 1e-6, 2.0));
+    assertThrows(IllegalArgumentException.class, () -> off.inventorySkew(KeyRateCovariance.assumedDefault(), -1.0, 2.0));
+    assertThrows(IllegalArgumentException.class, () -> off.inventorySkew(KeyRateCovariance.assumedDefault(), 1e-6, Double.NaN));
   }
 
   @Test
@@ -220,8 +330,9 @@ class PackageAndClobTest {
     for (int i = 0; i < 10_000; i++) {
       learning.update(base, 0.5, true);
     }
-    assertEquals(2.0, learning.coefficient(HitRateModel.INTERCEPT), 0.0, "clamped to band");
-    assertTrue(learning.coefficient(HitRateModel.SPREAD_BP) <= -1.0);
+    assertTrue(learning.coefficient(HitRateModel.INTERCEPT) <= learning.learnHigh(HitRateModel.INTERCEPT));
+    assertTrue(learning.coefficient(HitRateModel.SPREAD_BP) <= HitRateModel.SLOPE_LEARN_HIGH);
+    assertTrue(learning.winProbability(base, 0.5) > 0.9, "learned to win at 0.5 bp");
     assertEquals(0.5, HitRateModel.logistic(0.0), 0.0);
     assertTrue(HitRateModel.logistic(-800.0) >= 0.0);
   }

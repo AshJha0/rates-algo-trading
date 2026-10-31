@@ -521,8 +521,10 @@ public final class BacktestRunner {
       final Top top = tops.get(order.instrumentId);
       if (order.type == OrdType.Market) {
         final long mid = Prices.toMantissa(book.mid(order.instrumentId));
-        final long half = top != null && top.twoSided() ? (top.ask - top.bid) / 2 : 0L;
-        final HedgeCostModel.Fill fill = hedgeCost.fill(instrument, order.buy, order.quantity, mid, half);
+        final boolean twoSided = top != null && top.twoSided();
+        final long half = twoSided ? (top.ask - top.bid) / 2 : 0L;
+        final long touchQty = twoSided ? (order.buy ? top.askQty : top.bidQty) : 0L;
+        final HedgeCostModel.Fill fill = hedgeCost.fill(instrument, order.buy, order.quantity, mid, half, touchQty);
         fillOrder(order, fill.priceMantissa(), fill.fee());
         return;
       }

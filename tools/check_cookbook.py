@@ -40,10 +40,23 @@ RECIPES = {
     18: ("Recipe18Backtest.java", "recipe18.txt"),
     19: ("Recipe19Ledger.java", "recipe19.txt"),
     21: ("Recipe21ChaosBreakReport.java", "recipe21.txt"),
+    22: ("Recipe22TradingDay.java", "recipe22.txt"),
+    23: ("Recipe23NssRichCheap.java", "recipe23.txt"),
+    24: ("Recipe24ZSpreadAsw.java", "recipe24.txt"),
+    25: ("Recipe25CarryRoll.java", "recipe25.txt"),
+    26: ("Recipe26SofrInArrears.java", "recipe26.txt"),
+    27: ("Recipe27PackageRfq.java", "recipe27.txt"),
+    28: ("Recipe28QuotePulls.java", "recipe28.txt"),
+    29: ("Recipe29RouterReplay.java", "recipe29.txt"),
+    30: ("Recipe30ClobWorkup.java", "recipe30.txt"),
+    34: ("Recipe34ConfigSchema.java", "recipe34.txt"),
 }
 
 PYTHON_RECIPES = {
     20: ("recipe20_reconcile.py", "recipe20.txt"),
+    31: ("recipe31_pca_hedge.py", "recipe31.txt"),
+    32: ("recipe32_hitrate.py", "recipe32.txt"),
+    33: ("recipe33_markouts.py", "recipe33.txt"),
 }
 
 

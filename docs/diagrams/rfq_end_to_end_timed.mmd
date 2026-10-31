@@ -1,0 +1,43 @@
+%% Title: One RFQ end to end, with the timings the contract pins
+sequenceDiagram
+  participant C as Client
+  participant V as D2C venue
+  participant G as VenueGateway and FixSession
+  participant L as EventLoop
+  participant J as Inbound and outbound journals
+  participant Q as QuotingEngine
+  participant R as RiskEngine
+  participant H as Hedger
+  participant S as SmartOrderRouter
+  participant P as PositionKeeper
+
+  C->>V: RFQ to 3 to 5 dealers
+  Note over V: dealer response window 5000 ms (Section 11.3)
+  V->>G: FIX QuoteRequest R
+  G->>L: SBE QuoteRequest (10) on the inbound ring
+  L->>J: append inbound frame at the latched cycle time
+  L->>Q: dispatch through QuotingEventHandler
+  Note over Q: inputs no older than 2 s, heartbeats within 3 s, re-quote throttle 250 ms (Section 12.1)
+  Q->>R: checkQuote, 11 checks in order (Section 13.2)
+  R-->>Q: accepted, quantity reserved
+  Q->>L: publish Quote (11), FIRM until now + 5 s or the request expiry, whichever is first
+  L->>J: append outbound frame
+  Note over L,J: decode to encode target: p50 under 20 us, p99.9 under 100 us (BENCHMARKS.md)
+  L->>G: outbound ring
+  G->>V: FIX Quote S
+  V->>C: every quote when the window closes or all dealers answered
+  C->>V: trade with the best quote
+  V->>G: FIX QuoteResponse AJ Done, cover price
+  G->>L: SBE QuoteResponse (12)
+  L->>J: append inbound frame
+  L->>Q: dispatch
+  Q->>R: onFill, release the reservation
+  Note over Q: markout measured 60 s after the fill (markoutHorizonNanos)
+  Note over Q: an unanswered quote expires at validUntilNanos and frees its reservation
+  H->>R: on each timer: residual ladder
+  Note over H: first tranche 0.5 of the plan, then half-life 30 s (Section 14.2)
+  H->>S: parent order through HedgeOrderSink, bound at integration
+  Note over S: slices over at most 120 s, passive for at most 30 s, then aggressive (Section 15.1)
+  S->>L: NewOrder (20) to the chosen venue
+  L->>J: append outbound frame
+  J->>P: journal frames booked by PositionKeeper (Section 17.2)

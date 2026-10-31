@@ -1,0 +1,57 @@
+{
+  "fixture": "calendar.csv",
+  "created_utc": "2026-10-31T13:47:27+00:00",
+  "sha256": "60f64624c482cccab89c71f66df126133114455fc201db874864f84939850bbc",
+  "size": 2920,
+  "rows": 101,
+  "columns": [
+    "date",
+    "event",
+    "time_et"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_alfred.json",
+    "data/manifests/edge_fomc.json"
+  ],
+  "raw_file_count": 5,
+  "raw_files": [
+    {
+      "name": "alfred_PAYEMS.htm",
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=PAYEMS",
+      "downloaded_utc": "2026-10-31T13:42:11+00:00",
+      "sha256": "f7668adfaeece83b7e5c567427dcd8830c01c8ddbd3426bf5ea0a4ad0e118c84",
+      "size": 99881
+    },
+    {
+      "name": "alfred_CPIAUCSL.htm",
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=CPIAUCSL",
+      "downloaded_utc": "2026-10-31T13:42:11+00:00",
+      "sha256": "f4dc3e7c0c383e5c19c17fd2e63ee052e5413f15cb7d11dfedf040150fe59445",
+      "size": 84945
+    },
+    {
+      "name": "alfred_GDPC1.htm",
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=GDPC1",
+      "downloaded_utc": "2026-10-31T13:42:12+00:00",
+      "sha256": "b88d78cb7d00d4e9f883d3ba90b54697d5d000b9dbdab2486a0f36e7761df96f",
+      "size": 65039
+    },
+    {
+      "name": "alfred_PCEPI.htm",
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=PCEPI",
+      "downloaded_utc": "2026-10-31T13:42:12+00:00",
+      "sha256": "9161776987391318b3eb18a2cc93f67f54064d3a7ab1fd4f0ba86377bf079c94",
+      "size": 56988
+    },
+    {
+      "name": "fomccalendars.htm",
+      "url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+      "downloaded_utc": "2026-10-31T13:42:07+00:00",
+      "sha256": "26499e380a6dfbd3296d889ec3991b6661fa8ca2e67ff5fac9482c99a1958c0a",
+      "size": 166350
+    }
+  ],
+  "transformation": "Release days 2024-10-01 to READ_END: ALFRED vintage dates (weekdays) of PAYEMS (Employment Situation), CPIAUCSL (CPI), GDPC1 (GDP) and PCEPI (Personal Income and Outlays), 08:30 ET; FOMC statement days (last meeting day, notation votes dropped) from the Federal Reserve FOMC calendars page, 14:00 ET.",
+  "produced_by": "ratesresearch.edge.build"
+}

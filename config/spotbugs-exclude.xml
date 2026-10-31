@@ -17,6 +17,12 @@
     <Class name="io.ratesalgo.common.time.TimerWheel" />
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
   </Match>
+  <!-- trigger() calls every kill-switch listener and sends the KillSwitch message even when one
+       listener throws, then rethrows the first failure (DECISIONS.md DR-R2R-02), as TimerWheel. -->
+  <Match>
+    <Class name="io.ratesalgo.risk.KillSwitchController" />
+    <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
+  </Match>
   <!-- rates-analytics (P1, DR-P1-03): the bootstrap writes pillar values into the curve object
        that pricers read; CurveBuilder.curve() and CurveContext hand out that one mutable,
        single-writer curve on purpose. Copying would break incremental rebuilds. -->
@@ -30,12 +36,18 @@
       <Bug pattern="EI_EXPOSE_REP2" />
     </Or>
   </Match>
-  <!-- rates-router (P4): the router, its child order book and its codecs share collaborators
+  <!-- rates-router (P4, narrowed to these classes by DR-R2R-14): the router, its child order
+       book, the decision codec and the back-test baseline share collaborators
        with their caller by design (the journal sink, the book view, the decoded table handed to a
        frame handler, the child book exposed for inspection); everything runs on one thread and
        copying would allocate on the per-order path. -->
   <Match>
-    <Package name="~io\.ratesalgo\.router(\..*)?" />
+    <Or>
+      <Class name="io.ratesalgo.router.ChildOrderBook" />
+      <Class name="io.ratesalgo.router.DecisionCodec" />
+      <Class name="io.ratesalgo.router.SmartOrderRouter" />
+      <Class name="io.ratesalgo.router.backtest.AggressiveBaseline" />
+    </Or>
     <Or>
       <Bug pattern="EI_EXPOSE_REP" />
       <Bug pattern="EI_EXPOSE_REP2" />
@@ -94,26 +106,78 @@
     <Package name="io.ratesalgo.bench.jmh" />
     <Bug pattern="UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR" />
   </Match>
-  <!-- P2 venues (DR-P2V-07): components in these packages are wired together by reference at
+  <!-- P2 venues (DR-P2V-07; refdata and the FIX codec narrowed to two classes by DR-R2R-14, the FIX
+       gateway and net packages and rates-venues kept whole): components here are wired together by reference at
        start-up and owned by one thread; returning or storing a collaborator (a master, a session,
        a clock, a sink) is the wiring, not a leaked internal. Arrays and buffers that are internal
        state are still copied or kept private, and every other pattern stays enabled. -->
   <Match>
     <Or>
-      <Package name="io.ratesalgo.refdata" />
-      <Package name="~io\.ratesalgo\.fix(\..*)?" />
+      <Class name="io.ratesalgo.refdata.RefData" />
+      <Class name="io.ratesalgo.fix.codec.FixParser" />
+      <Package name="io.ratesalgo.fix.gateway" />
+      <Package name="io.ratesalgo.fix.net" />
       <Package name="~io\.ratesalgo\.venues(\..*)?" />
     </Or>
     <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2" />
   </Match>
-  <!-- P3 (DR-P3-09): the hedger, quoting engine and their helpers are wired once at start-up
-       to collaborators they share by design on the single writer thread (the risk engine, the
-       kill switch, sinks). Holding those references is the architecture, not a leak, as for the
-       Replayer above. Arrays and value objects are still copied where they cross the boundary. -->
+  <!-- P3 (DR-P3-09, narrowed to the classes that need it by DR-R2R-14): the hedger, its planner
+       and the quoting classes below are wired once at start-up to collaborators they share by
+       design on the single writer thread (the risk engine, the kill switch, sinks). Holding those
+       references is the architecture, not a leak. Arrays and value objects are still copied where
+       they cross the boundary. -->
   <Match>
     <Or>
-      <Package name="io.ratesalgo.hedge" />
-      <Package name="io.ratesalgo.quoting" />
+      <Class name="io.ratesalgo.hedge.Hedger" />
+      <Class name="io.ratesalgo.hedge.HedgePlanner" />
+      <Class name="io.ratesalgo.hedge.ExposureBasisAttribution" />
+      <Class name="io.ratesalgo.quoting.ClobQuoter" />
+      <Class name="io.ratesalgo.quoting.Desk" />
+      <Class name="io.ratesalgo.quoting.FairValueEngine" />
+      <Class name="io.ratesalgo.quoting.PackageQuoter" />
+      <Class name="io.ratesalgo.quoting.QuotingEngine" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
+  <!-- RingJournal (R2, DR-R2J-03): nextSequence is read and written only on the single
+       producing thread, by the class contract; the journal thread never touches it. -->
+  <Match>
+    <Class name="io.ratesalgo.journal.RingJournal" />
+    <Field name="nextSequence" />
+    <Bug pattern="AT_NONATOMIC_64BIT_PRIMITIVE" />
+  </Match>
+  <!-- LoopJournals (R2, DR-R2J-03): inbound() and outbound() hand the loop the journal sinks it
+       appends to; sharing them is the purpose of the class. -->
+  <Match>
+    <Class name="io.ratesalgo.core.LoopJournals" />
+    <Or>
+      <Method name="inbound" />
+      <Method name="outbound" />
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP" />
+  </Match>
+  <!-- Round 2 (DR-R2W-15): rates-app is the assembly; it builds each component once and hands
+       collaborators to each other (routers to the hedge sink, the composite book to the pricing
+       binding, rings to the sessions) and exposes them to the tests and the status endpoint.
+       Holding and returning those references is the wiring. Internal arrays stay private. -->
+  <Match>
+    <Package name="~io\.ratesalgo\.app(\..*)?" />
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
+  <!-- R2 desk features (DR-R2B-08): the risk ladder is the desk's shared state on the single
+       strategy thread; the axe book, the strategy's feature set and the report read it (or the
+       metrics) by reference at call time, which is the design, not a leaked internal. -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.strategy.AxeBook" />
+      <Class name="io.ratesalgo.strategy.DeskQuoter$Features" />
+      <Class name="io.ratesalgo.strategy.report.DeskReport" />
     </Or>
     <Or>
       <Bug pattern="EI_EXPOSE_REP" />

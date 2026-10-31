@@ -2,7 +2,7 @@
 
 ## How recipes work
 
-Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/cookbook/`. `RecipesTest` runs it in CI and compares its output with the block under "Expected output"; `tools/check_cookbook.py` checks that this page quotes both verbatim. The outputs were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11 and reproduced on JDK 27; they do not depend on the machine. Recipes 4 to 8 (P1) print values rounded well above double-precision noise so that they are the same on every platform. Recipes 14 to 16 (P3) were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11.
+Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/cookbook/`. `RecipesTest` runs it in CI and compares its output with the block under "Expected output"; `tools/check_cookbook.py` checks that this page quotes both verbatim. The outputs were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11 and reproduced on JDK 27; they do not depend on the machine. Recipes 4 to 8 (P1) print values rounded well above double-precision noise so that they are the same on every platform. Recipes 14 to 16 (P3) were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11. Recipes 23 to 34 (round 2) were recorded on 2026-10-31 with JDK 25.0.5 and Python 3.12 on Windows 11; the analytics recipes among them (23 to 26) round their output in the same way as recipes 4 to 8.
 
 ## The planned recipes
 
@@ -27,8 +27,21 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 19. How do I pre-register an experiment and record it in the ledger? (P5, written below; covers the earlier planned "pre-register a back-test and open the holdout once")
 20. How do I reconcile attribution to position P&L? (P5, written below; a Python recipe)
 21. How do I run the chaos test and read the break report? (P6, written below)
-22. How do I check that a hot-path package allocates nothing? (P2, not yet written)
-23. How do I verify a Java journal's hash chain from Python? (P5, not yet written)
+22. How do I run the trading process on a synthetic day and read the daily report? (round 2, written below; the brief for round 2 assigned this number)
+23. How do I fit a Nelson-Siegel-Svensson curve to Treasury yields and read rich and cheap bonds? (round 2, written below)
+24. How do I compute z-spread and asset-swap spread of a bond to the OIS curve? (round 2, written below)
+25. How do I compute carry and roll-down and a repo-implied forward price for a Treasury? (round 2, written below)
+26. How do I price a compounded-in-arrears SOFR leg with lookback and lockout? (round 2, written below)
+27. How do I price a curve or butterfly RFQ as one package with a net DV01 ladder? (round 2, written below)
+28. How do I see the quote lifecycle controls pull stale quotes (time to live, stale reference, feed gap)? (round 2, written below)
+29. How do I replay a journal and rebuild the router's decision table for one parent order? (round 2, written below)
+30. How do I run the CLOB simulator through a workup and read the book feed? (round 2, written below)
+31. How do I compute key-rate hedge ratios with PCA from the public Treasury curve fixture? (round 2, written below; a Python recipe)
+32. How do I fit the hit-rate model and read its calibration across the assumption band? (round 2, written below; a Python recipe)
+33. How do I compute markout curves by client tier from a back-test run? (round 2, written below; a Python recipe)
+34. How do I validate a deployment config against its schema and read the error? (round 2, written below)
+35. How do I verify a Java journal's hash chain from Python? (P5, not yet written; was 23)
+36. How do I check that a hot-path package allocates nothing? (P2, not yet written; was 22; `WiredLoopAllocationTest` in rates-app is a worked example until then)
 
 The recipes were renumbered when the phase branches were combined, so that they run contiguously by phase (DECISIONS.md DR-P4-05 and DR-P2C-10, amended).
 
@@ -1775,3 +1788,1242 @@ after every late message: breaks=0 unexplained=0
 ```
 
 How to read it. The first block has one line per reconciliation: `ours` and `theirs` are the items on each side after identical repeats are suppressed (`dup-suppressed=2` is the two duplicated drop-copy lines), `matched` agree on side, quantity, price to the mantissa and transaction time to one second, and `unexplained` counts breaks whose explanation does not clear them. The break lines give the reconciliation, the trade key (`venue:E:execId` for an order fill, `venue:R:quoteId` for an RFQ trade), the class and the explanation the journal supports. The three `MISSING_OURS LATE_ARRIVAL` breaks are the fills injected after the cut: the venue has them, our snapshot at the cut does not, and the full journal shows them arriving later. The `MISSING_THEIRS BUSTED_AFTER_CUT` break is the trade the venue busted after the cut. `drop-copy-pos` shows no break because the position reconciliation adjusts our side for exactly these explained trade breaks. The duplicate fills and the in-day busts produce no break at all: the keeper suppressed and applied them, and its audit trail records each one. The last line reconciles again after every late message has arrived and finds nothing. A break with explanation `NONE` or `DUPLICATE_CONFLICT` goes to operations under docs/runbooks/reconciliation-break.md.
+
+## 22. How do I run the trading process on a synthetic day and read the daily report?
+
+The trading process is `TradingProcess` in `rates-app`: P2's D2C RFQ and CLOB simulators started in this JVM, our FIX gateways connected to them over TCP, the CLOB's SBE book feed, a curve feed and one event loop for the USD instrument group with its journals (API_SPEC.md Section 18). `step(nanos, stepNanos)` moves simulated time and pumps everything on the calling thread until the FIX sessions are quiet, so a seeded day repeats exactly.
+
+The program runs ten simulated minutes from 08:25 New York on seed 7, across the 08:30 peak of the D2C arrival model, then pulls the kill switch and runs one more second. It then does what the desk does after the close: it books the journals into the position keeper (`JournalFeed`), reconciles the keeper with both venues' trade registers (`VenueReconciliation`), replays the journals through a freshly built desk (`TradingProcessMain.replayGroup`, the same check as `--replay`), and runs P5's back-tester over the recorded day with the desk as its strategy (`DeskBacktest`), which writes the daily report. The program prints the report's title and its P&L total row.
+
+Positions print as book/account/instrument: book 1 holds the RFQ trades in the five SOFR swaps, book 2 the Treasury hedges the routers bought and sold on the CLOB. The back-test's numbers differ from the live day's because the back-tester settles RFQs with P5's outcome model and fills hedges with its hedge cost model (DECISIONS.md DR-R2W-11); its P&L columns are those of API_SPEC.md Section 16.4.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.app.TradingProcess;
+import io.ratesalgo.app.TradingProcessMain;
+import io.ratesalgo.app.backtest.DeskBacktest;
+import io.ratesalgo.app.loop.DeskGroup;
+import io.ratesalgo.app.loop.DeskSettings;
+import io.ratesalgo.app.posttrade.JournalFeed;
+import io.ratesalgo.app.posttrade.VenueReconciliation;
+import io.ratesalgo.core.ReplayResult;
+import io.ratesalgo.posttrade.position.Position;
+import io.ratesalgo.posttrade.position.PositionKeeper;
+import io.ratesalgo.posttrade.recon.ReconResult;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 22: run the trading process on a synthetic day and read the daily report. */
+public final class Recipe22TradingDay {
+
+  private Recipe22TradingDay() {}
+
+  public static void main(final String[] args) throws IOException {
+    final Path dir = Files.createTempDirectory("recipe22");
+    // the D2C and CLOB simulators, both gateways and the USD loop, from 08:25 New York
+    final TradingProcess p = TradingProcess.start(new TradingProcess.Options(dir, 7L, DeskSettings.defaults()));
+    final DeskGroup desk = p.group(0).desk();
+    try {
+      p.step(10 * 60_000_000_000L, 10_000_000L);
+      System.out.println(String.format(Locale.ROOT,
+          "10 simulated minutes: %d RFQs, %d quotes, %d RFQ fills, %d hedge parents, %d hedge fills",
+          desk.desk().quoting().rfqs(), desk.desk().quoting().quotesSent(), desk.desk().quoting().fills(),
+          desk.hedgesRouted(), desk.hedgeFills()));
+      p.kill(9001);
+      p.step(1_000_000_000L, 10_000_000L);
+      System.out.println("after the kill switch: " + p.statusJson());
+    } finally {
+      p.close();
+    }
+
+    // post-trade: positions from the journals, reconciled with the venues' trade registers
+    final PositionKeeper keeper =
+        JournalFeed.keeper(p.group(0).dir(), "in", "out", JournalFeed.books(p.universe()),
+            JournalFeed.catalogue(desk.pricing()));
+    for (final Position pos : keeper.positions()) {
+      System.out.println(String.format(Locale.ROOT, "  %s net %,d", pos.key().text(), pos.netQuantity()));
+    }
+    final ReconResult recon = VenueReconciliation.run(keeper, p.venues().d2c(), p.venues().clob());
+    System.out.println(String.format(Locale.ROOT, "reconciliation: %d ours, %d theirs, %d matched, %d breaks",
+        recon.oursCount(), recon.theirsCount(), recon.matched(), recon.breaks().size()));
+
+    // the same journals through a fresh desk: the outbound stream must repeat exactly
+    final ReplayResult replay = TradingProcessMain.replayGroup(p.group(0).dir());
+    System.out.println(String.format(Locale.ROOT, "replay: %d inbound frames, %d of %d outbound messages, %s",
+        replay.inboundFrames(), replay.outboundProduced(), replay.outboundRecorded(),
+        replay.matches() ? "hash matches" : "MISMATCH"));
+
+    // the daily report: the back-tester replays the day with the desk as its strategy
+    final DeskBacktest.Run run = DeskBacktest.run(p.group(0).dir(), DeskBacktest.presets(), dir.resolve("report"), 1L);
+    System.out.println(String.format(Locale.ROOT, "back-test: %d RFQs, %d client fills, %d hedge fills",
+        run.result().rfqs().size(), run.result().clientFills(), run.result().hedgeFills()));
+    final String report = Files.readString(dir.resolve("report").resolve("report.md"));
+    report.lines().filter(l -> l.startsWith("| TOTAL") || l.startsWith("# ")).forEach(System.out::println);
+  }
+}
+```
+
+Expected output (recorded 2026-10-31 after the round 2 review merge, JDK 25.0.5, Windows 11; `SmokeTest` asserts the same day's counts; DR-INT-05):
+
+```
+10 simulated minutes: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills
+after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":27,"fills":16,"hedgesRouted":210,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000}
+  1/1/2001 net 1,000,000,000
+  1/1/2002 net 7,500,000,000
+  1/1/2003 net 10,000,000,000
+  1/1/2004 net -14,500,000,000
+  1/1/2005 net -4,000,000,000
+  2/1/1003 net 500,000,000
+  2/1/1006 net 7,400,000,000
+  2/1/1007 net 7,300,000,000
+  2/1/1009 net -14,000,000,000
+reconciliation: 229 ours, 229 theirs, 229 matched, 0 breaks
+replay: 96864 inbound frames, 240 of 240 outbound messages, hash matches
+back-test: 36 RFQs, 14 client fills, 171 hedge fills
+# Daily back-test report, 2026-11-02
+| TOTAL | 54049.48 | -19345.88 | -45781.25 | 0 | 10.45 | -439.5 | 0 | -11506.7 |
+```
+
+## 23. How do I fit a Nelson-Siegel-Svensson curve to Treasury yields and read rich and cheap bonds?
+
+`NelsonSiegelSvensson.fit(maturities, yields, start, rms)` fits the six Svensson parameters by Levenberg-Marquardt. The program fits them to the Treasury par curve of 2025-01-15 from `data/fixtures/ust_par_curve_2015_2025.csv` (13 tenors, in percent), then reads ten coupon Treasuries from the 2024 auction fixture against the fitted curve: the residual is the bond's street yield minus the curve at its remaining maturity, positive for a bond that is cheap (its yield is above the curve), and `px vs fit` turns it into price per 100 with the bond's yield DV01. The street yields are declared marks for the day, because no free source publishes end-of-day prices for individual Treasuries.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.analytics.bond.BondConvention;
+import io.ratesalgo.analytics.bond.BondPricer;
+import io.ratesalgo.analytics.bond.FixedRateBond;
+import io.ratesalgo.analytics.bond.NelsonSiegelSvensson;
+import io.ratesalgo.analytics.date.Dates;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.List;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 23: fit a Nelson-Siegel-Svensson curve to Treasury yields; rich and cheap. */
+public final class Recipe23NssRichCheap {
+
+  private Recipe23NssRichCheap() {}
+
+  static final int TODAY = Dates.of(2025, 1, 15);
+  static final double[] TENORS = {1 / 12.0, 2 / 12.0, 0.25, 4 / 12.0, 0.5, 1, 2, 3, 5, 7, 10, 20, 30};
+
+  /** Coupon Treasuries from data/fixtures/ust_auctions_2024.csv with declared street yields. */
+  static final Object[][] BASKET = {
+      {"91282CME8", 0.04250, "2024-12-31", "2026-12-31", 4.270},
+      {"91282CMB4", 0.04000, "2024-12-16", "2027-12-15", 4.335},
+      {"91282CMA6", 0.04125, "2024-12-02", "2029-11-30", 4.440},
+      {"91282CMD0", 0.04375, "2024-12-31", "2029-12-31", 4.452},
+      {"91282CLZ2", 0.04125, "2024-12-02", "2031-11-30", 4.552},
+      {"91282CMC2", 0.04500, "2024-12-31", "2031-12-31", 4.561},
+      {"91282CLF6", 0.03875, "2024-08-15", "2034-08-15", 4.652},
+      {"91282CLW9", 0.04250, "2024-11-15", "2034-11-15", 4.660},
+      {"912810UF3", 0.04625, "2024-12-02", "2044-11-15", 4.951},
+      {"912810UE6", 0.04500, "2024-11-15", "2054-11-15", 4.882},
+  };
+
+  static FixedRateBond bond(final Object[] row) {
+    return new FixedRateBond((String) row[0], BondConvention.UST, (double) row[1],
+        Dates.parse((String) row[2]), Dates.parse((String) row[3]));
+  }
+
+  /** The Treasury par curve of 2025-01-15 (percent) from data/fixtures/ust_par_curve_2015_2025.csv. */
+  static double[] parCurve() {
+    try {
+      final List<String> lines = Files.readAllLines(
+          RepoRoot.find().resolve("data/fixtures/ust_par_curve_2015_2025.csv"), StandardCharsets.UTF_8);
+      for (final String line : lines) {
+        if (line.startsWith(Dates.format(TODAY))) {
+          final String[] f = line.split(",", -1);
+          final double[] y = new double[TENORS.length];
+          for (int i = 0; i < y.length; i++) {
+            y[i] = Double.parseDouble(f[i + 1]);
+          }
+          return y;
+        }
+      }
+      throw new IllegalStateException("no par curve row for " + Dates.format(TODAY));
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  /** The fitted curve, shared with recipe 25. */
+  static NelsonSiegelSvensson fit(final double[] rms) {
+    final double[] start = {4.5, -0.3, -1.0, 1.0, 1.5, 10.0};
+    return NelsonSiegelSvensson.fit(TENORS, parCurve(), start, rms);
+  }
+
+  public static void main(final String[] args) {
+    final double[] rms = new double[1];
+    final NelsonSiegelSvensson nss = fit(rms);
+    final double[] p = nss.parameters();
+    System.out.println(String.format(Locale.ROOT,
+        "NSS b0=%.3f b1=%.3f b2=%.3f b3=%.3f t1=%.3f t2=%.3f  rms %.2f bp",
+        p[0], p[1], p[2], p[3], p[4], p[5], 100 * rms[0]));
+
+    final BondPricer pricer = new BondPricer();
+    System.out.println("cusip      maturity    years  yield%  fit%    resid bp  px vs fit  verdict");
+    for (final Object[] row : BASKET) {
+      final FixedRateBond b = bond(row);
+      final int settle = b.settlementDate(TODAY);
+      final double t = (b.maturity() - settle) / 365.25;
+      final double y = (double) row[4];
+      final double fitted = nss.zero(t);
+      final double residBp = 100 * (y - fitted);
+      final double dv01 = pricer.dv01(b, y / 100, settle, false);
+      final String verdict = Math.abs(residBp) < 0.5 ? "fair" : residBp > 0 ? "cheap" : "rich";
+      System.out.println(String.format(Locale.ROOT, "%s  %s  %5.2f  %6.3f  %6.3f  %+7.2f   %+8.4f  %s",
+          b.name(), Dates.format(b.maturity()), t, y, fitted, residBp, -residBp * dv01, verdict));
+    }
+  }
+}
+```
+
+Expected output:
+
+```
+NSS b0=3.994 b1=0.457 b2=-0.160 b3=3.076 t1=0.405 t2=14.156  rms 2.43 bp
+cusip      maturity    years  yield%  fit%    resid bp  px vs fit  verdict
+91282CME8  2026-12-31   1.95   4.270   4.250    +1.97    -0.0366  cheap
+91282CMB4  2027-12-15   2.91   4.335   4.312    +2.34    -0.0630  cheap
+91282CMA6  2029-11-30   4.87   4.440   4.441    -0.10    +0.0042  fair
+91282CMD0  2029-12-31   4.96   4.452   4.446    +0.57    -0.0253  cheap
+91282CLZ2  2031-11-30   6.87   4.552   4.555    -0.33    +0.0193  fair
+91282CMC2  2031-12-31   6.95   4.561   4.560    +0.12    -0.0074  fair
+91282CLF6  2034-08-15   9.58   4.652   4.678    -2.62    +0.1939  rich
+91282CLW9  2034-11-15   9.83   4.660   4.688    -2.79    +0.2142  rich
+912810UF3  2044-11-15  19.83   4.951   4.897    +5.38    -0.6568  cheap
+912810UE6  2054-11-15  29.83   4.882   4.907    -2.45    +0.3665  rich
+```
+
+The fit leaves 2.4 bp root-mean-square on the par curve itself: a four-factor shape cannot follow the 20-year point, which sits above both the 10-year and the 30-year. That is why the 20-year bond `912810UF3` reads 5.4 bp cheap (0.66 per 100 below the curve) while the 30-year reads rich, and it is the well-known 20-year anomaly of this curve, not a pricing error. The 0.5 bp band for `fair` is a choice of the program, not a market convention. `BondAnalyticsTest.svenssonParametersFromTheBundesbankFixtureAndRefit` checks the fitter by refitting the Bundesbank's published parameters to below 1e-6, and LEARN.md Section 4 covers yields and relative value.
+
+## 24. How do I compute z-spread and asset-swap spread of a bond to the OIS curve?
+
+`BondPricer.zSpread(bond, curve, dirty, settlement)` finds the continuously compounded spread that, added to the curve's zero rates, reprices the bond's dirty price; `assetSwapSpread(bond, curve, dirty, settlement, floatDayCount)` is the par-par asset-swap spread, the bond's value on the curve minus its market price divided by the floating annuity. The program prices recipe 23's basket at the same marks on the SOFR OIS curve of recipe 4 (2025-01-15) and prints both spreads, then checks that a bond priced at exactly its curve value has zero of each.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.analytics.bond.BondPricer;
+import io.ratesalgo.analytics.bond.FixedRateBond;
+import io.ratesalgo.analytics.curve.DiscountCurve;
+import io.ratesalgo.analytics.date.DayCount;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 24: z-spread and par-par asset-swap spread of Treasuries to the OIS curve. */
+public final class Recipe24ZSpreadAsw {
+
+  private Recipe24ZSpreadAsw() {}
+
+  public static void main(final String[] args) {
+    // the SOFR OIS curve of recipe 4 and the Treasury basket of recipe 23, both on 2025-01-15
+    final DiscountCurve ois = Recipe04SofrCurve.build().curve();
+    final BondPricer pricer = new BondPricer();
+    System.out.println("cusip      yield%   dirty      on OIS     z-spread bp  ASW bp");
+    for (final Object[] row : Recipe23NssRichCheap.BASKET) {
+      final FixedRateBond b = Recipe23NssRichCheap.bond(row);
+      final int settle = b.settlementDate(Recipe23NssRichCheap.TODAY);
+      final double y = (double) row[4];
+      final double dirty = pricer.dirtyPrice(b, y / 100, settle, false);
+      final double onCurve = pricer.dirtyFromCurve(b, ois, settle);
+      final double z = pricer.zSpread(b, ois, dirty, settle);
+      final double asw = pricer.assetSwapSpread(b, ois, dirty, settle, DayCount.ACT_360);
+      System.out.println(String.format(Locale.ROOT, "%s  %6.3f  %9.5f  %9.5f  %9.2f  %8.2f",
+          b.name(), y, dirty, onCurve, 1e4 * z, 1e4 * asw));
+    }
+    // a check: priced at its own OIS value, a bond has zero z-spread and zero asset-swap spread
+    final FixedRateBond tens = Recipe23NssRichCheap.bond(Recipe23NssRichCheap.BASKET[7]);
+    final int settle = tens.settlementDate(Recipe23NssRichCheap.TODAY);
+    final double fair = pricer.dirtyFromCurve(tens, ois, settle);
+    final double z = pricer.zSpread(tens, ois, fair, settle);
+    final double asw = pricer.assetSwapSpread(tens, ois, fair, settle, DayCount.ACT_360);
+    System.out.println(tens.name() + " at its OIS value: |z| and |ASW| below 1e-10 bp: "
+        + (Math.abs(1e4 * z) < 1e-10 && Math.abs(1e4 * asw) < 1e-10));
+  }
+}
+```
+
+Expected output:
+
+```
+cusip      yield%   dirty      on OIS     z-spread bp  ASW bp
+91282CME8   4.270  100.14889  100.97790      43.51     43.83
+91282CMB4   4.335   99.43046  100.79361      49.17     49.26
+91282CMA6   4.440   99.13977  101.72118      57.84     57.80
+91282CMD0   4.452   99.85236  102.54396      59.03     59.33
+91282CLZ2   4.552   98.01062  101.63181      60.23     59.69
+91282CMC2   4.561   99.83675  103.59605      61.13     61.31
+91282CLF6   4.652   95.66633  100.63042      63.82     61.80
+91282CLW9   4.660   97.51866  102.69795      64.11     63.13
+912810UF3   4.951   96.48417  109.17265      93.72     91.82
+912810UE6   4.882   94.79615  109.64097      87.40     84.31
+91282CLW9 at its OIS value: |z| and |ASW| below 1e-10 bp: true
+```
+
+Both spreads are positive and grow with maturity: the Treasuries yield more than the declared OIS quotes of recipe 4, by 44 bp at two years and about 90 bp at twenty and thirty. They agree to within about half a basis point for bonds priced near par and drift apart for the discount bonds (`91282CLF6` at 95.67, the long bonds), because the asset swap is struck at par while the z-spread discounts the actual cash flows. The levels reflect recipe 4's declared quotes, not an observed swap spread. `BondAnalyticsTest.zSpreadAndAssetSwapSpreadAreConsistent` asserts the same sign and size relation and the zero-at-curve-value identity.
+
+## 25. How do I compute carry and roll-down and a repo-implied forward price for a Treasury?
+
+`BondCarry.forwardCleanPrice` finances the dirty price in repo to the horizon and subtracts coupons received on the way (reinvested at the repo rate) and the accrued interest at the horizon; carry is spot clean minus forward clean. `rollDown` reprices the bond at the horizon with its yield moved down the fitted curve's slope, so that its spread to the curve is unchanged. The program uses the 10-year note at 4.66%, a GC repo curve whose overnight point is the TGCR of 2025-01-14 (4.27%, `data/fixtures/repo_gc_2024.csv`) with declared term points, and recipe 23's fitted curve for the roll; it prints one, three and six month horizons, the breakeven yield at which the forward price is reached, and the effect of financing 50 bp special.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.analytics.bond.BondCarry;
+import io.ratesalgo.analytics.bond.BondPricer;
+import io.ratesalgo.analytics.bond.FixedRateBond;
+import io.ratesalgo.analytics.bond.NelsonSiegelSvensson;
+import io.ratesalgo.analytics.date.BusinessDayConvention;
+import io.ratesalgo.analytics.date.Dates;
+import io.ratesalgo.analytics.funding.RepoCurve;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 25: carry, roll-down and the repo-implied forward price of a Treasury. */
+public final class Recipe25CarryRoll {
+
+  private Recipe25CarryRoll() {}
+
+  public static void main(final String[] args) {
+    // the 4 1/4% note of November 2034 at 4.66%, the 10-year line of recipe 23's basket
+    final FixedRateBond note = Recipe23NssRichCheap.bond(Recipe23NssRichCheap.BASKET[7]);
+    final int settle = note.settlementDate(Recipe23NssRichCheap.TODAY);
+    final double y = 0.0466;
+    final BondPricer pricer = new BondPricer();
+    final double clean = pricer.cleanPrice(note, y, settle);
+    // overnight point: TGCR of 2025-01-14 (4.27%, data/fixtures/repo_gc_2024.csv); term points declared
+    final RepoCurve gc = new RepoCurve(new int[] {1, 30, 90, 180},
+        new double[] {0.0427, 0.0425, 0.0421, 0.0415});
+    final NelsonSiegelSvensson nss = Recipe23NssRichCheap.fit(new double[1]);
+    final BondCarry carry = new BondCarry();
+    System.out.println(String.format(Locale.ROOT, "%s settle %s clean %.6f yield %.3f%%",
+        note.name(), Dates.format(settle), clean, 100 * y));
+    System.out.println("horizon     days  repo%   fwd clean   carry    roll    total   be yield%  be chg bp");
+    for (final int months : new int[] {1, 3, 6}) {
+      final int horizon = note.convention().calendar().adjust(Dates.addMonths(settle, months),
+          BusinessDayConvention.FOLLOWING);
+      final int days = horizon - settle;
+      final double repo = gc.rate(days);
+      final double fwd = carry.forwardCleanPrice(note, clean, settle, horizon, repo);
+      final double c = carry.carry(note, clean, settle, horizon, repo);
+      final double today = nss.zero((note.maturity() - settle) / 365.25) / 100;
+      final double later = nss.zero((note.maturity() - horizon) / 365.25) / 100;
+      final double roll = carry.rollDown(note, y, horizon, today, later);
+      final double breakeven = pricer.yieldFromClean(note, fwd, horizon, false);
+      System.out.println(String.format(Locale.ROOT,
+          "%s  %4d  %5.3f  %10.6f  %+7.4f  %+7.4f  %+7.4f  %8.4f  %+8.2f",
+          Dates.format(horizon), days, 100 * repo, fwd, c, roll, c + roll, 100 * breakeven,
+          1e4 * (breakeven - y)));
+    }
+    // trading special: 50 bp below GC for three months raises the carry by the funding saved
+    final int horizon = Dates.addMonths(settle, 3);
+    final double gcCarry = carry.carry(note, clean, settle, horizon, gc.rate(horizon - settle));
+    final double special = clean - carry.forwardCleanPrice(note, clean, settle, horizon, gc, 0.0050);
+    System.out.println(String.format(Locale.ROOT,
+        "3m carry at GC %+.4f, 50 bp special %+.4f, difference %.4f per 100", gcCarry, special,
+        special - gcCarry));
+    System.out.println(String.format(Locale.ROOT, "funding saved on the dirty price %.4f per 100",
+        RepoCurve.fundingCharge(clean + pricer.accrued(note, settle), horizon - settle, 0.0050)));
+  }
+}
+```
+
+Expected output:
+
+```
+91282CLW9 settle 2025-01-16 clean 96.790759 yield 4.660%
+horizon     days  repo%   fwd clean   carry    roll    total   be yield%  be chg bp
+2025-02-18    33  4.248   96.783065  +0.0077  +0.0262  +0.0339    4.6640     +0.40
+2025-04-16    90  4.210   96.760513  +0.0302  +0.0713  +0.1015    4.6729     +1.29
+2025-07-16   181  4.150   96.697193  +0.0936  +0.1425  +0.2361    4.6904     +3.04
+3m carry at GC +0.0302, 50 bp special +0.1521, difference 0.1219 per 100
+funding saved on the dirty price 0.1219 per 100
+```
+
+Carry is small and positive because the 4.25% coupon on a price of 96.79 (a current yield near 4.39%) only just exceeds repo at 4.15 to 4.25%; over six months it is 0.094 per 100 and the May coupon is inside the horizon. Roll-down is larger, 0.143 per 100 over six months, because the fitted curve slopes up at ten years. The breakeven column says the position earns its carry unless the yield rises more than 3.0 bp in six months. Trading 50 bp special adds exactly the funding saved on the dirty price, 0.1219 per 100 over three months, which the last two lines show agree. `BondAnalyticsTest.repoForwardCarryAndRollDown` checks the forward formula term by term; LEARN.md Section 4 explains carry and repo.
+
+## 26. How do I price a compounded-in-arrears SOFR leg with lookback and lockout?
+
+An `OisSwap` holds, for each floating period, the daily compounding grid the ISDA 2021 definitions describe, and `SwapConvention.withObservation(lookback, lockout, shift)` changes how that grid is observed. The program values one seasoned quarterly period (2024-12-16 to 2025-03-17) on the morning of 2025-01-15: `FixingHistory` holds the published SOFR fixings up to 2025-01-14 from `data/fixtures/sofr_2024.csv`, and `OisSwapPricer` compounds those and projects the rest from recipe 4's curve. It prints the observation window, how many observations are already fixed, the period's compounded rate and the leg's value for five conventions, then checks the realised part of the plain leg against the ratio of the published SOFR Index values.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.analytics.curve.DiscountCurve;
+import io.ratesalgo.analytics.date.Dates;
+import io.ratesalgo.analytics.swap.FixingHistory;
+import io.ratesalgo.analytics.swap.OisSwap;
+import io.ratesalgo.analytics.swap.OisSwapPricer;
+import io.ratesalgo.analytics.swap.SwapConvention;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 26: a seasoned compounded-in-arrears SOFR leg with lookback and lockout. */
+public final class Recipe26SofrInArrears {
+
+  private Recipe26SofrInArrears() {}
+
+  /** Rows of data/fixtures/sofr_2024.csv: date, SOFR in percent, SOFR Index. */
+  static List<String[]> sofr() {
+    try {
+      final List<String> lines = Files.readAllLines(
+          RepoRoot.find().resolve("data/fixtures/sofr_2024.csv"), StandardCharsets.UTF_8);
+      final List<String[]> rows = new ArrayList<>();
+      for (final String line : lines.subList(1, lines.size())) {
+        rows.add(line.split(",", -1));
+      }
+      return rows;
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  static double index(final List<String[]> rows, final int date) {
+    for (final String[] r : rows) {
+      if (Dates.parse(r[0]) == date) {
+        return Double.parseDouble(r[2]);
+      }
+    }
+    throw new IllegalArgumentException("no SOFR Index on " + Dates.format(date));
+  }
+
+  public static void main(final String[] args) {
+    final DiscountCurve curve = Recipe04SofrCurve.build().curve();
+    final int today = curve.valuationDate();
+    // what was published by the morning of 2025-01-15: fixings up to and including 2025-01-14
+    final List<String[]> rows = sofr();
+    int n = 0;
+    while (n < rows.size() && Dates.parse(rows.get(n)[0]) < today) {
+      n++;
+    }
+    final int[] dates = new int[n];
+    final double[] values = new double[n];
+    for (int i = 0; i < n; i++) {
+      dates[i] = Dates.parse(rows.get(i)[0]);
+      values[i] = Double.parseDouble(rows.get(i)[1]) / 100.0;
+    }
+    final FixingHistory fixings = new FixingHistory(dates, values);
+
+    // one quarterly period, 2024-12-16 to 2025-03-17, receiving SOFR on 100 million
+    final int start = Dates.of(2024, 12, 16);
+    final int end = Dates.of(2025, 3, 17);
+    final OisSwapPricer pricer = new OisSwapPricer();
+    final SwapConvention base = SwapConvention.USD_SOFR;
+    final SwapConvention[] variants = {
+        base.withObservation(0, 0, false),
+        base.withObservation(2, 0, false),
+        base.withObservation(2, 0, true),
+        base.withObservation(0, 2, false),
+        base.withObservation(5, 2, true),
+    };
+    System.out.println("convention               days  first obs   last obs    known  rate%     float PV");
+    for (final SwapConvention c : variants) {
+      final OisSwap leg = OisSwap.of(c, start, end, 1e8, 0.0, false);
+      final int[] obs = leg.fixingDates(0);
+      int known = 0;
+      for (final int d : obs) {
+        known += fixings.has(d) ? 1 : 0;
+      }
+      final double rate = pricer.parRate(leg, curve, fixings, today);
+      System.out.println(String.format(Locale.ROOT, "%-23s  %4d  %s  %s  %5d  %7.5f  %11.2f",
+          c.name(), obs.length, Dates.format(obs[0]), Dates.format(obs[obs.length - 1]), known,
+          100 * rate, pricer.floatLegPv(leg, curve, curve, fixings, today)));
+    }
+
+    // the realised part of the plain leg, compounded from fixings, against the SOFR Index ratio
+    final OisSwap plain = OisSwap.of(variants[0], start, end, 1e8, 0.0, false);
+    final int[] obs = plain.fixingDates(0);
+    final double[] w = plain.compoundingWeights(0);
+    double growth = 1.0;
+    for (int i = 0; i < obs.length && obs[i] < today; i++) {
+      growth *= 1.0 + fixings.rate(obs[i]) * w[i];
+    }
+    final double ratio = index(rows, today) / index(rows, start);
+    System.out.println(String.format(Locale.ROOT,
+        "realised growth %s to %s: fixings %.8f, SOFR Index ratio %.8f", Dates.format(start),
+        Dates.format(today), growth, ratio));
+  }
+}
+```
+
+Expected output:
+
+```
+convention               days  first obs   last obs    known  rate%     float PV
+USD-SOFR-OIS               61  2024-12-16  2025-03-14     20  4.33715   1088151.02
+USD-SOFR-OIS-LB2           61  2024-12-12  2025-03-12     22  4.35193   1091858.38
+USD-SOFR-OIS-LB2-OS        61  2024-12-12  2025-03-12     22  4.35167   1091793.95
+USD-SOFR-OIS-LO2           61  2024-12-16  2025-03-12     20  4.33713   1088146.77
+USD-SOFR-OIS-LB5-LO2-OS    61  2024-12-09  2025-03-05     25  4.36339   1094734.70
+realised growth 2024-12-16 to 2025-01-15: fixings 1.00365457, SOFR Index ratio 1.00365456
+```
+
+A two-day lookback moves the whole window back two business days, so 22 observations are known instead of 20 and the rate rises 1.5 bp, since mid-December SOFR fixed above the rates the curve projects for March. The observation shift weights each day by the shifted period instead, a 0.03 bp difference here. A two-day lockout repeats the fixing of 2025-03-12 for the last two days and changes the rate by 0.002 bp, because the curve is flat across those days. The fixings compound to 1.00365457 against an index ratio of 1.00365456: the index is published to eight decimals. `AnalyticsGoldenTest.swapsMatchQuantLibOnBothCurves` checks lookback, lockout and shift grids against QuantLib 1.44 (LEARN.md Section 3).
+
+## 27. How do I price a curve or butterfly RFQ as one package with a net DV01 ladder?
+
+`PackageQuoter` prices a package RFQ as one trade (API_SPEC.md Section 12.7): each leg's optimal half-spread is computed alone, then the hedge is charged once on the dealer's net ladder instead of leg by leg, and the inventory charge is taken on the net ladder against the book. `neutralPair` and `butterfly` size the other legs so that the package is DV01-neutral. The program builds a small USD SOFR swap market on the `rates-api` stubs (2, 5, 10 and 30 years, each with its Treasury future as hedge), wires a `Desk` and prices a 2s10s steepener and a 2s5s10s butterfly.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.api.CurrencyCode;
+import io.ratesalgo.api.Decimal9;
+import io.ratesalgo.api.Dv01Vector;
+import io.ratesalgo.api.InMemoryBookSource;
+import io.ratesalgo.api.InMemoryFairValueSource;
+import io.ratesalgo.api.InMemoryInstrumentDirectory;
+import io.ratesalgo.api.Instrument;
+import io.ratesalgo.api.KeyRateTenors;
+import io.ratesalgo.api.ParametricSensitivityProvider;
+import io.ratesalgo.api.RecordingHedgeOrderSink;
+import io.ratesalgo.api.RecordingOutboundSink;
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.hedge.HedgeUniverse;
+import io.ratesalgo.hedge.Hedger;
+import io.ratesalgo.hedge.TableHedgeCostModel;
+import io.ratesalgo.quoting.ClientTier;
+import io.ratesalgo.quoting.ClobQuoter;
+import io.ratesalgo.quoting.Desk;
+import io.ratesalgo.quoting.HitRatePreset;
+import io.ratesalgo.quoting.PackageQuoter;
+import io.ratesalgo.quoting.QuotingConfig;
+import io.ratesalgo.quoting.TierTable;
+import io.ratesalgo.risk.RiskLimits;
+import java.io.IOException;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 27: price a curve and a butterfly RFQ as one package, with the net ladder. */
+public final class Recipe27PackageRfq {
+
+  private Recipe27PackageRfq() {}
+
+  static final long FACE_1M = 100_000_000L;
+  static final int SW2 = 301;
+  static final int SW5 = 302;
+  static final int SW10 = 303;
+  static final int SW30 = 304;
+
+  public static void main(final String[] args) throws IOException {
+    final ManualClock clock = new ManualClock(1_767_268_800_000_000_000L); // 2026-01-01T12:00Z
+    final InMemoryInstrumentDirectory dir = new InMemoryInstrumentDirectory();
+    final InMemoryFairValueSource fair = new InMemoryFairValueSource();
+    // USD SOFR swaps quoted in rate percent, each with its futures hedge and a duration
+    final int[] futures = {201, 202, 203, 204};
+    final String[] futureNames = {"TU", "FV", "TY", "US"};
+    final double[] futureDuration = {1.9, 4.3, 6.5, 13.0};
+    final double[] futurePrice = {103.20, 108.40, 111.10, 117.30};
+    final int[] swaps = {SW2, SW5, SW10, SW30};
+    final double[] tenor = {2.0, 5.0, 10.0, 30.0};
+    final double[] swapDuration = {1.9, 4.5, 8.2, 17.0};
+    final double[] swapRate = {3.80, 3.70, 3.85, 3.95};
+    for (int i = 0; i < 4; i++) {
+      dir.add(Instrument.future(futures[i], futureNames[i], CurrencyCode.USD, tenor[i] * 0.7, 50 * FACE_1M));
+      dir.add(Instrument.swap(swaps[i], "SOFR" + (int) tenor[i], CurrencyCode.USD, tenor[i], swapDuration[i],
+          futures[i], 0.9, 50 * FACE_1M));
+    }
+    final ParametricSensitivityProvider pv01 = new ParametricSensitivityProvider(dir);
+    final HedgeUniverse universe = new HedgeUniverse();
+    final TableHedgeCostModel costs = new TableHedgeCostModel(16);
+    final long now = clock.epochNanos();
+    for (int i = 0; i < 4; i++) {
+      pv01.defineAtTenor(futures[i], -futureDuration[i] * 1e-4, 0.002);
+      pv01.defineAtTenor(swaps[i], swapDuration[i] * 1e-4, 0.002);
+      fair.set(futures[i], Decimal9.round(futurePrice[i]), now);
+      fair.set(swaps[i], Decimal9.round(swapRate[i]), now);
+      universe.add(futures[i], 10_000_000L, 5_000).add(swaps[i], FACE_1M, 2_000);
+      costs.set(futures[i], 4.0 * (i + 1), 1.0, 0.002).set(swaps[i], swapDuration[i] * 10, 0.0, 0.01 * (i + 1));
+    }
+    final Desk desk = new Desk(new Desk.Inputs(dir, pv01, fair, new InMemoryBookSource(16),
+        new RiskLimits().bucketPv01(250_000.0).netPv01(400_000.0).grossPv01(1_500_000.0).priceCollarBp(15.0),
+        universe, costs, new RecordingOutboundSink(), new RecordingOutboundSink(), new RecordingHedgeOrderSink(),
+        clock, new QuotingConfig().requoteThrottleNanos(0L), TierTable.single(1, new ClientTier(1, 1.0, 500 * FACE_1M, true, false)),
+        HitRatePreset.shippedDefault(), Hedger.config(), ClobQuoter.config()));
+    final PackageQuoter quoter = desk.packages();
+
+    // 2s10s steepener: the client pays fixed on 100m 2y and receives on a DV01-matched 10y
+    show(quoter, quoter.neutralPair(PackageQuoter.Type.CURVE, SW2, 100 * FACE_1M, SW10), dir);
+    // 2s5s10s butterfly: the client receives on 50m 5y, each wing carries half the body's DV01
+    show(quoter, quoter.butterfly(SW2, SW5, -50 * FACE_1M, SW10), dir);
+  }
+
+  private static void show(final PackageQuoter quoter, final PackageQuoter.PackageRequest pkg,
+      final InMemoryInstrumentDirectory dir) {
+    final PackageQuoter.Result r = quoter.quote(pkg, 1, 4, new PackageQuoter.Result());
+    System.out.println(pkg.type() + " quoted " + r.quoted());
+    for (int i = 0; i < pkg.legs(); i++) {
+      final long q = pkg.clientQuantity(i);
+      System.out.println(String.format(Locale.ROOT, "  %-7s client %-7s %6.1fm at %.6f%%",
+          dir.byId(pkg.instrumentId(i)).symbol(), q > 0 ? "pays" : "receives", Math.abs(q) / 1e8,
+          Decimal9.toDouble(r.legPrice(i))));
+    }
+    System.out.println(String.format(Locale.ROOT, "  legs one by one %.0f USD; net-risk PV01 %.0f USD per bp",
+        r.legChargeSum(), r.netRiskPv01()));
+    System.out.println(String.format(Locale.ROOT,
+        "  package %.0f USD: spread %.0f - hedge saving %.0f + inventory on the net ladder %.0f",
+        r.charge(), r.spreadChargeSum(), r.hedgeSaving(), r.inventoryCharge()));
+    System.out.println(String.format(Locale.ROOT, "  distance %.4f bp on every leg", r.distanceBp()));
+    final Dv01Vector net = new Dv01Vector(CurrencyCode.USD);
+    r.netLadder(net);
+    final StringBuilder ladder = new StringBuilder("  dealer net DV01");
+    for (int k = 0; k < KeyRateTenors.COUNT; k++) {
+      ladder.append(String.format(Locale.ROOT, " %s %.0f", KeyRateTenors.label(k), net.get(k) + 0.0));
+    }
+    System.out.println(ladder);
+    System.out.println(String.format(Locale.ROOT, "  parallel %.0f, gross %.0f USD per bp", net.parallel() + 0.0,
+        net.gross()));
+  }
+}
+```
+
+Expected output:
+
+```
+CURVE quoted true
+  SOFR2   client pays     100.0m at 3.806750%
+  SOFR10  client receives   23.0m at 3.843250%
+  legs one by one 66265 USD; net-risk PV01 16542 USD per bp
+  package 25556 USD: spread 17239 - hedge saving 3782 + inventory on the net ladder 12098
+  distance 0.6750 bp on every leg
+  dealer net DV01 1Y 0 2Y -19000 3Y 0 5Y 0 7Y 0 10Y 18860 20Y 0 30Y 0
+  parallel -140, gross 37860 USD per bp
+BUTTERFLY quoted true
+  SOFR2   client pays      59.0m at 3.803333%
+  SOFR5   client receives   50.0m at 3.696667%
+  SOFR10  client pays      14.0m at 3.853333%
+  legs one by one 77734 USD; net-risk PV01 11217 USD per bp
+  package 15062 USD: spread 13712 - hedge saving 4511 + inventory on the net ladder 5861
+  distance 0.3333 bp on every leg
+  dealer net DV01 1Y 0 2Y -11210 3Y 0 5Y 22500 7Y 0 10Y -11480 20Y 0 30Y 0
+  parallel -190, gross 45190 USD per bp
+```
+
+For the curve trade the client pays fixed on 100m 2-year and receives on 23m 10-year, which matches the 2-year's DV01; the dealer's net ladder is -19,000 at 2Y and +18,860 at 10Y, 140 USD per bp parallel after rounding the 10-year to whole millions. Priced leg by leg the two trades cost the client 66,265 USD. As a package it costs 25,556: the spread is charged on the net ladder's risk-equivalent PV01 (16,542 USD per bp, against 37,860 gross), the hedge is netted (3,782 saved) and the inventory charge on the offsetting ladder is 12,098. That charge is spread as 0.675 bp on every leg, in the client-worse direction. The package passes the same kill, health, release, throttle, fair-value and risk checks as a single RFQ; the program turns the client re-quote throttle off because it prices two packages for one client at the same instant. `PackageAndClobTest.curvePackageCostsLessThanItsLegsByTheNettedHedgeSaving` checks the identity charge = spread - saving + inventory and the DV01 neutrality; LEARN.md Section 8 covers the ladder.
+
+## 28. How do I see the quote lifecycle controls pull stale quotes (time to live, stale reference, feed gap)?
+
+A firm quote leaves the engine three ways besides a client answer (API_SPEC.md Section 12.6): it lapses at its time to live, it is withdrawn when the oldest input it was priced from grows older than `maxInputAgeNanos`, and every quote is withdrawn when `InputHealth` reports a heartbeat loss, a session loss or a book-feed gap. `QuotingEngine.poll` runs these checks; a withdrawal is a QuoteWithdraw message to the gateway with a `CancelReason`. The program sets a one-second time to live and a two-second input-age limit, drives a `ManualClock`, and prints each RFQ decision and each QuoteWithdraw the gateway receives.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.api.CurrencyCode;
+import io.ratesalgo.api.Decimal9;
+import io.ratesalgo.api.InMemoryBookSource;
+import io.ratesalgo.api.InMemoryFairValueSource;
+import io.ratesalgo.api.InMemoryInstrumentDirectory;
+import io.ratesalgo.api.Instrument;
+import io.ratesalgo.api.ParametricSensitivityProvider;
+import io.ratesalgo.api.RecordingHedgeOrderSink;
+import io.ratesalgo.api.RecordingOutboundSink;
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.hedge.HedgeUniverse;
+import io.ratesalgo.hedge.Hedger;
+import io.ratesalgo.hedge.TableHedgeCostModel;
+import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
+import io.ratesalgo.messages.sbe.QuoteWithdrawDecoder;
+import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.quoting.ClientTier;
+import io.ratesalgo.quoting.ClobQuoter;
+import io.ratesalgo.quoting.Desk;
+import io.ratesalgo.quoting.HitRatePreset;
+import io.ratesalgo.quoting.InputHealth;
+import io.ratesalgo.quoting.QuotingConfig;
+import io.ratesalgo.quoting.QuotingEngine;
+import io.ratesalgo.quoting.RfqOutcome;
+import io.ratesalgo.quoting.TierTable;
+import io.ratesalgo.risk.RiskLimits;
+import java.io.IOException;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 28: the quote lifecycle controls that pull stale quotes. */
+public final class Recipe28QuotePulls {
+
+  private Recipe28QuotePulls() {}
+
+  static final long T0 = 1_767_268_800_000_000_000L; // 2026-01-01T12:00Z
+  static final long MS = 1_000_000L;
+  static final long FACE_25M = 2_500_000_000L;
+
+  public static void main(final String[] args) throws IOException {
+    final ManualClock clock = new ManualClock(T0);
+    final InMemoryInstrumentDirectory instruments = new InMemoryInstrumentDirectory();
+    instruments.add(Instrument.bond(103, "UST10", CurrencyCode.USD, 10.0, FACE_25M));
+    final ParametricSensitivityProvider pv01 = new ParametricSensitivityProvider(instruments);
+    pv01.defineAtTenor(103, -8.2e-4, 0.0);
+    final InMemoryFairValueSource fair = new InMemoryFairValueSource();
+    final RecordingOutboundSink gateway = new RecordingOutboundSink();
+    final MessageHeaderDecoder header = new MessageHeaderDecoder();
+    final QuoteWithdrawDecoder withdraw = new QuoteWithdrawDecoder();
+    gateway.listener((templateId, buffer, offset, length) -> {
+      if (templateId == QuoteWithdrawDecoder.TEMPLATE_ID) {
+        withdraw.wrapAndApplyHeader(buffer, offset, header);
+        System.out.println(String.format(Locale.ROOT, "  t=%5d ms  QuoteWithdraw quote %d reason %s",
+            (withdraw.sentNanos() - T0) / MS, withdraw.quoteId(), withdraw.reason()));
+      }
+    });
+    // a one-second time to live and a two-second limit on the age of the inputs a quote used
+    final QuotingConfig config = new QuotingConfig().firmTtlNanos(1_000 * MS).maxInputAgeNanos(2_000 * MS);
+    final Desk desk = new Desk(new Desk.Inputs(instruments, pv01, fair, new InMemoryBookSource(4),
+        new RiskLimits().bucketPv01(250_000.0), new HedgeUniverse(), new TableHedgeCostModel(1), gateway,
+        new RecordingOutboundSink(), new RecordingHedgeOrderSink(), clock, config,
+        TierTable.single(1, new ClientTier(1, 1.0, 10_000_000_000L, true, false)),
+        HitRatePreset.shippedDefault(), Hedger.config(), ClobQuoter.config()));
+    final QuotingEngine engine = desk.quoting();
+    final InputHealth health = desk.health();
+    health.trackVenue(7);
+
+    System.out.println("1. time to live: the quote lapses at its validUntil, no message is sent");
+    fair.set(103, Decimal9.round(98.25), clock.epochNanos());
+    rfq(engine, clock, 1);
+    clock.advance(1_000 * MS);
+    engine.poll(clock.epochNanos());
+    System.out.println("  t= 1000 ms  live " + engine.liveQuotes() + ", expiries " + engine.expiries());
+
+    System.out.println("2. stale reference: quoted from a 1.5 s old fair value, pulled when it passes 2 s");
+    clock.advance(500 * MS);
+    rfq(engine, clock, 2);
+    clock.advance(400 * MS);
+    engine.poll(clock.epochNanos());
+    System.out.println("  t= 1900 ms  inputs 1.9 s old, live " + engine.liveQuotes());
+    clock.advance(200 * MS);
+    engine.poll(clock.epochNanos());
+
+    System.out.println("3. feed gap: book sequence 101, 102, 105 on venue 7 pulls every quote");
+    fair.set(103, Decimal9.round(98.26), clock.epochNanos());
+    clock.advance(300 * MS);
+    rfq(engine, clock, 3);
+    health.onBookSequence(7, 101);
+    health.onBookSequence(7, 102);
+    health.onBookSequence(7, 105);
+    clock.advance(1 * MS);
+    engine.poll(clock.epochNanos());
+    rfq(engine, clock, 4);
+    // the book is rebuilt from a snapshot; the re-quote throttle (250 ms) then lets the client in again
+    health.onFeedRecovered(7);
+    clock.advance(300 * MS);
+    fair.set(103, Decimal9.round(98.26), clock.epochNanos());
+    rfq(engine, clock, 5);
+    System.out.println(String.format(Locale.ROOT, "rfqs %d quotes %d passes %d expiries %d pulls %d",
+        engine.rfqs(), engine.quotesSent(), engine.passes(), engine.expiries(), engine.pulls()));
+  }
+
+  private static void rfq(final QuotingEngine engine, final ManualClock clock, final long rfqId) {
+    engine.onQuoteRequest(7, rfqId, 42, 103, Side.Buy, FACE_25M, 4, 0L, rfqId);
+    final RfqOutcome o = engine.outcome();
+    System.out.println(String.format(Locale.ROOT, "  t=%5d ms  rfq %d: %s %s%s", (clock.epochNanos() - T0) / MS,
+        rfqId, o.decision(), o.reason(), o.quoteId() == 0 ? ""
+            : String.format(Locale.ROOT, " quote %d valid to t=%d ms", o.quoteId(), (o.validUntilNanos() - T0) / MS)));
+  }
+}
+```
+
+Expected output:
+
+```
+1. time to live: the quote lapses at its validUntil, no message is sent
+  t=    0 ms  rfq 1: FIRM NONE quote 1 valid to t=1000 ms
+  t= 1000 ms  live 0, expiries 1
+2. stale reference: quoted from a 1.5 s old fair value, pulled when it passes 2 s
+  t= 1500 ms  rfq 2: FIRM NONE quote 2 valid to t=2500 ms
+  t= 1900 ms  inputs 1.9 s old, live 1
+  t= 2100 ms  QuoteWithdraw quote 2 reason StaleInput
+3. feed gap: book sequence 101, 102, 105 on venue 7 pulls every quote
+  t= 2400 ms  rfq 3: FIRM NONE quote 3 valid to t=3400 ms
+  t= 2401 ms  QuoteWithdraw quote 3 reason FeedGap
+  t= 2401 ms  rfq 4: PASS UNHEALTHY
+  t= 2701 ms  rfq 5: FIRM NONE quote 4 valid to t=3701 ms
+rfqs 5 quotes 4 passes 1 expiries 2 pulls 2
+```
+
+Quote 1 lapses at 1,000 ms without a message: the venue knows the quote's validUntil. Quote 2 is priced from a fair value already 1.5 s old, so it is withdrawn at 2,100 ms with `StaleInput`, before its time to live. Quote 3 is withdrawn with `FeedGap` as soon as venue 7's book sequence jumps from 102 to 105, the next RFQ is passed `UNHEALTHY`, and quoting resumes after `onFeedRecovered`. The final `expiries 2` counts quote 2 a second time, because a withdrawn quote keeps its reservation until its time to live passes. `QuotingEngineTest.quotesArePulledWhenTheirInputsGoStaleOrHealthFails` and `feedGapAndSessionLossPullEverything` assert the same behaviour.
+
+## 29. How do I replay a journal and rebuild the router's decision table for one parent order?
+
+The router writes every routing decision as one RouteDecision frame (template 80) followed by one RouteDecisionVenue frame (81) per venue, and every child order state change as a ChildOrderTransition (82), to a `FrameSink` (API_SPEC.md Section 15.5). The program binds that sink to `JournalWriter.append`, routes two parent orders on recipe 17's two-venue simulator, closes the journal, then reads it back with `JournalReader`, feeds every frame to `DecisionCodec` and keeps what belongs to parent 2, an urgent 8m sell. Nothing from the live run is kept in memory: the tables and the child history come from the file.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.journal.JournalReader;
+import io.ratesalgo.journal.JournalWriter;
+import io.ratesalgo.messages.sbe.ChildOrderTransitionDecoder;
+import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
+import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.router.CostTable;
+import io.ratesalgo.router.DecisionCodec;
+import io.ratesalgo.router.RandomSource;
+import io.ratesalgo.router.RouterPresets;
+import io.ratesalgo.router.SmartOrderRouter;
+import io.ratesalgo.router.sim.SimConfig;
+import io.ratesalgo.router.sim.SimMarket;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+
+/** COOKBOOK.md recipe 29: replay a journal and rebuild the router's decisions for one parent. */
+public final class Recipe29RouterReplay {
+
+  private Recipe29RouterReplay() {}
+
+  public static void main(final String[] args) throws IOException {
+    final Path dir = Files.createTempDirectory("recipe29");
+    final Path file = dir.resolve("router.raj");
+    final ManualClock clock = new ManualClock();
+    final SimConfig config = SimConfig.ust10yTwoVenues();
+    final SimMarket market = new SimMarket(config, 2026L, clock);
+
+    // live run: the router journals every RouteDecision, its venue rows and every child transition
+    try (JournalWriter journal = JournalWriter.create(file, 1 << 22, clock)) {
+      final SmartOrderRouter router = new SmartOrderRouter(RouterPresets.global(), config.routerVenues(0.25, 5),
+          market, market, (t, v, b, o, l) -> journal.append(t, v, b, o, l), clock, RandomSource.seeded(17L),
+          4, 64, 1L);
+      router.submit(1, 1001, Side.Buy, 20 * RouterPresets.ONE_MILLION, 0.5, 0L);
+      router.submit(2, 1001, Side.Sell, 8 * RouterPresets.ONE_MILLION, 0.9, 0L);
+      while (router.isActive(1) || router.isActive(2)) {
+        clock.advance(config.stepNanos());
+        market.step();
+        market.drain(router);
+        router.poll();
+      }
+      System.out.println("journal frames " + journal.nextSequence());
+    }
+
+    // replay: read the file back and keep what belongs to parent 2
+    final DecisionCodec codec = new DecisionCodec();
+    final MessageHeaderDecoder header = new MessageHeaderDecoder();
+    final ChildOrderTransitionDecoder transition = new ChildOrderTransitionDecoder();
+    final Map<Integer, Integer> byTemplate = new TreeMap<>();
+    final StringBuilder decisions = new StringBuilder();
+    final StringBuilder children = new StringBuilder();
+    try (JournalReader reader = JournalReader.open(file)) {
+      while (reader.next((seq, nanos, templateId, version, buffer, offset, length) -> {
+        byTemplate.merge(templateId, 1, Integer::sum);
+        if (codec.onFrame(templateId, buffer, offset, length) && codec.decoded().parentId() == 2) {
+          final CostTable t = codec.decoded();
+          decisions.append(decisions.isEmpty() ? t.format() : String.format(Locale.ROOT,
+              "decision %d %s slice %.1fm alloc %.1fm%n", t.decisionId(), t.reason(),
+              t.sliceQuantity() / (double) RouterPresets.ONE_MILLION,
+              t.allocatedQuantity() / (double) RouterPresets.ONE_MILLION));
+        }
+        if (templateId == ChildOrderTransitionDecoder.TEMPLATE_ID) {
+          transition.wrapAndApplyHeader(buffer, offset, header);
+          if (transition.parentId() == 2) {
+            children.append(String.format(Locale.ROOT, "  seq %3d child %d venue %d %s -> %s (%s) cum %.1fm%n",
+                seq, transition.clOrdId(), transition.venueId(), transition.fromState(), transition.toState(),
+                transition.cause(), transition.cumQuantity() / (double) RouterPresets.ONE_MILLION));
+          }
+        }
+      })) {
+        // reading
+      }
+    }
+    System.out.println("frames by template (80 decision, 81 venue row, 82 child transition): " + byTemplate);
+    System.out.print(decisions);
+    System.out.println("child orders of parent 2:");
+    System.out.print(children);
+    Files.delete(file);
+    Files.delete(dir);
+  }
+}
+```
+
+Expected output:
+
+```
+journal frames 92
+frames by template (80 decision, 81 venue row, 82 child transition): {80=11, 81=22, 82=58}
+decision 2 parent 2 Slice Sell slice 0 qty 4.0 alloc 4.0 horizon 3.0s expected 0.013448
+venue kind    bid        ask          same    opp    cap P(fill) impact    passive   aggress   chosen     alloc mode excluded
+1     Clob    98.500000  98.515625    12.0  120.0   33.0 0.0000  0.002402  0.013597  0.010766  0.013597     3.0 pass None
+2     Clob    98.500000  98.515625     6.0   60.0   16.0 0.0037  0.001961  0.013001  0.010239  0.013001     1.0 pass None
+decision 3 Escalation slice 3.0m alloc 0.0m
+decision 4 Escalation slice 1.0m alloc 0.0m
+decision 5 Retry slice 4.0m alloc 4.0m
+decision 6 Slice slice 4.0m alloc 4.0m
+child orders of parent 2:
+  seq   9 child 3 venue 1 New -> New (Sent) cum 0.0m
+  seq  10 child 4 venue 2 New -> New (Sent) cum 0.0m
+  seq  13 child 3 venue 1 New -> Acknowledged (Ack) cum 0.0m
+  seq  14 child 4 venue 2 New -> Acknowledged (Ack) cum 0.0m
+  seq  15 child 3 venue 1 Acknowledged -> CancelRequested (CancelSent) cum 0.0m
+  seq  16 child 4 venue 2 Acknowledged -> CancelRequested (CancelSent) cum 0.0m
+  seq  17 child 3 venue 1 CancelRequested -> Replaced (CancelConfirmed) cum 0.0m
+  seq  21 child 4 venue 2 CancelRequested -> Replaced (CancelConfirmed) cum 0.0m
+  seq  28 child 5 venue 1 New -> New (Sent) cum 0.0m
+  seq  29 child 6 venue 2 New -> New (Sent) cum 0.0m
+  seq  30 child 6 venue 2 New -> Filled (Fill) cum 1.0m
+  seq  31 child 5 venue 1 New -> Filled (Fill) cum 3.0m
+  seq  35 child 7 venue 1 New -> New (Sent) cum 0.0m
+  seq  36 child 8 venue 2 New -> New (Sent) cum 0.0m
+  seq  37 child 8 venue 2 New -> Filled (Fill) cum 1.0m
+  seq  38 child 7 venue 1 New -> Filled (Fill) cum 3.0m
+```
+
+The first table is the decision as the router saw it: both CLOB venues, their queue and capacity, the fill probability, impact, the passive and aggressive costs, and the allocation of 3m and 1m passive. The two Escalation decisions allocate nothing new; they replace the resting children, which the child history shows as Acknowledged to CancelRequested to Replaced, and the Retry and the next Slice each fill 4m across the two venues. The frame counts (11 decisions, 22 venue rows, 58 transitions) cover both parents. `DecisionReplayTest.journalRebuildsAndReproducesEveryDecision` asserts that every decision rebuilt from a journal equals the live one, and LEARN.md Section 9 covers the routing logic.
+
+## 30. How do I run the CLOB simulator through a workup and read the book feed?
+
+The CLOB simulator runs a workup like the interdealer Treasury venues: a trade at price P opens an exclusive window in which only the two counterparties may trade more at P, then an open window in which anyone may, and the timer restarts on each trade (the states are in the clob_workup_states diagram). Orders that arrive from outsiders during the exclusive window are held and processed when it ends. The program enters participant orders with `submitInternal`, moves the `ManualClock`, runs the due workup timers with `onTime`, and after each step prints the workup state, the trades from the venue's event log with their FIX tag 9504 flag, and the book rebuilt from the SBE feed by `BookFeedConsumer`.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.venues.Venues;
+import io.ratesalgo.venues.clob.ClobBook;
+import io.ratesalgo.venues.clob.ClobConfig;
+import io.ratesalgo.venues.clob.ClobSimulator;
+import io.ratesalgo.venues.feed.BookFeedConsumer;
+import io.ratesalgo.venues.feed.InProcessFeedChannel;
+import io.ratesalgo.venues.sim.Px;
+import java.util.List;
+
+/** COOKBOOK.md recipe 30: run the CLOB simulator through a workup and read the book feed. */
+public final class Recipe30ClobWorkup {
+
+  private Recipe30ClobWorkup() {}
+
+  static final int TEN_YEAR = 1007; // US91282CZG94
+
+  public static void main(final String[] args) {
+    final ManualClock clock = new ManualClock(Venues.T0);
+    final InProcessFeedChannel feed = new InProcessFeedChannel();
+    final ClobSimulator clob = (ClobSimulator) Venues.create("clob", clock, 1, feed);
+    final BookFeedConsumer book = new BookFeedConsumer(clob.feed());
+    final ClobConfig cfg = clob.config();
+    System.out.println("workup " + cfg.workupNanos() / 1_000_000 + " ms, exclusive " + cfg.exclusiveNanos() / 1_000_000
+        + " ms, extend on trade " + cfg.extendOnTrade());
+    final long p = Px.price("98.015625");
+    final int[] cursor = {0};
+    final long ms = 1_000_000L;
+
+    clob.submitInternal("DLR-A", TEN_YEAR, false, p, 10_000_000, 0);
+    clob.submitInternal("DLR-A", TEN_YEAR, false, Px.price("98.03125"), 5_000_000, 0);
+    clob.submitInternal("DLR-Z", TEN_YEAR, true, Px.price("97.984375"), 4_000_000, 0);
+    step("resting book", clob, clock, feed, book, 0, cursor);
+
+    clob.submitInternal("DLR-B", TEN_YEAR, true, p, 2_000_000, 0); // lifts the offer: a workup opens at p
+    step("B lifts 2m at 98.015625", clob, clock, feed, book, 0, cursor);
+
+    clob.submitInternal("DLR-C", TEN_YEAR, true, p, 3_000_000, 0); // an outsider: held in the exclusive window
+    clob.submitInternal("DLR-B", TEN_YEAR, true, p, 1_000_000, 0); // a participant: trades at once
+    step("C bids 3m (held), B adds 1m", clob, clock, feed, book, 100 * ms, cursor);
+
+    clob.submitInternal("DLR-D", TEN_YEAR, true, Px.price("98.03125"), 1_000_000, 0); // an outsider bidding above p: held too
+    step("exclusive window over", clob, clock, feed, book, cfg.exclusiveNanos(), cursor);
+
+    step("workup timer expired", clob, clock, feed, book, cfg.workupNanos(), cursor);
+    System.out.println("trades " + clob.trades() + ", feed sequence " + clob.feed().lastSequence()
+        + ", consumer sequence " + book.lastSequence() + ", gaps " + book.gaps());
+  }
+
+  private static void step(final String label, final ClobSimulator clob, final ManualClock clock,
+      final InProcessFeedChannel feed, final BookFeedConsumer book, final long advanceNanos, final int[] logCursor) {
+    if (advanceNanos > 0) {
+      clock.advance(advanceNanos);
+      clob.onTime(); // runs the workup timers that fall due
+    }
+    feed.poll(book, 100);
+    final ClobBook b = clob.book(TEN_YEAR);
+    System.out.println(label + ": " + (b.inWorkup() ? "workup at " + Px.text(b.workupPrice()) : "normal")
+        + ", held " + b.held().size());
+    final List<String> log = clob.eventLog();
+    for (; logCursor[0] < log.size(); logCursor[0]++) {
+      final String line = log.get(logCursor[0]);
+      final String text = line.substring(line.indexOf(' ') + 1); // drop the timestamp
+      if (text.startsWith("trade")) {
+        System.out.println("  " + text);
+      }
+    }
+    System.out.println("  feed bids " + levels(book, Side.Buy) + " offers " + levels(book, Side.Sell));
+  }
+
+  private static String levels(final BookFeedConsumer book, final Side side) {
+    final StringBuilder sb = new StringBuilder("[");
+    book.levels(TEN_YEAR, side).forEach((price, qty) ->
+        sb.append(sb.length() == 1 ? "" : ", ").append(Px.text(price)).append('x').append(qty));
+    return sb.append(']').toString();
+  }
+}
+```
+
+Expected output:
+
+```
+workup 5000 ms, exclusive 2000 ms, extend on trade true
+resting book: normal, held 0
+  feed bids [97.984375x400000000] offers [98.015625x1000000000, 98.03125x500000000]
+B lifts 2m at 98.015625: workup at 98.015625, held 0
+  trade 2000000 @ 98.015625 DLR-B/DLR-A N
+  feed bids [97.984375x400000000] offers [98.015625x800000000, 98.03125x500000000]
+C bids 3m (held), B adds 1m: workup at 98.015625, held 1
+  trade 1000000 @ 98.015625 DLR-B/DLR-A X
+  feed bids [97.984375x400000000] offers [98.015625x700000000, 98.03125x500000000]
+exclusive window over: workup at 98.015625, held 0
+  trade 3000000 @ 98.015625 DLR-C/DLR-A W
+  trade 1000000 @ 98.015625 DLR-D/DLR-A W
+  feed bids [97.984375x400000000] offers [98.015625x300000000, 98.03125x500000000]
+workup timer expired: normal, held 0
+  feed bids [97.984375x400000000] offers [98.015625x300000000, 98.03125x500000000]
+trades 4, feed sequence 6, consumer sequence 6, gaps 0
+```
+
+The first trade is a normal one (flag N) and opens the workup at 98.015625. DLR-C's 3m bid is held because C is not a counterparty, while DLR-B's further 1m trades at once with flag X. When the exclusive window ends, 2 s after the last trade, the held orders trade at P in arrival order with flag W, including DLR-D's bid at 98.03125, which fills at the workup price and not at its limit. The feed shows the offer at P falling from 10m to 3m and never shows a crossed book; the workup then times out with no further trades. `ClobBookTest.workupExclusiveWindowHoldsOutsiders` asserts the same sequence, and LEARN.md Section 6, "Worked example: a workup", explains why venues run it.
+
+## 31. How do I compute key-rate hedge ratios with PCA from the public Treasury curve fixture?
+
+`ratesresearch.curves.load_par_curve` reads the public Treasury par curve fixture `data/fixtures/ust_par_curve_2015_2025.csv` at seven tenors, `daily_changes` turns it into daily changes in basis points, and `pca` takes the eigenvectors of their sample covariance (level, slope and curvature, sign-normalised). `pca_hedge_ratio` gives the hedge of the 10-year with the 5-year alone, keeping one, two or three factors; the last step solves a three-by-three system with numpy so that a 2y/5y/30y hedge of one unit of 10-year nets PC1, PC2 and PC3 to zero. All ratios are in yield-change space, units of hedge yield per unit of target yield; a desk multiplies them by the ratio of DV01s to get notionals.
+
+```python
+"""COOKBOOK.md recipe 31: PCA hedge ratios from the Treasury par curve fixture."""
+
+from pathlib import Path
+
+import numpy as np
+
+from ratesresearch import curves
+
+root = Path(__file__).resolve().parents[2]
+dates, tenors, rates = curves.load_par_curve(root / "data/fixtures/ust_par_curve_2015_2025.csv")
+changes = curves.daily_changes(rates)
+result = curves.pca(changes, n_components=3)
+print(f"{len(changes)} daily changes, {dates[0]} to {dates[-1]}")
+
+print(f"{'':<6}" + "".join(f"{t:>8}" for t in tenors) + f"{'explained':>11}")
+for k, name in enumerate(("PC1", "PC2", "PC3")):
+    row = "".join(f"{v:>8.3f}" for v in result.loadings[k])
+    print(f"{name:<6}{row}{result.explained_variance_ratio[k]:>11.4f}")
+
+i10, i5 = tenors.index("10 Yr"), tenors.index("5 Yr")
+for n in (1, 2, 3):
+    h = curves.pca_hedge_ratio(result, i10, i5, n_factors=n)
+    print(f"10y hedged with 5y alone, {n} factor(s): {h:.4f}")
+
+# Hedge one unit of 10y with 2y, 5y and 30y so that PC1, PC2 and PC3 all net to zero.
+legs = [tenors.index(t) for t in ("2 Yr", "5 Yr", "30 Yr")]
+weights = np.linalg.solve(result.loadings[:, legs], result.loadings[:, i10])
+for t, w in zip(("2y", "5y", "30y"), weights, strict=True):
+    print(f"hedge leg {t:<4} {w:>8.4f}")
+residual = changes[:, i10] - changes[:, legs] @ weights
+print(f"10y daily sd {changes[:, i10].std(ddof=1):.3f} bp, hedged {residual.std(ddof=1):.3f} bp")
+```
+
+Expected output:
+
+```
+2749 daily changes, 2015-01-02 to 2025-12-31
+          2 Yr    3 Yr    5 Yr    7 Yr   10 Yr   20 Yr   30 Yr  explained
+PC1      0.338   0.378   0.410   0.418   0.394   0.358   0.341     0.8782
+PC2     -0.538  -0.418  -0.190   0.013   0.199   0.445   0.513     0.0995
+PC3      0.653  -0.050  -0.402  -0.413  -0.196   0.225   0.386     0.0114
+10y hedged with 5y alone, 1 factor(s): 0.9629
+10y hedged with 5y alone, 2 factor(s): 0.9153
+10y hedged with 5y alone, 3 factor(s): 0.9101
+hedge leg 2y    -0.1565
+hedge leg 5y     0.6933
+hedge leg 30y    0.4798
+10y daily sd 5.351 bp, hedged 0.907 bp
+```
+
+The first three components explain 87.8, 10.0 and 1.1 percent of the variance of daily changes, the same values `data/fixtures/ust_pca_summary.json` records, and `test_summarise_matches_committed_summary` and `test_first_component_explains_most_of_real_daily_changes` in `research/tests/test_curves.py` check them on the fixture. The one-factor 5y hedge is the loading ratio 0.394 / 0.410 = 0.963 and moves toward the regression slope as factors are added (`test_pca_hedge_with_all_factors_equals_regression_slope` shows they coincide with all seven). The three-leg hedge sells 2y against 5y and 30y, its weights sum to 1.017 because it must offset the level, and it cuts the 10-year's daily standard deviation from 5.35 bp to 0.91 bp; what remains is the variance in components four to seven.
+
+## 32. How do I fit the hit-rate model and read its calibration across the assumption band?
+
+`ratesresearch.hitrate.simulate_labels` draws labelled RFQs from the declared competition model, preset `usd_rfq_competition` in `data/presets.yaml`, and `fit` estimates the logistic win probability by Newton-Raphson on the first 70 percent of them, with standard errors from the inverse observed information. No public tape shows losing quotes (DR-008), so the spread-to-cover slope is a declared band (low -1.25, central -2.5, high -5.0 per bp, `ratesresearch.assumptions.SLOPE_BAND`); the program generates 20,000 labels at each point with the default seed, fits them, and runs `calibration_table` on the held-out 30 percent in quintiles of predicted probability.
+
+```python
+"""COOKBOOK.md recipe 32: fit the hit-rate model at each point of the slope band."""
+
+import copy
+from pathlib import Path
+
+from ratesresearch import hitrate, presets
+
+root = Path(__file__).resolve().parents[2]
+competition = presets.get_preset(root / "data/presets.yaml", "usd_rfq_competition")
+band = competition["assumptions"]["spread_to_cover_bp"]["band"]
+
+fits, tables = {}, {}
+for point in ("low", "central", "high"):
+    # simulate_labels draws with the band's central slope, so move that slot to this point.
+    comp = copy.deepcopy(competition)
+    comp["assumptions"]["spread_to_cover_bp"]["band"]["central"] = band[point]
+    x, y = hitrate.simulate_labels(comp, 20_000)
+    fits[point] = f = hitrate.fit(x, y)
+    tables[point] = hitrate.calibration_table(x[f.n_fit :], y[f.n_fit :], f.beta, bins=5)
+
+print(f"{'band point':<20}" + "".join(f"{p:>20}" for p in fits))
+print(f"{'declared slope':<20}" + "".join(f"{band[p]:>20.2f}" for p in fits))
+for j, name in enumerate(hitrate.FEATURES):
+    cells = "".join(f"{f.beta[j]:>10.3f} +/- {f.se[j]:.3f}" for f in fits.values())
+    print(f"{name:<20}{cells}")
+for label, attr in (("oos log-loss model", "log_loss_model"), ("constant", "log_loss_constant")):
+    print(f"{label:<20}" + "".join(f"{getattr(f, attr):>20.4f}" for f in fits.values()))
+
+print("test-set calibration by quintile of predicted win probability (predicted / observed)")
+for b in range(5):
+    cells = "".join(f"{tables[p][b][0]:>12.3f} / {tables[p][b][1]:.3f}" for p in fits)
+    print(f"{f'quintile {b + 1}':<20}{cells}")
+```
+
+Expected output:
+
+```
+band point                           low             central                high
+declared slope                     -1.25               -2.50               -5.00
+intercept                1.228 +/- 0.077     1.185 +/- 0.081     1.087 +/- 0.092
+spread_to_cover_bp      -1.268 +/- 0.053    -2.490 +/- 0.061    -4.998 +/- 0.089
+log_size_mm             -0.145 +/- 0.015    -0.145 +/- 0.015    -0.141 +/- 0.018
+tenor_years             -0.012 +/- 0.002    -0.012 +/- 0.002    -0.011 +/- 0.002
+fixing_window            0.324 +/- 0.041     0.281 +/- 0.043     0.337 +/- 0.049
+dealer_count            -0.255 +/- 0.016    -0.239 +/- 0.017    -0.223 +/- 0.019
+oos log-loss model                0.6526              0.6014              0.4950
+constant                          0.6888              0.6905              0.6923
+test-set calibration by quintile of predicted win probability (predicted / observed)
+quintile 1                 0.271 / 0.268       0.190 / 0.176       0.078 / 0.067
+quintile 2                 0.383 / 0.367       0.343 / 0.352       0.253 / 0.296
+quintile 3                 0.459 / 0.468       0.462 / 0.443       0.461 / 0.451
+quintile 4                 0.536 / 0.524       0.585 / 0.587       0.684 / 0.703
+quintile 5                 0.657 / 0.638       0.756 / 0.759       0.895 / 0.877
+```
+
+At each band point the fit recovers the declared slope within one standard error (-1.268, -2.490, -4.998) and the other coefficients near the simulator's true values (intercept 1.2, log size -0.15, tenor -0.01, fixing window 0.3, dealer count -0.25), so the pipeline returns what it was given; it measures no market. The held-out log-loss beats the constant predictor at every point, by more as the slope steepens, and observed rates sit within 0.05 of predicted ones in every quintile, inside the 0.06 bound that `test_hitrate_fit_beats_constant_and_recovers_slope` in `research/tests/test_p5_research.py` asserts. The committed preset `usd_rfq_hit_rate` (-2.57 +/- 0.04) is fitted to 40,000 labels, which is why it differs from the central column here; LEARN.md Section 10, "Why the band, and not one number", explains why results are reported at all three points.
+
+## 33. How do I compute markout curves by client tier from a back-test run?
+
+`ratesresearch.backtest_analysis.load_run` reads the two fitting-period runs committed under `data/fixtures/backtest/fitting/`, and `ratesresearch.markouts.curves` converts each client fill's dealer markout into a mid-to-mid move in basis points of yield (dealer markout less the edge earned, divided by the fill's DV01) and averages it by tier at 1 s, 10 s, 1 min and 5 min. A negative number means mid moved with the client, against us. `informed_share` estimates the informed fraction of each tier's flow as twice the share of fills where the client's direction matched the one-minute move, less one, with a binomial standard error.
+
+```python
+"""COOKBOOK.md recipe 33: markout curves by client tier from the fitting-period runs."""
+
+from pathlib import Path
+
+import pandas as pd
+
+from ratesresearch import backtest_analysis as ba
+from ratesresearch import markouts
+
+root = Path(__file__).resolve().parents[2]
+days = sorted((root / "data/fixtures/backtest/fitting").iterdir())
+fills = pd.concat([ba.load_run(d).fills for d in days], ignore_index=True)
+print("runs:", ", ".join(d.name for d in days))
+
+by_tier = markouts.curves(fills, "tier")
+print(f"{'tier':<6}{'fills':>6}" + "".join(f"{h:>9}" for h in markouts.HORIZONS))
+for _, r in by_tier.iterrows():
+    cells = "".join(f"{r[f'bp_{h}']:>9.4f}" for h in markouts.HORIZONS)
+    print(f"{int(r['tier']):<6}{int(r['fills']):>6}{cells}")
+
+share = markouts.informed_share(fills, "1min", by="tier")
+print("informed share at 1min (2 * agreement - 1)")
+for _, r in share.iterrows():
+    tier, n = int(r["group"]), int(r["fills"])
+    print(f"tier {tier}: {r['informed_share']:.3f} +/- {r['se']:.3f} ({n} fills)")
+```
+
+Expected output:
+
+```
+runs: 2026-01-05, 2026-01-06
+tier   fills       1s      10s     1min     5min
+1        145  -0.0057  -0.0186  -0.0792  -0.0815
+2         82   0.0083   0.0060  -0.0537   0.2437
+3         56   0.0066  -0.0287  -0.2444  -0.2621
+informed share at 1min (2 * agreement - 1)
+tier 1: 0.220 +/- 0.082 (141 fills)
+tier 2: 0.190 +/- 0.110 (79 fills)
+tier 3: 0.519 +/- 0.116 (54 fills)
+```
+
+Tier 3 loses 0.24 bp at one minute against 0.08 bp for tier 1 and 0.05 bp for tier 2, and its informed-share estimate, 0.52 +/- 0.12, is the highest; `test_markouts_rank_tiers_and_estimate_informed_share` in `research/tests/test_p5_research.py` checks on these same two runs that tier 3 is more adverse than tier 1 and that each estimate lies within three standard errors (plus 0.05) of the generator's truth in `truth.csv`. With 56 to 145 fills per tier the curves are noisy (tier 2 turns positive at five minutes), so LEARN.md Section 10, worked example P5-001, quotes the tier figures from all ten fitting sessions rather than from these two.
+
+## 34. How do I validate a deployment config against its schema and read the error?
+
+Every process reads a YAML configuration that must validate against `deploy/config/schema/process-config.schema.json` before it starts (API_SPEC.md Section 17.11); `ProcessConfig.check` returns every violation as a JSON-path message, `ProcessConfig.load` applies the environment overrides `RATES_HTTP_PORT` and `RATES_JOURNAL_DIR` first and throws `InvalidConfigException` if the result does not validate, and `ConfigValidatorMain` wraps the same check for CI. The program validates the shipped `deploy/config/trading-blue.yaml`, then the same document with four hand-made mistakes, then the shipped file with a bad port in the environment. `rates-cookbook` depends on `rates-ops` for this recipe.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.ops.config.JsonSchema;
+import io.ratesalgo.ops.config.ProcessConfig;
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+
+/** COOKBOOK.md recipe 34: validate a deployment config against its schema and read the error. */
+public final class Recipe34ConfigSchema {
+
+  private Recipe34ConfigSchema() {}
+
+  @SuppressWarnings("unchecked")
+  public static void main(final String[] args) throws IOException {
+    final Path root = RepoRoot.find();
+    final JsonSchema schema = ProcessConfig.schema(root.resolve("deploy/config/schema/process-config.schema.json"));
+    final Path blue = root.resolve("deploy/config/trading-blue.yaml");
+
+    // the shipped file: valid, and the typed view the process starts from
+    System.out.println("deploy/config/trading-blue.yaml errors: " + ProcessConfig.check(blue, schema));
+    final ProcessConfig cfg = ProcessConfig.load(blue, schema, Map.of());
+    System.out.println("  " + cfg.name() + " role " + cfg.role() + " colour " + cfg.colour() + " port " + cfg.port()
+        + " instruments " + cfg.instruments().size() + " retention " + cfg.retentionYears() + "y");
+
+    // the same document with four mistakes an operator could make by hand
+    final Map<String, Object> doc;
+    try (Reader r = Files.newBufferedReader(blue, StandardCharsets.UTF_8)) {
+      doc = (Map<String, Object>) ProcessConfig.parse(r);
+    }
+    ((Map<String, Object>) doc.get("process")).put("colour", "red");
+    ((Map<String, Object>) doc.get("http")).put("port", 80810);
+    ((Map<String, Object>) doc.get("journal")).put("capacityBytes", "64MB");
+    doc.remove("retention");
+    final List<String> errors = schema.validate(doc);
+    System.out.println("edited document: " + errors.size() + " errors");
+    errors.forEach(e -> System.out.println("  " + e));
+
+    // an environment override is validated too: the process refuses to start
+    try {
+      ProcessConfig.load(blue, schema, Map.of("RATES_HTTP_PORT", "70000"));
+    } catch (final ProcessConfig.InvalidConfigException e) {
+      System.out.println("RATES_HTTP_PORT=70000 refused: " + e.errors());
+    }
+  }
+}
+```
+
+Expected output:
+
+```
+deploy/config/trading-blue.yaml errors: []
+  trading-blue role trading colour blue port 8081 instruments 2 retention 5y
+edited document: 4 errors
+  $: missing required property 'retention'
+  $.process.colour: red is not one of [blue, green]
+  $.http.port: 80810 is above the maximum 65535
+  $.journal.capacityBytes: expected integer, found String 64MB
+RATES_HTTP_PORT=70000 refused: [$.http.port: 70000 is above the maximum 65535]
+```
+
+The shipped file has no errors and loads to its typed view. The edited document reports all four mistakes at once, each with the path to the offending value and what the schema expected, so an operator fixes them in one pass; a missing section is reported at `$`, the root. The override is checked like the file, so a process started with `RATES_HTTP_PORT=70000` refuses to start instead of binding an unexpected port. `ConfigValidationTest.brokenConfigurationsReportEveryViolation` and `environmentOverridesApplyBeforeValidation` assert this, and the ops workflow runs the validator on every committed configuration.
+

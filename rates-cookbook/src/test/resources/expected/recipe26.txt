@@ -1,0 +1,7 @@
+convention               days  first obs   last obs    known  rate%     float PV
+USD-SOFR-OIS               61  2024-12-16  2025-03-14     20  4.33715   1088151.02
+USD-SOFR-OIS-LB2           61  2024-12-12  2025-03-12     22  4.35193   1091858.38
+USD-SOFR-OIS-LB2-OS        61  2024-12-12  2025-03-12     22  4.35167   1091793.95
+USD-SOFR-OIS-LO2           61  2024-12-16  2025-03-12     20  4.33713   1088146.77
+USD-SOFR-OIS-LB5-LO2-OS    61  2024-12-09  2025-03-05     25  4.36339   1094734.70
+realised growth 2024-12-16 to 2025-01-15: fixings 1.00365457, SOFR Index ratio 1.00365456

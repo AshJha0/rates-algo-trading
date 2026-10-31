@@ -69,12 +69,13 @@ class LoopPropertiesTest {
       @ForAll final long seed,
       @ForAll @IntRange(min = 1, max = 300) final int messages,
       @ForAll @IntRange(min = 1024, max = 8192) final int segment,
-      @ForAll @DoubleRange(min = 0.0, max = 0.15) final double faultRate)
+      @ForAll @DoubleRange(min = 0.0, max = 0.15) final double faultRate,
+      @ForAll final JournalMode mode)
       throws IOException {
     final Path dir = Files.createTempDirectory("loopprop");
     try {
       final QuoteApp live = new QuoteApp(true);
-      final TestRig rig = new TestRig(dir, live, segment, RingBufferContract.MIN_CAPACITY);
+      final TestRig rig = new TestRig(dir, live, segment, RingBufferContract.MIN_CAPACITY, mode);
       final FaultInjector faults =
           new FaultInjector(
               new FaultPlan(faultRate, faultRate, faultRate, faultRate, 4, seed), rig.publisher::offer);

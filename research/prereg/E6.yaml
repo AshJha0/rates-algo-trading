@@ -1,0 +1,49 @@
+# Pre-registration EDGE-E6. Written and hashed on 2026-10-31 before the par-curve data it tests
+# were downloaded or read for this study (the P1 par-curve fixture 2015 to 2025 is in the
+# repository; no carry statistic has been computed on it).
+# Format: API_SPEC.md Section 16.8; shared rules: research/prereg/edge_programme.yaml.
+# period is the holdout test period; holdout lists the reserve dates (not read by this programme).
+prereg_version: 1
+id: EDGE-E6
+title: Carry and roll-down inventory tilt on the Treasury par curve
+hypothesis: >
+  An inventory tilted towards the tenors with the highest carry and roll-down per unit DV01
+  (weights 1 + 0.5 z, no shorts, same total DV01) earns more over the following month, net of
+  funding, than an equal-DV01 inventory across 2, 3, 5, 7, 10, 20 and 30 years.
+metric: monthly P&L of the tilted inventory minus the baseline, bp per unit DV01, unit one month
+baseline: equal_dv01
+treatments: [carry_roll_tilt]
+period: {start: 2021-01-01, end: 2026-06-30}
+fitting_period: {start: 2015-01-01, end: 2020-12-31}
+holdout: [
+  2026-07-01, 2026-07-02, 2026-07-03, 2026-07-06, 2026-07-07, 2026-07-08, 2026-07-09,
+  2026-07-10, 2026-07-13, 2026-07-14, 2026-07-15, 2026-07-16, 2026-07-17, 2026-07-20,
+  2026-07-21, 2026-07-22, 2026-07-23, 2026-07-24, 2026-07-27, 2026-07-28, 2026-07-29,
+  2026-07-30, 2026-07-31, 2026-08-03, 2026-08-04, 2026-08-05, 2026-08-06, 2026-08-07,
+  2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13, 2026-08-14, 2026-08-17, 2026-08-18,
+  2026-08-19, 2026-08-20, 2026-08-21, 2026-08-24, 2026-08-25, 2026-08-26, 2026-08-27,
+  2026-08-28, 2026-08-31, 2026-09-01, 2026-09-02, 2026-09-03, 2026-09-04, 2026-09-07,
+  2026-09-08, 2026-09-09, 2026-09-10, 2026-09-11, 2026-09-14, 2026-09-15, 2026-09-16,
+  2026-09-17, 2026-09-18, 2026-09-21, 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25,
+  2026-09-28, 2026-09-29, 2026-09-30, 2026-10-01, 2026-10-02, 2026-10-05, 2026-10-06,
+  2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14, 2026-10-15,
+  2026-10-16, 2026-10-19, 2026-10-20, 2026-10-21, 2026-10-22, 2026-10-23, 2026-10-26,
+  2026-10-27, 2026-10-28, 2026-10-29, 2026-10-30,
+]
+success_threshold: >
+  E6 passes the programme test rule at the central band point (funding at the 1-month bill plus
+  10 bp): positive mean, 95 percent moving-block bootstrap interval (blocks of 3 months, 2000
+  resamples) above zero, Holm-adjusted p below 0.05, mean at least 0.1 bp per month.
+assumption_band:
+  parameter: funding spread over the 1-month bill (bp)
+  points: [low, central, high]
+  values: {low: 0, central: 10, high: 25}
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/E6.config.yaml
+config_sha256: 8a23086a554b19234ae25cd2904022d251f41300a0da710298e112e46a384f36
+limitations: >
+  Constant-maturity par yields, not the yields of held bonds; first-order price changes; no
+  bid-offer, no specialness in repo, and funding at a bill-plus-spread proxy. The tilt is a curve
+  position as well as a carry position, so its P&L carries curve risk; the test asks whether that
+  is paid over 66 holdout months, which is a short history for a curve factor.

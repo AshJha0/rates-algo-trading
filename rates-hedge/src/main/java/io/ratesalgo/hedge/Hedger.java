@@ -25,6 +25,10 @@ import io.ratesalgo.risk.RiskEngine;
  * Every parent passes {@link RiskEngine#checkOrder} first and reserves its quantity until filled
  * or cancelled.
  *
+ * <p>A kill cancels every parent, except a kill from the risk engine's daily-loss limit ({@link
+ * RiskEngine#flattenOnly}): then the parents keep working and timers keep sending risk-reducing
+ * tranches, so the book is flattened rather than frozen with a loss on it.
+ *
  * <p>Also an {@link AxeSource}: while an episode is active, a client trade that moves the book
  * toward the hedge earns a price improvement proportional to its correlation with the needed
  * hedge, capped at {@code axeMaxBp}. Allocation-free after construction.
@@ -111,6 +115,13 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private final long[] parentArrival;
   private int parentCount;
   private long nextParentId;
+  // parents dropped by the last kill: a fill that raced the cancel-all is still booked (DR-R2R-13)
+  private final long[] killedId;
+  private final int[] killedInstrument;
+  private final long[] killedRemaining;
+  private int killedCount;
+  private long lateFills;
+  private long flattenKills;
 
   private final Dv01Vector residual;
   private final double[] r = new double[K];
@@ -145,6 +156,9 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentInstrument = new int[config.maxParents];
     parentRemaining = new long[config.maxParents];
     parentArrival = new long[config.maxParents];
+    killedId = new long[config.maxParents];
+    killedInstrument = new int[config.maxParents];
+    killedRemaining = new long[config.maxParents];
     nextParentId = config.parentIdBase;
     residual = new Dv01Vector(currency);
   }
@@ -158,7 +172,8 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   public int onTimer(final long epochNanos) {
     measure();
     analytics.recordResidual(epochNanos, residualVariance, residual.parallel());
-    if (!risk.killSwitch().isActive() || Math.sqrt(residualVariance) < config.triggerStdDev) {
+    final boolean allowed = risk.killSwitch().isActive() || risk.flattenOnly();
+    if (!allowed || Math.sqrt(residualVariance) < config.triggerStdDev) {
       episode = false;
       return 0;
     }
@@ -198,21 +213,58 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   public void onHedgeFill(final long id, final long price, final long quantityMinor) {
     final int p = find(id);
     if (p < 0) {
+      if (bookKilledFill(id, price, quantityMinor)) {
+        return;
+      }
       throw new IllegalArgumentException("fill for unknown hedge parent " + id);
     }
     final long remaining = parentRemaining[p];
     final long qty = Math.min(quantityMinor, Math.abs(remaining));
     final long signed = remaining > 0 ? qty : -qty;
     final int instrumentId = parentInstrument[p];
+    final long arrival = parentArrival[p];
     risk.release(instrumentId, signed > 0 ? qty : 0L, signed > 0 ? 0L : qty);
-    risk.onFill(instrumentId, signed, price);
-    final Instrument inst = risk.directory().byId(instrumentId);
-    analytics.onFill(
-        inst, signed, price, parentArrival[p], risk.quotePerBp(instrumentId), risk.unitParallelPv01(instrumentId));
+    // the parent's book entry is brought up to date before the fill reaches the risk engine: a
+    // fill can trip a post-trade limit, and the kill switch then calls onKill, which releases
+    // and drops every parent, so the entry must already match the reservation it describes
     parentRemaining[p] = remaining - signed;
     if (parentRemaining[p] == 0) {
       remove(p);
     }
+    risk.onFill(instrumentId, signed, price);
+    final Instrument inst = risk.directory().byId(instrumentId);
+    analytics.onFill(
+        inst, signed, price, arrival, risk.quotePerBp(instrumentId), risk.unitParallelPv01(instrumentId));
+  }
+
+  /**
+   * A fill on a parent the last kill dropped: the router had already sent it when the cancel-all
+   * went out, so the trade stands. It is booked (the reservation is already released) up to the
+   * parent's remaining quantity; returns false if {@code id} is not such a parent.
+   */
+  private boolean bookKilledFill(final long id, final long price, final long quantityMinor) {
+    for (int k = 0; k < killedCount; k++) {
+      if (killedId[k] == id && killedRemaining[k] != 0) {
+        final long remaining = killedRemaining[k];
+        final long qty = Math.min(quantityMinor, Math.abs(remaining));
+        final long signed = remaining > 0 ? qty : -qty;
+        killedRemaining[k] = remaining - signed;
+        lateFills++;
+        risk.onFill(killedInstrument[k], signed, price);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Fills booked on parents after a kill had dropped them. */
+  public long lateFills() {
+    return lateFills;
+  }
+
+  /** Daily-loss kills under which the working parents were kept to keep flattening. */
+  public long flattenKills() {
+    return flattenKills;
   }
 
   /** The router finished a parent without filling the rest (cancelled, expired, rejected). */
@@ -226,6 +278,20 @@ public final class Hedger implements AxeSource, KillSwitchListener {
 
   @Override
   public void onKill(final KillReason reason, final long epochNanos) {
+    if (risk.flattenOnly()) {
+      // the risk engine's own daily-loss kill: quotes are pulled, but the hedges that reduce the
+      // loss keep working and new ones are still sent, each passing checkOrder (PNL_AUDIT item 14)
+      flattenKills++;
+      return;
+    }
+    // remembered before the cancel-all, since the router may report each parent done inside it
+    killedCount = 0;
+    for (int p = 0; p < parentCount; p++) {
+      killedId[killedCount] = parentId[p];
+      killedInstrument[killedCount] = parentInstrument[p];
+      killedRemaining[killedCount] = parentRemaining[p];
+      killedCount++;
+    }
     sink.cancelAll();
     for (int p = 0; p < parentCount; p++) {
       releaseRemaining(p);

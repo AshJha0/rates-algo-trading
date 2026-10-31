@@ -62,7 +62,9 @@ public final class FixParser {
       int tag = 0;
       byte c;
       while (pos < end && (c = buffer.getByte(pos)) != '=') {
-        if (c < '0' || c > '9') {
+        // digits only, no leading zero, at most nine digits so the int cannot wrap onto a
+        // session tag (4294967345 would otherwise read as 49, SenderCompID)
+        if (c < '0' || c > '9' || (c == '0' && pos == fieldStart) || pos - fieldStart == 9) {
           return MALFORMED;
         }
         tag = tag * 10 + (c - '0');

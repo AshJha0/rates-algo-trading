@@ -104,6 +104,12 @@ public final class OrderStateTracker {
     }
   }
 
+  /** The quantity recorded for an order, or 0 if the tracker does not know it. */
+  public long orderQuantity(final long clOrdId) {
+    final long s = slotByClOrdId.get(clOrdId);
+    return s < 0 ? 0L : orderQty[(int) s];
+  }
+
   private int slot(final long clOrdId, final long quantity) {
     final long s = slotByClOrdId.get(clOrdId);
     if (s >= 0) {

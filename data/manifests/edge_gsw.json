@@ -1,0 +1,16 @@
+{
+  "created_utc": "2026-10-31T13:42:06+00:00",
+  "files": [
+    {
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "name": "feds200628.csv",
+      "sha256": "88cab90e84ad765ab79d9854b33e5813051210f2ac2285eaa6e720149fdd256d",
+      "size": 16664803,
+      "url": "https://www.federalreserve.gov/data/yield-curve-tables/feds200628.csv"
+    }
+  ],
+  "licence": "Board of Governors of the Federal Reserve System website: public domain US government information unless marked otherwise; feds200628 is the Gurkaynak, Sack and Wright (2007) dataset, cite FEDS 2006-28. Read 2026-10-31.",
+  "manifest_version": 1,
+  "missing": [],
+  "source": "gsw"
+}

@@ -361,4 +361,52 @@ class SegmentedJournalTest {
       assertEquals(w.chainHash(), hash);
     }
   }
+
+  @Test
+  void aPreparedRollAllocatesNothingOnTheAppendingThread() {
+    final ManualClock clock = new ManualClock();
+    final com.sun.management.ThreadMXBean threads =
+        (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+    final long self = Thread.currentThread().threadId();
+    threads.getThreadAllocatedBytes(self);
+    final UnsafeBuffer p = payload(5, 57);
+    try (SegmentedJournal j = SegmentedJournal.create(dir, "alloc", 64 << 10, clock, true)) {
+      // 96-byte frames, about 680 per segment: warm up over 20 rolls, then measure 20 more
+      for (int i = 0; i < 20 * 680; i++) {
+        j.append(10, 0, p, 0, 57);
+      }
+      final int segmentBefore = j.segmentIndex();
+      final long before = threads.getThreadAllocatedBytes(self);
+      for (int i = 0; i < 20 * 680; i++) {
+        j.append(10, 0, p, 0, 57);
+      }
+      final long allocated = threads.getThreadAllocatedBytes(self) - before;
+      assertTrue(j.segmentIndex() >= segmentBefore + 19, "rolls in the measured part: " + (j.segmentIndex() - segmentBefore));
+      assertEquals(0L, allocated, "bytes allocated by 20 rolls; " + j.rollWaits() + " rolls waited");
+    }
+  }
+
+  @Test
+  void pretouchLeavesTheFileReadingTheSame() throws IOException {
+    final ManualClock clock = new ManualClock();
+    final Path file = dir.resolve("touched.raj");
+    try (JournalWriter w = JournalWriter.create(file, 3 * JournalWriter.PAGE_SIZE + 100, clock)) {
+      final UnsafeBuffer p = payload(2, 40);
+      w.append(10, 0, p, 0, 40);
+      assertEquals(4, w.pretouch());
+      w.append(10, 0, p, 0, 40);
+    }
+    final byte[] bytes = Files.readAllBytes(file);
+    final int used = JournalFormat.FILE_HEADER_LENGTH + 2 * JournalFormat.alignedFrameLength(40);
+    for (int i = used; i < bytes.length; i++) {
+      assertEquals(0, bytes[i], "byte " + i + " after the last frame");
+    }
+    try (JournalReader r = JournalReader.open(file)) {
+      int n = 0;
+      while (r.next((s, t, id, v, b, o, l) -> {})) {
+        n++;
+      }
+      assertEquals(2, n);
+    }
+  }
 }

@@ -33,6 +33,15 @@ import org.agrona.concurrent.UnsafeBuffer;
  * extreme. A check that fails sends a RiskLimitBreach to the alert sink and returns the limit kind;
  * the caller must not send the message.
  *
+ * <p>A PV01 limit that is already breached does not freeze the book: a quote or order passes the
+ * pillar, net and gross checks when none of those worst-case figures moves further past its limit
+ * (PNL_AUDIT.md item 14). So client flow and hedges that reduce a breach are accepted, and anything
+ * that adds to it, or overshoots through zero into a new breach, is refused.
+ *
+ * <p>Basis and swap-spread exposure have limits too. The schema has no limit kind for them, so a
+ * refusal returns {@link #REJECT_BASIS} or {@link #REJECT_SWAP_SPREAD} without a breach message,
+ * and post-trade breaches are counted by {@link #basisBreaches}.
+ *
  * <p>Single-writer. No allocation after construction.
  */
 public final class RiskEngine {
@@ -45,6 +54,12 @@ public final class RiskEngine {
 
   /** Refused because the instrument, its sensitivities or its fair value are unknown. */
   public static final int REJECT_UNKNOWN = -2;
+
+  /** Refused because futures-versus-cash basis exposure would grow past its limit. */
+  public static final int REJECT_BASIS = -3;
+
+  /** Refused because swap-spread exposure would grow past its limit. */
+  public static final int REJECT_SWAP_SPREAD = -4;
 
   private static final int K = KeyRateTenors.COUNT;
   private static final int C = CurrencyCode.COUNT;
@@ -100,6 +115,10 @@ public final class RiskEngine {
   private double lastObserved;
   private long breachCount;
   private long preTradeRejects;
+  private long dailyLossKill = -1L;
+  private final boolean[] basisAlerted = new boolean[C];
+  private final boolean[] spreadAlerted = new boolean[C];
+  private long basisBreaches;
 
   /** An engine over every instrument in {@code directory}, with no positions. */
   public RiskEngine(
@@ -265,6 +284,10 @@ public final class RiskEngine {
       preTradeRejects++;
       return REJECT_UNKNOWN;
     }
+    // quotes always pass the envelope, which lets a breach shrink but not grow; a one-sided quote
+    // whose fill offsets net PV01 skips only the daily-loss check, like a risk-reducing order
+    final boolean reducing =
+        (bidQuantity == 0L) != (askQuantity == 0L) && riskReducing(i, bidQuantity - askQuantity);
     int r = sizeAndPrice(i, bidPrice, bidQuantity);
     if (r == OK) {
       r = sizeAndPrice(i, askPrice, askQuantity);
@@ -272,7 +295,7 @@ public final class RiskEngine {
     if (r == OK) {
       r = envelope(i, bidQuantity, askQuantity);
     }
-    if (r == OK) {
+    if (r == OK && !reducing) {
       r = dailyLoss(directory.byIndex(i).currency().index());
     }
     if (r == OK) {
@@ -293,7 +316,9 @@ public final class RiskEngine {
    * Checks an order before it is sent. {@code side} is ours. A risk-reducing order (one whose
    * parallel PV01 offsets the currency's net PV01 without overshooting it) skips the PV01 and
    * daily-loss checks so that a breached book can always be hedged; size, fat-finger, collar,
-   * position and rate checks still apply.
+   * position and rate checks still apply. While the kill switch is KILLED by this engine's own
+   * daily-loss breach ({@link #flattenOnly}), risk-reducing orders still pass, so the hedgers can
+   * keep flattening; every other order is refused with {@link #REJECT_KILLED}.
    */
   public int checkOrder(
       final int instrumentId,
@@ -301,20 +326,26 @@ public final class RiskEngine {
       final long quantity,
       final long price,
       final long journalSeqNo) {
-    if (!killSwitch.isActive()) {
+    final int i = directory.indexOf(instrumentId);
+    final long buy = side == Side.Buy ? quantity : 0L;
+    final long sell = side == Side.Buy ? 0L : quantity;
+    if (!killSwitch.isActive()
+        && !(flattenOnly() && i >= 0 && known[i] && riskReducing(i, buy - sell))) {
       preTradeRejects++;
       return REJECT_KILLED;
     }
-    final int i = directory.indexOf(instrumentId);
     if (i < 0 || !known[i]) {
       preTradeRejects++;
       return REJECT_UNKNOWN;
     }
-    final long buy = side == Side.Buy ? quantity : 0L;
-    final long sell = side == Side.Buy ? 0L : quantity;
     int r = sizeAndPrice(i, price, quantity);
     if (r == OK) {
+      // a risk-reducing order skips the PV01 envelope but not the basis and swap-spread limits,
+      // so a futures hedge of swap risk cannot open unlimited spread risk (PNL_AUDIT item 16)
       r = riskReducing(i, buy - sell) ? positionOnly(i, buy, sell) : envelope(i, buy, sell);
+      if (r == OK && riskReducing(i, buy - sell)) {
+        r = basisCheck(i, buy, sell);
+      }
     }
     if (r == OK && !riskReducing(i, buy - sell)) {
       r = dailyLoss(directory.byIndex(i).currency().index());
@@ -496,6 +527,20 @@ public final class RiskEngine {
     return unit[index(instrumentId)][k];
   }
 
+  /**
+   * True while the kill switch is not ACTIVE because of this engine's post-trade daily-loss breach
+   * (KILLED, or RESET_PENDING after it) and no other kill has happened since. Hedgers keep
+   * flattening in this state; quotes stay withdrawn.
+   */
+  public boolean flattenOnly() {
+    return !killSwitch.isActive() && killSwitch.killCount() == dailyLossKill;
+  }
+
+  /** Post-trade basis and swap-spread limit breaches (edge-triggered, no message sent). */
+  public long basisBreaches() {
+    return basisBreaches;
+  }
+
   /** Breach messages sent, pre- and post-trade. */
   public long breachCount() {
     return breachCount;
@@ -665,39 +710,110 @@ public final class RiskEngine {
     final Instrument inst = directory.byIndex(i);
     final int c = inst.currency().index();
     term(i, pendingBuy[i] + buy, pendingSell[i] + sell, newHi, newLo);
+    // each worst case may stay where it is when already past its limit, but not move further
     double gross = 0.0;
+    double oldGross = 0.0;
     double net = 0.0;
     for (int k = 0; k < K; k++) {
       final double base = ladder[c][k];
       net += base;
       final double hi = base + resHiAgg[c][k] - resHi[i][k] + newHi[k];
       final double lo = base + resLoAgg[c][k] - resLo[i][k] + newLo[k];
+      final double oldHi = base + resHiAgg[c][k];
+      final double oldLo = base + resLoAgg[c][k];
       final double lim = limits.bucketPv01(k);
-      if (hi > lim || lo < -lim) {
-        return report ? record(LimitKind.BucketDv01, k, lim, hi > lim ? hi : lo) : LimitKind.BucketDv01.value();
+      final boolean hiOver = hi > allowed(lim, oldHi);
+      if (hiOver || -lo > allowed(lim, -oldLo)) {
+        return report ? record(LimitKind.BucketDv01, k, lim, hiOver ? hi : lo) : LimitKind.BucketDv01.value();
       }
       gross += Math.max(Math.abs(hi), Math.abs(lo));
+      oldGross += Math.max(Math.abs(oldHi), Math.abs(oldLo));
     }
     final double up = unitParallel[i] * inst.major(pendingBuy[i] + buy);
     final double down = -unitParallel[i] * inst.major(pendingSell[i] + sell);
     final double netHi = net + resNetHiAgg[c] - resNetHi[i] + Math.max(0.0, Math.max(up, down));
     final double netLo = net + resNetLoAgg[c] - resNetLo[i] + Math.min(0.0, Math.min(up, down));
-    if (netHi > limits.netPv01() || netLo < -limits.netPv01()) {
+    final double netLim = limits.netPv01();
+    final boolean netHiOver = netHi > allowed(netLim, net + resNetHiAgg[c]);
+    if (netHiOver || -netLo > allowed(netLim, -(net + resNetLoAgg[c]))) {
       return report
-          ? record(LimitKind.NetDv01, c, limits.netPv01(), netHi > limits.netPv01() ? netHi : netLo)
+          ? record(LimitKind.NetDv01, c, netLim, netHiOver ? netHi : netLo)
           : LimitKind.NetDv01.value();
     }
-    if (gross > limits.grossPv01()) {
+    if (gross > allowed(limits.grossPv01(), oldGross)) {
       return report ? record(LimitKind.GrossDv01, c, limits.grossPv01(), gross) : LimitKind.GrossDv01.value();
     }
+    return basisCheck(i, buy, sell);
+  }
+
+  /**
+   * Basis and swap-spread limits on positions plus this check's own quantity at either extreme.
+   * Other reservations are left out: depending on their product they make the offset larger or
+   * smaller. An exposure already past its limit may shrink but not grow.
+   */
+  private int basisCheck(final int i, final long buy, final long sell) {
+    final Instrument inst = directory.byIndex(i);
+    final int t = inst.type().index();
+    if (t != ProductType.FUTURE.index() && t != ProductType.BOND.index() && t != ProductType.SWAP.index()) {
+      return OK;
+    }
+    final double[] p = productPv01[inst.currency().index()];
+    final double up = unitParallel[i] * inst.major(buy);
+    final double down = -unitParallel[i] * inst.major(sell);
+    final double oldBasis = Math.abs(basisOf(p, -1, 0.0));
+    final double oldSpread = Math.abs(spreadOf(p, -1, 0.0));
+    for (int side = 0; side < 2; side++) {
+      final double add = side == 0 ? up : down;
+      if (add == 0.0) {
+        continue;
+      }
+      if (Math.abs(basisOf(p, t, add)) > allowed(limits.basisPv01(), oldBasis)) {
+        return REJECT_BASIS;
+      }
+      if (Math.abs(spreadOf(p, t, add)) > allowed(limits.swapSpreadPv01(), oldSpread)) {
+        return REJECT_SWAP_SPREAD;
+      }
+    }
     return OK;
+  }
+
+  private static double basisOf(final double[] p, final int t, final double add) {
+    final double fut = p[ProductType.FUTURE.index()] + (t == ProductType.FUTURE.index() ? add : 0.0);
+    final double bond = p[ProductType.BOND.index()] + (t == ProductType.BOND.index() ? add : 0.0);
+    return offset(fut, bond);
+  }
+
+  private static double spreadOf(final double[] p, final int t, final double add) {
+    final double swap = p[ProductType.SWAP.index()] + (t == ProductType.SWAP.index() ? add : 0.0);
+    final double cash =
+        p[ProductType.BOND.index()]
+            + p[ProductType.FUTURE.index()]
+            + (t == ProductType.BOND.index() || t == ProductType.FUTURE.index() ? add : 0.0);
+    return offset(swap, cash);
+  }
+
+  /**
+   * The level a worst-case figure may reach: the limit, or where it already is when that is past
+   * the limit, with a relative tolerance for the rounding of the incremental sums.
+   */
+  private static double allowed(final double limit, final double current) {
+    return current > limit ? current + 1e-9 * (1.0 + current) : limit;
   }
 
   private boolean riskReducing(final int i, final long signedQuantity) {
     final Instrument inst = directory.byIndex(i);
     final double orderPv01 = unitParallel[i] * inst.major(signedQuantity);
     final double net = netPv01(inst.currency());
-    return orderPv01 * net < 0.0 && Math.abs(orderPv01) <= Math.abs(net);
+    if (orderPv01 * net >= 0.0 || Math.abs(orderPv01) > Math.abs(net)) {
+      return false;
+    }
+    // no overshoot even if every other working reservation on the order's side fills too
+    // (DR-R2R-09); the instrument's own reservation is left out, as in the envelope check
+    final int c = inst.currency().index();
+    if (orderPv01 < 0.0) {
+      return net + resNetLoAgg[c] - resNetLo[i] + orderPv01 >= 0.0;
+    }
+    return net + resNetHiAgg[c] - resNetHi[i] + orderPv01 <= 0.0;
   }
 
   private int dailyLoss(final int c) {
@@ -775,8 +891,24 @@ public final class RiskEngine {
     final boolean newLoss = loss && !postAlerted[c][LimitKind.DailyLoss.value()];
     edge(c, LimitKind.DailyLoss, loss, c, -limits.dailyLoss(), pnl);
     if (newLoss && limits.killOnDailyLoss()) {
-      killSwitch.trigger(KillReason.LimitBreach, 0, 0);
+      // set before the trigger, because the listeners ask flattenOnly() from inside it
+      final long previous = dailyLossKill;
+      dailyLossKill = killSwitch.killCount() + 1;
+      if (!killSwitch.trigger(KillReason.LimitBreach, 0, 0)) {
+        dailyLossKill = previous;
+      }
     }
+    final double[] p = productPv01[c];
+    final boolean basisOver = Math.abs(basisOf(p, -1, 0.0)) > limits.basisPv01();
+    if (basisOver && !basisAlerted[c]) {
+      basisBreaches++;
+    }
+    basisAlerted[c] = basisOver;
+    final boolean spreadOver = Math.abs(spreadOf(p, -1, 0.0)) > limits.swapSpreadPv01();
+    if (spreadOver && !spreadAlerted[c]) {
+      basisBreaches++;
+    }
+    spreadAlerted[c] = spreadOver;
   }
 
   private void edge(

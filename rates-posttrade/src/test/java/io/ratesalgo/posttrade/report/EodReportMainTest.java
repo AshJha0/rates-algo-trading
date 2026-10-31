@@ -40,6 +40,9 @@ class EodReportMainTest {
     assertTrue(Files.readString(outDir.resolve("official-pnl-2026-10-30.csv")).startsWith("date,book,"));
     assertTrue(Files.exists(outDir.resolve("records/2026/10/30/order-records.csv")));
     assertTrue(Files.exists(outDir.resolve("surveillance-2026-10-30.csv")));
+    final String messages = Files.readString(outDir.resolve("messages-2026-10-30.csv"));
+    assertTrue(messages.startsWith("instrument_id,messages,cancels\n"), messages);
+    assertTrue(messages.lines().count() > 1, "a synthetic day sends messages");
     assertTrue(out.toString(StandardCharsets.UTF_8).startsWith("eod 2026-10-30: positions=3"));
   }
 

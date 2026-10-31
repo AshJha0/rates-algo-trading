@@ -7,34 +7,60 @@ import io.ratesalgo.api.Instrument;
 import io.ratesalgo.api.InstrumentDirectory;
 import io.ratesalgo.api.KeyRateTenors;
 import io.ratesalgo.hedge.KeyRateCovariance;
+import io.ratesalgo.messages.sbe.KillReason;
+import io.ratesalgo.risk.KillSwitchListener;
 import io.ratesalgo.risk.RiskEngine;
 import java.util.Arrays;
+import org.agrona.collections.Long2LongHashMap;
 
 /**
- * Prices a package or structured RFQ as one trade (API_SPEC.md Section 12.7).
+ * Prices a package or structured RFQ as one trade on its net risk (API_SPEC.md Section 12.7) and
+ * holds it through its time to live.
  *
- * <p>Each leg is first priced alone: its optimal half-spread {@code h_i} (bp) on its PV01 {@code
- * P_i} costs the client {@code h_i * P_i}. The package then nets: the dealer's net PV01 ladder
- * {@code L} is hedged once instead of leg by leg, so the package charge is
+ * <p>Controls (PNL_AUDIT item 12): a package passes the same gates a single RFQ does, in the same
+ * order: kill switch, input health, the release pull window, instrument and currency, the client
+ * re-quote throttle, fair value with input age, and the risk engine's quote check on every leg.
+ * A quoted package reserves every leg's quantity until it is answered or its time to live
+ * passes, as a single quote does.
+ *
+ * <p>Pricing on net risk. Each leg's optimal half-spread {@code h_i} (bp) is found from the
+ * hit-rate model against the client's adverse cost, then widened for events, releases and
+ * volatility as in the engine. The package spread is the PV01-weighted mean {@code hbar} charged
+ * on the package's risk-equivalent PV01
  *
  * <pre>
- *   charge = sum_i h_i P_i - (sum_i hedgeCost(P_i) - hedgeCost(|parallel(L)|)) + kappa (L' Sigma p + 0.5 L' Sigma L)
+ *   R = sqrt(L' Sigma L) * sum_i P_i / sum_i sqrt(d_i' Sigma d_i)
  * </pre>
  *
- * floored at {@code minHalfSpreadBp * max_i P_i}. The bracket is the netted-hedge saving; the last
- * term is the inventory charge on the net ladder against the book {@code p}. The sum of the legs
- * priced one by one is {@code sum_i (h_i P_i + kappa (d_i' Sigma p + 0.5 d_i' Sigma d_i))} with
- * {@code d_i} the dealer's ladder of leg i; the package is cheaper by the hedge saving and by the
- * cross terms {@code -kappa sum_{i<j} d_i' Sigma d_j}, which are positive for offsetting legs. The charge is spread
- * over the legs as an equal bp distance on each, in the client-worse direction. Every leg passes
- * the risk engine's quote check one-sided; the package is passed if any leg fails.
+ * with {@code L} the dealer's net ladder, {@code d_i} leg i's ladder and {@code P_i} its PV01: the
+ * net ladder's one-day risk in PV01 units of the legs' own volatility. A DV01-neutral curve trade
+ * is charged on its curve risk, not on the sum of its legs. Then
+ *
+ * <pre>
+ *   charge = hbar R + sum_i hedgeCost(P_i) - saving + kappa (L' Sigma p + 0.5 L' Sigma L)
+ *   saving = max(0, sum_i hedgeCost(P_i) - hedgeCost(|parallel(L)|))
+ * </pre>
+ *
+ * floored at {@code minHalfSpreadBp * max_i P_i}; {@code p} is the book. {@link
+ * Result#spreadChargeSum} is {@code hbar R + sum_i hedgeCost(P_i)} so that {@code charge =
+ * spread - saving + inventory}. The legs priced one by one cost {@code sum_i ((h_i + hedge_i) P_i
+ * + kappa (d_i' Sigma p + 0.5 d_i' Sigma d_i))}. The charge is spread over the legs as an equal bp
+ * distance on each, in the client-worse direction.
  *
  * <p>There is no package message in SBE schema v1; P2's D2C venue carries package RFQs, and the
- * coordinator maps its legs to {@link PackageRequest} (deferred, see the P3 report).
+ * coordinator maps its legs to {@link PackageRequest} and the venue's answer to {@link
+ * #onResponse}. The Desk registers nothing here yet: the kill switch reaches {@link #onKill} once
+ * the wiring registers this quoter, and until then {@link #quote} reads the kill switch itself.
  */
-public final class PackageQuoter {
+public final class PackageQuoter implements KillSwitchListener {
 
   private static final int K = KeyRateTenors.COUNT;
+  private static final int LEGS = 4;
+  private static final int MAX_LIVE = 64;
+  private static final byte FREE = 0;
+  private static final byte LIVE = 1;
+  private static final byte WITHDRAWN = 2;
+  private static final byte EXPIRED = 3;
 
   /** Structured package types. */
   public enum Type {
@@ -85,13 +111,17 @@ public final class PackageQuoter {
   /** Result of pricing a package; reused. */
   public static final class Result {
     private boolean quoted;
-    private final long[] legPrice = new long[4];
+    private PassReason reason = PassReason.NONE;
+    private long packageId;
+    private long validUntilNanos;
+    private final long[] legPrice = new long[LEGS];
     private double legChargeSum;
     private double spreadChargeSum;
     private double hedgeSaving;
     private double inventoryCharge;
     private double charge;
     private double distanceBp;
+    private double netRiskPv01;
     private int rejection;
     private final Dv01Vector netLadder = new Dv01Vector(CurrencyCode.USD);
 
@@ -99,17 +129,32 @@ public final class PackageQuoter {
       return quoted;
     }
 
+    /** Why the package was not quoted, or NONE. */
+    public PassReason reason() {
+      return reason;
+    }
+
+    /** Id to answer with in {@link PackageQuoter#onResponse}; 0 when not quoted. */
+    public long packageId() {
+      return packageId;
+    }
+
+    /** End of the package's time to live, epoch nanoseconds. */
+    public long validUntilNanos() {
+      return validUntilNanos;
+    }
+
     /** Decimal9 price of a leg, client-worse by the package distance. */
     public long legPrice(final int leg) {
       return legPrice[leg];
     }
 
-    /** Sum of the legs' standalone charges (spread plus inventory), currency. */
+    /** Sum of the legs' standalone charges (spread, hedge and inventory), currency. */
     public double legChargeSum() {
       return legChargeSum;
     }
 
-    /** Sum of the legs' spread charges {@code h_i P_i}, currency. */
+    /** Spread on the net risk plus the legs' standalone hedge cost, currency. */
     public double spreadChargeSum() {
       return spreadChargeSum;
     }
@@ -124,7 +169,7 @@ public final class PackageQuoter {
       return inventoryCharge;
     }
 
-    /** PackageRequest charge, currency. */
+    /** Package charge, currency. */
     public double charge() {
       return charge;
     }
@@ -132,6 +177,11 @@ public final class PackageQuoter {
     /** Distance applied to every leg, bp. */
     public double distanceBp() {
       return distanceBp;
+    }
+
+    /** Risk-equivalent PV01 of the net ladder, currency per bp. */
+    public double netRiskPv01() {
+      return netRiskPv01;
     }
 
     /** Risk engine code when a leg failed its check, else 0. */
@@ -150,11 +200,27 @@ public final class PackageQuoter {
   private final FairValueEngine fairValue;
   private final QuotingEngine engine;
   private final KeyRateCovariance covariance;
-  private final double[] fair = new double[4];
+  private final double[] fair = new double[LEGS];
   private final double[] l = new double[K];
-  private final double[][] legLadder = new double[4][K];
+  private final double[][] legLadder = new double[LEGS][K];
   private final double[] p = new double[K];
   private final Dv01Vector book = new Dv01Vector(CurrencyCode.USD);
+  private final Long2LongHashMap lastQuote = new Long2LongHashMap(256, 0.5f, Long.MIN_VALUE);
+
+  // live packages
+  private final byte[] state = new byte[MAX_LIVE];
+  private final long[] pId = new long[MAX_LIVE];
+  private final int[] pLegs = new int[MAX_LIVE];
+  private final int[][] pInstrument = new int[MAX_LIVE][LEGS];
+  private final long[][] pDealerQty = new long[MAX_LIVE][LEGS];
+  private final long[][] pPrice = new long[MAX_LIVE][LEGS];
+  private final long[] pValidUntil = new long[MAX_LIVE];
+  private long nextPackageId;
+  private long packagesQuoted;
+  private long packageFills;
+  private long lateFills;
+  private long expiries;
+  private long unmatched;
 
   public PackageQuoter(
       final InstrumentDirectory directory,
@@ -197,32 +263,64 @@ public final class PackageQuoter {
   /** Prices {@code pkg} for {@code clientId} against {@code dealers} competitors. */
   public Result quote(final PackageRequest pkg, final int clientId, final int dealers, final Result out) {
     final long now = engine.clock().epochNanos();
+    poll(now);
     out.quoted = false;
+    out.reason = PassReason.NONE;
+    out.packageId = 0L;
     out.rejection = 0;
     final QuotingConfig cfg = engine.config();
+    if (!risk.killSwitch().isActive()) {
+      return pass(out, PassReason.KILLED);
+    }
+    if (!engine.health().healthy(now)) {
+      return pass(out, PassReason.UNHEALTHY);
+    }
+    if (cfg.inReleasePull(now)) {
+      return pass(out, PassReason.RELEASE_WINDOW);
+    }
     final Instrument first = directory.byId(pkg.instrumentId(0));
+    if (first == null || pkg.legs() > LEGS) {
+      return pass(out, PassReason.UNKNOWN_INSTRUMENT);
+    }
+    final long last = lastQuote.get(clientId);
+    if (last != Long.MIN_VALUE && now - last < cfg.requoteThrottleNanos) {
+      return pass(out, PassReason.THROTTLED);
+    }
+    if (freeSlot() < 0) {
+      return pass(out, PassReason.BOOK_FULL);
+    }
     Arrays.fill(l, 0.0);
-    double chargeSum = 0.0;
+    double spreadPv01 = 0.0;
     double standaloneHedge = 0.0;
     double totalPv01 = 0.0;
     double maxPv01 = 0.0;
+    double legRisk = 0.0;
+    final HitRateModel hr = engine.hitRate();
+    final double session = QuotingEngine.liquidSession(first.currency(), now);
     for (int i = 0; i < pkg.legs(); i++) {
       final int id = pkg.instrumentId(i);
       final Instrument inst = directory.byId(id);
-      if (inst == null || inst.currency() != first.currency() || !fairValue.compute(inst, now)
-          || now - fairValue.oldestNanos() > cfg.maxInputAgeNanos()) {
-        return out;
+      if (inst == null || inst.currency() != first.currency() || pkg.clientQuantity(i) == 0L) {
+        return pass(out, PassReason.UNKNOWN_INSTRUMENT);
+      }
+      if (!fairValue.compute(inst, now)) {
+        return pass(out, PassReason.NO_FAIR_VALUE);
+      }
+      if (now - fairValue.oldestNanos() > cfg.maxInputAgeNanos()) {
+        return pass(out, PassReason.STALE_INPUT);
       }
       fair[i] = fairValue.fair();
       final double qMajor = inst.major(pkg.clientQuantity(i));
       final double legPv01 = Math.abs(risk.unitParallelPv01(id) * qMajor);
       final double hedgeBp = engine.hedgeCostBp(inst, legPv01);
-      final HitRateModel hr = engine.hitRate();
       final double base =
-          hr.base(Math.abs((double) pkg.clientQuantity(i)) / inst.typicalQuantity(), inst.tenorYears(), 1.0, dealers);
-      final double cost = engine.toxicity().adverseBp(clientId) + hedgeBp;
-      final double h = Math.max(cfg.minHalfSpreadBp, engine.spread().optimal(base, cost, cfg.maxHalfSpreadBp));
-      chargeSum += h * legPv01;
+          hr.base(Math.abs((double) pkg.clientQuantity(i)) / inst.typicalQuantity(), inst.tenorYears(), session, dealers);
+      final double h =
+          clamp(
+              engine.widen(engine.spread().optimal(base, engine.toxicity().adverseBp(clientId), cfg.maxHalfSpreadBp),
+                  first.currency(), now),
+              cfg.minHalfSpreadBp, cfg.maxHalfSpreadBp);
+      spreadPv01 += h * legPv01;
       standaloneHedge += hedgeBp * legPv01;
       totalPv01 += legPv01;
       maxPv01 = Math.max(maxPv01, legPv01);
@@ -230,11 +328,15 @@ public final class PackageQuoter {
         legLadder[i][k] = -risk.unitPv01(id, k) * qMajor;
         l[k] += legLadder[i][k];
       }
+      legRisk += Math.sqrt(Math.max(0.0, covariance.quadratic(legLadder[i], legLadder[i])));
     }
     double netPar = 0.0;
     for (int k = 0; k < K; k++) {
       netPar += l[k];
     }
+    final double netRisk =
+        legRisk > 0.0 ? Math.sqrt(Math.max(0.0, covariance.quadratic(l, l))) * totalPv01 / legRisk : 0.0;
+    final double hbar = totalPv01 > 0.0 ? spreadPv01 / totalPv01 : 0.0;
     final double netHedge = engine.hedgeCostBp(first, Math.abs(netPar)) * Math.abs(netPar);
     final double saving = Math.max(0.0, standaloneHedge - netHedge);
     risk.ladder(first.currency(), book);
@@ -245,7 +347,8 @@ public final class PackageQuoter {
       standaloneInventory +=
           cfg.kappa() * (covariance.quadratic(legLadder[i], p) + 0.5 * covariance.quadratic(legLadder[i], legLadder[i]));
     }
-    final double charge = Math.max(cfg.minHalfSpreadBp * maxPv01, chargeSum - saving + inventory);
+    final double spreadCharge = hbar * netRisk + standaloneHedge;
+    final double charge = Math.max(cfg.minHalfSpreadBp * maxPv01, spreadCharge - saving + inventory);
     final double distance = totalPv01 > 0.0 ? charge / totalPv01 : 0.0;
     for (int i = 0; i < pkg.legs(); i++) {
       final int id = pkg.instrumentId(i);
@@ -257,21 +360,158 @@ public final class PackageQuoter {
           clientBuys ? risk.checkQuote(id, 0L, 0L, px, qty, 0L) : risk.checkQuote(id, px, qty, 0L, 0L, 0L);
       if (r != RiskEngine.OK) {
         out.rejection = r;
-        return out;
+        return pass(out, PassReason.RISK_REJECT);
       }
       out.legPrice[i] = px;
     }
+    // hold: reserve every leg for the time to live
+    final int s = freeSlot();
+    final long id = ++nextPackageId;
+    state[s] = LIVE;
+    pId[s] = id;
+    pLegs[s] = pkg.legs();
+    pValidUntil[s] = now + cfg.firmTtlNanos();
+    for (int i = 0; i < pkg.legs(); i++) {
+      final long dealerQty = -pkg.clientQuantity(i);
+      pInstrument[s][i] = pkg.instrumentId(i);
+      pDealerQty[s][i] = dealerQty;
+      pPrice[s][i] = out.legPrice[i];
+      risk.reserve(pkg.instrumentId(i), dealerQty > 0 ? dealerQty : 0L, dealerQty > 0 ? 0L : -dealerQty);
+    }
+    lastQuote.put(clientId, now);
+    packagesQuoted++;
     out.netLadder.currency(first.currency());
     for (int k = 0; k < K; k++) {
       out.netLadder.set(k, l[k]);
     }
-    out.legChargeSum = chargeSum + standaloneInventory;
-    out.spreadChargeSum = chargeSum;
+    out.legChargeSum = spreadPv01 + standaloneHedge + standaloneInventory;
+    out.spreadChargeSum = spreadCharge;
     out.hedgeSaving = saving;
     out.inventoryCharge = inventory;
     out.charge = charge;
     out.distanceBp = distance;
+    out.netRiskPv01 = netRisk;
+    out.packageId = id;
+    out.validUntilNanos = pValidUntil[s];
     out.quoted = true;
     return out;
+  }
+
+  /**
+   * The venue's answer for a package. Done books every leg to risk at the quoted leg prices, so
+   * the hedger sees the net ladder; a Done for a package that expired or was withdrawn here is
+   * still booked once (the venue may have accepted it before our expiry reached it). Any answer
+   * releases the reservation of a package still held. Returns false for an unknown id.
+   */
+  public boolean onResponse(final long packageId, final boolean done) {
+    for (int s = 0; s < MAX_LIVE; s++) {
+      if (state[s] == FREE || pId[s] != packageId) {
+        continue;
+      }
+      if (state[s] != EXPIRED) {
+        release(s);
+      } else if (done) {
+        lateFills++;
+      }
+      if (done) {
+        packageFills++;
+        for (int i = 0; i < pLegs[s]; i++) {
+          risk.onFill(pInstrument[s][i], pDealerQty[s][i], pPrice[s][i]);
+        }
+      }
+      state[s] = FREE;
+      return true;
+    }
+    unmatched++;
+    return false;
+  }
+
+  /** Expires packages whose time to live has passed; their slot is kept for a late Done. */
+  public void poll(final long nowNanos) {
+    for (int s = 0; s < MAX_LIVE; s++) {
+      if ((state[s] == LIVE || state[s] == WITHDRAWN) && pValidUntil[s] <= nowNanos) {
+        release(s);
+        state[s] = EXPIRED;
+        expiries++;
+      }
+    }
+  }
+
+  /**
+   * Withdraws every live package. There is no package withdraw message in schema v1, so the
+   * reservation is held until the venue answers or the time to live passes, as for a single quote
+   * being withdrawn.
+   */
+  @Override
+  public void onKill(final KillReason reason, final long epochNanos) {
+    for (int s = 0; s < MAX_LIVE; s++) {
+      if (state[s] == LIVE) {
+        state[s] = WITHDRAWN;
+      }
+    }
+  }
+
+  /** Packages quoted and held (live or withdrawn, not yet answered or expired). */
+  public int heldPackages() {
+    int n = 0;
+    for (int s = 0; s < MAX_LIVE; s++) {
+      if (state[s] == LIVE || state[s] == WITHDRAWN) {
+        n++;
+      }
+    }
+    return n;
+  }
+
+  public long packagesQuoted() {
+    return packagesQuoted;
+  }
+
+  public long packageFills() {
+    return packageFills;
+  }
+
+  /** Done answers booked for packages that had already expired here. */
+  public long lateFills() {
+    return lateFills;
+  }
+
+  public long expiries() {
+    return expiries;
+  }
+
+  /** Answers for packages no longer remembered. */
+  public long unmatchedResponses() {
+    return unmatched;
+  }
+
+  private int freeSlot() {
+    int expired = -1;
+    long oldest = Long.MAX_VALUE;
+    for (int s = 0; s < MAX_LIVE; s++) {
+      if (state[s] == FREE) {
+        return s;
+      }
+      if (state[s] == EXPIRED && pId[s] < oldest) {
+        oldest = pId[s];
+        expired = s;
+      }
+    }
+    return expired;
+  }
+
+  private void release(final int s) {
+    for (int i = 0; i < pLegs[s]; i++) {
+      final long q = pDealerQty[s][i];
+      risk.release(pInstrument[s][i], q > 0 ? q : 0L, q > 0 ? 0L : -q);
+    }
+  }
+
+  private static Result pass(final Result out, final PassReason reason) {
+    out.reason = reason;
+    return out;
+  }
+
+  private static double clamp(final double v, final double lo, final double hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
   }
 }

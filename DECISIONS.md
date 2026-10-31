@@ -114,6 +114,8 @@ Decision. Nodes are log discount factors at instrument pillars; extrapolation ex
 
 Consequences. Linear interpolation matches QuantLib's `PiecewiseLogLinearDiscount`, which the golden uses; the two non-local schemes are checked by round trip, incremental rebuild and gradient tests only (QuantLib's convex-monotone implementation has different defaults). Instruments may not share a pillar.
 
+Diagram: [multi-curve bootstrap](docs/site/pages/diagrams.md#multi-curve-bootstrap).
+
 ## DR-P1-04: Key-rate DV01 by algorithmic differentiation through the bootstrap
 
 Date: 2026-10-31
@@ -618,6 +620,8 @@ Decision. P(win) is logistic in spread from fair, log size relative to a typical
 
 Consequences. Learning cannot leave the declared assumption. When the research session adds the preset to `data/presets.yaml`, it takes precedence without a code change. The back-tester (P5) sweeps the band.
 
+Diagram: [research to production parameters](docs/site/pages/diagrams.md#research-to-production-parameters).
+
 ## DR-P3-03: A fair-value signal needs an out-of-sample validation record
 
 Date: 2026-10-31
@@ -739,3 +743,699 @@ Context. On the ubuntu-latest CI job (JDK 25, Temurin) `LoopAllocationTest` fail
 Decision. `EventLoop`'s constructor now encodes a Backpressure message into its scratch buffer and sets its `BackpressureEvent` once, so the backpressure path's classes are loaded on the building thread. The test measures three consecutive windows of one million messages after a one-million-message warm-up: the last window must allocate exactly zero, the second and third at most 1,024 bytes each, and the first is reported but not bounded. The counter is read from the test thread with the loop thread's id, and the bean is called once before warm-up. The failure message prints every window's bytes, dropped messages and backpressure events. The inbound journal is sized at 768 MiB so that it holds a Backpressure frame for every message if the drainer drops all of them.
 
 Consequences. The gate still fails on any per-message allocation, since one byte per message is a megabyte per window, and on any allocation in the last window. A one-off cost on a path first taken just after warm-up no longer fails the build, but it shows in the message. The test now always sends 4 million messages, where before it sent between 2.1 and 4 million.
+
+## DR-INT-03: The trading process binds its loop journals through LoopJournals
+
+Date: 2026-10-31
+
+Context. Round 2 ran two branches at once. `claude/r2-journal-latency-ee2034` took segment creation, mapping and page faults off the loop thread (DR-R2J-01, DR-R2J-02), added a ring mode (DR-R2J-03) and made the mode a loop configuration choice through `LoopJournals` and `EventLoop.Builder.journals(LoopJournals)`. `claude/r2-wiring-c31ae4` built `TradingProcess` in the new `rates-app` module against the P2 API: it created its inbound, outbound and route journals with `SegmentedJournal.create(dir, name, size, clock)`, without preallocation, so each roll mapped a new file on the loop thread, which is the cost DR-R2J-02 removed. Neither branch changed the other's files; the overlap is the call site.
+
+Decision. The journal branch's design stands unchanged. At integration `TradingProcess` creates the loop's inbound and outbound journals with `LoopJournals.create(dir, "in", "out", SEGMENT_BYTES, clock)` in the default mode (`DIRECT`, DR-R2J-04) and passes them with `.journals(...)`; the route journal, which the desk also appends to on the loop thread, is created with preallocation (`SegmentedJournal.create(..., true)`). File names, segment size and the frame format are unchanged, so `JournalFeed`, `JournalExport` and `--replay` read the same files. `WiredLoopAllocationTest` keeps its single-file `JournalWriter` journals, which do not roll.
+
+Consequences. A roll in the trading process no longer maps, creates or allocates on the loop thread. Each journal now keeps one prepared 64 MiB segment and one background thread from the start. Switching the process to the ring mode is a one-argument change to the `LoopJournals.create` call.
+
+## DR-INT-04: Ledger rows from parallel branches are appended in merge order with new seq and prev_sha256
+
+Date: 2026-10-31
+
+Context. `data/ledger/ledger.jsonl` is an append-only hash chain: each line carries `seq` (1-based) and `prev_sha256`, the SHA-256 of the previous line's text, and both readers (`Ledger.entries()` in `rates-backtest`, `prereg.read_ledger` in `research/ratesresearch`) refuse a line whose `seq` is not its position or whose `prev_sha256` does not match. In round 2, several branches ran experiments in parallel and each appended its rows after the same base, P5-001 at seq 1. `claude/r2-edge-research-6aba2e` appended EDGE-E1 to EDGE-E6 as seq 2 to 7, `claude/r2-pnl-audit-e32be7` appended AUDIT-01 to AUDIT-04 as seq 2 to 5, and `claude/r2-business-6cda18` appended R2B-001 to R2B-007 as seq 2 to 8, so the chains cannot all stand.
+
+Decision. Rows already on `round2-integration` are kept unchanged, and each later branch's rows are appended after them in their original order. The edge rows merged first, onto a ledger that held only seq 1, so they kept seq 2 to 7. The audit rows were re-appended with the project's own `Ledger.append` (`rates-backtest`), which assigns `seq` and `prev_sha256`. Everything else in each row stays as recorded: results, `config_sha256`, `journal_sha256`, `prereg_sha256`, `code_commit`, `code_dirty`, `look`, `recorded_utc` and the journal list. Each written line was checked to be byte-identical to the original with only those two values replaced. The business rows were then re-appended the same way after the audit rows, as seq 12 to 18. The chain verifies end to end in both `Ledger.entries()` and `prereg.read_ledger` (18 rows). `research/audit/summarize.py` re-reads the rows, recomputes every interval and Holm p from the stored daily P&L and asserts them against the rows; it reproduces `research/audit/results/summary.md` except the four headings, which print the new seq. References to the old numbers in `docs/research/PNL_AUDIT.md`, `research/audit/README.md` and `summary.md` were renumbered, with the experiment id added beside each seq. The copies in `research/audit/results/AUDIT-0n.json` carry no seq or chain field and are unchanged. For the business rows, the seq column and the record range in `docs/research/DESK_FEATURES.md`, the CHANGELOG entry, DR-R2B-07's context and the `DeskFactory` comment were renumbered; the R2B pre-registrations cite no seq.
+
+| Experiment | Original seq (own branch) | Seq on round2-integration | prev_sha256 before | prev_sha256 after |
+|---|---:|---:|---|---|
+| AUDIT-01 | 2 | 8 | `850a5e40a004...` | `2f8551ce748d...` |
+| AUDIT-02 | 3 | 9 | `f16a70a4cc23...` | `300529794edf...` |
+| AUDIT-03 | 4 | 10 | `05fbad304512...` | `be7e052c8319...` |
+| AUDIT-04 | 5 | 11 | `1d9907487c7a...` | `3ac99a2f43d0...` |
+| R2B-001 | 2 | 12 | `850a5e40a004...` | `79abbbcb0fb2...` |
+| R2B-002 | 3 | 13 | `f37fd5be9247...` | `09d5e8022aa1...` |
+| R2B-003 | 4 | 14 | `f5101a7c10e5...` | `8cf5f04d08ce...` |
+| R2B-004 | 5 | 15 | `481745c8c1ee...` | `e3ebb73c0d0e...` |
+| R2B-005 | 6 | 16 | `a0ca41a043fd...` | `c2af0c8facb2...` |
+| R2B-006 | 7 | 17 | `968558726727...` | `9d5d645bbf1a...` |
+| R2B-007 | 8 | 18 | `62a00dc6e056...` | `ccbaf1e16ff3...` |
+
+Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
+
+## DR-INT-05: The wired desk declares a winner's curse that fits its half-spread cap
+
+Date: 2026-10-31
+
+Context. `claude/r2-review-6e9f43` added a pass to `QuotingEngine.onQuoteRequest`: when the expected cost of filling (client toxicity, plus the winner's curse `winnersCurseBp * sqrt(2 ln dealers) * volRatio`, plus the hedge cost) is at or above `maxHalfSpreadBp`, no spread up to the cap has positive expected edge, so the engine returns `PassReason.NEGATIVE_EDGE` instead of quoting at the cap. `claude/r2-wiring-c31ae4` holds the wired desk's half spread between 0.02 and 0.08 bp so it can compete with the simulated dealers (DR-R2W, `DeskSettings.quoting()`), but it kept the default `winnersCurseBp` of 0.10 bp. With three dealers that term alone is 0.10 * sqrt(2 ln 3) = 0.148 bp, above the 0.08 bp cap. After the merge every RFQ was passed, and `SmokeTest`, `BacktestBindingTest`, `TradingProcessMainTest`, `VenueBindingTest` and recipe 22 failed because the desk never quoted.
+
+Decision. Review's guard stays as written. `DeskSettings.quoting()` declares `winnersCurseBp(0.02)`, which puts the term at about 0.030 bp, inside the desk's 0.02 to 0.08 bp band. Toxicity starts at zero and the guard still passes a client whose learned adverse cost reaches the cap. Like the band itself, 0.02 bp is a declared value for the synthetic smoke day, not a fit. Recipe 22's recorded output (`rates-cookbook/src/test/resources/expected/recipe22.txt` and COOKBOOK.md) and the smoke-day counts in README.md and STATUS.md were re-recorded: 39 RFQs, 34 quotes, 22 RFQ fills, 302 hedge parents and 291 hedge fills, against 43, 43, 25, 261 and 266 before. The other review changes on the quoting and risk path (the reservation-aware risk-reducing check, late fills after expiry, one hit-rate label per RFQ, the ticked CLOB prices) move the counts too.
+
+Also at this merge, `data/presets.yaml`: the review branch changed the hit-rate slope rationale in `ratesresearch/assumptions.py` and edited the same text by hand in the presets file, with different YAML line wrapping. The shipped file was replaced by the output of the project's generator (`ratesresearch.hitrate.main`). The parsed YAML is identical; only the wrapping of four lines changed, so the file is again byte-for-byte reproducible.
+
+Also, `VenueBindingTest.aLostSessionIsPulledOnTheLoopCancelledAtTheVenueAndQuotingResumesAfterLogon` failed once in the first full verify after this merge and once in three idle runs. The D2C simulator logs `cancel-on-disconnect` from its own FIX thread when it notices the closed socket, in wall-clock time, and the test read the log straight after a 200 ms simulated step. The test now waits for the entry for up to 10 s of wall-clock time, stepping 10 ms at a time (`awaitLogged`); every other assertion is unchanged. It passed five runs in a row.
+
+Consequences. A desk configuration whose cap is below its own expected cost now quotes nothing rather than quoting at a loss. Any new desk configuration has to keep `winnersCurseBp`, the hedge cost and the cap consistent, and a smoke day that quotes nothing fails `SmokeTest`.
+
+## DR-INT-06: Load-sensitive tests: exact accounting in the latency harness test, a longer wait for the first quote, a JIT-settled warm-up for the wired allocation test
+
+Date: 2026-10-31
+
+Context. `LatencyHarnessTest.shortRunWritesAReportWhoseHistogramsReadBack` failed twice under full-build load in the fix-a1 session and passed when run alone. Among its checks, it required the gateway callback to see exactly `generated - generatorDropped` Quotes. That holds only if the loop publishes every Quote. When the machine is loaded, the gateway thread that drains the outbound ring can fall behind, and the loop then drops Quotes on the full ring and counts them as `outboundDropped` (DR-P2C backpressure). So a correct run could fail the check. The other checks in the test (counts against the measured window, histogram read-back, report rows) do not depend on scheduling.
+
+Decision. The single equality becomes three exact equalities over the counters the harness writes to its JSON report. The loop processed exactly what the generator did not drop (`inbound == generated - generatorDropped`). Each processed request was either published or counted as dropped (`inbound == outbound + outboundDropped`). The gateway handed on exactly what was published (`seen == outbound`). Every other assertion is unchanged, and a failure prints the report.
+
+Also, `TradingProcessMainTest.theTradingRoleQuotesTakesTheKillAndItsJournalsReplay` failed with "no quote within 30 s" under full-build load in the fix-c session and passed alone. The process runs in wall-clock time at time scale 60, so a loaded machine delays its first quote. The test already polled `/control/status` until `quotesSent` was positive; the ceiling is now 180 s, and the failure message prints the last status. The kill, metrics and replay assertions are unchanged.
+
+Also, `WiredLoopAllocationTest` (rates-app) failed once under full-build load in the fix-d session and passed alone. The failing report was not kept. Five runs at integration, each in a fresh JVM with all 12 cores held busy by spinning processes, all passed, so no allocation was reproduced and no code path was found that allocates. The one mechanism that fits a failure that appears only under load is JIT timing. The test warms up for a fixed 600,000 messages; when the compiler threads are starved, C2 compilations and deoptimisations of the desk's paths land in the measured windows, and a deoptimisation that rematerialises scalar-replaced objects allocates on the loop thread. The test now keeps warming up, one window at a time, until a whole window passes with no new JIT compilation time, for at most 4 extra windows, and its report gives the number of extra windows. The measured windows are unchanged: the same four windows of 150,000 messages, no later window above 1,024 bytes, and at least one window with zero bytes. A genuine per-message allocation still fails, because it would show in every window. If the failure recurs with the JIT quiet, the report now says so, and the cause is then a real one-off allocation to fix as in DR-INT-02.
+
+Consequences. The test still fails if a message is lost without being counted on any path, which is what the old check guarded, and it now also checks the loop's own counters against the generator. A run where the loop drops Quotes on backpressure passes, as it should. The harness itself is unchanged.
+
+## DR-FIX-A1-01: The hit-rate intercept and slope are learned by a forgetting Newton step within wide bounds
+
+Date: 2026-10-31
+
+Context. P&L audit item 2 (docs/research/PNL_AUDIT.md; AUDIT-01, seq 8, `slope_known`): the production hit-rate slope was held near its central value, and learning was bounded to [-2.4, -1.0]. When the settling slope was known, the strategy earned +949k a day at the H band point, so a desk that cannot move its slope toward what its own outcomes show leaves money on the table.
+
+Decision. `HitRateModel` learns b0 and b1 from the desk's own wins and losses. Each outcome takes one Newton step on the logistic log-likelihood, using an information matrix that starts at the prior precision `1 / learningRate` and decays with a window of 5,000 RFQs, so the first steps equal the old gradient ascent and later ones shrink as evidence accumulates. Both coefficients are clamped to learning bounds wider than the declared band: slope -8.0 to -0.2 (AUDIT-01 sweeps to -5.0; the slope stays negative) and intercept -3.0 to 5.0. `base()` excludes the intercept, so a base stored when a quote is sent stays valid after the intercept moves. The daily report can read `learnedSlope()`, `slopeStandardError()` and `slopeOutsideDeclaredBand()`.
+
+Consequences. The desk's slope can reach a market where price decides or one where it hardly matters, and the report shows when its data has left the assumption band. One RFQ is still one label (DR-R2R-08). The learning is allocation-free. Wins are scarce at wide spreads, so the slope's standard error is reported beside it.
+
+## DR-FIX-A1-02: The spread optimiser averages over the cover with Gauss-Hermite quadrature, the observed gaps setting a floor
+
+Date: 2026-10-31
+
+Context. Audit item 11 (AUDIT-01, `cover_integrated`): the optimiser evaluated the hit rate at a point estimate of the cover, while the cover is uncertain. Averaging over it earned +69k a day at C (interval -50k to 214k) and +29k at L.
+
+Decision. `SpreadModel` maximises `Pbar(win | s) * (s - c)`, where `Pbar` averages the hit-rate model over a cover distributed normally around the expected cover. It uses 8-point Gauss-Hermite quadrature and a golden-section search on [0, maxHalfSpread], with no derivative and no allocation. The cover's standard deviation comes from the gaps between our winning prices and the disclosed covers, fed through `observeCoverGap`, with a window of 500. Until a gap arrives it is the prior given at construction, 0 by default, which reproduces the point estimate exactly.
+
+Consequences. Gaps are seen only on wins, so the observed spread is that of a truncated sample and understates the true one; it is treated as a floor. Engine output is unchanged until the engine feeds gaps, which is left to the engine package (fix A2).
+
+## DR-FIX-A1-03: Default tier tables price toxic tiers wider instead of blocking them
+
+Date: 2026-10-31
+
+Context. Audit item 5 (AUDIT-02, seq 9): at the engine's spreads, declining informed flow cost more than it saved: `oracle_decline_informed` -486k a day at C and -1.13mm at L; declining tier 3 lost 638k at C.
+
+Decision. `TierTable.standard` builds three firm tiers with nothing blocked and spread multipliers 1.0, 1.15 and 1.35. Unmapped clients get tier 2. `unblocked(version, widening)` converts any blocked tier of an existing table into a quoting tier with its multiplier times `widening` (default 1.5), and `blockedTiers()` lets a check flag a table that still refuses quotes. The multipliers are declared, not fitted; they follow AUDIT-02's `widen_tier3` direction (+93k at L).
+
+Consequences. Blocking stays possible through an explicit `ClientTier`, but no default builds one. Which table a desk runs remains a configuration choice approved through `TierTableControl`.
+
+## DR-FIX-B-01: The CLOB quoter skews for inventory with the RFQ engine's kappa, before the tick rounding
+
+Date: 2026-10-31
+
+Context. P&L audit item 7 (docs/research/PNL_AUDIT.md; AUDIT-04, seq 11): neither the back-tested engine nor the CLOB quoter leaned its prices against inventory. `skew_0p05` earned +97k a day at C (interval -48k to 366k) and +61k at L; `skew_0p20` +151k at L but -143k at C. Item 6: CLOB quotes were off the venue's tick grid, which the review fixed (DR-R2R-12).
+
+Decision. `ClobQuoter.inventorySkew` applies the RFQ engine's own skew, `kappa * u' Sigma p / |U|` clamped to `maxSkewBp`, to both CLOB targets, with the same parameters and covariance, so both channels lean the same way on the same book. The skew moves the targets before the tick rounding, so prices stay on the tick. It is off until called, which keeps today's CLOB output unchanged. A test checks every resulting price against `ClobBook`'s tick rule at 1/32, 1/128 and 1/256 ticks on flat, long and short books.
+
+Consequences. Whether a desk turns the skew on, and at which kappa, is configuration. AUDIT-04 shows that the level matters (gain at L, loss at C for 0.20 bp), so it should be tuned through a pre-registered run rather than set by hand.
+
+## DR-FIX-C-01: A breach may shrink but not grow, and the engine's own daily-loss kill lets hedges flatten
+
+Date: 2026-10-31
+
+Context. P&L audit item 14 (docs/research/PNL_AUDIT.md; code reading of RiskEngine and Hedger): once a PV01 limit was breached, the checks refused flow that would have reduced the breach, and a kill froze the hedger with the loss on the book.
+
+Decision. Each worst-case PV01 figure (pillar, net, gross) may stay where it is when already past its limit, with a relative tolerance for rounding, but may not move further past it or overshoot through zero into a new breach. That applies to quotes, orders and headroom. A one-sided quote whose fill offsets net PV01 skips only the daily-loss check, as a risk-reducing order already did. When the kill comes from the engine's own post-trade daily-loss breach, `flattenOnly()` is true: quotes stay withdrawn and other orders are refused, but risk-reducing orders still pass. The `Hedger` keeps its parents working and keeps sending tranches. Any other kill still cancels everything. `flattenOnly()` is set before the trigger, because the listeners read it during the kill.
+
+Consequences. The desk can always trade its way back inside a limit and flatten after a daily-loss stop. An operator kill or a kill of any other cause is unchanged. The desk-level oracle in `SinkAuditor` and `ChaosTest` follows the new rule.
+
+## DR-FIX-C-02: Basis and swap-spread exposure have their own limits and attribution
+
+Date: 2026-10-31
+
+Context. Item 16 (AUDIT-03, seq 10, `bucketed`; Desk.java): all risk was hedged in one future, and the basis and swap-spread risk this opens was neither limited nor attributed.
+
+Decision. `RiskLimits` gains `basisPv01` and `swapSpreadPv01`, checked on positions plus the checked quantity at either extreme; other reservations are left out because, depending on product, they move the offset either way. An exposure already past its limit may shrink but not grow. The limit schema has no kind for them, so a refusal returns `REJECT_BASIS` or `REJECT_SWAP_SPREAD` without a breach message, and post-trade breaches are counted. Risk-reducing orders skip the PV01 envelope but not these limits, so a futures hedge of swap risk cannot open unlimited spread risk. `ExposureBasisAttribution` attributes each hedge fill's basis and swap-spread exposure and slippage, one per currency in `Desk`; SpotBugs treats its reference to the shared risk engine as it does the Hedger's.
+
+Consequences. The limits default to off until configured. A breach message kind for them is a schema change left for later.
+
+## DR-FIX-C-03: The router prices adverse selection on filled passive children and the cost of each message, off by default
+
+Date: 2026-10-31
+
+Context. Item 15 (AUDIT-03, `passive_ty`): passive hedging at the touch turned the hedge line from -704k to +130k a day at C, but the router valued a filled passive child as free of adverse selection. Item 18: message and cancel costs were not counted anywhere, while venue order-to-trade policies count cancels.
+
+Decision. `RouterParams` gains `filledAdverseFactor` (the expected adverse move after a passive fill, in sigma over the expected queue wait, capped at the passive horizon), `messageCostPoints` (per new order or cancel, per lot) and per-instrument volatility. All three are off in the existing constructor and presets. `RouterPresets.globalWithControls` sets 0.75 sigma and 0.0001 points per lot per message, about 1 USD on one million of cash face. These are assumptions, not fits, and stay out of `data/presets.yaml` until the audit re-run has measured them. `QuoteStuffingDetector` now counts cancels, replaces and withdrawals, and the end-of-day report writes per-instrument message and cancel counts.
+
+Consequences. Routing is unchanged until a desk selects the controls preset. The order-to-trade figures are visible daily either way.
+
+## DR-FIX-A2-01: Every RFQ's decision and outcome is recorded with the signed cover gap and our rank
+
+Date: 2026-10-31
+
+Context. P&L audit item 3 (docs/research/PNL_AUDIT.md; AUDIT-01, seq 8): won trades sat 0.44 bp behind the cover (DV01-weighted, C), so the desk's volume rested on clients accepting quotes behind the best competitor, and production did not record it.
+
+Decision. The engine reports each decision and each response to an `RfqRecordListener`, with the cover gap signed from the client's side and our rank as far as the cover shows it, and it counts wins from behind the cover. This is the recording side of the item. Changing prices in response is left to a pre-registered run on the recorded data.
+
+Consequences. The cost of winning from behind the cover can be measured on live and back-tested days alike. The listener is allocation-free and off by default (`NONE`).
+
+## DR-FIX-A2-02: Client markouts are measured from fair value at the trade
+
+Date: 2026-10-31
+
+Context. Item 4 (AUDIT-01, AUDIT-02): the toxicity markout was measured from the traded price, so the half spread the desk captured netted out the adverse move. The 5-minute adverse move for tier 3 was 0.31 bp against 0.13 bp charged.
+
+Decision. Markouts are measured from the fair value at the time of the trade.
+
+Consequences. Toxicity estimates rise by about the captured half spread, and the adverse cost the engine charges per client rises with them. With the review's NEGATIVE_EDGE pass (DR-INT-05), a client whose learned cost reaches the cap is no longer quoted.
+
+## DR-FIX-A2-03: A live quote is withdrawn when fair value moves against it
+
+Date: 2026-10-31
+
+Context. Item 8 (AUDIT-01 diagnostics): firm quotes stood through market moves for their whole time to live. Within a 1.5 s window, +31.7k a day moved in clients' favour.
+
+Decision. `poll` withdraws a live quote with `AdverseSignal` when fair value has moved against it by more than `fairMoveWithdrawBp`, default 0.25 bp, and 0 turns it off.
+
+Consequences. A withdrawn firm quote can still be lifted if the venue accepts the lift first; such fills are booked as late fills (DR-R2R-13).
+
+## DR-FIX-A2-04: The release calendar is on by default
+
+Date: 2026-10-31
+
+Context. Item 9 (AUDIT-01, AUDIT-04 `release_guard`): quoting within 2 minutes of the 08:30 and 10:00 New York releases captured 36.7k a day of spread and lost 37.5k to the 5-minute move. Pulling from 60 s before to 30 s after earned +20k at C. Edge study E3 measured the release variance (supported).
+
+Decision. The default `QuotingConfig` carries the 08:30 and 10:00 New York releases on weekdays of 2026 and 2027. From 60 s before to 30 s after, quotes are pulled and RFQs passed with `RELEASE_WINDOW`. For 5 minutes after the window, half spreads are multiplied by 2.355, the E3 holdout ratio. The calendar is a declared schedule of release times, not a list of actual release days.
+
+Consequences. Every desk and test that runs across 08:30 or 10:00 New York sees the pull. The rates-app smoke day starts at 08:25, so its counts changed, and recipe 22 was re-recorded. A real calendar source is a follow-up.
+
+## DR-FIX-A2-05: Package RFQs pass the single-RFQ controls and pay for their net risk
+
+Date: 2026-10-31
+
+Context. Item 12 (code reading of PackageQuoter): package RFQs skipped the kill switch, health, throttle, input-age and risk checks that single RFQs pass, reserved nothing, and were priced on the sum of their legs.
+
+Decision. `PackageQuoter` applies the single-RFQ gates in the same order and reserves every leg for the time to live. It books Dones to risk, including late ones. It charges the PV01-weighted mean of the legs' optimal half spreads on the net ladder's risk-equivalent PV01, plus hedge cost less the netting saving plus the inventory term, floored at the minimum half spread on the largest leg.
+
+Consequences. A DV01-neutral curve or fly is charged for its curve risk only, which recipe 27 now shows. The desk does not yet register the package quoter with the kill switch; until it does, the quoter reads the switch on every quote.
+
+## DR-FIX-A2-06: A late single-RFQ Done reaches the recorder and the hedger
+
+Date: 2026-10-31
+
+Context. Item 13 (code reading of QuotingEngine): a Done that raced our expiry could miss risk and the hedger. The review books such fills (DR-R2R-13).
+
+Decision. A late Done is also reported to the recorder, and it reaches the hedger through the risk engine's fill, which a test shows.
+
+Consequences. No trade the venue accepted is left unhedged because of the race.
+
+## DR-INT-07: One winner's-curse setting for the wired desk, and the final smoke-day numbers
+
+Date: 2026-10-31
+
+Context. Fix package A2 (`claude/fix-a2-engine-8168e0`) met the same NEGATIVE_EDGE problem as DR-INT-05 and set `DeskSettings.winnersCurseBp(0.01)` in commit 2031b7a. When it merged round2-integration it took DR-INT-05's 0.02 bp, and it then re-recorded recipes 22 and 27 on that tree (ac1bba3).
+
+Decision. The wired desk keeps `winnersCurseBp(0.02)` (DR-INT-05), so there is one setting. Recipe 22's output on the merged tree with packages A1, B, C and A2 equals A2's recording, and `RecipesTest` and `check_cookbook.py` pass on it. README.md and STATUS.md quote that output: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills, 229 trades reconciled, and a back-test of 36 RFQs, 14 client fills and 171 hedge fills.
+
+Consequences. The smoke-day numbers move again whenever a quoting default changes. Recipe 22's recorded output is the reference, and README and STATUS follow it.
+
+## DR-FIX-D-01: The back-tester can walk the displayed depth for market hedges; the linear rule stays the default
+
+Date: 2026-10-31
+
+Context. The P&L audit measured hedge cost with a linear rule on one block (item 1: 0.328 bp per DV01 hedged), while the production router sends child orders against displayed depth.
+
+Decision. `HedgeCostModel.withDepthWalk(true)` fills market hedges level by level against the displayed touch quantity. `fromPreset` and the default keep the linear rule, so P5-001 and AUDIT-01 to AUDIT-04 still reproduce from their ledger rows.
+
+Consequences. Runs that want realistic child-order costs opt in. AUDIT-11 measured 0.089 bp per DV01 with the depth walk against 0.174 bp under the linear rule for the production desk.
+
+## DR-FIX-D-02: A best-price client rule beside the hit-rate client, on the same random draws
+
+Date: 2026-10-31
+
+Context. Item 3: volume rested on clients accepting quotes behind the cover, which the soft logistic client allows.
+
+Decision. `RfqOutcomeModel.ClientChoice.BEST_PRICE` makes the client trade with the best price, with a tie on a fair coin. Both rules draw the same numbers in the same order, so every RFQ's cover is the same under either and a paired comparison isolates the client rule.
+
+Consequences. A strategy's dependence on clients who accept worse prices can be measured directly. `HIT_RATE` stays the default.
+
+## DR-FIX-D-03: Bond coupons accrue on the carry line
+
+Date: 2026-10-31
+
+Context. Item 17 (AUDIT-01 funding line): the back-tester charged bond funding without coupon carry, so a net short bond position looked cheaper to hold than it is.
+
+Decision. `CarryModel.bondCoupons` accrues each bond's annual coupon ACT/365 next to funding.
+
+Consequences. Balance sheet, initial margin and the CCP basis are still not priced. Item 17 is fixed for coupons only.
+
+## DR-INT-08: Two allocation tests that failed on CI after the round 2 merge
+
+Date: 2026-10-31
+
+Context. On PR #3 (round2-integration f5dc492), CI failed in two allocation tests that had passed locally.
+
+First, on ubuntu, `DeskQuoterAllocationTest.perRfqAndPerFillPathsAreAllocationFreeAfterWarmUp` (rates-strategy) failed with "expected <20> but was <50>". This is a count, not bytes. The loop runs windows of 200 RFQs until at least 50 windows have run and the last 20 in a row allocated nothing, so on exit the number of trailing quiet windows is at least 20. The assertion `assertEquals(20, quiet)` held only when the path settled after window 30. On the Linux runner it allocated nothing from the first window, so all 50 windows were quiet. That is the strongest possible pass, failed by an off-by-design equality. None of the merged fix packages changed the count's meaning; they only shifted when the path settles.
+
+Second, on windows, `RouterAllocationTest.perOrderPathIsAllocationFreeAfterWarmUp` (rates-router) measured 256 bytes, where 0 is required. Fix C's additions on the per-order path are primitive arithmetic and a linear scan of two final arrays (`RouterParams.Volatility.sigmaDailyPoints`), and with `RouterPresets.global()` the new terms are zero. There is no boxing, capture, lazy initialisation or string building on the path. The test measured in a second loop after the warm-up loop. A freshly compiled loop's first pass, through on-stack replacement, allocates on the measuring thread, which `DeskQuoterAllocationTest` recorded on 2026-10-31 as a 168-byte first window. So the 256 bytes are warm-up noise, not router code.
+
+Decision. In the strategy test the count assertion becomes `quiet >= 20`, the condition the loop guarantees; the zero-byte rule on each of those windows is unchanged. In the router test the measurement moves into the warmed-up loop and call site: after at least 50 windows of 20 parents, the loop must end with 5 quiet warm-up windows followed by 3 measured windows (60 parents, as before), each allocating exactly zero bytes. The zero rule is not loosened.
+
+Consequences. Both tests still fail on any allocation in the measured windows. They no longer fail when a runner reaches steady state early, or because of the compilation of the measuring loop.
+
+## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
+
+Date: 2026-10-31
+
+Context. The P2 harness run with journaling on (`docs/benchmarks/latency-20261031-072915.json`) had a core decode-to-encode p99.9 of 271 ms, and the generator thread, which does no I/O, was late by up to 554 ms. A reproduction on the same laptop on 2026-10-31 at commit 4facfef57c3e (`docs/benchmarks/latency-20261031-114010.json`, journaling on, 512 MiB segments, 60 s warm-up, 300 s measured) ran with `-Xlog:safepoint,gc`, a thread that sleeps 1 ms and logs any oversleep above 20 ms, a watcher of the journal directory, and Windows performance counters at 1 s. Every whole-process stall in that run (226, 94 and 77 ms) was a safepoint whose time to safepoint was the stall (224.0, 92.4 and 76.1 ms), and each began within 0.3 s of a `.pending` segment file appearing, that is, as the background thread started to create the next segment. Available memory stayed between 4.6 and 7.1 GB and hard page reads stayed near zero, so memory pressure and disk reads are ruled out.
+
+Two things combine. First, `JournalWriter.create` called Agrona's `IoUtil.mapNewFile(file, size, true)`, which zero-fills by storing one byte per 4 KiB page through the new mapping in a counted `int` loop. Each store is a page fault taken in Java code, and under `-XX:+UseParallelGC` (the harness flag) C2 removes safepoint polls from counted loops (`UseCountedLoopSafepoints` is false; it is true under G1). Once the loop is compiled, a safepoint requested while it runs waits for the whole remaining fill, and every other Java thread, the event loop included, stops at its next poll and waits too. Second, the harness's gateway thread passed a capturing lambda to `outbound.read` inside its polling loop, creating an object per poll; the garbage caused a young collection, and so a safepoint, about every 0.6 s, which made it likely that one landed during a fill. The 199,968 bytes allocated on the loop thread in the P2 run came from the roll mapping a file on the loop thread (DR-P2C-03) and are a separate issue, fixed by DR-R2J-02.
+
+`SafepointStallProbe` (`rates-bench`) isolates the mechanism: one thread creates four 512 MiB files, another calls `System.gc()` every 20 ms, a third spins and records its longest gap. On the laptop, 2026-10-31, JDK 25.0.5, `-Xms1g -Xmx1g`: Agrona's fill under ParallelGC, 145.9 ms; the same with `-XX:+UseCountedLoopSafepoints -XX:LoopStripMiningIter=1000`, 4.9 ms; under G1, 5.9 ms; zeros written with `FileChannel.write`, 3.0 ms; channel writes followed by a plain page-touch loop, 106.7 ms; the same touch loop with `Thread.yield()` every 16 pages, 2.6 ms.
+
+Decision. New segment files are zero-filled with `FileChannel.write` from a 1 MiB direct buffer and then mapped; the bytes and the format are unchanged. Every loop that touches mapped pages off the loop thread (`JournalWriter.pretouch`) calls `Thread.yield()` every 16 pages, because the return from a native call is a safepoint check, so a safepoint waits for at most 16 page faults. The harness creates its gateway handler once, and its JSON report now gives the number of collections and their total time over the measured phase (`gcCollections`, `gcMillis`). The harness keeps ParallelGC so that its numbers stay comparable with the P2 rows.
+
+Consequences. A safepoint can no longer be held by journal file creation, on any collector. A collection still stops the loop thread for its duration, so garbage on any thread of the loop's process, not only on the loop thread, is a latency risk; the harness report now shows it. Any future code that walks a mapping page by page in Java must keep a safepoint check in the walk. The probe stays in `rates-bench` so the result can be repeated on the pinned Linux host DR-005 calls for.
+
+## DR-R2J-02: Segments are prepared and every page touched off the loop thread, one segment ahead, with an allocation-free hand-over
+
+Date: 2026-10-31
+
+Context. With preallocation (DR-P2C-03), the background thread created the next segment once the current one was half full, but the roll still ran on the loop thread: it waited on a `Future`, submitted the full segment's close to an executor and mapped the new file with `JournalWriter.open`, which allocated about 200 KB and left every page of the new mapping to fault on the loop thread's first store to it (one fault per 4 KiB, about every 40 inbound frames). The brief suggests touching every page and keeping two segments ahead.
+
+Decision. `SegmentedJournal` with preallocation runs one background thread per journal (`journal-prepare-<name>`). `create` touches every page of the first segment before it returns. As soon as a segment becomes current, the thread creates the next one under its `.pending` name, forces it, renames it, maps it and touches every page (`JournalWriter.pretouch`, with the safepoint check of DR-R2J-01). At a roll the loop thread reads the prepared writer from a volatile field, sets its first sequence and previous hash (`continueChain`), writes the full writer to a second volatile field and unparks the thread, which forces and unmaps the full segment. A roll that finds no prepared segment spins until one is ready and counts it (`rollWaits()`). One segment ahead, not two: at 50,000 messages per second the outbound journal fills a 512 MiB segment in about 80 s and preparing one took 0.5 to 12 s in the runs of 2026-10-31 (the 12 s while the disk was also writing back the full segments), so one prepared segment leaves a margin of more than six times; a second would keep another 512 MiB per journal mapped and touched for no measured gain. `rollWaits` is in the harness report so a run that needed a deeper queue would show it.
+
+Consequences. The loop thread never maps, unmaps, forces or creates a file, takes no lock and allocates nothing on a roll; `SegmentedJournalTest.aPreparedRollAllocatesNothingOnTheAppendingThread` measures 0 bytes over 20 rolls and `LoopAllocationTest` now rolls inside its measured windows. Disk use is the current segment plus one prepared segment per journal from the start, where before the second appeared at half full. The prepared segment's header stamp is the time it was prepared. Small segments (tests use 1 to 8 KiB) make rolls wait for the preparer, which is correct but slower; tools that want rolls without a background thread keep `preallocate` false. The volatile hand-over is an exception to the rule that only ring buffers cross threads (docs/ARCHITECTURE.md): it carries a journal writer between the loop and the journal's own background thread, never handler state.
+
+## DR-R2J-03: A second journal mode in which a journal thread writes the mapped file from an off-heap ring
+
+Date: 2026-10-31
+
+Context. The brief asks for a mode in which the loop thread never touches the mapped file, in case the mapped write itself is the problem on Windows, with the replay hash unchanged and both modes covered by the same tests.
+
+Decision. `RingJournal` (`rates-journal`) owns a `SegmentedJournal` and an Agrona `OneToOneRingBuffer` over a direct buffer (64 MiB by default, `LoopJournals.create` takes another size). `append` on the producer thread claims a record whose type id is the template id plus one (the ring refuses type id 0), writes the producer clock's `epochNanos()`, the schema version and the payload, commits it and returns the sequence the frame will get, counted on the producer side. A journal thread per journal (`journal-drain-<name>`, Agrona `BackoffIdleStrategy` from spinning to a 100 microsecond park) drains the ring into `SegmentedJournal.append(templateId, schemaVersion, timestampNanos, ...)`, a new overload that takes the stamp instead of reading the clock, so the sequence and the chain hash are assigned by the same `JournalWriter` code from the same bytes in the same order. A full ring makes the producer spin until there is room and counts it (`producerWaits()`); nothing is dropped. A frame too large for an empty segment is refused on the producer thread. A failure on the journal thread is rethrown on the producer's next append. `close` drains the ring before closing the journal. `JournalMode` (`DIRECT`, `RING`) and `LoopJournals` in `rates-core` make the mode a loop configuration choice; `EventLoop.Builder.inboundJournal(JournalSink)` and `outboundJournal(JournalSink)` are unchanged.
+
+Consequences. The files are identical in both modes frame for frame (`RingJournalTest.ringModeWritesTheSameFramesAsTheDirectMode`), so `LoopReplay` and every reader work on either; `LoopReplayTest`, `LoopPropertiesTest.replayOfAnyRunReproducesTheOutboundHash` and `LoopAllocationTest` run in both modes. The chain hash moves off the loop thread in ring mode, which shortens the loop's append. The costs: one more thread per journal, which needs a core of its own to keep up at high rates; frames in the ring are lost if the process dies, where in direct mode a frame is in the page cache once appended; and a journal thread that falls behind for longer than the ring holds (about 0.5 million QuoteRequest frames at 64 MiB) stalls the loop.
+
+## DR-R2J-04: The direct mode is the default
+
+Date: 2026-10-31
+
+Context. The brief asks for the direct mapped write as the default if it meets the target with journaling on, and the ring mode otherwise.
+
+Decision. `DIRECT` is the default (`LoopJournals.DEFAULT_MODE`, the harness default and `-Dlatency.journalMode`). Measured on the laptop of docs/BENCHMARKS.md on 2026-10-31 with the code of commit 04d12a503a6b, 50,000 QuoteRequests per second, 60 s warm-up, 300 s measured, 512 MiB segments, ParallelGC, core decode-to-encode in the runs whose generator kept to schedule: direct p50 0.2 us, p99.9 1.6 us, maximum 336 us (`latency-20261031-115541.json`); ring p50 0.1 us, p99.9 1.6 us, maximum 440 us (`latency-20261031-120234.json`); journaling off p50 0.1 us, p99.9 1.1 us (`latency-20261031-121134.json`). No safepoint was logged, no roll waited for its segment, no ring filled and the loop thread allocated nothing. In four further runs taken while other load ran on the laptop (discarded by the generator rule), direct reached p99.9 3.6 and 275 us and ring 2.0 and 4.1 us; under a controlled load of ten spinning threads, journaling off reached 11.4 ms and direct 5.6 ms. The JMH append costs 62 ns direct and 19 to 39 ns into the ring on the loop thread (`JournalModeAppendBenchmark`).
+
+Consequences. At p99.9 the two modes are within the noise of unpinned laptop runs of each other, so the choice rests on what else differs: the direct mode has no extra thread per journal and keeps every appended frame through a process crash; the ring mode moves the chain hash and the mapped store off the loop thread, which matters if the mapped write itself becomes the bottleneck (larger frames, slower storage, a host where page faults on touched pages return). The ring mode stays available and tested. The comparison should be repeated on the pinned Linux host (DR-005) and at rates where one journal thread is near saturation.
+
+## DR-R2J-05: Interfaces added or changed by the journal work, for the coordinator
+
+Date: 2026-10-31
+
+Context. A sibling session wires the modules into `rates-app` at the same time and binds journals through the public API of `JournalWriter`, `SegmentedJournal`, `FrameSource` and the `EventLoop` builder.
+
+Decision. Additions only, except where noted. `JournalWriter.append(templateId, schemaVersion, timestampNanos, payload, offset, length)` and `SegmentedJournal.append` with the same parameters take the stamp explicitly; the existing overloads read the clock as before. `SegmentedJournal.rollWaits()` is new. `SegmentedJournal.create(..., true)` now touches the first segment before returning and prepares each next segment immediately rather than at half full (behaviour, not signature). New public types: `RingJournal` (`rates-journal`), `JournalMode` and `LoopJournals` (`rates-core`), and `EventLoop.Builder.journals(LoopJournals)`. `FrameSource`, `JournalReader`, `SegmentedJournalReader`, `Replayer` and the file format are unchanged. In `rates-bench`, the `HarnessConfig` record gains two components, `journalMode` and `ringBytes`, after `journal` (a source change for any caller of its canonical constructor; `HarnessConfig.parse` is unchanged for existing options), the harness takes `--journal-mode` and `--ring-bytes` (`-Dlatency.journalMode`), and its JSON report gains `config.journalMode`, `config.ringBytes`, `counts.journalRollWaits`, `counts.journalRingWaits`, `counts.gcCollections` and `counts.gcMillis` under the same schema name, since the change only adds fields.
+
+Consequences. Code that passes `SegmentedJournal::append` as a `JournalSink` keeps working and gets the touched, allocation-free roll if it creates the journal with preallocation. Code that wants the mode switch uses `LoopJournals`.
+
+## DR-R2W-01: Dv01Ladder and Dv01Vector stay two types, joined by an adapter
+
+Date: 2026-10-31
+
+Context. P1's `Dv01Ladder` (rates-analytics) is immutable, allocates, and has one pillar per curve instrument (for the SOFR curve of the trading process: 2Y, 5Y, 10Y, 12Y, 30Y). P3's `Dv01Vector` (rates-api) is mutable, allocation-free and has the eight key-rate tenors of `KeyRateTenors`. Both are the value change for a one basis point rise: positive for a payer swap, negative for a long bond.
+
+Decision. Keep both. `io.ratesalgo.app.pricing.Dv01Adapter` splits each ladder pillar's DV01 onto the two neighbouring key-rate tenors linearly in curve years (`KeyRateTenors.split`), with no sign flip. The pricing binding applies the same weights in place on the loop; `toVector(Dv01Ladder)` is the allocating form for start of day and tests.
+
+Consequences. Unifying would have meant either an allocating type on the hot path or a mutable type in P1's public API. The parallel DV01 is preserved exactly; `PricingBindingTest` asserts each tenor against `KeyRateRisk.fromGradient` mapped by the adapter to 1e-12 of the parallel DV01.
+
+## DR-R2W-02: The pricing binding: one OIS curve, rebuilt one pillar at a time on the loop
+
+Date: 2026-10-31
+
+Context. P3 needs a fair mid and a key-rate PV01 per instrument without allocating; P1 provides the bootstrap, the pricers and their gradients.
+
+Decision. `AnalyticsPricing` bootstraps a USD SOFR OIS curve (linear in log discount factor, sequential solver) from the par rates of the five SOFR swap templates. A CurveInput of kind ParSwap moves one pillar through `CurveBuilder.rebuild`, which re-solves that pillar and the ones after it; then every swap's par rate and every instrument's unit ladder are recomputed into preallocated arrays: swaps from `OisSwapPricer.pvGradient`, bonds from `BondPricer.dirtyFromCurveGradient`, both mapped through `CurveBuilder.quoteSensitivities`. The unit swap's fixed rate is the template's starting par rate, so the swap object is built once. Bond fair value is the composite book (the quoting engine already prefers the microprice). Before the first CurveInput the reference time is `NO_VALUE`, so the desk does not quote off the starting curve.
+
+Consequences. A 30-year pillar rebuild costs milliseconds of loop time (daily SOFR compounding over about 7,500 days); at the curve feed's 500 ms interval that is acceptable, and a faster feed would need a coalescing step. `PricingBindingTest` asserts par rates and PVs equal a fresh bootstrap of the same quotes to 1e-12.
+
+## DR-R2W-03: Instrument groups are currencies; a QuoteResponse follows its QuoteRequest
+
+Date: 2026-10-31
+
+Context. API_SPEC.md Section 9 runs one loop per instrument group, but the risk engine's limits and the hedger's residual are per currency (DR-P3-12), so splitting a currency across loops would split one risk book.
+
+Decision. A group is a currency. The universe is USD only, so the process runs one group, `usd`, and its journals live in `<journal dir>/usd/`. The inbound router partitions by instrument id; a QuoteResponse carries none, so it goes to the group that received its QuoteRequest (remembered by venue and RFQ id until a final, non-Rejected response); Heartbeat, GatewayStatus and KillSwitch go to every group.
+
+Consequences. Adding EUR or GBP adds a group without changing the gateways. `InboundRouterTest` covers two groups; the process itself has run with one.
+
+## DR-R2W-04: The venue gateway accepts the quoting engine's withdrawals
+
+Date: 2026-10-31
+
+Context. DR-INT-01 left two cancel pairs: the quoting engine sends QuoteWithdraw (60) and OrderWithdraw (61), and the venue gateway knew only QuoteCancel (43) and OrderCancel (41).
+
+Decision. `VenueGateway.offer` translates 60 to FIX Z exactly as 43, and 61 to FIX F; OrderWithdraw has no quantity, so F takes the order quantity `OrderStateTracker` recorded from the NewOrder (new accessor `orderQuantity`). The router's cancels are encoded by the binding as OrderCancel (41) with full fields.
+
+Consequences. No schema change. Retiring one pair remains open.
+
+## DR-R2W-05: Feed gaps reach the loop; a snapshot rebuild is announced with GatewayStatus
+
+Date: 2026-10-31
+
+Context. P3's input health marks a book-feed gap when a venue sequence number jumps and clears it on `onFeedRecovered`, which nothing called. P2's `BookFeedConsumer` recovers from a snapshot inside the gateway, out of the loop's sight. The loop accepts only GatewayStatus from the control schema.
+
+Decision. `FeedBinding` forwards every frame, the gapped one included, so the loop sees the gap; the desk's BookUpdate handler polls the quoting engine at once when input is unhealthy, which pulls every quote (the quote-pull-on-gap path). The binding then forwards the venue's snapshot (a Clear and the levels at the snapshot sequence) and publishes GatewayStatus CONNECTED with the feed's status id 3; the desk calls `onFeedRecovered` on it.
+
+Consequences. Recovery is journaled and replays. `VenueBindingTest` drops two feed frames at the venue and asserts that the pull reached the venue and that quoting resumed.
+
+## DR-R2W-06: An RFQ trade is booked once, from the QuoteResponse
+
+Date: 2026-10-31
+
+Context. The D2C simulator confirms a won RFQ twice: a QuoteResponse (AJ, type 1) and an ExecutionReport (8) carrying the quote id and the client's side. The gateway turns both into SBE. The position keeper books the first as the RFQ trade `venue:R:quoteId` and would book the second as an Execution trade, with the opposite side.
+
+Decision. The second is a confirmation. The desk counts and ignores ExecutionReports from the RFQ venue (the quoting engine books the fill from the QuoteResponse), and `JournalFeed` does not feed them to the keeper.
+
+Consequences. The trade reconciliation matches every RFQ trade against the venue's own register by quote id (`TradeRecord.quoteId`, added).
+
+## DR-R2W-07: One router per hedge instrument; hedger urgency as a fraction of the schedule
+
+Date: 2026-10-31
+
+Context. P4's `BookView` has no instrument argument, so a `SmartOrderRouter` routes one instrument. P3's `HedgeOrderSink` has `cancel` and `cancelAll`, which the router lacked, and states urgency as a deadline in nanoseconds where the router takes a number in [0, 1].
+
+Decision. The desk builds one router per hedge instrument (the four on-the-run Treasuries), each with its own client order id range (`ROUTER_BASE + (j << 40)`). `RouterHedgeSink` dispatches by instrument, maps urgency to `1 - (deadline - now) / scheduleHorizon` clipped to [0, 1] (a deadline of 0 is fully urgent), and refuses with false what a router cannot take. `SmartOrderRouter` gains `cancel(parentId)`, `cancelAll()`, `parentsLive()` and `maxParents()`: a cancelled parent stops routing, cancels its live children and finishes once each child has filled or confirmed. A cancel's ClOrdID is the child id with bit 61 set, so the venue's acknowledgement maps back without a table.
+
+Consequences. Router fills reach the hedger through the desk's ExecutionReport handler (`onHedgeFill`, then `onParentDone` when the router has finished the parent); a fill after the kill switch released the parent goes to the risk engine directly.
+
+## DR-R2W-08: The router assumes a configured trade rate; no futures venue yet
+
+Date: 2026-10-31
+
+Context. The router's queue model needs a traded quantity per second, and the SBE book feed carries no trades. P2 has no futures simulator.
+
+Decision. `LoopBook.view` reports a configured rate (2,000,000,000 minor units per second, 20 million of face, `DeskSettings.tradeRatePerSecond`). The routers route to the CLOB only.
+
+Consequences. A trade feed or an average of our own fills would replace the constant; a futures venue adds a row to `VenueParams[]` when P2 provides one. Both are deferred.
+
+## DR-R2W-09: The smoke day's declared assumptions
+
+Date: 2026-10-31
+
+Context. The simulators were built separately from the desk; run together they need a common market and settings under which the desk trades.
+
+Decision. The day starts at 2026-11-02T13:25Z, 08:25 New York, five minutes before the 08:30 peak of the D2C arrival model; `Venues.T0` is 14:30Z (09:30 New York), not 08:30 as its comment says. The curve feed publishes the D2C simulator's swap mids every 500 ms, and a market maker (`ClobLiquidity`, owner `LP`) keeps three levels a side on the CLOB around the D2C bond mids, refreshed every second. The desk's half spread is held between 0.02 and 0.08 bp because the simulated dealers quote a median of 0.25 bp for swaps; the hedger hedges once the residual's daily standard deviation exceeds 20,000 USD. These are declared values, not fits.
+
+Consequences. On seed 7 the smoke day sends 43 quotes and is filled 25 times (`SmokeTest`, 2026-10-31); with a 0.25 bp maximum half spread it was filled none of 5 times.
+
+## DR-R2W-10: The kill switch enters the loop as a message
+
+Date: 2026-10-31
+
+Context. The control endpoint runs on the HTTP thread; the kill switch belongs to the loop's state.
+
+Decision. `POST /control/kill` publishes a KillSwitch (31, reason Manual, scope 0, requestedBy from `X-Requested-By`) into every group's inbound ring; the desk's handler triggers its `KillSwitchController`, whose listeners pull quotes and cancel every router parent through the real gateways, and the controller's own KillSwitch goes to the control ring. With the loops on their own threads the endpoint waits up to two seconds for every group to report the switch engaged and no live quote.
+
+Consequences. The kill is journaled as an input, so replay reproduces the pulls; the rehearsal's "kill switch journaled" check reads the inbound journal.
+
+## DR-R2W-11: The back-test binding reshapes the journal and runs the desk as a strategy
+
+Date: 2026-10-31
+
+Context. P5's back-tester reads one RAJ1 file of schema-1 frames, keeps a top of book from level-0 BookUpdates, settles RFQs itself, has no resting-order cancel, and does not pass Heartbeats to strategies.
+
+Decision. `JournalExport` copies QuoteRequest, CurveInput and the curve feed's Heartbeat from a loop's inbound journal and turns every change of each instrument's top of book into Clear, Add bid and Add ask at level 0 with a renumbered sequence. `DeskStrategy` runs the desk's `DeskGroup` on its own loop, synchronously per callback; it sends every child order as a market order, drops router cancels, and restores the curve heartbeat with each curve input. `DeskBacktest` runs it under `data/presets.yaml` at the central band point with the universe's own instrument set and writes P5's daily report.
+
+Consequences. The back-test's hedge fills come from P5's hedge cost model, not from the CLOB's queue, so the report's hedge slippage is that model's. The replay of the same journal through `LoopReplay` is the exactness test; the back-test produces the report.
+
+## DR-R2W-12: The allocation and hot-path gates with the real desk
+
+Date: 2026-10-31
+
+Context. rates-core's gates cover the loop with a trivial handler. With the desk registered, two allocations showed (JFR with TLABs off): `SmartOrderRouter.venues()` clones its array, which the hedge sink called per parent, and `CurveBuilder.maxRepricingError` iterated an immutable list on every rebuild. After both were removed, a few hundred bytes still appeared in some windows at irregular times, attributed by JFR to enum class initialisation and to call sites that do not allocate (deoptimisation).
+
+Decision. The hedge sink caches each router's lot increment; `CurveBuilder` uses an indexed loop. `WiredLoopAllocationTest` sends 600,000 messages of warm-up and four windows of 150,000: no window after the first may allocate more than 1,024 bytes and at least one must allocate nothing. `AppHotPathRulesTest` applies rates-core's ArchUnit rules to the classes marked `@HotPath` in rates-app, except that Agrona's primitive-keyed maps are allowed.
+
+Consequences. A per-message leak of one byte still fails (150,000 bytes a window). The gate is weaker than rates-core's in one way: the clean window need not be the last.
+
+## DR-R2W-13: Simulated time, two ways to run, and quiescence by FIX sequence numbers
+
+Date: 2026-10-31
+
+Context. The simulators run their own QuickFIX/J threads; the process must run a seeded day reproducibly in tests and in real time in a container.
+
+Decision. One `SimClock` (an immutable reading behind a volatile field) drives the venues, the curve feed and the liquidity. The loops read it through `AnchoredClock`, so a latched monotonic time and wall time always come from one reading. The FIX sessions take intervals from the system monotonic clock and stamps from simulated time, so heartbeats keep real time with QuickFIX/J. `TradingProcess.step` drives everything on one thread and, after each step, pumps until no work is left and each venue's QuickFIX/J sequence numbers equal ours (`getExpectedSenderNum` is the venue's own outgoing number). `startThreads` runs each loop on a `LoopRunner` and the rest on a driver thread pacing simulated time.
+
+Consequences. Two runs of the smoke day gave the same counts on the laptop (2026-10-31). The threaded run is not reproducible step for step, but its journals replay exactly (`BacktestBindingTest`).
+
+## DR-R2W-14: The rehearsal starts rates-app
+
+Date: 2026-10-31
+
+Context. The P6 rehearsal started `OpsProcessMain`'s simulated quoter and checked that a quote was live right after readiness.
+
+Decision. Both images and the process-mode rehearsal start `io.ratesalgo.app.TradingProcessMain`; the trading role runs the simulators in process at ten times real time from 08:25 New York, and the venue-sim role serves health and metrics. A real quote lives for the venue's five-second window, so the rehearsal polls the status for up to 60 s until one is live instead of reading it once. The trading image copies `data/refdata`.
+
+Consequences. `OpsProcessMain` and `SimulatedQuoter` remain in rates-ops but no image uses them.
+
+## DR-R2W-15: SpotBugs in rates-app
+
+Date: 2026-10-31
+
+Context. SpotBugs reported 17 items on the new module. Twelve were EI_EXPOSE_REP and EI_EXPOSE_REP2: the assembly hands collaborators to each other and returns them to tests and the status endpoint. The rest were real: `TradingProcess` synchronised on its own instance (reachable by any caller) and read its driver thread field without the lock, `start` rethrew a caught exception, two fields were set after construction, and the pricing binding compared quotes with `!=`.
+
+Decision. `config/spotbugs-exclude.xml` excludes EI_EXPOSE_REP and EI_EXPOSE_REP2 for `io.ratesalgo.app` and its subpackages, as DR-P2V-07 and DR-P3-09 did for theirs. The other findings are fixed: a private lock object and a volatile driver field, a success flag in `start`, constructor-set fields (an unbound child lookup that throws until the router exists), and `Double.compare` for the quote change test.
+
+Consequences. Every other pattern stays enabled for rates-app.
+
+## DR-R2B-01: Desk features in a new module with a byte-identical baseline
+
+Date: 2026-10-31
+
+Context. The R2 business brief asks for seven desk features measured against today's engine, built while other sessions change `rates-quoting`, `rates-hedge`, `rates-backtest` and the venues on their own branches.
+
+Decision. The features live in a new module `rates-strategy` that depends on the others as libraries and plugs into their existing interfaces (`Strategy`, `CarryModel`, `AxeSource`, `TierTableControl`, `ToxicityTable`); no other module's source changed. Each feature is an interface whose default is today's behaviour. `DeskQuoter` with every default sends the same messages as `ModelSpreadStrategy` (P5-001's treatment, the best tested quoter) on the same journal, and `DeskQuoterBaselineTest` checks the output chain hash, so every experiment compares one feature against today's engine and nothing else.
+
+Consequences. The features run in the back-tester today. The live `QuotingEngine` takes `AxeSource` and `TierTableControl` already; the hedge budget, hedge timing, quote sizer and inventory penalty need extension points in `Hedger` and `QuotingEngine` before they can run live (DR-R2B-09).
+
+## DR-R2B-02: Pre-registrations under data/preregs
+
+Date: 2026-10-31
+
+Context. The brief names `research/prereg/` for the pre-registrations. The repository keeps them in `data/preregs/`, where `PreRegistration`, `ExperimentCli`, `ratesresearch.prereg.validate` and the Python tests look, with configs in `data/experiments/`.
+
+Decision. R2B-001 to R2B-007 are `data/preregs/R2B-00x.yaml`, sharing `data/experiments/R2B.config.yaml`, validated by both validators.
+
+Consequences. One place for every pre-registration; the brief's path is not used.
+
+## DR-R2B-03: The assumption band covers slope, dealer count and informed share together
+
+Date: 2026-10-31
+
+Context. DR-008 requires every simulator result across a declared band. The back-tester's `BandPoint` varies only the win-probability slope; the brief asks for dealer count and informed-flow share too, which change the journals themselves.
+
+Decision. One joint band with three points, declared in the experiment config: slope -1.25, -2.5, -5.0 per bp (preset `usd_rfq_hit_rate`), dealers 2 to 4, 2 to 5, 3 to 6, and informed share of every tier times 0.5, 1.0, 1.5. `BandScenario` applies the market parameters to a copy of `data/presets.yaml` for each point, so each point has its own journals; presets on disk are unchanged.
+
+Consequences. Low is a benign market and high a harsh one; the three parameters move together, so a result at one point cannot be attributed to one of them. A factorial band (27 points) is a possible later experiment.
+
+## DR-R2B-04: Statistics and guards of the desk experiments
+
+Date: 2026-10-31
+
+Context. The seven experiments share journals and the baseline run, and common random numbers pair every session; P5-001 used Welch's unpaired test. The brief asks for Holm across the seven and adoption only without limit breaches.
+
+Decision. Per treatment and band point: a paired t-test of the daily difference of the pre-registered metric, Holm over all 21 (treatment, point) tests, and a moving-block bootstrap interval of the mean difference (blocks 2, 2,000 resamples, seed 11). Supported when improved (adjusted p below 0.05 and the interval above zero) at all three points. Adopted only if supported, no limit breach on a session where the baseline did not breach, and the daily P&L difference interval not entirely below zero, at every point. The relative limit guard was chosen on the fitting period, where the baseline itself breached the 1,000,000 USD per bp net DV01 limit on some sessions (one large RFQ is enough); an absolute guard would have made adoption impossible for any feature that leaves sizing alone.
+
+Consequences. The P&L guard is a non-inferiority screen: it fails only when P&L is significantly worse, so an adopted feature may still have a negative mean P&L difference (R2B-001 at central and high does).
+
+## DR-R2B-05: The learned tiering carries its state across sessions
+
+Date: 2026-10-31
+
+Context. Each client trades about a dozen times a session, below the 30-fill minimum sample, so a tiering that starts empty every session never moves anyone.
+
+Decision. The experiment keeps one `MarkoutTiering` per band point (one for R2B-004, another for R2B-007) and runs the sessions in date order, as a desk's rolling client analytics would.
+
+Consequences. Sessions are no longer independent for the tiering treatments; the paired comparison per session is unaffected, but the bootstrap blocks of 2 sessions understate the dependence of the learning curve. The simulator's static tiers are the truth the market was generated with, so R2B-004 tests the cost of learning against an oracle table.
+
+## DR-R2B-06: No SBE message for the axe list
+
+Date: 2026-10-31
+
+Context. The brief allows an axe-list SBE message in template ids 120 to 129 only if needed.
+
+Decision. None is added. The quoting engine reads axes in-process through `AxeSource`; `AxeBook.publish()` returns the list for the desk report and for a later publisher. API_SPEC Section 2 is unchanged and ids 120 to 129 stay free.
+
+Consequences. Publishing axes to clients or venues (an axe feed) needs a message and a record when it is built.
+
+## DR-R2B-07: Adopt the netting hedge budget as the desk default
+
+Date: 2026-10-31
+
+Context. R2B-001 (ledger seq 12, commit 8c4eacb, 20 sessions 2026-03-02 to 2026-03-27) met its pre-registered rule: hedge slippage improved at all three band points (by 292,958, 136,853 and 43,116 USD per day, Holm p at most 0.0052) with no new limit breach and no significantly worse P&L. R2B-002 to R2B-007 did not.
+
+Decision. `DeskFactory.ADOPTED` is `[internalisation]` and `deskDefault()` builds the baseline with `NettingHedgeBudget` (soft 150,000, hard 400,000, retain 50,000 USD per bp, hold 120 s). The experiment baseline (`baseline()`) stays today's engine so that later experiments remain comparable with these.
+
+Consequences. Mean absolute net DV01 roughly doubles (29,849 to 66,313 USD per bp at central) and the daily P&L difference has a negative mean at central and high with intervals that include zero; risk limits must allow the larger intraday inventory. The holdout (2026-04-06 to 2026-04-10) has not been opened; opening it once is the next check. These are simulator consistency checks (DR-008), not evidence of edge.
+
+## DR-R2B-08: SpotBugs exclusion for shared desk state
+
+Date: 2026-10-31
+
+Context. SpotBugs reports EI_EXPOSE_REP and EI_EXPOSE_REP2 where `AxeBook` and `DeskQuoter.Features` hold the shared `RiskLadder`, and where `DeskReport` holds its `DeskMetrics`.
+
+Decision. A class-level exclusion for those three classes and those two patterns in `config/spotbugs-exclude.xml`, as DR-P3-09 did for the hedger and quoting engine: reading the ladder by reference at call time is the design. Other classes copy what crosses their boundary (`DeskExperiment.Outcome`, `DeskFactory`).
+
+Consequences. Every other pattern stays enabled for the module.
+
+## DR-R2B-09: Extension points the features needed and did not find
+
+Date: 2026-10-31
+
+Context. The brief asks to plug into existing extension points and to note missing ones for the coordinator.
+
+Decision. Worked around inside `rates-strategy`, and listed here:
+1. `StrategyContext.quote` has no quantity and the runner settles the requested size only, so a smaller quoted size can only be a decline (feature 3).
+2. `StrategyContext` exposes net DV01 but no ladder; `DeskQuoter` rebuilds the ladder from positions on every RFQ and fill.
+3. `Experiment` builds strategies from a closed switch and tests only total P&L with Welch; the desk experiments have their own harness (`DeskExperiment`) reusing `BacktestRunner`, `Stats`, `PreRegistration`, `Ledger` and `SyntheticDay`.
+4. `DailyReport` has a router fill-quality hook but no general section hook; the desk section is a separate `desk_report.json` and `desk_report.md`.
+5. `Hedger` has its own trigger and decay schedule with no pluggable budget or timing policy, and `QuotingEngine` has no hook for a size policy (beyond the tier's maximum quantity) or an inventory funding penalty; features 1, 3, 5 and 6 run only in the back-tester until those exist.
+6. The back-tester delivers no Heartbeats to strategies (noted by r2-wiring); `DeskQuoter` does not need them.
+
+Consequences. Each item is a small change in a module another session owns; with items 1 and 5 the adopted and future features can run live.
+
+## DR-R2B-10: Coupon carry in the desk experiments
+
+Date: 2026-10-31
+
+Context. The back-tester's `CarryModel` is `NONE` by default, so bond inventory pays repo but earns no coupon, and every bond position is carry-negative regardless of the curve.
+
+Decision. The desk experiments pass `CouponCarry` with declared coupons (UST 2Y 3.60, UST 10Y 3.95 percent, against the book's 4.25 percent repo) to every run, baseline included. The coupons are in the experiment config and covered by its hash.
+
+Consequences. P&L in these records is not directly comparable with P5-001's, which had no carry; within the R2B records every strategy has the same carry rule.
+
+## DR-R2R-01: Coupons for carry and basis are selected by record date
+
+Date: 2026-10-31
+
+Context. `BasisAnalytics` and `BondCarry` counted a coupon when its payment date fell in (settlement, horizon] and settlement preceded the ex-dividend date. A gilt held from before its ex-dividend date to a date inside the ex-dividend period, but before the payment, receives the coupon, while the accrued at the horizon is already negative. The coupon was dropped: on the Long Gilt about 2 per 100 of carry and an implied repo that rules the bond out of the cheapest-to-deliver choice.
+
+Decision. `FixedRateBond.entitlementDate(i)` returns the ex-dividend date when the convention has one and the coupon date otherwise. A position held from s to h is paid coupon i exactly when s < entitlementDate(i) <= h. A coupon paid after h enters at its value at h to first order in the repo rate (the existing linear form, with a negative day count).
+
+Consequences. UST and Bund results are unchanged (record date equals coupon date). The golden basis cases are UST only, so the test is hand-computed (`BondAnalyticsTest.giltHeldIntoTheExDividendPeriodCarriesTheCouponPaidAfterTheHorizon`); gilt and Bund baskets in the golden file remain open.
+
+## DR-R2R-02: A kill completes even when a listener throws
+
+Date: 2026-10-31
+
+Context. `Hedger.onHedgeFill` called `risk.onFill` before updating the parent. A fill that breached the daily loss limit fired the kill switch from inside the call; `onKill` released the pre-fill remainder and `RiskEngine.release` threw. `KillSwitchController.trigger` had already set KILLED, so the exception left the later listeners (other currencies' hedgers) uncalled and no KillSwitch message sent.
+
+Decision. The hedger brings the parent up to date before the fill reaches the risk engine. `trigger` calls every listener inside its own try block, sends the KillSwitch message, counts failures (`listenerFailures`) and then rethrows the first one. SpotBugs' THROWS_METHOD_THROWS_RUNTIMEEXCEPTION is excluded for this class only, as for `TimerWheel`.
+
+Consequences. A listener bug still reaches the caller as an exception, but after the desk is safe.
+
+## DR-R2R-03: A fill after a confirmed cancel is booked and does not shorten the parent
+
+Date: 2026-10-31
+
+Context. When a venue confirmed a cancel with a cumulative quantity above what had been received, the router freed the rest and could route it again. A later fill beyond the child's outstanding quantity was subtracted from the parent's outstanding a second time, so the parent finished while a re-routed child was still live, and its slot could be reused under that child.
+
+Decision. `ChildOrderBook` reports the part of a fill beyond the child's outstanding quantity (`lastOverfill`, `overfills`); the router subtracts only the rest from outstanding. A parent finishes when filled to at least its quantity and nothing is outstanding.
+
+Consequences. The parent can end over-executed by the overfill, which the venue did trade; the counter is there for an operator alert. Cancelling working children to absorb the excess is not done.
+
+## DR-R2R-04: The router's cost model charges a venue's price offset
+
+Date: 2026-10-31
+
+Context. API_SPEC.md Section 15.1 measured every cost from the venue's own mid. Two venues with the same spread and parameters but books a tick apart cost the same, and the tie went to row 0, at the worse price.
+
+Decision. Both costs gain o = s (venueMid - m), with s the side sign and m the consolidated mid (highest bid and lowest ask over the decision's rows with a two-sided quote). The offset is zero when all mids agree.
+
+Consequences. The scenario `ust10y_three_venue_v1` re-run gives a router cost of -0.2565 bps and savings of 2.9388 [2.7792, 3.0631] and 2.7673 [2.5802, 2.9026] bps (before: -0.1957, 2.8780, 2.7065). `SmartOrderRouterTest.bookMovingAwayCancelsAndReroutes` asserted the old behaviour (all quantity back to the venue that had moved two ticks away) and now asserts a split.
+
+## DR-R2R-05: FIX integers, tag numbers and timestamps are parsed strictly
+
+Date: 2026-10-31
+
+Context. Tag numbers were accumulated in an int without a digit limit (4294967345 read as 49, SenderCompID) and accepted leading zeros. Integer fields were parsed as scale-0 decimals, so "34=1.0", "+5" and a checksum of "+05" were accepted and Long.MIN_VALUE refused. A UTCTimestamp accepted day 31 in every month.
+
+Decision. A tag is at most nine digits with no leading zero; an integer field is an optional '-' and digits, accumulated negative so the full long range parses; the day of a timestamp is checked against the month's length with the Gregorian leap rule.
+
+Consequences. A counterparty sending a non-canonical integer is refused with MALFORMED or a format error, the conservative reading of FIX 4.4.
+
+## DR-R2R-06: The holiday fixture covers 2026 and 2027 and refuses other years
+
+Date: 2026-10-31
+
+Context. `holidays.csv` ended on 1 January 2027 and `FixtureCalendarSource` treated every date it did not list as a business day, so 2027 settlement dates ran through MLK Day, Good Friday and Easter Monday.
+
+Decision. `tools/gen_refdata_fixtures.py` writes 2026 and 2027 for US-GS (SIFMA recommended full closes), UK (England and Wales bank holidays) and TARGET. The source refuses a date outside the years between its earliest and latest holiday.
+
+Consequences. Code that asks about 2028 fails loudly until the fixture is extended or the rates-analytics calendars replace it.
+
+## DR-R2R-07: Fail days stop at the cancel date
+
+Date: 2026-10-31
+
+Context. `SettlementObligation.daysFailed` froze its end date only on settlement, so a fail later cancelled kept accruing days, and fail cost, with the as-of date.
+
+Decision. The end date is set on SETTLED or CANCELLED.
+
+Consequences. None beyond the corrected count.
+
+## DR-R2R-08: No quote at negative edge; one hit-rate label per RFQ
+
+Date: 2026-10-31
+
+Context. When the expected adverse cost (toxicity plus winner's curse plus hedge cost) reached `maxHalfSpreadBp`, the optimiser returned the cap and the engine quoted although E(s) = P(s)(s - c) is not positive for any allowed s. A Done with a cover taught the hit-rate model two wins, the second at the cover distance with abs(), so a cover on the wrong side also counted.
+
+Decision. The engine passes with `NEGATIVE_EDGE` when cost >= maxHalfSpreadBp. A Done teaches one win; a cover on the client's side of the trade adds to the mean cover distance only.
+
+Consequences. The online intercept no longer drifts toward its upper band from double counting. `QuotingEngineTest.doneBooksTheFillAndTeachesTheModelIncludingTheCover` asserted two updates and now asserts one.
+
+## DR-R2R-09: The risk-reducing exemption counts working reservations
+
+Date: 2026-10-31
+
+Context. DR-P3-05 exempts an order that offsets the net PV01 "without overshooting" from the PV01 and loss checks. The test used the position only, so with a working hedge parent reserved on the same side a second order could carry the book through zero in the worst case.
+
+Decision. The overshoot test adds the other instruments' worst-case net reservation on the order's side (the instrument's own reservation is left out, as in the envelope check).
+
+Consequences. Some hedge parents are now checked and refused. The P3 gate tests re-run: `MillionRfqTest` 533,266 quotes, 55,600 fills, 3,298 hedge parents, 3,288 risk rejects, 0 violations (before 476,215, 30,933, 4,446, 1,654); `ChaosTest` 9,269 kills and 643 resets (before 9,272 and 646). Less of the envelope is reserved by stacked hedge parents, so more RFQs find capacity.
+
+## DR-R2R-10: An instrument without a hedge cost is not traded
+
+Date: 2026-10-31
+
+Context. `TableHedgeCostModel` priced an unknown instrument at Double.MAX_VALUE / 1e6. `BoxQpSolver` scaled its stop tolerance by max |c_i|, so one missing entry made the stop about 1e293: the solver stopped after one iteration and reported converged with the residual barely reduced (sd 508,293 from 557,600 in the reviewer's probe).
+
+Decision. An unknown instrument costs positive infinity; the planner fixes any instrument without a finite cost at zero lots; the solver's scale is taken over free variables (lo < hi) only.
+
+Consequences. The documented plan (sd 10,352 at cost 62,418) is unchanged.
+
+## DR-R2R-11: Swap golden tolerances sized to what the gate must catch
+
+Date: 2026-10-31
+
+Context. The swap PV tolerance was 1e-8 of notional and the par-rate tolerance 1e-6, against measured worst cases of 8.5e-15 and 3.5e-16. 54 of the 83 golden swaps are spot par swaps, whose PV and par rate move by less than those tolerances under a payment-lag or day-count slip.
+
+Decision. 1e-12 of notional and 1e-10. The Python regeneration test keeps the 1e-6 absolute floor of DR-P1-06, a cross-platform rounding allowance rather than a model tolerance; API_SPEC.md Section 8.1, which said 1e-12, is corrected.
+
+Consequences. Three orders of magnitude of headroom remain on the Java side.
+
+## DR-R2R-12: CLOB quotes are rounded to the venue tick
+
+Date: 2026-10-31
+
+Context. `ClobQuoter` rounded targets to the Decimal9 grid; `ClobBook` refuses a price off its tick, so every order on a 1/128 or 1/256 venue would be rejected.
+
+Decision. `enable(instrumentId, tickMantissa)` takes the venue tick; the bid rounds down and the ask up to it. `enable(instrumentId)` keeps tick 1 so existing callers are unchanged until the wiring passes the tick from reference data.
+
+Consequences. The binding in rates-app must call the two-argument form (handed to r2-wiring).
+
+## DR-R2R-13: Late fills on expired quotes and killed hedge parents are booked
+
+Date: 2026-10-31
+
+Context. A fill can race a quote's expiry or a kill's cancel-all (DR-P3-05 says so). The quoting engine freed an expired quote at once, so a late Done was counted as unmatched and never reached risk; the hedger dropped its parents on a kill, so a late fill threw "unknown hedge parent".
+
+Decision. The quoting engine keeps the last 1,024 expired quotes as tombstones and books a late Done from them once, without teaching the hit-rate model. The hedger remembers the parents dropped by the last kill (recorded before the cancel-all, which may report them done) and books a late fill up to each parent's remainder. A fill matching neither is still unmatched or refused.
+
+Consequences. Positions follow what the venues traded. Both paths are allocation-free (fixed arrays, linear scan).
+
+## DR-R2R-14: SpotBugs exclusions name classes, not packages
+
+Date: 2026-10-31
+
+Context. EI_EXPOSE_REP and EI_EXPOSE_REP2 were excluded for whole packages in rates-router, rates-refdata, rates-fix, rates-hedge and rates-quoting, so a new class that leaked an internal array would pass unnoticed.
+
+Decision. Each match now names the classes SpotBugs flags with the match removed (router: ChildOrderBook, DecisionCodec, SmartOrderRouter, AggressiveBaseline; refdata: RefData; FIX codec: FixParser; hedge: Hedger, HedgePlanner; quoting: ClobQuoter, Desk, FairValueEngine, PackageQuoter, QuotingEngine). The FIX gateway and net packages and rates-venues keep their package matches because other sessions own and are changing them.
+
+Consequences. A new class in these modules that stores or returns a mutable collaborator needs its own entry and a reason.

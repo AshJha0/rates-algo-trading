@@ -6,24 +6,36 @@ import io.ratesalgo.messages.sbe.VenueExclusion;
  * The venue cost model and the allocation of one slice across venues (API_SPEC.md Sections 15.1
  * and 15.2).
  *
- * <p>Per unit of quantity {@code q} on venue {@code v}, in price points relative to the venue mid,
- * with half spread {@code h}, impact {@code I(q) = y * sigmaDay * (q / ADV)^alpha} (the
+ * <p>Per unit of quantity {@code q} on venue {@code v}, in price points relative to the consolidated
+ * mid {@code m} (the mid of the best bid and best ask over the table's quoted rows), with venue
+ * offset {@code o = s * (venueMid - m)} for side sign {@code s} (+1 buy, -1 sell), half spread
+ * {@code h}, impact {@code I(q) = y * sigmaDay * (q / ADV)^alpha} (the
  * square-root law when alpha is 0.5, as in the owner's earlier library, API_SPEC.md Section 8.3),
  * latency cost {@code L = kLat * sigmaSec * sqrt(latency)} and adverse move {@code A = kAdv *
- * sigmaSec * sqrt(T)} over the passive horizon {@code T}:
+ * sigmaSec * sqrt(T)} over the passive horizon {@code T}, adverse selection on a filled passive
+ * child {@code F = kFill * sigmaSec * sqrt(min(W, T))} over the expected queue wait {@code W}, and
+ * message cost {@code M = c * lot / q} per message:
  *
  * <pre>
- * aggressive(q) = h + I(q) + takerFee + L
- * passive(q)    = P(q) (-h + I(q) + makerFee) + (1 - P(q)) (A + h + I(q) + takerFee) + L
+ * aggressive(q) = o + h + I(q) + takerFee + L + M
+ * passive(q)    = o + P(q) (-h + I(q) + makerFee + F) + (1 - P(q)) (A + h + I(q) + takerFee + 2M)
+ *                 + L + M
  * chosen(q)     = min of the allowed ones (ties cross)
  * </pre>
+ *
+ * <p>{@code sigma} is the routed instrument's own volatility when the parameters list one. A
+ * passive child that does not fill costs two more messages, the cancel and the aggressive order
+ * that replaces it, since the router has no amend. {@code F} and {@code M} are zero unless the
+ * parameters turn them on (PNL_AUDIT.md items 15 and 18).
  *
  * where {@code P(q)} is the complete-fill probability of {@link QueueFillModel} with the displayed
  * same-side depth ahead, the unit market-order rate {@code tradeRate / (2 * lot)} and the venue's
  * cancellation rate. The unfilled passive remainder escalates to aggressive at the end of {@code
  * T}, which is why its cost carries {@code A + h + takerFee}; impact is charged to both legs
  * because the square-root law measures a metaorder's volume whatever the order type (the same
- * argument as the earlier library's Section 13.2).
+ * argument as the earlier library's Section 13.2). The offset makes a venue whose whole book sits
+ * at a worse price cost more than one with the same spread at a better price (DECISIONS.md
+ * DR-R2R-04); it is zero when every venue shows the same mid.
  *
  * <p>Allocation minimises {@code sum_v q_v * chosen_v(q_v)} subject to {@code sum_v q_v <=
  * slice}, {@code q_v = 0 or minSize_v <= q_v <= cap_v}, {@code q_v} a multiple of the lot. It is
@@ -66,16 +78,18 @@ public final class Allocator {
       final CostTable t, final int r, final long quantity, final RouterParams rp,
       final VenueParams vp) {
     final double halfSpread = (t.bestAsk[r] - t.bestBid[r]) * 0.5 / SCALE;
-    final double sigmaSec = rp.sigmaPerSqrtSecond();
+    final double offset = venueOffset(t, r);
+    final double sigmaSec = rp.sigmaPerSqrtSecond(t.instrumentId);
     impact =
         rp.impactY()
-            * rp.sigmaDailyPoints()
+            * rp.sigmaDailyPoints(t.instrumentId)
             * StrictMath.pow((double) quantity / vp.adv(), rp.impactAlpha());
     final double latency =
         rp.latencyRiskFactor() * sigmaSec * StrictMath.sqrt(t.latencyNanos[r] / SCALE);
     final double taker = t.takerFee[r] / SCALE;
     final double maker = t.makerFee[r] / SCALE;
-    aggressiveCost = halfSpread + impact + taker + latency;
+    final double message = rp.messageCostPoints() * t.lotSize[r] / Math.max(1L, quantity);
+    aggressiveCost = offset + halfSpread + impact + taker + latency + message;
 
     final double horizon = t.passiveHorizonNanos / SCALE;
     final long lot = t.lotSize[r];
@@ -93,14 +107,41 @@ public final class Allocator {
       waitSeconds = MAX_WAIT_SECONDS;
     }
     final double adverse = rp.adverseFactor() * sigmaSec * StrictMath.sqrt(horizon);
+    final double filledAdverse =
+        rp.filledAdverseFactor() * sigmaSec * StrictMath.sqrt(Math.min(waitSeconds, horizon));
     passiveCost =
-        fillProbability * (-halfSpread + impact + maker)
-            + (1.0 - fillProbability) * (adverse + halfSpread + impact + taker)
-            + latency;
+        offset
+            + fillProbability * (-halfSpread + impact + maker + filledAdverse)
+            + (1.0 - fillProbability) * (adverse + halfSpread + impact + taker + 2.0 * message)
+            + latency
+            + message;
     final boolean passiveOk = t.passiveAllowed[r] && horizon > 0.0;
     passiveChosen = passiveOk && (!t.aggressiveAllowed[r] || passiveCost < aggressiveCost);
     chosenCost = passiveChosen ? passiveCost : aggressiveCost;
     return chosenCost;
+  }
+
+  /**
+   * Price points by which row {@code r}'s mid is worse than the consolidated mid for the table's
+   * side; zero when the row or the consolidated book has no two-sided quote.
+   */
+  static double venueOffset(final CostTable t, final int r) {
+    if (t.bestBid[r] <= 0 || t.bestAsk[r] <= 0) {
+      return 0.0;
+    }
+    long bestBid = 0;
+    long bestAsk = Long.MAX_VALUE;
+    for (int i = 0; i < t.venueCount; i++) {
+      if (t.bestBid[i] > 0 && t.bestAsk[i] > 0) {
+        bestBid = Math.max(bestBid, t.bestBid[i]);
+        bestAsk = Math.min(bestAsk, t.bestAsk[i]);
+      }
+    }
+    // in halves of a mantissa, so odd sums lose nothing
+    final long venueMid2 = t.bestBid[r] + t.bestAsk[r];
+    final long consolidatedMid2 = bestBid + bestAsk;
+    final double sign = t.side == io.ratesalgo.messages.sbe.Side.Sell ? -1.0 : 1.0;
+    return sign * (venueMid2 - consolidatedMid2) * 0.5 / SCALE;
   }
 
   /**

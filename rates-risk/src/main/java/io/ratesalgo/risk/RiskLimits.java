@@ -20,6 +20,8 @@ public final class RiskLimits {
   private double netPv01 = Double.MAX_VALUE;
   private double grossPv01 = Double.MAX_VALUE;
   private double dailyLoss = Double.MAX_VALUE;
+  private double basisPv01 = Double.MAX_VALUE;
+  private double swapSpreadPv01 = Double.MAX_VALUE;
   private double orderRatePerSecond = 1e9;
   private double quoteRatePerSecond = 1e9;
   private double messageRatePerSecond = 1e9;
@@ -104,6 +106,26 @@ public final class RiskLimits {
   /** Loss since the start of day, per currency, beyond which new risk is refused. */
   public RiskLimits dailyLoss(final double limit) {
     dailyLoss = positive(limit, "dailyLoss");
+    return this;
+  }
+
+  /** Absolute limit on futures-versus-cash basis exposure, per currency per basis point. */
+  public double basisPv01() {
+    return basisPv01;
+  }
+
+  public RiskLimits basisPv01(final double limit) {
+    basisPv01 = positive(limit, "basisPv01");
+    return this;
+  }
+
+  /** Absolute limit on swap-spread exposure, per currency per basis point. */
+  public double swapSpreadPv01() {
+    return swapSpreadPv01;
+  }
+
+  public RiskLimits swapSpreadPv01(final double limit) {
+    swapSpreadPv01 = positive(limit, "swapSpreadPv01");
     return this;
   }
 

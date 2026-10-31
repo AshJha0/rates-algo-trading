@@ -19,11 +19,13 @@ import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.OrdType;
 import io.ratesalgo.messages.sbe.OrderCancelDecoder;
 import io.ratesalgo.messages.sbe.OrderReplaceDecoder;
+import io.ratesalgo.messages.sbe.OrderWithdrawDecoder;
 import io.ratesalgo.messages.sbe.QuoteCancelDecoder;
 import io.ratesalgo.messages.sbe.QuoteDecoder;
 import io.ratesalgo.messages.sbe.QuoteRequestEncoder;
 import io.ratesalgo.messages.sbe.QuoteResponseEncoder;
 import io.ratesalgo.messages.sbe.QuoteStatus;
+import io.ratesalgo.messages.sbe.QuoteWithdrawDecoder;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TimeInForce;
 import io.ratesalgo.messages.sbe.TradeBustEncoder;
@@ -38,7 +40,9 @@ import org.agrona.concurrent.UnsafeBuffer;
  * QuoteResponse AJ and rejecting QuoteStatusReport AI to QuoteResponse; ExecutionReport 8 to
  * ExecutionReport or TradeBust after {@link OrderStateTracker}; MarketDataSnapshotFullRefresh W
  * and MarketDataIncrementalRefresh X to BookUpdate. Outbound (SBE offered by the engine to FIX):
- * Quote to S, QuoteCancel to Z, NewOrder to D, OrderCancel to F, OrderReplace to G.
+ * Quote to S, QuoteCancel to Z, NewOrder to D, OrderCancel to F, OrderReplace to G. The quoting
+ * engine's QuoteWithdraw (60) and OrderWithdraw (61) are sent as Z and F too (DR-R2W-04); an
+ * OrderWithdraw carries no quantity, so F takes the order quantity the tracker recorded.
  *
  * <p>Units (API_SPEC.md Section 10.3): FIX prices are decimal text converted exactly to int64
  * mantissas with exponent -9; FIX quantities are face or notional in currency units, converted
@@ -69,6 +73,8 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
   private final NewOrderDecoder newOrder = new NewOrderDecoder();
   private final OrderCancelDecoder orderCancel = new OrderCancelDecoder();
   private final OrderReplaceDecoder orderReplace = new OrderReplaceDecoder();
+  private final QuoteWithdrawDecoder quoteWithdraw = new QuoteWithdrawDecoder();
+  private final OrderWithdrawDecoder orderWithdraw = new OrderWithdrawDecoder();
   private FixSession session;
 
   // market data entry being accumulated
@@ -444,7 +450,9 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
         && templateId != QuoteCancelDecoder.TEMPLATE_ID
         && templateId != NewOrderDecoder.TEMPLATE_ID
         && templateId != OrderCancelDecoder.TEMPLATE_ID
-        && templateId != OrderReplaceDecoder.TEMPLATE_ID) {
+        && templateId != OrderReplaceDecoder.TEMPLATE_ID
+        && templateId != QuoteWithdrawDecoder.TEMPLATE_ID
+        && templateId != OrderWithdrawDecoder.TEMPLATE_ID) {
       stats.unsupportedOutbound++;
       return false;
     }
@@ -457,6 +465,8 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
           case QuoteCancelDecoder.TEMPLATE_ID -> sendQuoteCancel(buffer, bodyOffset, blockLength, version);
           case NewOrderDecoder.TEMPLATE_ID -> sendNewOrder(buffer, bodyOffset, blockLength, version);
           case OrderCancelDecoder.TEMPLATE_ID -> sendCancel(buffer, bodyOffset, blockLength, version);
+          case QuoteWithdrawDecoder.TEMPLATE_ID -> sendQuoteWithdraw(buffer, bodyOffset, blockLength, version);
+          case OrderWithdrawDecoder.TEMPLATE_ID -> sendOrderWithdraw(buffer, bodyOffset, blockLength, version);
           default -> sendReplace(buffer, bodyOffset, blockLength, version);
         };
     if (sent) {
@@ -506,6 +516,36 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
         .put(FixTags.QUOTE_CANCEL_TYPE, 1)
         .put(FixTags.NO_QUOTE_ENTRIES, 1);
     putInstrument(w, quoteCancel.instrumentId());
+    session.send();
+    return true;
+  }
+
+  private boolean sendQuoteWithdraw(final DirectBuffer b, final int o, final int bl, final int v) {
+    quoteWithdraw.wrap(b, o, bl, v);
+    if (instruments.securityId(quoteWithdraw.instrumentId()) == null) {
+      return false;
+    }
+    final FixWriter w = session.begin(MsgType.QUOTE_CANCEL);
+    w.put(FixTags.QUOTE_REQ_ID, quoteWithdraw.rfqId())
+        .put(FixTags.QUOTE_ID, quoteWithdraw.quoteId())
+        .put(FixTags.QUOTE_CANCEL_TYPE, 1)
+        .put(FixTags.NO_QUOTE_ENTRIES, 1);
+    putInstrument(w, quoteWithdraw.instrumentId());
+    session.send();
+    return true;
+  }
+
+  private boolean sendOrderWithdraw(final DirectBuffer b, final int o, final int bl, final int v) {
+    orderWithdraw.wrap(b, o, bl, v);
+    if (instruments.securityId(orderWithdraw.instrumentId()) == null) {
+      return false;
+    }
+    final FixWriter w = session.begin(MsgType.ORDER_CANCEL_REQUEST);
+    w.put(FixTags.ORIG_CL_ORD_ID, orderWithdraw.origClOrdId()).put(FixTags.CL_ORD_ID, orderWithdraw.clOrdId());
+    putInstrument(w, orderWithdraw.instrumentId());
+    w.putChar(FixTags.SIDE, fixSide(orderWithdraw.side()))
+        .putTimestamp(FixTags.TRANSACT_TIME, orderWithdraw.sentNanos())
+        .putDecimal(FixTags.ORDER_QTY, orders.orderQuantity(orderWithdraw.origClOrdId()), QTY_SCALE);
     session.send();
     return true;
   }

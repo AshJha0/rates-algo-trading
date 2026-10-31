@@ -90,6 +90,16 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-app</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-ops</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.agrona</groupId>
       <artifactId>agrona</artifactId>
     </dependency>

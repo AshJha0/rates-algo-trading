@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.common.time.SystemClock;
-import io.ratesalgo.journal.JournalWriter;
 import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.QuoteEncoder;
@@ -19,13 +18,16 @@ import org.agrona.concurrent.BusySpinIdleStrategy;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.ringbuffer.ManyToOneRingBuffer;
 import org.agrona.concurrent.ringbuffer.OneToOneRingBuffer;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The P2 allocation gate: after warm-up, QuoteRequests go through a live loop on its own thread
  * (inbound ring, inbound and outbound journals, a handler that decodes and publishes a Quote, a
- * timer every 1024 messages) and the loop thread's allocated-bytes counter must not move.
+ * timer every 1024 messages) and the loop thread's allocated-bytes counter must not move. It runs
+ * once per {@link JournalMode}, and each journal rolls to a new segment inside the measured
+ * windows (DR-R2J-02).
  *
  * <p>The check is windowed (DR-INT-02). Warm-up is one million messages; then three consecutive
  * windows of one million messages are measured. The last window must allocate exactly nothing and
@@ -49,6 +51,7 @@ class LoopAllocationTest {
   private static final int WINDOW = 1_000_000;
   private static final int WINDOWS = 3;
   private static final long LATER_WINDOW_BOUND = 1024L;
+  private static final int SEGMENT = 256 << 20;
 
   @TempDir Path dir;
 
@@ -81,22 +84,22 @@ class LoopAllocationTest {
     }
   }
 
-  @Test
-  void loopThreadAllocatesNothingOverOneMillionMessages() throws Exception {
+  @ParameterizedTest
+  @EnumSource(JournalMode.class)
+  void loopThreadAllocatesNothingOverOneMillionMessages(final JournalMode mode) throws Exception {
     final EventClock clock = new EventClock(new AnchoredClock(SystemClock.INSTANCE));
     final ManyToOneRingBuffer inbound = RingBufferContract.newInbound(RingBufferContract.DEFAULT_INBOUND_CAPACITY);
     final OneToOneRingBuffer outbound = RingBufferContract.newOutbound(RingBufferContract.DEFAULT_INBOUND_CAPACITY);
-    // 4 million messages: 96-byte inbound and 120-byte outbound frames, plus clock ticks. On a
-    // 2-CPU runner the drainer can fall behind and every dropped Quote adds a 64-byte Backpressure
-    // frame to the inbound journal, so that journal is sized for every message being dropped.
-    try (JournalWriter in = JournalWriter.create(dir.resolve("in.raj"), 768 << 20, clock);
-        JournalWriter out = JournalWriter.create(dir.resolve("out.raj"), 512 << 20, clock)) {
+    // 4 million messages: 96-byte inbound and 120-byte outbound frames, plus clock ticks and, on a
+    // 2-CPU runner where the drainer falls behind, a 64-byte Backpressure frame per dropped Quote.
+    // That is 0.4 to 0.6 GB per journal, so 256 MiB segments roll at least once in each journal
+    // during the measured windows: the roll is inside the gate (DR-R2J-02).
+    try (LoopJournals journals = LoopJournals.create(dir, "in", "out", SEGMENT, clock, mode)) {
       final EventLoop loop =
           EventLoop.builder(clock)
               .inbound(inbound)
               .outbound(outbound)
-              .inboundJournal(in::append)
-              .outboundJournal(out::append)
+              .journals(journals)
               .build();
       loop.register(QuoteRequestDecoder.TEMPLATE_ID, new TrivialQuoter(loop));
 
@@ -154,7 +157,9 @@ class LoopAllocationTest {
       assertNull(runner.failure());
       assertEquals(sent, loop.counters().get(LoopCounters.OUTBOUND));
 
-      final String report = report(bytes, dropped, backpressure);
+      final String report =
+          mode + " journals, " + journals.rollWaits() + " rolls waited, " + journals.producerWaits()
+              + " ring waits; " + report(bytes, dropped, backpressure);
       for (int w = 1; w < WINDOWS; w++) {
         assertTrue(bytes[w] <= LATER_WINDOW_BOUND, "a window after the first exceeded " + LATER_WINDOW_BOUND + " bytes: " + report);
       }

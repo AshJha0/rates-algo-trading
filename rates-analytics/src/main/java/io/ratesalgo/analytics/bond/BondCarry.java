@@ -18,7 +18,11 @@ import io.ratesalgo.analytics.funding.RepoCurve;
  * </pre>
  *
  * with r the repo rate (Act/360 simple, GC or special) for d days, d_i the days from coupon i to
- * the horizon. Exact given the inputs.
+ * the horizon. "Paid in (settle, horizon]" means the coupon's record date ({@link
+ * FixedRateBond#entitlementDate}) is in that interval: a gilt held into its ex-dividend period
+ * receives a coupon paid after the horizon, d_i is then negative and the coupon enters at its value
+ * at the horizon to first order in r, matching the negative accrued at the horizon. Exact given the
+ * inputs otherwise.
  */
 public final class BondCarry {
 
@@ -39,7 +43,8 @@ public final class BondCarry {
     double fwd = dirty * (1.0 + repoRate * d / 360.0);
     for (int i = 0; i < b.couponCount(); i++) {
       final int pay = b.couponDate(i);
-      if (pay > settlement && pay <= horizon && settlement < b.exDividendDate(i)) {
+      final int record = b.entitlementDate(i);
+      if (record > settlement && record <= horizon) {
         fwd -= b.couponAmount(i) * (1.0 + repoRate * (horizon - pay) / 360.0);
       }
     }

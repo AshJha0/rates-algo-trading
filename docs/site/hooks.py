@@ -32,12 +32,18 @@ PAGES: dict[str, str] = {
     "publishing.md": "docs/GITHUB_PAGES.md",
     "compliance.md": "docs/compliance/RTS6_INVENTORY.md",
     "runbooks.md": "docs/runbooks/README.md",
+    "edge-studies.md": "docs/research/EDGE_STUDIES.md",
+    "desk-features.md": "docs/research/DESK_FEATURES.md",
 }
 
 # research notebooks (P5): page notebooks/<name>.md from research/notebooks/<name>.ipynb
-NOTEBOOKS = ("hitrate", "markouts", "spread", "flow", "backtest_analysis")
+# edge studies (r2): research/notebooks/edge_*.ipynb
+NOTEBOOKS = ("hitrate", "markouts", "spread", "flow", "backtest_analysis") + tuple(
+    sorted(p.stem for p in (REPO_ROOT / "research" / "notebooks").glob("edge_*.ipynb"))
+)
 
 _REVERSE: dict[str, str] = {source: page for page, source in PAGES.items()}
+_SITE_PAGES = "docs/site/pages/"
 _LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(\s+\"[^\"]*\")?\)")
 
 
@@ -52,6 +58,9 @@ def _rewrite_links(markdown: str, source_rel: str, repo_url: str) -> str:
         resolved = posixpath.normpath(posixpath.join(source_dir, path)) if path else source_rel
         if resolved in _REVERSE:
             new_target = _REVERSE[resolved]
+        elif resolved.startswith(_SITE_PAGES):
+            # a hand-written site page (for example the diagrams page); mapped pages sit at the root
+            new_target = resolved[len(_SITE_PAGES) :]
         else:
             new_target = f"{repo_url.rstrip('/')}/blob/main/{resolved}"
         if anchor:

@@ -2,7 +2,7 @@
 
 This document is the contract between modules and between the Java and Python sides. Anything stated here is fixed for the schema or format version it names; a change needs a new version number, a decision record in `DECISIONS.md` and a migration note in `CHANGELOG.md`. Where code and this document disagree, the one that was reviewed last is wrong and the pull request that fixes it must say which.
 
-Phase 0 pins Sections 0 to 4. Phase 1 pins Sections 5 to 8 (analytics). Phase 2 pins Section 9 (event loop and ring buffers) and Section 1.5 (journal segments); the P2 venue half pins Sections 10 and 11 (FIX, book feed, simulators, reference data) and Section 2.2. Phase 3 pins Sections 12 to 14 (quoting, risk limits, hedger). Phase 4 pins Section 15 (router). Phase 5 pins Section 16 (back-tester). Phase 6 pins Section 17 (post-trade and operations) and Section 2.1.
+Phase 0 pins Sections 0 to 4. Phase 1 pins Sections 5 to 8 (analytics). Phase 2 pins Section 9 (event loop and ring buffers) and Section 1.5 (journal segments); the P2 venue half pins Sections 10 and 11 (FIX, book feed, simulators, reference data) and Section 2.2. Phase 3 pins Sections 12 to 14 (quoting, risk limits, hedger). Phase 4 pins Section 15 (router). Phase 5 pins Section 16 (back-tester). Round 2 pins Section 18 (process assembly). Phase 6 pins Section 17 (post-trade and operations) and Section 2.1.
 
 ## Section 0. Units and conventions
 
@@ -72,6 +72,14 @@ A reader must verify, for each frame: `frameLength >= 32`, `sequence == previous
 A segmented journal named `name` in directory `dir` is the files `name.000001.raj`, `name.000002.raj`, and so on: the name, a dot, the 1-based segment index in six decimal digits, and the suffix `.raj` (at most 999,999 segments). Each segment is a complete RAJ1 file with its own 32-byte header; segments are created with the same `capacityBytes`.
 
 Sequence and chain continue across segments. The first frame of segment *k* + 1 carries the sequence after the last frame of segment *k*, and its chain hash input begins with the last chain hash of segment *k* (not with zero). The writer (`SegmentedJournal`) rolls to the next segment when the next frame does not fit in the current one, so a segment ends either at its terminating zero length or at its end. A frame larger than an empty segment can hold is refused (`JournalFullException`). A writer may create the next segment ahead of time under the name `name.00000k.raj.pending` and rename it to its final name when it is complete; readers ignore `.pending` files, and a complete segment with no frames is valid (a crash after preallocation leaves one).
+
+How `SegmentedJournal` prepares segments when preallocation is on (R2, DECISIONS.md DR-R2J-01 and DR-R2J-02); none of this changes a byte of the format:
+
+- A new segment file is zero-filled with file-channel writes and then mapped. It is not zero-filled by storing through the mapping.
+- `create` writes a zero byte into the last byte of every page of the first segment before it returns ("touching" the page), so the operating system has mapped every page before the first append.
+- As soon as a segment becomes current, a background thread (`journal-prepare-<name>`) prepares the next one: create as `.pending`, force, rename, map, touch every page. One segment is kept ready ahead of the current one.
+- At a roll the appending thread takes the ready writer through a volatile field, continues the chain in it and hands the full segment back to the background thread, which forces and unmaps it. The roll maps nothing, forces nothing and allocates nothing on the appending thread. If the next segment is not ready, the roll waits for it and counts the wait (`rollWaits()`).
+- Touching a byte that is already zero leaves the file unchanged; a touched segment with no frames reads as an empty segment.
 
 A reader (`SegmentedJournalReader`) walks the segments in index order up to the highest index present when it opened, carrying sequence and hash across each boundary, and applies 1.4 throughout. A segment read on its own fails the chain check unless the reader is given the previous segment's last sequence and hash, which is deliberate: a segment cannot be swapped for another self-consistent one without detection. A missing segment below the highest index is reported as corruption at the sequence the missing segment should have started with. `SegmentedJournalTest` checks a swapped segment, a missing segment, a flipped byte in a later segment and a truncated earlier segment.
 
@@ -246,6 +254,8 @@ Sequential (Brent, local interpolation and no instrument past its pillar) or glo
 
 `DiscountCurve.accumulateLogDfGradient` gives \(\partial \ln P(T) / \partial y_i\) exactly for all three schemes. `CurveBuilder.quoteSensitivities(g)` solves \(J^{\top} x = g\) with \(J_{kj} = \partial q_k / \partial y_j\), turning a gradient in pillar values into one in quotes.
 
+Diagram: [multi-curve bootstrap](docs/site/pages/diagrams.md#multi-curve-bootstrap).
+
 ## Section 7. Pricing formulas and tolerances
 
 ### 7.1 Formulas
@@ -261,9 +271,9 @@ Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on
 
 | Quantity | Asserted tolerance | Measured worst case | Test |
 |---|---|---|---|
-| Swap PV (83 swaps), QuantLib curve | 1e-8 of notional | 1.6e-15 of notional | `swapsMatchQuantLibOnBothCurves` |
-| Swap PV on the Java bootstrap | 1e-8 of notional | 8.5e-15 of notional | same |
-| Par rate | 1e-6 | 3.5e-16 | same |
+| Swap PV (83 swaps), QuantLib curve | 1e-12 of notional (1e-8 before DR-R2R-11) | 1.6e-15 of notional | `swapsMatchQuantLibOnBothCurves` |
+| Swap PV on the Java bootstrap | 1e-12 of notional | 8.5e-15 of notional | same |
+| Par rate | 1e-10 (1e-6 before DR-R2R-11) | 3.5e-16 | same |
 | Curve discount factors, Java versus QuantLib-priced bootstrap | 1e-10 | 8.3e-16 | `javaBootstrapMatchesQuantLibCurvesAndRepricesInstruments` |
 | Curve instrument repricing (round trip) | 1e-10 | 4.3e-14 (golden curves), 9.3e-14 (all interpolations) | same; `CurveBuilderTest` |
 | Parallel DV01, AD versus QuantLib 1bp central bump | 1e-5 relative | 1.4e-6 relative | `parallelDv01ByAlgorithmicDifferentiationMatchesQuantLibBumps` |
@@ -283,7 +293,7 @@ Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on
 
 ### 8.1 Producing the golden file
 
-`python -m ratesresearch.goldens` (from `research/`, with `pip install -e "research[dev,golden]"`, QuantLib pinned at 1.44) writes `data/golden/analytics_golden.json`. The curves are bootstrapped in Python by a sequential Brent search in which every instrument is priced by QuantLib objects built with explicit schedules, calendars and conventions identical to Section 5; the market quotes for 15 January 2025 are declared values (DECISIONS.md DR-P1-08); past fixings are the published ones in `data/fixtures`. `research/tests/test_goldens.py` regenerates the file and compares every number to 1e-12 relative (absolute floor 1e-12); CI runs it on Linux and Windows (DECISIONS.md DR-P1-06).
+`python -m ratesresearch.goldens` (from `research/`, with `pip install -e "research[dev,golden]"`, QuantLib pinned at 1.44) writes `data/golden/analytics_golden.json`. The curves are bootstrapped in Python by a sequential Brent search in which every instrument is priced by QuantLib objects built with explicit schedules, calendars and conventions identical to Section 5; the market quotes for 15 January 2025 are declared values (DECISIONS.md DR-P1-08); past fixings are the published ones in `data/fixtures`. `research/tests/test_goldens.py` regenerates the file and compares every number to 1e-12 relative (absolute floor 1e-6, DR-P1-06 as amended at integration); CI runs it on Linux and Windows (DECISIONS.md DR-P1-06).
 
 ### 8.2 Format (golden_version 1)
 
@@ -391,6 +401,21 @@ Template ids start at 65001 so that a journal frame's template id never collides
 
 A live loop writes two journals, each a `SegmentedJournal` (Section 1.5) built with the loop's `EventClock`: the inbound journal holds every accepted inbound message, every clock tick, every Backpressure and the LoopError if there is one; the outbound journal holds every message the loop produced. Both carry the latched cycle time in `timestampNanos`.
 
+Journal modes (R2, DECISIONS.md DR-R2J-03). `LoopJournals.create(dir, inboundName, outboundName, segmentBytes, clock, mode)` opens both journals, with preallocation on, in one `JournalMode`, and `EventLoop.Builder.journals(LoopJournals)` gives them to the loop. `inboundJournal(JournalSink)` and `outboundJournal(JournalSink)` still accept any sink, so a caller that wires `SegmentedJournal::append` itself is unaffected.
+
+| Mode | What the loop thread does per message | Who writes the mapped file | Chain hash computed on |
+|---|---|---|---|
+| `DIRECT` (default, DR-R2J-04) | `SegmentedJournal.append`: copy the payload into the touched segment, hash, header, length written last with an ordered store | the loop thread | the loop thread |
+| `RING` | `RingJournal.append`: claim a record in an off-heap Agrona `OneToOneRingBuffer` (64 MiB by default), write the latched `epochNanos()`, the schema version and the payload, commit | the journal thread `journal-drain-<name>`, through `SegmentedJournal.append` with the stamp from the record | the journal thread |
+
+Both modes write the same frames: the same `JournalWriter` code assigns the sequence and computes the chain hash from the same payload bytes in the order the loop appended them, and the stamp is the latched time read on the loop thread in both. `RingJournalTest.ringModeWritesTheSameFramesAsTheDirectMode` checks sequence, stamp, template id, schema version, payload and chain hash frame by frame. Replay (below) reads either. In ring mode:
+
+- a full ring makes the loop thread wait until the journal thread makes room, and the wait is counted (`producerWaits()`); a frame is never dropped;
+- a frame too large for an empty segment is refused on the loop thread (`JournalFullException`), as in direct mode;
+- if the journal thread fails, the next append on the loop thread throws `IllegalStateException` with the cause; the runner stops the loop as for any other failure (Section 4), and its attempt to journal a LoopError through the failed journal fails too and is attached to the failure as suppressed;
+- a process crash loses the frames still in the ring (normally microseconds of traffic); in direct mode every appended frame is already in the mapping and survives a process crash. Neither mode forces to disk on the loop thread; durability across an operating-system crash is the background force at each roll plus the operating system's write-back.
+- `LoopJournals.close()` drains each ring before closing its journal; call it after the loop thread has stopped.
+
 `LoopReplay.run(inbound, recordedOutbound, factory)` replays the inbound journal through a fresh loop built by the same `LoopFactory` that built the live one:
 
 - The `Replayer` sets a `ManualClock` to each frame's `timestampNanos` and the loop latches it, so handlers see the times they saw live.
@@ -401,6 +426,8 @@ A live loop writes two journals, each a `SegmentedJournal` (Section 1.5) built w
 The result (`ReplayResult`) gives the produced and recorded counts, both final hashes and `firstMismatch`: the outbound sequence of the first produced message whose chain hash or template id differs from the recorded frame, or the produced count plus one when replay produced fewer messages than were recorded; 0 when the streams are equal. Equal final hashes mean equal outbound byte streams, because the chain covers every payload byte in order.
 
 Worked example: `LoopReplayTest.replayReproducesTheOutboundStreamExactly` runs 480 QuoteRequests with expiry timers, an undrained gateway that causes backpressure, a disconnect and 4096-byte segments, then replays; produced and recorded counts and hashes are equal. Replacing the handler's 2,000,000 spread (0.002 in price units) with 3,000,000 gives `firstMismatch = 1`.
+
+Diagram: [replay and determinism](docs/site/pages/diagrams.md#replay-and-determinism).
 
 ### 9.8 Counters
 
@@ -681,7 +708,7 @@ SEF (`SefSimulator`): the order book of the CLOB without workup, plus RFQ. An RF
 | auctions.csv | market, tenor, isin, announcementDate, auctionDate, issueDate (must agree with bonds.csv) |
 | holidays.csv | calendar (US-GS, UK, TARGET), date, name |
 
-Rules: instrument ids are positive and unique across bonds, swaps and futures; ISIN and CUSIP check digits are validated and a CUSIP must equal ISIN characters 3 to 11; dates satisfy announcement before or on auction, auction before or on issue, issue before first coupon, first coupon before maturity. On-the-run: for a market and tenor, the bond with the latest `onTheRunFromDate` on or before the date (and not matured); a bond is when-issued from its announcement date until it is on the run, so the on-the-run rolls on the new issue's issue date. `CalendarSource` is the hook for `rates-analytics` calendars; `FixtureCalendarSource` reads `holidays.csv` and refuses unknown calendar names.
+Rules: instrument ids are positive and unique across bonds, swaps and futures; ISIN and CUSIP check digits are validated and a CUSIP must equal ISIN characters 3 to 11; dates satisfy announcement before or on auction, auction before or on issue, issue before first coupon, first coupon before maturity. On-the-run: for a market and tenor, the bond with the latest `onTheRunFromDate` on or before the date (and not matured); a bond is when-issued from its announcement date until it is on the run, so the on-the-run rolls on the new issue's issue date. `CalendarSource` is the hook for `rates-analytics` calendars; `FixtureCalendarSource` reads `holidays.csv` and refuses unknown calendar names and dates outside the calendar years the file lists (2026 and 2027).
 
 ### 11.5 Market data quality and reject reason codes
 
@@ -788,6 +815,8 @@ presets:
 
 A preset named `quoting_hit_rate_default` in `data/presets.yaml` takes precedence; otherwise the copy in `rates-quoting/src/main/resources/quoting-hit-rate-default.yaml` is used (DR-P3-02). Feedback moves `intercept` and `spread_bp` and clamps them to their bands.
 
+Diagram: [research to production parameters](docs/site/pages/diagrams.md#research-to-production-parameters).
+
 ### 12.4 Skew
 
 With p the book's PV01 ladder in the instrument's currency, u the instrument's per-unit ladder, U its parallel PV01, \(\Sigma\) the key-rate covariance (14.2) and Q the quoted quantity in major units:
@@ -804,9 +833,11 @@ Bonds and futures: microprice of the composite book, \((b \cdot A + a \cdot B) /
 
 ### 12.6 RFQ decision order and lifecycle
 
-For each QuoteRequest, after `poll`: duplicate (venue, rfqId) within the window; kill switch ACTIVE; inputs healthy (heartbeats, sessions, feed sequence); instrument known and quantity positive; request not expired; client tier not blocked; re-quote throttle; fair value present; oldest input within `maxInputAgeNanos`; size reduced to `min(request, tier max, risk headroom)` rounded down to the step, pass if zero; capacity of the live book; spread, skew, axe; risk pre-trade check (Section 13.2). A failure at any step is a PASS with the `PassReason` in `RfqOutcome`. Otherwise the quantity is reserved and a Quote sent: FIRM with `validUntilNanos = min(now + firmTtl, request expiry)`, or SUBJECT with `validUntilNanos = 0` (DR-P3-10). The diagram is docs/diagrams/rfq_decision.mmd.
+For each QuoteRequest, after `poll`: duplicate (venue, rfqId) within the window; kill switch ACTIVE; inputs healthy (heartbeats, sessions, feed sequence); instrument known and quantity positive; request not expired; client tier not blocked; re-quote throttle; fair value present; oldest input within `maxInputAgeNanos`; size reduced to `min(request, tier max, risk headroom)` rounded down to the step, pass if zero; capacity of the live book; expected adverse cost below `maxHalfSpreadBp`, else no spread up to the cap has positive expected value and the engine passes with `NEGATIVE_EDGE`; spread, skew, axe; risk pre-trade check (Section 13.2). A failure at any step is a PASS with the `PassReason` in `RfqOutcome`. Otherwise the quantity is reserved and a Quote sent: FIRM with `validUntilNanos = min(now + firmTtl, request expiry)`, or SUBJECT with `validUntilNanos = 0` (DR-P3-10). The diagram is docs/diagrams/rfq_decision.mmd.
 
-`poll(now)` expires quotes with `validUntilNanos <= now` and releases their reservation; sends QuoteWithdraw (reason StaleInput) for any live quote whose oldest input is older than `maxInputAgeNanos`; sends QuoteWithdraw for every live quote when inputs turn unhealthy (reasons HeartbeatLoss, SessionLoss, FeedGap); and measures due markouts. A withdrawn quote keeps its reservation until answered or expired. On QuoteResponse: Done books the fill at the traded price, teaches a win and, with a disclosed cover, a win at the cover distance; TradedAway teaches a loss; every status releases and frees the quote.
+`poll(now)` expires quotes with `validUntilNanos <= now` and releases their reservation; sends QuoteWithdraw (reason StaleInput) for any live quote whose oldest input is older than `maxInputAgeNanos`; sends QuoteWithdraw for every live quote when inputs turn unhealthy (reasons HeartbeatLoss, SessionLoss, FeedGap); and measures due markouts. A withdrawn quote keeps its reservation until answered or expired. On QuoteResponse: Done books the fill at the traded price, teaches one win (a disclosed cover on the client's side of the trade adds to the mean cover distance and is not a second observation, DR-R2R-08); TradedAway teaches a loss; every status releases and frees the quote.
+
+Diagram: [RFQ end to end with timings](docs/site/pages/diagrams.md#rfq-end-to-end-with-timings).
 
 ### 12.7 Package RFQs
 
@@ -814,7 +845,31 @@ For each QuoteRequest, after `poll`: duplicate (venue, rfqId) within the window;
 
 ### 12.8 CLOB quoting
 
-`ClobQuoter` rests a bid and an ask at fair plus or minus `halfSpreadBp` (default 0.25 bp). It keeps an order while the target is within `requoteThresholdBp` (0.10 bp) to keep queue priority, and tracks the quantity ahead from the displayed size at its level. It cancels both sides for `cooldownNanos` (1 s) when the futures signal moves more than `futuresJumpBp` (0.5 bp) between updates, and the threatened side when book imbalance \((B - A) / (B + A)\) exceeds 0.6 in absolute value. It replaces at most once per side per `minRequoteNanos` (50 ms), rests at most `participation` (0.25) of the displayed size at the best price and never more than the risk headroom, and never places a buy at or above its own resting sell or a sell at or below its own resting buy. Orders are NewOrder (20), Limit, Day; cancels are OrderWithdraw (61). Reservations are released on the venue's ExecutionReport.
+`ClobQuoter` rests a bid and an ask at fair plus or minus `halfSpreadBp` (default 0.25 bp), the bid rounded down and the ask up to the venue tick given to `enable(instrumentId, tickMantissa)` (DR-R2R-12; `enable(instrumentId)` keeps the Decimal9 grid). It keeps an order while the target is within `requoteThresholdBp` (0.10 bp) to keep queue priority, and tracks the quantity ahead from the displayed size at its level. It cancels both sides for `cooldownNanos` (1 s) when the futures signal moves more than `futuresJumpBp` (0.5 bp) between updates, and the threatened side when book imbalance \((B - A) / (B + A)\) exceeds 0.6 in absolute value. It replaces at most once per side per `minRequoteNanos` (50 ms), rests at most `participation` (0.25) of the displayed size at the best price and never more than the risk headroom, and never places a buy at or above its own resting sell or a sell at or below its own resting buy. Orders are NewOrder (20), Limit, Day; cancels are OrderWithdraw (61). Reservations are released on the venue's ExecutionReport.
+
+### 12.9 Learned hit rate, cover averaging and tier defaults (round 2 fix A1)
+
+`HitRateModel(preset, learningRate)` and `HitRateModel(preset, learningRate, slopeLow, slopeHigh)`: the coefficients start at the preset's central values. `update(base, spreadBp, won)` takes one Newton step on (b0, b1) of the logistic log-likelihood, with an information matrix that starts at the prior precision `1 / learningRate` and forgets with a window of `WINDOW` (5,000) outcomes. The coefficients are then clamped to `[INTERCEPT_LEARN_LOW, INTERCEPT_LEARN_HIGH]` (-3.0, 5.0) and `[slopeLow, slopeHigh]` (default `SLOPE_LEARN_LOW` -8.0 to `SLOPE_LEARN_HIGH` -0.2). The slope bounds must contain the preset's band and stay negative. A learning rate of 0 counts outcomes and learns nothing. `base(...)` is the part of z that depends on neither the spread nor the intercept. Report accessors: `learnedSlope()`, `learnedIntercept()`, `slopeStandardError()` (NaN when learning is off), `slopeOutsideDeclaredBand()`, `declaredSlopeLow()`, `declaredSlopeHigh()`, `learnLow(i)`, `learnHigh(i)`, `wins()`. The preset schema (12.3) is unchanged; its band bounds the starting assumption, not learning.
+
+`SpreadModel(hitRate)` and `SpreadModel(hitRate, priorCoverSigmaBp)`: `winProbability(base, s)` is the hit-rate model averaged over a cover distributed normally around the expected cover, with 8-point Gauss-Hermite quadrature, and `optimal(base, cost, maxHalfSpread)` maximises `winProbability * (s - cost)` by golden-section search on [0, maxHalfSpread]. `observeCoverGap(gapBp)` feeds the gap between a winning price and the disclosed cover into running moments with a window of `COVER_WINDOW` (500). `coverSigmaBp()`, `meanCoverGapBp()` and `coverGaps()` read them. Gaps are seen only on wins, so the observed spread is a floor, not a fit. With no gaps and a prior of 0 the result is the point estimate.
+
+`TierTable.standard(version, maxQuantity, clients)`: three firm tiers, none blocked, spread multipliers 1.0, 1.15 and 1.35 (`standardMultiplier(tier)`); unmapped clients get tier 2. `unblocked(newVersion, widening)` returns a copy in which every blocked tier quotes, with its multiplier times `widening` (at least 1; `DEFAULT_BLOCK_WIDENING` 1.5). `blockedTiers()` counts tiers that refuse every quote.
+
+### 12.10 CLOB inventory skew (round 2 fix B)
+
+`ClobQuoter.inventorySkew(covariance, kappa, maxSkewBp)` turns on inventory skew with the RFQ engine's parameters (`QuotingConfig.kappa()`, `maxSkewBp()`) and its key-rate covariance. At each update both targets move by `skew = clamp(kappa * u' Sigma p / |U|, -maxSkewBp, maxSkewBp)` bp: the bid target is `fair - (halfSpreadBp + skew)` and the ask target `fair + (halfSpreadBp - skew)`, each then rounded to the venue tick (12.8). A long book (positive skew) lowers both sides. Kappa 0 turns it off; it is off until called. `lastSkewBp()` is the skew at the last update.
+
+### 12.11 RFQ recording, fair-move withdraw, release calendar and package controls (round 2 fix A2)
+
+`QuotingEngine.recorder(RfqRecordListener)` (default `RfqRecordListener.NONE`). `onDecision(RfqOutcome)` is called for every RFQ decision, pass or quote, and the outcome object is reused after the call. `onResult(rfqId, quoteId, status, ourPrice, coverPrice, coverGapBp, rank)` is called for every venue outcome of our quotes, matched or booked late. `coverGapBp` is how far our price sat behind the cover for the client (positive when the cover was better; NaN without a cover). `rank` is 1 when our price was at least as good as the cover (or a Done without a cover), 2 when the cover was better, and 0 when unknown. `RfqOutcome` exposes `venueId()`, `rfqId()`, `clientId()`, `instrumentId()` and the decision. Counters: `coversRecorded()`, `wonBehindCover()`, `meanWonBehindCoverBp()`, `fairMovePulls()`.
+
+Client markouts are measured from the fair value at the trade, not from the traded price.
+
+`QuotingConfig.fairMoveWithdrawBp(v)` (default 0.25 bp; 0 off): `poll` withdraws a live quote with `CancelReason.AdverseSignal` when fair value has moved against it by more than `v`.
+
+Release calendar, on by default: `QuotingConfig.usReleaseSchedule(from, to)` returns the epoch nanos of 08:30 and 10:00 New York on weekdays in the range, and the default calendar covers 2026 and 2027. `releaseCalendar(releaseNanos)` replaces it, `releasePullNanos(before, after)` sets the pull window (default 60 s before, 30 s after) and `releaseWidening(afterNanos, multiplier)` sets the widening after it (default 5 minutes at 2.355, the E3 holdout). In the pull window live quotes are pulled and RFQs are passed with `PassReason.RELEASE_WINDOW`. `releases()` and `inReleasePull(nowNanos)` read the calendar.
+
+`PackageQuoter` (Section 12.7) applies the single-RFQ gates in the same order: kill switch, input health, release pull window, instrument and currency, client re-quote throttle, fair value with input age, and `RiskEngine.checkQuote` on every leg. A quoted package reserves every leg until answered or expired. `onResponse(packageId, done)` books a Done to risk, including one that arrives after expiry, `poll(nowNanos)` expires packages, and `onKill(reason, epochNanos)` withdraws them. The spread is charged on the net ladder's risk-equivalent PV01, `R = sqrt(L' Sigma L) * sum P_i / sum sqrt(d_i' Sigma d_i)`, so a DV01-neutral curve trade pays for its curve risk, not for the sum of its legs. `Result` exposes `reason()`, `packageId()`, `validUntilNanos()` and `netRiskPv01()`. Counters: `heldPackages()`, `packagesQuoted()`, `packageFills()`, `lateFills()`, `expiries()`, `unmatchedResponses()`. The desk does not register the quoter with the kill switch yet; until it does, `quote` reads the kill switch itself.
 
 ## Section 13. Risk limit semantics and check order (P3)
 
@@ -840,7 +895,7 @@ Per instrument: position (minor units), reserved buy and sell quantity, the PV01
 10. DailyLoss: P&L since `startOfDay` below minus `dailyLoss`.
 11. QuoteRate or OrderRate, then MessageRate: token buckets of `rate * burstSeconds` tokens.
 
-A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting skip 7 to 10 (DR-P3-05). Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
+A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting, counting every other working reservation on the same side as filled, skip 7 to 10 (DR-P3-05, DR-R2R-09). Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
 
 ### 13.3 Post-trade alerts
 
@@ -849,6 +904,14 @@ After every fill, curve move and re-mark the engine evaluates position, pillar, 
 ### 13.4 Kill switch
 
 `KillSwitchController`: ACTIVE, KILLED, RESET_PENDING (docs/diagrams/kill_switch_state.mmd). `trigger(reason, scope, requestedBy)` from ACTIVE or RESET_PENDING calls every registered listener in registration order (quoting engine: QuoteWithdraw for every live quote; CLOB quoter: OrderWithdraw for every resting order; hedgers: `HedgeOrderSink.cancelAll` and release of reservations) and then sends one KillSwitch (31); from KILLED it only counts. `requestReset(operator)` moves KILLED to RESET_PENDING; `approveReset(approver, inputsHealthy)` moves to ACTIVE only for a different person with healthy inputs.
+
+### 13.5 Breaches, flatten-only and basis limits (round 2 fix C)
+
+A PV01 limit that is already breached does not freeze the book. A quote or order passes the pillar, net and gross checks when none of those worst-case figures moves further past its limit (each may stay where it is, with a relative tolerance for rounding). Flow that reduces a breach is accepted; flow that adds to it, or overshoots through zero into a new breach, is refused. A one-sided quote whose fill offsets net PV01 skips only the daily-loss check.
+
+`flattenOnly()` is true while the kill switch is not ACTIVE because of this engine's own post-trade daily-loss breach (KILLED, or RESET_PENDING after it) and no other kill has happened since. In that state risk-reducing orders still pass `checkOrder`, so hedgers keep flattening, and every other order and every quote is refused with `REJECT_KILLED`.
+
+`RiskLimits.basisPv01(limit)` and `swapSpreadPv01(limit)` bound basis and swap-spread exposure on positions plus the checked quantity at either extreme (other reservations are left out). An exposure already past its limit may shrink but not grow. A refusal returns `REJECT_BASIS` (-3) or `REJECT_SWAP_SPREAD` (-4) without a breach message, since the schema has no limit kind for them; post-trade breaches are counted by `basisBreaches()`. Risk-reducing orders skip the PV01 envelope but not these two limits.
 
 ## Section 14. Hedger objective and solver tolerances (P3)
 
@@ -875,6 +938,14 @@ Default covariance: daily volatilities 6.0, 6.5, 6.8, 7.0, 7.0, 6.8, 6.2, 5.8 bp
 ### 14.4 Staging, axes and analytics
 
 On each timer the hedger measures r; below the trigger nothing happens and the episode ends. Otherwise it plans and sends the first-tranche fraction of each instrument's planned lots (urgency 0, immediate), then on later timers \(1 - 2^{-\Delta t / t_{1/2}}\) of the current plan (urgency now plus the half-life), at least one lot while any is planned. Every parent passes `checkOrder` and reserves its quantity until filled or done. While an episode is active, `axeBp(instrument, side)` is `axeMax * min(1, -corr)` where corr is the \(\Sigma\)-correlation between the trade's PV01 and r, and zero when the trade adds variance. `HedgeAnalytics` records slippage of each fill against the arrival mid (positive is a cost, in currency and PV01-weighted bp), the residual variance and net PV01 at each timer, and calls the `BasisAttribution` hook.
+
+Diagram: [hedge and route](docs/site/pages/diagrams.md#hedge-and-route).
+
+### 14.5 Hedging under the daily-loss kill and basis attribution (round 2 fix C)
+
+A kill cancels every parent of the `Hedger`, except a kill from the risk engine's daily-loss limit (`RiskEngine.flattenOnly()`): then the parents keep working and timers keep sending risk-reducing tranches, each passing `checkOrder`. `flattenKills()` counts such kills.
+
+`ExposureBasisAttribution(risk, currency)` implements `BasisAttribution`. `onHedgeFill(...)` books each hedge fill; `basisAdded()`, `swapSpreadAdded()`, `basisExposure()`, `swapSpreadExposure()`, `slippage(productType)` and `fills()` read the totals. `Desk.basisAttribution(currency)` returns the instance wired for that currency.
 
 ## Section 15. Smart order router (P4)
 
@@ -924,13 +995,13 @@ Parameters, config version 1 (`RouterParams`, `VenueParams`; defaults in `Router
 For row \(v\) of a decision and quantity \(q\), with bid \(b\), ask \(a\), same-side displayed depth \(Q\), trade rate \(r\) (quantity per second, both sides), lot \(\lambda\), passive horizon \(T\) (0 when passive is not allowed) and \(\sigma_s = \sigma_d/\sqrt{D}\):
 
 \[
-h = \tfrac{a-b}{2},\quad I(q) = y\,\sigma_d\,(q/\mathrm{ADV})^{\alpha},\quad L = k_L\,\sigma_s\sqrt{\ell},\quad A = k_A\,\sigma_s\sqrt{T}
+o = s\,\big(\tfrac{a+b}{2} - m\big),\quad h = \tfrac{a-b}{2},\quad I(q) = y\,\sigma_d\,(q/\mathrm{ADV})^{\alpha},\quad L = k_L\,\sigma_s\sqrt{\ell},\quad A = k_A\,\sigma_s\sqrt{T}
 \]
 \[
-c_{aggr}(q) = h + I(q) + f_t + L,\qquad c_{pass}(q) = P\,(-h + I(q) + f_m) + (1-P)\,(A + h + I(q) + f_t) + L
+c_{aggr}(q) = o + h + I(q) + f_t + L,\qquad c_{pass}(q) = o + P\,(-h + I(q) + f_m) + (1-P)\,(A + h + I(q) + f_t) + L
 \]
 
-where \(P\) is `QueueFillModel.probability(ceil(Q/λ), ceil(q/λ), r/(2λ), θ, T)` (complete-fill probability, Cont, Stoikov and Talreja 2010, uniformisation as in the owner's earlier library, API_SPEC.md Section 13.1 there; tolerance 1e-10 against the Poisson tail when \(\theta = 0\), `CostModelTest`). The chosen cost is \(c_{pass}\) if passive is allowed and either aggressive is not allowed or \(c_{pass} < c_{aggr}\); otherwise \(c_{aggr}\). The expected queue wait reported is \((\lceil Q/\lambda\rceil + \lceil q/\lambda\rceil)/(r/2\lambda)\), capped at 1e6 s. All doubles are rounded to Decimal9 with `Math.round(x * 1e9)` when written to the table; inputs that enter the model as doubles (trade rate, fees) are taken from the rounded table values, so a decision re-evaluated from the journal reproduces every mantissa.
+where \(s\) is +1 for a buy and -1 for a sell, \(m\) is the consolidated mid (the mid of the highest bid and lowest ask over the decision's rows with a two-sided quote), so the venue offset \(o\) charges a venue whose book sits at a worse price than the others (zero when all mids agree; DR-R2R-04, `CostModelTest.aVenueQuotingAtABetterPriceWinsTheSlice`), \(P\) is `QueueFillModel.probability(ceil(Q/λ), ceil(q/λ), r/(2λ), θ, T)` (complete-fill probability, Cont, Stoikov and Talreja 2010, uniformisation as in the owner's earlier library, API_SPEC.md Section 13.1 there; tolerance 1e-10 against the Poisson tail when \(\theta = 0\), `CostModelTest`). The chosen cost is \(c_{pass}\) if passive is allowed and either aggressive is not allowed or \(c_{pass} < c_{aggr}\); otherwise \(c_{aggr}\). The expected queue wait reported is \((\lceil Q/\lambda\rceil + \lceil q/\lambda\rceil)/(r/2\lambda)\), capped at 1e6 s. All doubles are rounded to Decimal9 with `Math.round(x * 1e9)` when written to the table; inputs that enter the model as doubles (trade rate, fees) are taken from the rounded table values, so a decision re-evaluated from the journal reproduces every mantissa.
 
 ### 15.2 Routing objective and allocation
 
@@ -1005,9 +1076,11 @@ Result (`BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` (rates-route
 
 | Strategy | Mean cost (bps of price) | Mean saving of the router (bps) | 95% block-bootstrap interval |
 |---|---|---|---|
-| router | -0.1957 | | |
-| single-venue aggressive | 2.6822 | 2.8780 | [2.7210, 2.9855] |
-| even split aggressive | 2.5108 | 2.7065 | [2.5309, 2.8272] |
+| router | -0.2565 | | |
+| single-venue aggressive | 2.6822 | 2.9388 | [2.7792, 3.0631] |
+| even split aggressive | 2.5108 | 2.7673 | [2.5802, 2.9026] |
+
+Re-run 2026-10-31 after the venue offset of DR-R2R-04 was added to the cost model; the P4 gate run before it gave a router cost of -0.1957 and savings of 2.8780 [2.7210, 2.9855] and 2.7065 [2.5309, 2.8272] bps.
 
 The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_BPS`). The router's cost is below zero because most of its quantity rests and earns part of the spread in a market whose only adverse selection is the random walk; the number measures the router's logic in this declared world and is not a forecast of desk savings. Refitting the impact and queue parameters from P2 simulator data is deferred (DR-P4-03).
 
@@ -1021,6 +1094,10 @@ The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_B
 | Report for an unknown clOrdId, duplicate fill, stale status | ignored and counted (`unknown`, `duplicates`, `stale`) |
 | Overfill, venue mismatch, execId at or above 2^43, venueId at or above 2^20, null status | refused and counted as an anomaly |
 | RouteDecisionVenue out of sequence, or wrong schema id, on decode | `IllegalStateException` |
+
+### 15.8 Filled-child adverse cost, message cost and per-instrument volatility (round 2 fix C)
+
+`RouterParams` gains three components. `filledAdverseFactor` is the expected adverse move after a passive child fills, in units of sigma over its expected queue wait (capped at the passive horizon), in [0, 5]. `messageCostPoints` is the cost of one order message (new order or cancel) in price points on one lot of the venue, in [0, 1]. `volatility` (`RouterParams.Volatility.of(instrumentIds, sigmaDailyPoints)`, `NONE` by default) is the daily volatility per instrument; unlisted instruments use `sigmaDailyPoints`. `sigmaDailyPoints(id)` and `sigmaPerSqrtSecond(id)` read it. The constructor without these components sets them to 0 and `NONE`, which is the previous behaviour. `withControls(configVersion, filledAdverseFactor, messageCostPoints, volatility)` returns a copy with them set. `RouterPresets.globalWithControls(volatility)` is `global()` with 0.75 sigma and 0.0001 points per lot per message at `CONTROLS_CONFIG_VERSION` (2). These are assumptions, not in `data/presets.yaml` and not the default.
 
 ## Section 16. Back-tester, outcome models, pre-registration, ledger and report (P5)
 
@@ -1117,6 +1194,10 @@ Tolerance: \(|\text{residual}| < 0.01\) on every run, per instrument and in tota
 
 Java and Python agree on `data/fixtures/backtest/stats_crosscheck.json`: exactly for the bootstrap and generator, to 1e-12 for Welch.
 
+### 16.6a Depth-walk hedge fills, best-price client and coupon carry (round 2 fix D)
+
+`HedgeCostModel.withDepthWalk(on)` returns a copy that fills a market hedge level by level against the displayed quantity at each price; `depthWalk()` reads the setting. The default, and `fromPreset`, keep the linear cost rule, so earlier ledger rows reproduce. `RfqOutcomeModel.ClientChoice` is `HIT_RATE` (default: the soft logistic of the hit-rate model) or `BEST_PRICE` (the client trades with the best price: we win inside the cover, lose outside, and a tie is a fair coin). `withClientChoice(c)` returns a copy with the other rule and `clientChoice()` reads it. Both rules draw the same numbers in the same order. `CarryModel.bondCoupons(annualCouponByInstrument)` accrues each bond's coupon ACT/365 on the carry line next to funding; `CarryModel.NONE` books nothing.
+
 ### 16.7 SplitMix64
 
 `state += 0x9E3779B97F4A7C15`; output `mix(state)` with `z = (z ^ z>>>30) * 0xBF58476D1CE4E5B9; z = (z ^ z>>>27) * 0x94D049BB133111EB; z ^ z>>>31`. `nextDouble = (nextLong >>> 11) * 2^-53`; `nextInt(b) = (nextLong >>> 1) mod b`; `forStream(seed, key) = new SplitMix64(mix(seed ^ mix(key + golden)))`. `nextGaussian` (Box-Muller) is reproducible within the JVM only.
@@ -1141,6 +1222,8 @@ Ledger `data/ledger/ledger.jsonl`, one canonical JSON object per line (sorted ke
 | `verdict` | `supported` or `not supported` |
 
 `ExperimentCli` exit codes: 0 recorded, 1 error, 2 refused (nothing run, nothing recorded).
+
+Diagram: [experiment lifecycle](docs/site/pages/diagrams.md#experiment-lifecycle).
 
 ### 16.9 Results tables and daily report
 
@@ -1178,7 +1261,7 @@ Rules:
 - **Late fills.** Positions are computed from live trades in transaction-time order (ties by journal sequence, then key), so a fill that arrives after a later one lands where it belongs. It is flagged `late` and audited `LATE_FILL`.
 - **Busts.** A busted trade stays in the records and leaves the position. A second bust is audited `DUPLICATE_BUST` and changes nothing. A bust still waiting for its fill at the end of the day is a `pending-busts` break.
 - **Amendments.** Each amendment is a new version (`versions(key)`) with the party id of the person who made it and the reason in the audit trail. An amendment of an unknown or busted trade, or to a non-positive quantity, is refused and audited `AMEND_REJECTED`.
-- **Average cost.** Weighted average cost. A trade in the direction of the position adds `price * quantity` to the cost; a trade against it realises `closed * (price - average)` through the valuation convention and removes the closed share of the cost; a trade through zero closes the old position and opens the remainder at its own price. Intermediate values carry 34 significant digits (`MathContext.DECIMAL128`). The property test `PositionCalculatorProperties` checks that realised plus unrealised P&L equals the trades' cash flow plus the remainder at the mark, to 1e-6 minor units, for random trade sequences.
+- **Average cost.** Weighted average cost. A trade in the direction of the position adds `price * quantity` to the cost; a trade against it realises `closed * (price - average)` through the valuation convention and removes the closed share of the cost; a trade through zero closes the old position and opens the remainder at its own price. Intermediate values carry 34 significant digits (`MathContext.DECIMAL128`). The property test `PositionCalculatorPropertiesTest` checks that realised plus unrealised P&L equals the trades' cash flow plus the remainder at the mark, to 1e-6 minor units, for random trade sequences.
 - **Audit.** Every decision, including the decision not to book, leaves an `AuditEntry` (sequence, timestamp, kind, key, actor, detail): BOOKED, DUPLICATE_IGNORED, DUPLICATE_CONFLICT, LATE_FILL, BUSTED, BUST_PENDING, DUPLICATE_BUST, AMENDED, AMEND_REJECTED, OPENING_POSITION.
 
 Positions are kept per book, account and instrument (`PositionKey`). The `BookMapper` assigns each trade a book, an account and the algorithm inventory id.
@@ -1252,7 +1335,7 @@ date,book,account,instrument_id,component,amount_minor
 
 ### 17.6 Clearing lifecycle (swaps)
 
-States NEW, SUBMITTED, ACCEPTED, CLEARED, REJECTED; events SUBMIT, ACCEPT, CLEAR, REJECT. Transitions: NEW to SUBMITTED on SUBMIT; SUBMITTED to ACCEPTED on ACCEPT; ACCEPTED to CLEARED on CLEAR; SUBMITTED or ACCEPTED to REJECTED on REJECT. Every other pair is refused: the state does not change and the refusal is kept in the history. CLEARED and REJECTED are terminal. A rejection voids the trade; the caller journals a `PostTradeBust` with reason ClearingRejected. `ClearingHouseSimulator` accepts within a per-account gross notional limit, rejects beyond it, and clears accepted trades at the end of the cycle. Property tests (`ClearingLifecycleProperties`): terminal states absorb every event, a refusal never changes state, CLEARED is reached only through NEW, SUBMITTED, ACCEPTED, and replaying the history through the pure transition function reaches the same state.
+States NEW, SUBMITTED, ACCEPTED, CLEARED, REJECTED; events SUBMIT, ACCEPT, CLEAR, REJECT. Transitions: NEW to SUBMITTED on SUBMIT; SUBMITTED to ACCEPTED on ACCEPT; ACCEPTED to CLEARED on CLEAR; SUBMITTED or ACCEPTED to REJECTED on REJECT. Every other pair is refused: the state does not change and the refusal is kept in the history. CLEARED and REJECTED are terminal. A rejection voids the trade; the caller journals a `PostTradeBust` with reason ClearingRejected. `ClearingHouseSimulator` accepts within a per-account gross notional limit, rejects beyond it, and clears accepted trades at the end of the cycle. Property tests (`ClearingLifecyclePropertiesTest`): terminal states absorb every event, a refusal never changes state, CLEARED is reached only through NEW, SUBMITTED, ACCEPTED, and replaying the history through the pure transition function reaches the same state.
 
 ### 17.7 Settlement lifecycle (bonds) and the cost of a fail
 
@@ -1263,7 +1346,7 @@ Cost of a fail (`FailCost`, actual/360, from our point of view):
 - funding: `proceeds * fundingRate * days / 360`, a loss if we are the failing deliverer, a gain if we are failed to;
 - TMPG fails charge for Treasuries: `proceeds * max(3% - referenceRate, 0) * days / 360`, paid by the failing deliverer.
 
-Worked example (`SettlementProperties.workedFailExample`): proceeds 9,950,000.00 USD failing for 3 days with funding at 4.30% costs 3,565.42 USD; the fails charge is zero at a 4.00% reference rate and 1,658.33 USD at 1.00%.
+Worked example (`SettlementPropertiesTest.workedFailExample`): proceeds 9,950,000.00 USD failing for 3 days with funding at 4.30% costs 3,565.42 USD; the fails charge is zero at a 4.00% reference rate and 1,658.33 USD at 1.00%.
 
 ### 17.8 Reconciliations and break classes
 
@@ -1330,3 +1413,131 @@ The list is pinned in `deploy/prometheus/metrics.txt`; `MetricsRegistryTest` che
 | `MessageSink` | rates-ops | P2 event loop inbound ring buffer |
 | Attribution file (17.5) | rates-posttrade | P5 back-tester output |
 | P2 `TradeBust` (44) | rates-posttrade | A case in `PositionKeeper.onFrame` that applies it as a PostTradeBust with reason VenueError |
+
+The 17.14 bindings stand as follows after round 2 (Section 18): `TradeBust` (44) is applied by `PositionKeeper.onFrame` (DR-R2W-06 for the RFQ case); `BookMapper`, `InstrumentCatalogue` and `ValuationConvention` are bound by `io.ratesalgo.app.posttrade.JournalFeed` (catalogue from the pricing binding's directory, books by product); `OpsHttpServer.Control` is bound to `TradingProcess.kill` and `statusJson` (DR-R2W-10); `MessageSink` (stress harness) takes `InboundRouter::offer`. `MarkSource`, `CarrySource`, `BusinessCalendar`, `VenueStatusPort`, `QuotingControl` and the attribution file stay on their fixtures (deferred, STATUS.md).
+
+### 17.15 Message and cancel counts (round 2 fix C)
+
+`QuoteStuffingDetector` counts outbound Quote and NewOrder frames together with the cancels and replaces that go with them (OrderCancel, OrderReplace, QuoteCancel, QuoteWithdraw, OrderWithdraw) per instrument over its sliding window. `messages(instrumentId)` and `cancels(instrumentId)` give the day's totals and `instruments()` lists the instruments seen. `EodReportMain` writes per-instrument message and cancel counts in the end-of-day report.
+
+## Section 18. Process assembly (round 2)
+
+Module `rates-app`, package `io.ratesalgo.app`. It wires the phase modules into one trading process. Nothing in it re-implements a phase: every binding adapts one module's interface to another's.
+
+### 18.1 Entry point and run modes
+
+`TradingProcessMain --config FILE --schema FILE [--seed N] [--time-scale X]` validates the rates-ops process configuration (Section 17.11; exit 2 if refused). Role `trading` starts `TradingProcess` with its simulators, runs each instrument group's loop on its own `LoopRunner` thread and the gateways, feed, curve feed and venues on one driver thread (`rates-gateways`) that advances simulated time by `X` (default 10) times real time from 2026-11-02T13:25Z, and serves the rates-ops endpoints (Section 17.12). Role `venue-sim` serves health and metrics only. `TradingProcessMain --replay DIR` replays every group directory under `DIR` through `LoopReplay` with the desk's factory and prints one line per group; exit 0 if every outbound hash matches.
+
+`TradingProcess.step(nanos, stepNanos)` runs the same assembly on the calling thread: per step it moves the `SimClock` under both venues' locks, runs the venues' due events, the curve feed and the CLOB liquidity, then pumps gateways, feed, control rings and loops until three consecutive passes do no work and each venue's QuickFIX/J sequence numbers equal the engine session's (`getExpectedSenderNum` equals our `expectedInSeq`, `getExpectedTargetNum` equals our `nextOutSeq`), or two seconds pass (DR-R2W-13).
+
+### 18.2 Fixed identifiers (`AppIds`)
+
+| Name | Value | Meaning |
+|---|---|---|
+| D2C venue id | 101 | stamped by the D2C gateway on its SBE messages |
+| CLOB venue id | 102 | the CLOB's FIX gateway and its SBE book feed (`ClobSimulator.VENUE_ID`) |
+| Outbound gateway ids | 0 D2C, 1 CLOB, 2 control | in every loop, in the order the rings are added (Section 9.2) |
+| GatewayStatus ids | 0 D2C session, 1 CLOB session, 3 CLOB feed | inbound template 65003; id 3 CONNECTED means the feed was rebuilt from a snapshot |
+| Curve heartbeat source | 900 | Heartbeat `sourceId` of the curve feed; the desk requires it |
+| SOFR curve id | 1 | CurveInput `curveId` |
+| Router child ids | from `2^52 + (j << 40)` | router `j`; a cancel request's ClOrdID is the child id with bit 61 set |
+| Engine CompID | RALGO | on every venue |
+
+### 18.3 Pricing binding
+
+`AnalyticsPricing` implements `FairValueSource` and `SensitivityProvider` (Section 12) over one USD SOFR OIS curve bootstrapped by `CurveBuilder` (linear in log discount factor) from the par rates of the swap templates 2001 to 2005 (2Y, 5Y, 10Y, 30Y, 12Y). A CurveInput of kind ParSwap whose instrument is a template moves that pillar: value is the par rate in percent as a Decimal9 mantissa, converted to a decimal by multiplying by 1e-11; `CurveBuilder.rebuild(pillar, quote)` re-solves it and the later pillars; every swap's par rate and every instrument's unit key-rate ladder are then recomputed in place.
+
+- Swap fair mid: `Decimal9.round(parRate * 100)`; reference time: the newest CurveInput stamp, `NO_VALUE` before the first.
+- Bond fair mid: the mid of the composite book, `NO_VALUE` without both sides; reference time: the book's update stamp.
+- Unit ladder: value change of one major unit (one currency unit of notional or face) for a one basis point rise in each curve quote, mapped onto the eight `KeyRateTenors` by `Dv01Adapter` (DR-R2W-01). `pv01(id, quantityMinor, out)` scales it by `quantityMinor / 100`.
+- Tolerance: par rates and PVs equal a fresh bootstrap of the same quotes to 1e-12; tenor DV01s equal `KeyRateRisk.fromGradient` mapped by the adapter to 1e-12 of the parallel DV01 (`PricingBindingTest`).
+
+### 18.4 The desk on the loop and agent registration order
+
+`DeskLoopFactory` is the `LoopFactory` of the live loop and of `LoopReplay`. It sets the timer wheel to 1 ms ticks, 1024 slots, 4096 timers, builds the loop and one `DeskGroup`, which constructs, in this order: `AnalyticsPricing`; `LoopBook` (composite book over the CLOB); one `SmartOrderRouter` per hedge instrument with its `LoopOrderGateway`; `RouterHedgeSink`; P3's `Desk` (kill switch, risk engine, a hedger per currency, fair value, quoting engine, package and CLOB quoters; DR-P3 order of kill-switch listeners: quoting, CLOB quoter, hedgers). The desk's input health tracks venues 101 and 102.
+
+Handlers, registered in this order:
+
+| Template | Handler |
+|---|---|
+| 1 Heartbeat, 10 QuoteRequest, 12 QuoteResponse | `Desk.handler()` (input health, quoting engine) |
+| 2 BookUpdate | `LoopBook.apply`, `Desk.handler()`, `RiskEngine.onFairValue` (bonds with a two-sided book), the instrument's router `onBookUpdate`; a quoting poll if input is unhealthy |
+| 3 CurveInput | `AnalyticsPricing.onCurveInput`; on a moved pillar `RiskEngine.onCurveMove(USD)` and `onFairValue` |
+| 21 ExecutionReport | from the RFQ venue: counted, not booked (DR-R2W-06); router child ids: the router, then the hedger (`onHedgeFill`, `onParentDone`); other ids: the CLOB quoter |
+| 31 KillSwitch | `KillSwitchController.trigger(reason, scope, requestedBy)` |
+| 44 TradeBust | reverses the fill in the risk engine |
+| 65003 GatewayStatus | input health `onSession` (ids 0, 1) or `onFeedRecovered` (id 3), then a quoting poll |
+
+The first dispatched message of any template starts the desk: it requires the curve heartbeat, calls `RiskEngine.startOfDay` and schedules the housekeeping timer, which every 10 ms polls the quoting engine and each router and every 250 ms calls `Hedger.onTimer`, then reschedules itself from the timer's own deadline. Starting on the first message, not at construction, makes every deadline relative to an input, so live and replay agree. The only agent is the status agent the process adds (`TradingProcess.Group.publishStatus`), which copies counters into volatile fields; agents do not run in replay (DR-P2C-04).
+
+`OutboundSink` (gateway) publishes to the gateway id of the message's venue (its first field); `OutboundSink` (control) publishes to gateway 2.
+
+### 18.5 Venue binding and instrument-group partitioning
+
+`VenueSession` owns a `TcpInitiator`, a `FixSession` (heartbeat 30 s, reset on logon) and P2's `VenueGateway`, whose inbound sink is an `InboundRouter`. Its duty cycle reads the socket, runs the session timers and drains this venue's outbound ring in every group into `VenueGateway.offer`. Logon and disconnect publish GatewayStatus with the session's id.
+
+`InboundRouter` (one per publishing thread) sends a message naming an instrument (BookUpdate, CurveInput, QuoteRequest, ExecutionReport, TradeBust) to that instrument's group; a QuoteResponse to the group that received the QuoteRequest with the same venue and RFQ id, forgotten at the first final response that is not Rejected; everything else (Heartbeat, GatewayStatus, KillSwitch) to every group. A full ring drops and counts BookUpdate, CurveInput and Heartbeat and retries every other message until the loop takes it (Section 9.3). An instrument group is a currency (DR-R2W-03).
+
+`FeedBinding` forwards every BookUpdate from the venue's feed channel, including the first after a sequence gap; on a gap it requests the venue's snapshot, forwards its frames, skips buffered frames the snapshot covers and publishes GatewayStatus CONNECTED with id 3 (DR-R2W-05).
+
+### 18.6 Post-trade binding
+
+`JournalFeed.feed(dir, "in", "out", handler)` merges a group's inbound and outbound journals by timestamp (inbound first at equal stamps, journal order within each), drops control-schema frames and the RFQ venue's fill confirmations, and numbers the merged frames from 1. `JournalFeed.keeper` feeds a `PositionKeeper` with books 1 (RFQ trades) and 2 (hedges) and the catalogue of the pricing binding (bonds multiplier 1, swaps the annuity). `VenueReconciliation.run(keeper, d2c, clob)` reconciles the keeper's live trades with the D2C simulator's trades won by RALGO (key `101:R:quoteId`) and the CLOB simulator's unbusted fills to RALGO (key `102:E:execId`), venue quantities times 100, with `Reconciler.Tolerance.DEFAULT`.
+
+### 18.7 Back-test binding
+
+`JournalExport.export(dir, "in", target, capacity)` writes one RAJ1 file: QuoteRequest, CurveInput and the curve feed's Heartbeat copied unchanged with their stamps, and every change of an instrument's top of book as BookUpdates Clear, Add bid, Add ask at level 0 with venue sequence numbers from 1. `DeskStrategy` is a P5 `Strategy` that runs a `DeskGroup` on its own loop per callback; a Quote becomes `ctx.quote(rfqId, px, px)`, a NewOrder becomes a market order (`ctx.sendOrder`), the back-tester's QuoteResponse and ExecutionReport return with the desk's quote and child ids, and the curve heartbeat is restored with each curve input (DR-R2W-11). `DeskBacktest.run(groupDir, presets, outDir, seed)` runs it under `data/presets.yaml` at the central band point and writes `results.raj`, the tables of Section 16 and `report.md`, `report.json`.
+
+### 18.8 Acceptance tests
+
+| Test | Asserts |
+|---|---|
+| `SmokeTest` | ten simulated minutes from 08:25 on seed 7: quotes sent, RFQ fills, hedge parents routed and filled, book updates through the feed; after `POST /control/kill` no live quote, no router child, nothing resting at the CLOB, a KillSwitch on the control ring; positions from the journals; reconciliation with no break; replay hash equal |
+| `BacktestBindingTest` | a day recorded with the loops on their own threads replays to the same outbound hash; the daily report runs on its journal and is deterministic |
+| `PricingBindingTest` | Section 18.3 tolerances |
+| `VenueBindingTest` | a feed gap and a lost session pull quotes through the loop and the venue; quoting resumes after the snapshot and after logon; injected GatewayStatus faults |
+| `WiredLoopAllocationTest`, `AppHotPathRulesTest` | DR-R2W-12 |
+
+## Section 19. Desk features (rates-strategy, R2)
+
+Module `rates-strategy`, package `io.ratesalgo.strategy`. Section 18 is reserved for `rates-app` (branch `claude/r2-wiring-c31ae4`); this section is numbered 19 so the two merge without renumbering. Each feature sits behind an interface whose default reproduces today's engine; the measured results are in docs/research/DESK_FEATURES.md and the decisions in DR-R2B-01 to DR-R2B-10. Units: DV01 in major currency per 1 bp rise (positive gains when rates rise), positions in minor units, spreads and premiums in bp, times in epoch nanoseconds. Every method named allocation-free allocates nothing after warm-up (`DeskQuoterAllocationTest`).
+
+### 19.1 RiskLadder
+
+`RiskLadder(List<Instrument>)`: positions per instrument and their DV01 ladder. Buckets: 0 = 2Y (tenor up to 3 years), 1 = 5Y (up to 7), 2 = 10Y (up to 15), 3 = 30Y. `setPosition(index, minor)`, `recompute()`, `net()`, `bucket(b)`, `ladderNorm()` (Euclidean norm of the buckets), `tradeDv01(index, weBuy, quantity)`, `indexOf(instrumentId)` (dense index or -1). Swaps, bonds and futures share one ladder, so opposing flow nets across products before any hedge. Allocation-free.
+
+### 19.2 HedgeBudget (feature 1)
+
+`double excessDv01(RiskLadder, long nanosSinceClientFill)`: DV01 to remove now with the sign of the exposure (the hedge sent is `-excess`), zero for none. `long holdNanos()`: when to ask again after a client fill, zero for never. Default `HedgeBudget.threshold(t)` (`ThresholdHedgeBudget`): `|net| > t` gives `net`. `NettingHedgeBudget(soft, hard, retain, holdNanos)`, `0 <= retain <= soft <= hard`: `|net| > hard` gives `net - sign(net) * soft`; `|net| > soft` and age at least `hold` gives `net - sign(net) * retain`; otherwise zero.
+
+### 19.3 Axes (feature 2)
+
+`AxeBook(RiskLadder, maxBp, budgetDv01, bucketWeight)` implements `io.ratesalgo.hedge.AxeSource`: `axeBp(instrumentId, ourSide) = maxBp * min(1, |e| / budget)` when trading `ourSide` reduces `e = (1 - w) * net + w * bucket(instrument)`, else 0; `axeQuantity` is `|e| / |dv01PerUnit|` on the axed side; `publish()` returns `List<Axe(instrumentId, ourSide, improveBp, quantity)>` in ascending instrument order (allocates). Default `AxeSource.NONE`. No SBE message: template ids 120 to 129 stay unused (DR-R2B-06).
+
+### 19.4 QuoteSizer (feature 3)
+
+`long maxQuantity(RiskLadder, index, tradeDv01, requested)` and `double premiumBp(RiskLadder, index, tradeDv01, sizeMillions)` (never negative). A D2C RFQ is all-or-none in the back-tester, so a maximum below the request is a decline. Default `QuoteSizer.UNLIMITED`. `EnvelopeSizer(limitDv01, softUtil, hardUtil, riskPremiumBp, blockSizeMm, blockPremiumBp)`: with `post = |net + tradeDv01|` and `u = post / limit`, a risk-reducing request (`post <= |net|`) gets full size and no risk premium; `u > hardUtil` declines; otherwise the premium is `riskPremiumBp * min(1, (u - softUtil) / (hardUtil - softUtil))^2` when `u > softUtil`, plus `blockPremiumBp * ln(size / blockSizeMm)` when `size > blockSizeMm`. `lognormalQuantileMm(mu, sigma, z) = exp(mu + z sigma)`.
+
+### 19.5 ClientTiering (feature 4)
+
+`int tier(clientId)` (1 best, allocation-free), `boolean wantsMarkouts()`, `void onMarkout(clientId, markoutBp, now)` (allocation-free), `void review(now)` (may publish a table version and allocate; runs at the review cadence). The markout is `sign(q) * (mid(t + h) - mid(t)) / |priceChangePerBp|`, bp of value from our side. Default `StaticTiering(clientsPerTier)`: `1 + (clientId - 1) / clientsPerTier`. `MarkoutTiering(tiers, demoteBelow[], promoteAbove[], minSample, alpha, startIndex, reviewIntervalNanos, proposerId, approverId, capacity)`: requires `promoteAbove[t] > demoteBelow[t - 1]` and `proposerId != approverId`; publishes through `io.ratesalgo.quoting.TierTableControl.propose` and `approve`, versions strictly increasing from 1.
+
+### 19.6 HedgeTiming (feature 5)
+
+`Action decide(excessDv01, now)` with `Action` IMMEDIATE, STAGED (send `1 / slices()` now, ask again after `sliceIntervalNanos()`) and WAIT (ask again after `waitNanos()`); `onClientFill(tradeDv01, now)`; `reset()`. Default `HedgeTiming.ALWAYS_IMMEDIATE`. `OptimalStoppingTiming(FlowRateEstimator, gamma, sigmaBpPerSqrtSecond, hedgeCostPerDv01, impactPerDv01Squared, waitStepNanos, maxWaitNanos, slices, sliceIntervalNanos)`: WAIT when `c * min(a, lambda dt) > gamma / 2 * sigma^2 * a^2 * dt` and the wait so far plus `dt` is within `maxWait`; else STAGED when `k a^2 (1 - 1/n) > gamma / 2 * sigma^2 * a^2 * ds * sum_{j=1}^{n-1} ((n - j) / n)^2`; else IMMEDIATE. `FlowRateEstimator(tauSeconds, priorDv01PerSecond)`: decaying rates of DV01-raising and DV01-lowering client fills; `opposingRate(exposure, now)`.
+
+### 19.7 InventoryPenalty (feature 6)
+
+`double penaltyBp(RiskLadder, index, weBuy, quantity)`: cost in bp of the trade's DV01, negative for a trade that reduces inventory. Default `InventoryPenalty.NONE`. `FundingPenalty(ladder, couponByIndex[], bondBsPerYear, swapBsPerYear, holdingDays)`: bonds `((repo - coupon) * dPos + bsBond * dGross) * 100 * v * H / 360`, swaps `bsSwap * dGross * 0.01 * H / 360`, futures 0, divided by `quantity * |dv01PerUnit|`; `repo` is the instrument's funding rate. `CouponCarry(Map<Integer, Double>)` implements the back-tester's `CarryModel`: bonds accrue `position * 100 * v * coupon * dt / 360 days`.
+
+### 19.8 DeskQuoter
+
+`DeskQuoter(name, Features)` implements the back-tester's `Strategy`; `Features(ladder, SpreadOptimizer, HedgeBudget, HedgeTiming, AxeSource, QuoteSizer, ClientTiering, InventoryPenalty, markoutHorizonNanos)`. `baselineFeatures(ladder, spread, threshold, clientsPerTier, horizon)` sets every default. Per RFQ: refresh the ladder from the context; decline if the sizer's maximum is below the request; `extra = premiumBp + penaltyBp`; `s = SpreadOptimizer.optimalHalfSpreadBp(instrument, size, tier, dealers, inWindow, extra)` with `E[edge](s) = P(s) (s - adverse(tier) - hedgeCost - extra)`; half-spread `max(0, s - axeBp)` around mid, rounded to tick outward. Per client fill: feed the timing, schedule a markout when the tiering wants one, then ask the budget and the timing; one hedge in flight at a time, into the 10-year note future. With the defaults the output chain hash equals that of `ModelSpreadStrategy` on the same journal. Counters: `quotes`, `sizeDeclines`, `clientFills`, `hedgesSent`, `waits`, `stagedSlices`, `markoutsRecorded`.
+
+### 19.9 Experiments
+
+`DeskFactory(config, presets, instruments)`: `baseline()`, `treatment(name, tiering)` for `internalisation`, `axes`, `sizing`, `tiering`, `timing`, `funding` and `desk_all`, and `deskDefault()` (the baseline with the adopted features, `ADOPTED`). `DeskExperiment(repoRoot, configFile).run(days, workDir)` and `DeskExperimentCli --preregs a.yaml,...,g.yaml [--ledger] [--repo] [--work] [--scope evaluation|holdout] [--commit] [--dirty]`: refuses (exit 2, nothing recorded) unless every pre-registration is valid (Section 16.8), they share config, period and holdout, each has baseline `baseline` and one known treatment, and a holdout has not been opened; then runs once and appends one ledger record per pre-registration. Config `data/experiments/R2B.config.yaml`: `band` (`dealers_min`, `dealers_max`, `informed_share_multiplier` at `low`, `central`, `high`; the slope comes from preset `usd_rfq_hit_rate` at the same point), `limits`, `carry`, `baseline`, one section per feature, `statistics`. Record `results`: `treatment`, `baseline`, `metric`, `metric_unit`, `orientation`, `days`, `band.<point>` (`baseline_mean`, `treatment_mean`, `difference_mean`, `improvement_mean`, `improvement_ci_low`, `improvement_ci_high`, `paired_p`, `holm_p`, `verdict` improved, worse or inconclusive, `pnl_difference_mean`, `pnl_difference_ci_low`, `pnl_difference_ci_high`, `pnl_guard`, `limit_breach_days`, `new_limit_breach_days`, `secondary_means`), `statistics`, `guards`, `adopted_as_default`; the record's `verdict` is `supported` or `not supported`.
+
+### 19.10 Desk report (feature 7)
+
+`DeskMetrics.of(BacktestResult, InstrumentSet, Settings(limitDv01, positionLimitMm, horizonIndex, gamma, sigma, bondBsPerYear, swapBsPerYear))`: scalar metrics by name (`pnl`, `client_dv01_traded`, `hedge_dv01_traded`, `pnl_per_dv01`, `capture_per_dv01`, `hedge_ratio`, `spread_capture`, `adverse_selection`, `other_inventory`, `hedge_cost`, `carry`, `funding`, `fees`, `residual`, `hedges`, `hedge_slippage`, `hedge_slippage_per_dv01`, `risk_charge`, `risk_adjusted_hedge_cost`, `mean_abs_net_dv01`, `max_abs_net_dv01`, `limit_utilisation`, `balance_sheet_charge`, `funding_net`, `inventory_half_life_s`, `limit_breach`, `adverse_tier_1` to `adverse_tier_3`) and `hitRateCounts()` by tier, then product and tenor bucket. Waterfall: `spread_capture + adverse_selection + other_inventory + hedge_cost + carry + funding + fees = position P&L - residual`. `DeskReport(date, strategy, metrics)`: `toMap`, `toJson`, `toMarkdown`. `DeskReportCli --config --date [--strategy] [--band] [--repo] [--out]` writes `desk_report.json` and `desk_report.md`.

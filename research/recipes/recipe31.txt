@@ -1,0 +1,12 @@
+2749 daily changes, 2015-01-02 to 2025-12-31
+          2 Yr    3 Yr    5 Yr    7 Yr   10 Yr   20 Yr   30 Yr  explained
+PC1      0.338   0.378   0.410   0.418   0.394   0.358   0.341     0.8782
+PC2     -0.538  -0.418  -0.190   0.013   0.199   0.445   0.513     0.0995
+PC3      0.653  -0.050  -0.402  -0.413  -0.196   0.225   0.386     0.0114
+10y hedged with 5y alone, 1 factor(s): 0.9629
+10y hedged with 5y alone, 2 factor(s): 0.9153
+10y hedged with 5y alone, 3 factor(s): 0.9101
+hedge leg 2y    -0.1565
+hedge leg 5y     0.6933
+hedge leg 30y    0.4798
+10y daily sd 5.351 bp, hedged 0.907 bp

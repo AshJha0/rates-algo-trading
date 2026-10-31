@@ -44,7 +44,17 @@ class RecipesTest {
         Arguments.of("recipe17.txt", (Main) Recipe17RouteHedge::main),
         Arguments.of("recipe18.txt", (Main) Recipe18Backtest::main),
         Arguments.of("recipe19.txt", (Main) Recipe19Ledger::main),
-        Arguments.of("recipe21.txt", (Main) Recipe21ChaosBreakReport::main));
+        Arguments.of("recipe21.txt", (Main) Recipe21ChaosBreakReport::main),
+        Arguments.of("recipe22.txt", (Main) Recipe22TradingDay::main),
+        Arguments.of("recipe23.txt", (Main) Recipe23NssRichCheap::main),
+        Arguments.of("recipe24.txt", (Main) Recipe24ZSpreadAsw::main),
+        Arguments.of("recipe25.txt", (Main) Recipe25CarryRoll::main),
+        Arguments.of("recipe26.txt", (Main) Recipe26SofrInArrears::main),
+        Arguments.of("recipe27.txt", (Main) Recipe27PackageRfq::main),
+        Arguments.of("recipe28.txt", (Main) Recipe28QuotePulls::main),
+        Arguments.of("recipe29.txt", (Main) Recipe29RouterReplay::main),
+        Arguments.of("recipe30.txt", (Main) Recipe30ClobWorkup::main),
+        Arguments.of("recipe34.txt", (Main) Recipe34ConfigSchema::main));
   }
 
   @ParameterizedTest(name = "{0}")

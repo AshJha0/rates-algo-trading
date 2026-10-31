@@ -6,6 +6,82 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Added
 
+Round 2, journal write path off the loop's latency path (branch `claude/r2-journal-latency-ee2034`).
+
+- `rates-journal`: `RingJournal`, a journal written by its own thread from an off-heap Agrona ring, with the same frames as a direct append (DR-R2J-03); `JournalWriter.append` and `SegmentedJournal.append` overloads that take the frame stamp; `SegmentedJournal.rollWaits()`.
+- `rates-core`: `JournalMode` (`DIRECT`, `RING`), `LoopJournals` (a loop's two journals in one mode) and `EventLoop.Builder.journals(LoopJournals)`.
+- `rates-bench`: `--journal-mode` and `--ring-bytes` options, collection counts and journal wait counts in the JSON report, `JournalModeAppendBenchmark` (JMH, the loop thread's append in each mode) and `SafepointStallProbe` (how long segment creation holds up a spinning thread).
+- Tests: `RingJournalTest` (frame-for-frame equality with the direct mode as a jqwik property, a ring smaller than the stream, refusals), a zero-allocation roll test and a pretouch test in `SegmentedJournalTest`; `LoopAllocationTest`, `LoopReplayTest` and the replay-hash property now run in both modes.
+- Docs: BENCHMARKS cause analysis and before and after rows, API_SPEC Sections 1.5 and 9.7, ARCHITECTURE journal write path, DR-R2J-01 to DR-R2J-05.
+
+Round 2, process wiring (branch `claude/r2-wiring-c31ae4`).
+
+- `rates-app` (new): `TradingProcessMain` and `TradingProcess`, the assembled trading process (API_SPEC.md Section 18). Pricing binding `AnalyticsPricing` (P3's `FairValueSource` and `SensitivityProvider` over one SOFR OIS curve rebuilt one pillar per CurveInput, ladders mapped by `Dv01Adapter`); venue binding `VenueSession`, `InboundRouter` and `FeedBinding` (FIX and SBE book feed to the ring-buffer contract, GatewayStatus on logon, disconnect and snapshot rebuild); the desk on the loop (`DeskLoopFactory`, `DeskGroup`, `LoopBook`, `RouterHedgeSink`, `LoopOrderGateway`); post-trade binding `JournalFeed` and `VenueReconciliation`; back-test binding `JournalExport`, `DeskStrategy` and `DeskBacktest`; simulation support `SimClock`, `SimulatedVenues`, `CurveFeed`, `ClobLiquidity`. A `--replay DIR` mode.
+- Tests: `SmokeTest`, `BacktestBindingTest` (replay hash of a threaded day, daily report), `PricingBindingTest` (1e-12 against direct analytics), `VenueBindingTest` (feed gap, lost session, injected faults), `WiredLoopAllocationTest`, `AppHotPathRulesTest`, `TradingProcessMainTest`, unit tests of the book, the inbound router and the hedge sink.
+- Adapters in existing modules: `VenueGateway` sends QuoteWithdraw (60) and OrderWithdraw (61) as FIX Z and F (`OrderStateTracker.orderQuantity`); `SmartOrderRouter.cancel`, `cancelAll`, `parentsLive`, `maxParents`; `PositionKeeper` applies a venue `TradeBust` (44) as a VenueError bust (`JournalScript.venueBust`), closing the API_SPEC.md 17.14 item; `TradeRecord` gains `quoteId`, `instrumentId`, `tradeNanos` and `ClobSimulator.executions(owner)` lists the venue's fills, for the reconciliation; `CurveBuilder.maxRepricingError` no longer allocates an iterator.
+- COOKBOOK.md recipe 22 (run the trading process on a synthetic day and read the daily report); the earlier planned items 22 and 23 move to 36 and 35 at integration, after the round 2 recipes 23 to 34.
+- Docs: API_SPEC.md Section 18; ARCHITECTURE.md component rows and process topology; `module_deps.mmd` and `data_flow.mmd` redrawn; DECISIONS.md DR-R2W-01 to 15.
+
+Round 2, cookbook recipes and diagrams (branch `claude/r2-cookbook-diagrams-656067`).
+
+- COOKBOOK.md recipes 23 to 34: Nelson-Siegel-Svensson fit and rich and cheap Treasuries (23), z-spread and asset-swap spread to the OIS curve (24), carry, roll-down and the repo-implied forward (25), a compounded-in-arrears SOFR leg with lookback and lockout (26), a curve or butterfly RFQ priced as one package (27), quote pulls by the lifecycle controls (28), the router's decision table rebuilt from a journal (29), a CLOB workup and its book feed (30), PCA key-rate hedge ratios (31, Python), hit-rate calibration across the assumption band (32, Python), markout curves by client tier (33, Python) and a deployment config checked against its schema (34).
+- Programs `Recipe23NssRichCheap` to `Recipe30ClobWorkup` and `Recipe34ConfigSchema` in `rates-cookbook` with recorded output under `src/test/resources/expected`, checked by `RecipesTest`; Python recipes `research/recipes/recipe31_pca_hedge.py`, `recipe32_hitrate.py` and `recipe33_markouts.py`; every recipe registered in `tools/check_cookbook.py`.
+- Diagrams: `system_context`, `ci_pipeline`, `hedge_route_sequence`, `multi_curve_bootstrap`, `replay_determinism`, `research_to_production`, `rfq_end_to_end_timed` and `rts6_control_map` in `docs/diagrams`, shown on the site's diagrams page; `experiment_lifecycle` updated.
+
+R2 desk features (branch `claude/r2-business-6cda18`).
+
+- `rates-strategy` (new): `RiskLadder`; seven desk features behind interfaces whose defaults are today's engine: `HedgeBudget` (`ThresholdHedgeBudget`, `NettingHedgeBudget`), `AxeBook` (an `AxeSource`), `QuoteSizer` (`EnvelopeSizer`), `ClientTiering` (`StaticTiering`, `MarkoutTiering` publishing through `TierTableControl`), `HedgeTiming` (`OptimalStoppingTiming`, `FlowRateEstimator`), `InventoryPenalty` (`FundingPenalty`), `CouponCarry`; `SpreadOptimizer`; `DeskQuoter`, which reproduces `ModelSpreadStrategy` byte for byte at its defaults; `DeskMetrics`, `DeskReport`, `DeskReportCli` (desk P&L view and waterfall); `DeskFactory`, `BandScenario`, `DeskExperiment`, `DeskExperimentCli`.
+- Experiments: pre-registrations R2B-001 to R2B-007 (`data/preregs/`), config `data/experiments/R2B.config.yaml`, seven ledger records (R2B-001 to R2B-007, seq 12 to 18). Internalisation and netting supported and adopted as the desk default (`DeskFactory.deskDefault`); axes, sizing, tiering, hedge timing, funding and all six together not supported. Simulator consistency checks only (DR-008).
+- Tests: baseline equivalence, feature formulas, allocation-free per-RFQ and per-fill paths, waterfall reconciliation, experiment harness and refusals.
+- Docs: docs/research/DESK_FEATURES.md (site page "Desk features"), API_SPEC.md Section 19, DECISIONS DR-R2B-01 to DR-R2B-10, diagrams "Internalisation flow" and "Desk P&L waterfall". SpotBugs exclusion for shared desk state (DR-R2B-08).
+
+Round 2 fixes from the P&L audit, package A1 (branch `claude/fix-a1-models-67fd05`, commit 18da1a1).
+
+- Audit item 2: `HitRateModel` learns the intercept and the spread slope from the desk's own wins and losses, one Newton step per outcome with a 5,000-RFQ forgetting window, within learning bounds of -8.0 to -0.2 for the slope and -3.0 to 5.0 for the intercept instead of the declared band; `learnedSlope()`, `learnedIntercept()`, `slopeStandardError()` and `slopeOutsideDeclaredBand()` for the daily report; `base()` no longer includes the intercept (DR-FIX-A1-01).
+- Audit item 5: `TierTable.standard(version, maxQuantity, clients)` builds a three-tier default with nothing blocked and tiers 2 and 3 widened (1.15 and 1.35); `unblocked(version, widening)` turns blocked tiers into widened ones; `blockedTiers()` counts them (DR-FIX-A1-03).
+- Audit item 11: `SpreadModel` averages the win probability over a normal cover spread with 8-point Gauss-Hermite quadrature; `observeCoverGap(gapBp)`, `coverSigmaBp()`, `meanCoverGapBp()`, `coverGaps()` and `winProbability(base, s)`; with no gaps and no prior the optimum equals the point estimate (DR-FIX-A1-02).
+- Tests: `PricingModelsTest` (learning, bounds, cover averaging, tier defaults).
+
+Round 2 fixes from the P&L audit, package B (branch `claude/fix-b-clob-68d6c2`, commit 52b6df1).
+
+- Audit item 7: `ClobQuoter.inventorySkew(covariance, kappa, maxSkewBp)` moves both CLOB targets by `clamp(kappa u' Sigma p / |U|, maxSkewBp)` bp, the RFQ engine's inventory skew, before the venue tick rounding; off until called; `lastSkewBp()` reads it (DR-FIX-B-01).
+- Audit item 6: the tick rounding itself came with the review (DR-R2R-12); this package adds a test that checks every CLOB price against `ClobBook`'s tick rule for 1/32, 1/128 and 1/256 ticks on flat, long and short books.
+
+Round 2 fixes from the P&L audit, package C (branch `claude/fix-c-controls-1e7782`, commits b0521ec and b69d8c1).
+
+- Audit item 14: a breached PV01 limit may shrink but not grow, for quotes, orders and headroom; a one-sided quote whose fill offsets net PV01 skips only the daily-loss check; `RiskEngine.flattenOnly()` is true while the engine's own daily-loss kill holds, and risk-reducing orders still pass then; `Hedger` keeps its parents and keeps hedging under that kill (`flattenKills()`) (DR-FIX-C-01).
+- Audit item 16: basis and swap-spread limits, `RiskLimits.basisPv01` and `swapSpreadPv01`, refused with `RiskEngine.REJECT_BASIS` (-3) and `REJECT_SWAP_SPREAD` (-4) and counted post-trade by `basisBreaches()`; `ExposureBasisAttribution` (rates-hedge) attributes hedge fills to basis and swap-spread exposure and slippage, wired per currency by `Desk.basisAttribution(currency)` (DR-FIX-C-02).
+- Audit item 15: the router charges a filled passive child an adverse move (`RouterParams.filledAdverseFactor`, in sigma over the expected queue wait) and uses per-instrument volatility (`RouterParams.Volatility`); off by default, `RouterPresets.globalWithControls(volatility)` turns it on at 0.75 sigma (DR-FIX-C-03).
+- Audit item 18: the router charges a cost per order message (`RouterParams.messageCostPoints`, 0.0001 points per lot in `globalWithControls`); `QuoteStuffingDetector` counts cancels, replaces and withdrawals with new messages (`messages(id)`, `cancels(id)`, `instruments()`); `EodReportMain` writes per-instrument message and cancel counts (DR-FIX-C-03).
+- Tests: `RiskControlsTest`, `HedgeControlsTest`, `RouterControlsTest`, `QuoteStuffingCancelsTest`, `DeskWiringTest`; the desk-level oracle in `SinkAuditor` and `ChaosTest` follows the new breach rule.
+
+Round 2 fixes from the P&L audit, package A2 (branch `claude/fix-a2-engine-8168e0`, commits 78615e5, 2031b7a and ac1bba3).
+
+- Audit item 3 (recording side): every RFQ decision and every response goes to a `QuotingEngine.RfqRecordListener` (`recorder(listener)`) with the signed cover gap and our rank; `coversRecorded()`, `wonBehindCover()` and `meanWonBehindCoverBp()` count wins from behind the cover (DR-FIX-A2-01).
+- Audit item 4: client markouts are measured from the fair value at the trade, not the traded price, so the captured half spread no longer hides the adverse move (DR-FIX-A2-02).
+- Audit item 8: `poll` withdraws a live quote (AdverseSignal) when fair value moves against it by more than `QuotingConfig.fairMoveWithdrawBp` (default 0.25 bp; 0 turns it off); `fairMovePulls()` counts them (DR-FIX-A2-03).
+- Audit item 9: a release calendar is on by default (`QuotingConfig.usReleaseSchedule`: 08:30 and 10:00 New York on weekdays of 2026 and 2027); quotes are pulled and RFQs passed with `PassReason.RELEASE_WINDOW` from 60 s before to 30 s after, then half spreads are multiplied by 2.355 for 5 minutes; `releaseCalendar`, `releasePullNanos`, `releaseWidening`, `releases()`, `inReleasePull(now)` (DR-FIX-A2-04).
+- Audit item 12: `PackageQuoter` passes the same gates as a single RFQ (kill, health, release window, throttle, fair-value age, the risk check on every leg), reserves its legs for the time to live, books Dones, late ones included, to risk, and charges its spread on the net ladder's risk-equivalent PV01 (DR-FIX-A2-05).
+- Audit item 13: a late single-RFQ Done (review DR-R2R-13) is recorded and reaches the hedger (DR-FIX-A2-06).
+- rates-app: the package's own winner's-curse setting (0.01 bp, commit 2031b7a) was superseded in its merge of round2-integration by DR-INT-05's 0.02 bp, which stands (DR-INT-07). COOKBOOK recipes 22 and 27 re-recorded. Tests: `AuditFixesTest`.
+
+Round 2 fixes from the P&L audit, package D (branch `claude/fix-d-backtest-cdd6aa`, commits 503be68, 04edc03 and 8331c41).
+
+- Audit item 3 (back-tester side): `RfqOutcomeModel.ClientChoice.BEST_PRICE` (`withClientChoice`), a client who trades with the best price, with the same random draws as the default `HIT_RATE` (DR-FIX-D-02).
+- Audit item 17 (coupon carry): `CarryModel.bondCoupons(annualCouponByInstrument)` accrues bond coupons ACT/365 on the carry line next to funding (DR-FIX-D-03). Balance sheet, initial margin and the CCP basis remain unpriced.
+- Back-tester hedge fills: `HedgeCostModel.withDepthWalk(true)` fills market hedges level by level against the displayed touch quantity; `fromPreset` keeps the linear rule so P5-001 and AUDIT-01 to 04 still reproduce (DR-FIX-D-01).
+- Experiments: pre-registrations AUDIT-11 to AUDIT-14 (`research/prereg/`), the P&L audit re-run on the production desk (`research/audit/DeskAudit.java`, `run_desk_audit.sh`), ledger rows seq 19 to 22, results and a PNL_AUDIT.md section "Production-engine re-run". Tests: `FixPackageDTest`.
+
+### Fixed
+
+- Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).
+
+### Changed
+
+- `deploy/trading/Dockerfile`, `deploy/venue-sim/Dockerfile` and the process-mode rehearsal start `io.ratesalgo.app.TradingProcessMain`; the rehearsal polls for a live quote; `.github/workflows/ops.yml` packages `rates-app`.
+
+### Added
+
 Phase 2, event core (workstream W2).
 
 - `rates-core` (new): `EventLoop` single-writer duty cycle over Agrona `ManyToOneRingBuffer` inbound rings and one `OneToOneRingBuffer` per gateway, with dispatch by SBE template id, inbound and outbound journaling at a latched cycle time, timer polling with journaled clock ticks, agents and outbound backpressure events; `LoopRunner` with thread naming, optional Linux core pinning (`net.openhft:affinity`, optional), idle strategies, day hooks and LoopError journaling; `LoopReplay` with frame-by-frame outbound chain-hash comparison; `RingBufferContract`, `InboundPublisher`, `ControlMessages` (core control schema 100); `AnchoredClock`, `EventClock`, `LoopCounters`; `chaos.FaultInjector` for drop, duplicate, delay, reorder and gateway disconnect.
