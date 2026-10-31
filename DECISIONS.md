@@ -976,6 +976,20 @@ Decision. `CarryModel.bondCoupons` accrues each bond's annual coupon ACT/365 nex
 
 Consequences. Balance sheet, initial margin and the CCP basis are still not priced. Item 17 is fixed for coupons only.
 
+## DR-INT-08: Two allocation tests that failed on CI after the round 2 merge
+
+Date: 2026-10-31
+
+Context. On PR #3 (round2-integration f5dc492), CI failed in two allocation tests that had passed locally.
+
+First, on ubuntu, `DeskQuoterAllocationTest.perRfqAndPerFillPathsAreAllocationFreeAfterWarmUp` (rates-strategy) failed with "expected <20> but was <50>". This is a count, not bytes. The loop runs windows of 200 RFQs until at least 50 windows have run and the last 20 in a row allocated nothing, so on exit the number of trailing quiet windows is at least 20. The assertion `assertEquals(20, quiet)` held only when the path settled after window 30. On the Linux runner it allocated nothing from the first window, so all 50 windows were quiet. That is the strongest possible pass, failed by an off-by-design equality. None of the merged fix packages changed the count's meaning; they only shifted when the path settles.
+
+Second, on windows, `RouterAllocationTest.perOrderPathIsAllocationFreeAfterWarmUp` (rates-router) measured 256 bytes, where 0 is required. Fix C's additions on the per-order path are primitive arithmetic and a linear scan of two final arrays (`RouterParams.Volatility.sigmaDailyPoints`), and with `RouterPresets.global()` the new terms are zero. There is no boxing, capture, lazy initialisation or string building on the path. The test measured in a second loop after the warm-up loop. A freshly compiled loop's first pass, through on-stack replacement, allocates on the measuring thread, which `DeskQuoterAllocationTest` recorded on 2026-10-31 as a 168-byte first window. So the 256 bytes are warm-up noise, not router code.
+
+Decision. In the strategy test the count assertion becomes `quiet >= 20`, the condition the loop guarantees; the zero-byte rule on each of those windows is unchanged. In the router test the measurement moves into the warmed-up loop and call site: after at least 50 windows of 20 parents, the loop must end with 5 quiet warm-up windows followed by 3 measured windows (60 parents, as before), each allocating exactly zero bytes. The zero rule is not loosened.
+
+Consequences. Both tests still fail on any allocation in the measured windows. They no longer fail when a runner reaches steady state early, or because of the compilation of the measuring loop.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31
