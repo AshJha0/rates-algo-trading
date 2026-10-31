@@ -40,6 +40,7 @@
     <module>rates-hedge</module>
     <module>rates-quoting</module>
     <module>rates-app</module>
+    <module>rates-strategy</module>
     <module>rates-cookbook</module>
   </modules>
 

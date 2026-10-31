@@ -1,0 +1,24 @@
+flowchart TD
+  rfq["Client RFQ<br/>swap, Treasury"]
+  size{"QuoteSizer<br/>within the DV01 envelope?"}
+  decline["Decline"]
+  price["Price<br/>hit-rate optimiser with adverse selection by tier,<br/>hedge cost, size premium and funding penalty;<br/>less the axe improvement"]
+  fill["Client fill<br/>books into the RiskLadder"]
+  ladder["RiskLadder<br/>net DV01 and 2Y, 5Y, 10Y, 30Y buckets;<br/>opposing flow in swaps, bonds and futures nets here"]
+  budget{"HedgeBudget<br/>net beyond the hard budget,<br/>or beyond the soft budget after the hold?"}
+  hold["Hold<br/>recheck when the hold expires"]
+  timing{"HedgeTiming<br/>stopping rule"}
+  wait["Wait one step<br/>offsetting flow expected"]
+  staged["Send one slice<br/>recheck after the slice interval"]
+  now["Send the residual<br/>to the 10-year note future"]
+  axes["AxeBook<br/>improves the side that reduces the exposure"]
+
+  rfq --> size
+  size -->|no| decline
+  size -->|yes| price --> fill --> ladder --> budget
+  ladder -.-> axes -.-> price
+  budget -->|no| hold -.-> budget
+  budget -->|yes| timing
+  timing -->|WAIT| wait -.-> budget
+  timing -->|STAGED| staged -.-> budget
+  timing -->|IMMEDIATE| now --> ladder
