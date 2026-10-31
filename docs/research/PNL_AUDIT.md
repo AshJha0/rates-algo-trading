@@ -189,6 +189,21 @@ Expected value is stated relative to the engine's central P&L where the simulato
 | Funding and balance sheet | Partly | Back-tester bond funding without coupon carry; FailCost in posttrade | r2-business FundingPenalty and CouponCarry; item 17 | r2-business |
 | Streaming and click-to-trade prices | Missing | None | Where latency and last look matter (item 19); large on electronic Treasury venues, not estimated here | 10 |
 
+## Fix packages for the next round
+
+The fixes above, grouped into four packages that share no source file, so four people can work on them at the same time.
+
+- **Shared documents.** Edits to API_SPEC.md, DECISIONS.md, CHANGELOG.md and STATUS.md go in each package's hand-over note and are applied by the coordinator at merge, so no package edits a shared document.
+- **Not in any package.** Items 1 and 10 (hedge netting and timing) are r2-business's rates-strategy work. Item 19 needs nothing.
+- **Plan-days** are the sums of the item estimates above.
+
+| Package | Items | Files it owns (and no other package touches) | Plan-days | Done when |
+|---|---|---|---:|---|
+| A. RFQ pricing and quote lifecycle | 2, 3 (recording side), 4, 5, 8, 9, 11, 12, 13 | rates-quoting: QuotingEngine.java, QuotingConfig.java, QuotingEventHandler.java, HitRateModel.java, SpreadModel.java, ToxicityTable.java, RfqOutcome.java, PassReason.java, PackageQuoter.java, resources/quoting-hit-rate-default.yaml, and their tests | 15 | Slope learned outside [-2.4, -1.0] with a daily report of the learned value; cover and rank recorded on every RFQ, including passes and losses; toxicity marked from mid at trade; live quotes withdrawn or repriced on a fair-value move above a configured threshold; release calendar on by default; win probability averaged over the cover distribution; packages pass the kill, health, throttle, reservation and time-to-live checks; a late Done still reaches risk |
+| B. CLOB quoting | 6, 7 (CLOB side) | rates-quoting: ClobQuoter.java and its test | 3 | Every CLOB price on the venue tick (bid down, ask up); inventory skew on both sides with the RFQ engine's kappa; a test against ClobBook's tick rule |
+| C. Risk, hedge, router and surveillance controls | 14, 15, 16, 18 | rates-risk: RiskEngine.java, RiskLimits.java; rates-hedge: Hedger.java, a BasisAttribution implementation; rates-router: Allocator.java, RouterParams.java, RouterPresets.java; rates-posttrade: QuoteStuffingDetector.java, EodReportMain.java; rates-quoting: Desk.java (wiring only); their tests | 7 | Risk-reducing quotes and hedges allowed through a breach; the daily-loss kill keeps flattening hedges; basis and swap-spread limits and attribution wired; adverse term on filled passive children and per-instrument volatility; cancels counted by the stuffing detector and costed by the router. Start from r2-review's branch after it merges, because r2-review changed RiskEngine, Hedger and Allocator |
+| D. Back-tester realism and the audit re-run | 3 (back-test side), 17 (carry), and the HedgeCostModel note | rates-backtest: model/HedgeCostModel.java, model/RfqOutcomeModel.java, BacktestRunner.java, pnl/PositionBook.java, pnl/CarryModel.java; new research/prereg/AUDIT-1n files and ledger rows | 5 | Market hedges filled level by level against displayed depth; an optional best-price-wins client; bond coupon carry next to funding; AUDIT-01 to AUDIT-04 re-run through rates-app DeskBacktest (after r2-wiring merges) under new pre-registration ids. Public signatures stay compatible, because rates-app's DeskBacktest builds BacktestConfig |
+
 ## Follow-ups for other owners
 
 - **r2-business.** Item 1 is the prize for NettingHedgeBudget and OptimalStoppingTiming: up to 704k USD a day at C, 0.25 bp of client DV01. Item 10 is their threshold baseline. MarkoutTiering inherits item 4's markout definition.
