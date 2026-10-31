@@ -131,6 +131,16 @@ public final class FixedRateBond {
     return exDate[i];
   }
 
+  /**
+   * Record date of coupon i: a holder whose settlement date is strictly before it receives the
+   * coupon. The ex-dividend date where the convention has one, otherwise the coupon date. A
+   * position held from s to h is paid coupon i exactly when s &lt; entitlementDate(i) &lt;= h,
+   * which for a gilt includes a coupon paid after h when h falls in its ex-dividend period.
+   */
+  public int entitlementDate(final int i) {
+    return Math.min(exDate[i], payNominal[i]);
+  }
+
   /** Regular-way settlement date for a trade date. */
   public int settlementDate(final int tradeDate) {
     return convention.calendar().advanceBusinessDays(tradeDate, convention.settlementDays());

@@ -82,7 +82,9 @@ public final class HedgePlanner {
       final int id = universe.instrumentId(j);
       final Instrument inst = risk.directory().byId(id);
       final double lotMajor = inst.major(universe.lotMinor(j));
-      final boolean eligible = inst.currency() == residual.currency();
+      // an instrument without a finite cost is not traded (and kept out of the solver's scale)
+      final boolean eligible =
+          inst.currency() == residual.currency() && Double.isFinite(costs.linearPerLot(id));
       for (int k = 0; k < K; k++) {
         h[j][k] = eligible ? risk.unitPv01(id, k) * lotMajor : 0.0;
       }
@@ -107,7 +109,7 @@ public final class HedgePlanner {
         g += sh[i][k] * r[k];
       }
       final int id = universe.instrumentId(i);
-      final double a = costs.linearPerLot(id);
+      final double a = hi[i] > 0.0 ? costs.linearPerLot(id) : 0.0;
       final double b = costs.impactPerLot2(id);
       c[i] = kappa * g + a;
       c[i + m] = -kappa * g + a;

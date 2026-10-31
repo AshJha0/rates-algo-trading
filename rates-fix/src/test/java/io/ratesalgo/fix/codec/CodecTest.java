@@ -155,6 +155,43 @@ class CodecTest {
     assertEquals("", new FixParser().toString());
   }
 
+  private static long integer(final String s) {
+    final UnsafeBuffer b = ascii(s);
+    return AsciiNumbers.parseLong(b, 0, b.capacity(), 34);
+  }
+
+  /** DR-R2R-05: integer fields, tag numbers and dates are parsed strictly. */
+  @Test
+  void integersTagsAndDatesAreStrict() {
+    assertEquals(0L, integer("0"));
+    assertEquals(-17L, integer("-17"));
+    assertEquals(Long.MAX_VALUE, integer("9223372036854775807"));
+    assertEquals(Long.MIN_VALUE, integer("-9223372036854775808"));
+    for (final String bad :
+        new String[] {"+5", "1.0", "5.", "", "-", "9223372036854775808", "-9223372036854775809",
+            "1e3", " 1"}) {
+      assertThrows(FixFormatException.class, () -> integer(bad), bad);
+    }
+    final FixParser p = new FixParser();
+    for (final String bad :
+        new String[] {"8=FIX.4.4|9=5|35=0|4294967345=X|10=000|", "8=FIX.4.4|9=5|35=0|035=0|10=000|",
+            "8=FIX.4.4|9=5|35=0|1234567890=X|10=000|"}) {
+      assertEquals(FixParser.MALFORMED, p.wrap(ascii(bad), 0, bad.length()), bad);
+    }
+    for (final String bad :
+        new String[] {"20260231-00:00:00", "20270229-00:00:00", "21000229-00:00:00",
+            "20260431-00:00:00"}) {
+      final UnsafeBuffer b = ascii(bad);
+      assertThrows(FixFormatException.class, () -> FixTime.parse(b, 0, b.capacity(), 52), bad);
+    }
+    final UnsafeBuffer leap = ascii("20280229-00:00:00");
+    assertEquals(Instant.parse("2028-02-29T00:00:00Z").getEpochSecond() * 1_000_000_000L,
+        FixTime.parse(leap, 0, leap.capacity(), 52));
+    final UnsafeBuffer y2000 = ascii("20000229-00:00:00");
+    assertEquals(Instant.parse("2000-02-29T00:00:00Z").getEpochSecond() * 1_000_000_000L,
+        FixTime.parse(y2000, 0, y2000.capacity(), 52));
+  }
+
   @Test
   void parserRejectsDamagedMessages() {
     final FixWriter w = new FixWriter(256);

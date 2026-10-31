@@ -697,7 +697,16 @@ public final class RiskEngine {
     final Instrument inst = directory.byIndex(i);
     final double orderPv01 = unitParallel[i] * inst.major(signedQuantity);
     final double net = netPv01(inst.currency());
-    return orderPv01 * net < 0.0 && Math.abs(orderPv01) <= Math.abs(net);
+    if (orderPv01 * net >= 0.0 || Math.abs(orderPv01) > Math.abs(net)) {
+      return false;
+    }
+    // no overshoot even if every other working reservation on the order's side fills too
+    // (DR-R2R-09); the instrument's own reservation is left out, as in the envelope check
+    final int c = inst.currency().index();
+    if (orderPv01 < 0.0) {
+      return net + resNetLoAgg[c] - resNetLo[i] + orderPv01 >= 0.0;
+    }
+    return net + resNetHiAgg[c] - resNetHi[i] + orderPv01 <= 0.0;
   }
 
   private int dailyLoss(final int c) {

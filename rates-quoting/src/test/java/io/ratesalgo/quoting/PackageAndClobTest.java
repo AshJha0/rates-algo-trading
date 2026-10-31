@@ -4,6 +4,7 @@ import static io.ratesalgo.quoting.TestMarket.FACE_1M;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.api.CurrencyCode;
@@ -93,6 +94,31 @@ class PackageAndClobTest {
     clob.update(TestMarket.UST10, m.clock.epochNanos());
     assertTrue(clob.restingOrder(TestMarket.UST10, true) != 0L);
     assertTrue(clob.throttled() > 0);
+  }
+
+  /**
+   * DR-R2R-12: on a venue with a 1/256 tick the bid rounds down and the ask up to the tick, each
+   * within one tick of the Decimal9 target, so the venue does not refuse the order as off-tick.
+   */
+  @Test
+  void clobPricesAreOnTheVenueTick() {
+    final long tick = Decimal9.round(1.0 / 256);
+    final ClobQuoter fine = new TestMarket().desk.clob();
+    final ClobQuoter coarse = m.desk.clob();
+    fine.enable(TestMarket.UST5);
+    coarse.enable(TestMarket.UST5, tick);
+    fine.update(TestMarket.UST5, m.clock.epochNanos());
+    coarse.update(TestMarket.UST5, m.clock.epochNanos());
+    final long fineBid = fine.restingPrice(TestMarket.UST5, true);
+    final long fineAsk = fine.restingPrice(TestMarket.UST5, false);
+    final long bid = coarse.restingPrice(TestMarket.UST5, true);
+    final long ask = coarse.restingPrice(TestMarket.UST5, false);
+    assertTrue(fineBid % tick != 0 || fineAsk % tick != 0, "the Decimal9 targets are off the tick");
+    assertEquals(0L, bid % tick);
+    assertEquals(0L, ask % tick);
+    assertTrue(bid <= fineBid && fineBid - bid < tick, bid + " vs " + fineBid);
+    assertTrue(ask >= fineAsk && ask - fineAsk < tick, ask + " vs " + fineAsk);
+    assertThrows(IllegalArgumentException.class, () -> coarse.enable(TestMarket.UST10, 0L));
   }
 
   @Test

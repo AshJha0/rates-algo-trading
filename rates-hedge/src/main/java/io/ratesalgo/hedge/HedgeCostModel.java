@@ -8,7 +8,10 @@ package io.ratesalgo.hedge;
  */
 public interface HedgeCostModel {
 
-  /** Cost per lot, independent of size; non-negative. */
+  /**
+   * Cost per lot, independent of size; non-negative. Positive infinity for an instrument the model
+   * has no cost for: the planner never trades it.
+   */
   double linearPerLot(int instrumentId);
 
   /** Impact coefficient per lot squared; non-negative. */

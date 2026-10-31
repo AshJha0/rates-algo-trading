@@ -241,7 +241,12 @@ public final class BondPricer {
     return d2 / pv;
   }
 
-  /** Yield DV01: price change per 100 face for a one basis point fall in yield. */
+  /**
+   * Yield DV01: price change per 100 face for a one basis point fall in yield, positive for a long
+   * bond (the street "price value of a basis point"). This is the opposite sign to {@code
+   * io.ratesalgo.analytics.risk.Dv01Ladder}, which reports PV(+1bp) minus PV and so is negative
+   * for a long bond; convert with a sign flip when mixing the two.
+   */
   public double dv01(
       final FixedRateBond b, final double yield, final int settlement, final boolean adjusted) {
     return modifiedDuration(b, yield, settlement, adjusted)
