@@ -303,7 +303,7 @@ A router that sends the same size at the same interval is easy to detect: anothe
 
 ### Worked example
 
-COOKBOOK.md recipe 17 routes a 20 million buy of a 10-year note across two simulated CLOBs at urgency 0.5. The first slice is 4 million. On venue 1 the touch is 98.500000 / 98.515625 (one tick of 1/64), 12 million rests on the bid, and the router's estimate of flow is 1 lot per second each side. For the 3 million it evaluated there:
+COOKBOOK.md recipe 16 routes a 20 million buy of a 10-year note across two simulated CLOBs at urgency 0.5. The first slice is 4 million. On venue 1 the touch is 98.500000 / 98.515625 (one tick of 1/64), 12 million rests on the bid, and the router's estimate of flow is 1 lot per second each side. For the 3 million it evaluated there:
 
 - half spread \(h = 0.0078125\);
 - impact \(I = 0.6 \times 0.5 \times \sqrt{3/46\,800} = 0.002402\) (ADV of 46,800 lots is twice the arrival rate over a 23,400-second day);

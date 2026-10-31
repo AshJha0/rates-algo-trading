@@ -609,9 +609,9 @@ mvn -B -ntp -pl rates-analytics -am test -Dtest=AnalyticsGoldenTest -Dsurefire.f
 
 The figures measured on 2026-10-31 (JDK 25.0.5, Windows 11) are listed in API_SPEC.md Section 7.2. To add a comparison, add the instrument to `research/ratesresearch/goldens/generator.py`, regenerate, and add the assertion with its tolerance named as a constant in the test.
 
-## 17. How do I route a hedge order and read the markout report?
+## 16. How do I route a hedge order and read the markout report?
 
-Numbered 17, not 16 as the P4 brief said: the planned list above already gives 16 to the P3 kill-switch recipe and 17 to routing (DECISIONS.md DR-P4-05).
+Numbered 16, as the P4 brief said; it was written as 17 on the P4 branch and renumbered when the phase branches were integrated, because P5 uses 17 to 19 (DECISIONS.md DR-P4-05, amended).
 
 `SmartOrderRouter` takes a parent order through `ParentOrderSink.submit` (the P3 hedger's `HedgeOrderSink` is bound to it), cuts it into randomised slices, prices every venue with the cost model of API_SPEC.md Section 15.1, allocates each slice, and journals the cost table as RouteDecision (template 80) and RouteDecisionVenue (template 81) frames before any child order goes out. Here the router runs against two in-memory CLOBs (`SimConfig.ust10yTwoVenues()`), and a `DecisionCodec` behind the journal sink decodes each decision as it is written, so the table printed is the one in the journal. The last two lines are a small markout report: the cost against the arrival mid, and the mid's move 30 seconds after the last fill, both in basis points of price.
 
@@ -632,10 +632,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** COOKBOOK.md recipe 17: route a hedge order across two venues and read the decisions. */
-public final class Recipe17RouteHedge {
+/** COOKBOOK.md recipe 16: route a hedge order across two venues and read the decisions. */
+public final class Recipe16RouteHedge {
 
-  private Recipe17RouteHedge() {}
+  private Recipe16RouteHedge() {}
 
   public static void main(final String[] args) {
     final ManualClock clock = new ManualClock();

@@ -213,7 +213,7 @@ Decision. Greedy by marginal cost per unit in blocks of a common increment, at m
 
 Consequences. Optimal on the increment lattice for convex per-venue costs without minimum sizes (checked against enumeration); a heuristic otherwise. Bounded, deterministic and allocation-free.
 
-## DR-P4-05: Cookbook recipe numbered 17
+## DR-P4-05: Cookbook recipe numbered 17 (amended: renumbered 16)
 
 Date: 2026-10-31
 
@@ -222,6 +222,8 @@ Context. The brief names the router recipe 16; COOKBOOK.md's planned list gives 
 Decision. The repository wins: the router recipe is 17, and it prints a markout line as the planned title says.
 
 Consequences. No collision with the P3 recipe.
+
+Amendment (2026-10-31, branch integration). The phase plan assigns P3 recipes 12 to 15, P4 recipe 16 and P5 recipes 17 to 19, and the P5 branch wrote 17 to 19. To avoid a duplicate, the router recipe is renumbered 16 (`Recipe16RouteHedge`, `expected/recipe16.txt`); its content is unchanged.
 
 ## DR-P4-06: The router routes one instrument across venues; the hedger chooses the instrument
 
