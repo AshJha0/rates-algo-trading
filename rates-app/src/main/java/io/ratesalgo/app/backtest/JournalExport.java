@@ -17,6 +17,7 @@ import io.ratesalgo.messages.sbe.Side;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.TreeMap;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -39,21 +40,24 @@ import org.agrona.concurrent.UnsafeBuffer;
  */
 public final class JournalExport {
 
-  private final ManualClock clock = new ManualClock(0L);
+  private final ManualClock clock;
   private final MessageHeaderDecoder header = new MessageHeaderDecoder();
   private final BookUpdateDecoder update = new BookUpdateDecoder();
   private final BookUpdateEncoder top = new BookUpdateEncoder();
   private final MessageHeaderEncoder headerEncoder = new MessageHeaderEncoder();
   private final UnsafeBuffer out = new UnsafeBuffer(new byte[128]);
-  private final Map<Integer, TreeMap<Long, Long>> bids = new HashMap<>();
-  private final Map<Integer, TreeMap<Long, Long>> asks = new HashMap<>();
+  private final Map<Integer, NavigableMap<Long, Long>> bids = new HashMap<>();
+  private final Map<Integer, NavigableMap<Long, Long>> asks = new HashMap<>();
   private final Map<Integer, long[]> lastTop = new HashMap<>();
-  private JournalWriter writer;
+  private final JournalWriter writer;
   private long venueSeq;
   private long copied;
   private long topFrames;
 
-  private JournalExport() {}
+  private JournalExport(final ManualClock clock, final JournalWriter writer) {
+    this.clock = clock;
+    this.writer = writer;
+  }
 
   /**
    * Exports journal {@code name} in {@code dir} to {@code target}.
@@ -61,16 +65,16 @@ public final class JournalExport {
    * @return frames written
    */
   public static long export(final Path dir, final String name, final Path target, final int capacityBytes) {
-    final JournalExport e = new JournalExport();
-    try (JournalWriter w = JournalWriter.create(target, capacityBytes, e.clock);
+    final ManualClock clock = new ManualClock(0L);
+    try (JournalWriter w = JournalWriter.create(target, capacityBytes, clock);
         SegmentedJournalReader reader = SegmentedJournalReader.open(dir, name)) {
-      e.writer = w;
+      final JournalExport e = new JournalExport(clock, w);
       final FrameHandler handler = e::onFrame;
       while (reader.next(handler)) {
         // every frame
       }
+      return e.copied + e.topFrames;
     }
-    return e.copied + e.topFrames;
   }
 
   private void onFrame(
@@ -104,7 +108,7 @@ public final class JournalExport {
     copied++;
   }
 
-  private TreeMap<Long, Long> side(final int instrumentId, final boolean bid) {
+  private NavigableMap<Long, Long> side(final int instrumentId, final boolean bid) {
     return (bid ? bids : asks)
         .computeIfAbsent(instrumentId, k -> bid ? new TreeMap<>(java.util.Comparator.reverseOrder()) : new TreeMap<>());
   }
@@ -116,15 +120,15 @@ public final class JournalExport {
       side(id, true).clear();
       side(id, false).clear();
     } else {
-      final TreeMap<Long, Long> levels = side(id, update.side() == Side.Buy);
+      final NavigableMap<Long, Long> levels = side(id, update.side() == Side.Buy);
       if (action == BookAction.Delete || update.quantity() <= 0) {
         levels.remove(update.price().mantissa());
       } else {
         levels.put(update.price().mantissa(), update.quantity());
       }
     }
-    final TreeMap<Long, Long> b = side(id, true);
-    final TreeMap<Long, Long> a = side(id, false);
+    final NavigableMap<Long, Long> b = side(id, true);
+    final NavigableMap<Long, Long> a = side(id, false);
     if (b.isEmpty() || a.isEmpty()) {
       return;
     }

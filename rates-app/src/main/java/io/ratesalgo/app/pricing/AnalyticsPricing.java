@@ -208,7 +208,7 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
     newestInput = Math.max(newestInput, timestampNanos);
     final int pillar = pillarOfSwap[kindIndex[i]];
     final double quote = valueMantissa * MANTISSA_PERCENT_TO_DECIMAL;
-    if (quote != builder.instruments().get(pillar).quote()) {
+    if (Double.compare(quote, builder.instruments().get(pillar).quote()) != 0) {
       builder.rebuild(pillar, quote);
       rebuilds++;
     }

@@ -52,7 +52,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Package the process jars
-        run: mvn -B -ntp -DskipTests package -pl rates-ops,rates-posttrade -am
+        run: mvn -B -ntp -DskipTests package -pl rates-app,rates-ops,rates-posttrade -am
       - name: Validate configuration with the Java validator the processes use
         run: |
           java -cp "rates-ops/target/rates-ops-0.1.0-SNAPSHOT.jar:rates-ops/target/lib/*" \

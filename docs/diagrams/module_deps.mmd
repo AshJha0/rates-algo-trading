@@ -1,62 +1,66 @@
 graph TD
   common["rates-common<br/>Clock, ManualClock, TimerWheel<br/>(P0)"]
   messages["rates-messages<br/>SBE schema v1 codecs<br/>(P0)"]
-  journal["rates-journal<br/>JournalWriter, JournalReader, Replayer<br/>(P0)"]
+  journal["rates-journal<br/>JournalWriter, SegmentedJournal, Replayer<br/>(P0, P2)"]
   agrona["Agrona (external)"]
   sbe["SBE runtime (external)"]
+  quickfixj["QuickFIX/J (external, simulators only)"]
+  snakeyaml["SnakeYAML (external)"]
 
   analytics["rates-analytics<br/>curves, swaps, bonds, futures<br/>(P1)"]
   core["rates-core<br/>event loop, replay, runner<br/>(P2)"]
   bench["rates-bench<br/>latency harness, JMH<br/>(P2)"]
-  venues["rates-venues<br/>FIX 4.4, SBE book feed, simulators<br/>(planned P2)"]
+  refdata["rates-refdata<br/>securities master, calendars<br/>(P2)"]
+  fix["rates-fix<br/>FIX 4.4 codec, session, gateway<br/>(P2)"]
+  venues["rates-venues<br/>D2C, CLOB, SEF simulators, book feed<br/>(P2)"]
   api["rates-api<br/>interfaces to P1, P2, P4 and stubs<br/>(P3)"]
   quoting["rates-quoting<br/>RFQ, package and CLOB quoting<br/>(P3)"]
   risk["rates-risk<br/>DV01 ladder, limits, kill switch<br/>(P3)"]
   hedge["rates-hedge<br/>cost-aware hedger<br/>(P3)"]
   router["rates-router<br/>SmartOrderRouter, cost model, state machine<br/>(P4)"]
   backtest["rates-backtest<br/>runner, outcome models, ledger, report<br/>(P5)"]
-  snakeyaml["SnakeYAML (external)"]
   posttrade["rates-posttrade<br/>positions, records, recon<br/>(P6)"]
   ops["rates-ops<br/>health, metrics, config, stress<br/>(P6)"]
+  app["rates-app<br/>the trading process: bindings, assembly<br/>(round 2)"]
+  cookbook["rates-cookbook<br/>COOKBOOK.md recipes"]
 
   journal --> common
   journal --> agrona
   messages --> sbe
   messages --> agrona
-
-  analytics -.-> common
   core --> common
   core --> messages
   core --> journal
   core --> agrona
   bench --> core
-  core -.-> analytics
-  venues -.-> messages
-  venues -.-> core
+  fix --> common
+  fix --> messages
+  venues --> fix
+  venues --> refdata
+  venues --> quickfixj
   api --> common
   api --> messages
   risk --> api
   hedge --> risk
   quoting --> hedge
   quoting --> risk
-  api -.-> analytics
-  api -.-> core
-  api -.-> router
   router --> common
   router --> messages
   router --> agrona
-  router -.-> core
-  router -.-> venues
   backtest --> journal
   backtest --> messages
-  backtest --> common
   backtest --> snakeyaml
-  backtest -.-> core
   posttrade --> journal
   posttrade --> messages
-  posttrade -.-> analytics
   ops --> posttrade
   ops --> journal
 
-  classDef planned stroke-dasharray: 5 5
-  class venues planned
+  app --> core
+  app --> analytics
+  app --> quoting
+  app --> router
+  app --> venues
+  app --> posttrade
+  app --> ops
+  app --> backtest
+  cookbook --> app

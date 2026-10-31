@@ -1,18 +1,35 @@
 flowchart LR
-  venue["Venue or venue simulator<br/>FIX 4.4, SBE book feed<br/>(planned P2)"]
-  gateway["Venue gateway<br/>decode to internal SBE<br/>(planned P2)"]
-  ring_in["Inbound ring buffer<br/>Agrona"]
-  loop["Event loop<br/>one thread per instrument group<br/>(planned P2)"]
-  journal["Journal<br/>RAJ1 frames, hash chain<br/>(P0)"]
-  ring_out["Outbound ring buffer"]
-  gateway_out["Venue gateway<br/>encode to venue protocol"]
-  replayer["Replayer<br/>(P0)"]
-  backtest["Back-tester<br/>(planned P5)"]
-  research["Python research<br/>ratesresearch (P0 partial)"]
+  d2c["D2C RFQ simulator<br/>FIX 4.4 (rates-venues)"]
+  clob["CLOB simulator<br/>FIX 4.4 and SBE book feed"]
+  curvefeed["Curve feed<br/>CurveInput, Heartbeat"]
+  session["VenueSession<br/>VenueGateway: FIX to SBE"]
+  feed["FeedBinding<br/>gap: snapshot, GatewayStatus"]
+  router_in["InboundRouter<br/>partition by instrument group"]
+  ring_in["Inbound ring<br/>one per group"]
+  loop["Event loop per group<br/>DeskGroup: pricing, book,<br/>quoting, risk, hedger, routers"]
+  journals["Journals<br/>in, out, route"]
+  ring_out["Outbound rings<br/>D2C, CLOB, control"]
+  control["Control endpoint<br/>kill switch, status, metrics"]
+  replay["LoopReplay<br/>outbound hash comparison"]
+  keeper["Position keeper<br/>venue reconciliation"]
+  backtest["Back-tester<br/>DeskStrategy, daily report"]
+  research["Python research<br/>ratesresearch"]
 
-  venue --> gateway --> ring_in --> loop
-  loop -->|append every input| journal
-  loop --> ring_out --> gateway_out --> venue
-  journal --> replayer --> backtest
-  journal --> research
+  d2c --> session
+  clob --> session
+  clob --> feed
+  session --> router_in
+  feed --> router_in
+  curvefeed --> router_in
+  control -->|KillSwitch| router_in
+  router_in --> ring_in --> loop
+  loop -->|every input and output| journals
+  loop --> ring_out --> session
+  session --> d2c
+  session --> clob
+  loop -->|status agent| control
+  journals --> replay
+  journals --> keeper
+  journals -->|export| backtest
+  journals --> research
   backtest --> research

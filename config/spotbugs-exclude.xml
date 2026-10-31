@@ -120,4 +120,15 @@
       <Bug pattern="EI_EXPOSE_REP2" />
     </Or>
   </Match>
+  <!-- Round 2 (DR-R2W-15): rates-app is the assembly; it builds each component once and hands
+       collaborators to each other (routers to the hedge sink, the composite book to the pricing
+       binding, rings to the sessions) and exposes them to the tests and the status endpoint.
+       Holding and returning those references is the wiring. Internal arrays stay private. -->
+  <Match>
+    <Package name="~io\.ratesalgo\.app(\..*)?" />
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>

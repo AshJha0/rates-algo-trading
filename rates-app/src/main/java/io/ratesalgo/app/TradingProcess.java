@@ -191,7 +191,8 @@ public final class TradingProcess implements AutoCloseable {
   private final org.agrona.concurrent.MessageHandler controlHandler = this::onControl;
   private final List<LoopRunner> runners = new ArrayList<>();
   private final AtomicBoolean driving = new AtomicBoolean();
-  private Thread driver;
+  private final Object lifecycle = new Object();
+  private volatile Thread driver;
   private volatile Throwable driverFailure;
   private long killSwitchMessages;
   private long breachMessages;
@@ -282,6 +283,7 @@ public final class TradingProcess implements AutoCloseable {
    */
   public static TradingProcess start(final Options options) {
     final TradingProcess p = new TradingProcess(options);
+    boolean started = false;
     try {
       p.d2c.connect();
       p.clob.connect();
@@ -297,9 +299,11 @@ public final class TradingProcess implements AutoCloseable {
       }
       p.venues.startFlow();
       p.pump();
-    } catch (final RuntimeException e) {
-      p.close();
-      throw e;
+      started = true;
+    } finally {
+      if (!started) {
+        p.close();
+      }
     }
     return p;
   }
@@ -384,7 +388,13 @@ public final class TradingProcess implements AutoCloseable {
    * Runs each loop on its own thread and the venues, gateways, feed and liquidity on a driver
    * thread that advances simulated time by {@code timeScale} times real time.
    */
-  public synchronized void startThreads(final double timeScale) {
+  public void startThreads(final double timeScale) {
+    synchronized (lifecycle) {
+      startThreadsLocked(timeScale);
+    }
+  }
+
+  private void startThreadsLocked(final double timeScale) {
     if (driver != null) {
       return;
     }
@@ -398,7 +408,7 @@ public final class TradingProcess implements AutoCloseable {
               .start());
     }
     driving.set(true);
-    driver =
+    final Thread thread =
         new Thread(
             () -> {
               try {
@@ -419,14 +429,16 @@ public final class TradingProcess implements AutoCloseable {
               }
             },
             "rates-gateways");
-    driver.setDaemon(true);
-    driver.start();
+    thread.setDaemon(true);
+    driver = thread;
+    thread.start();
   }
 
   /** What stopped the driver thread or a loop thread, or null. */
   public Throwable failure() {
-    if (driverFailure != null) {
-      return driverFailure;
+    final Throwable driverThread = driverFailure;
+    if (driverThread != null) {
+      return driverThread;
     }
     for (final LoopRunner r : runners) {
       if (r.failure() != null) {
@@ -568,11 +580,18 @@ public final class TradingProcess implements AutoCloseable {
 
   /** Stops the threads, logs out, closes journals and venues. */
   @Override
-  public synchronized void close() {
+  public void close() {
+    synchronized (lifecycle) {
+      closeLocked();
+    }
+  }
+
+  private void closeLocked() {
     driving.set(false);
-    if (driver != null) {
+    final Thread thread = driver;
+    if (thread != null) {
       try {
-        driver.join(5_000L);
+        thread.join(5_000L);
       } catch (final InterruptedException e) {
         Thread.currentThread().interrupt();
       }

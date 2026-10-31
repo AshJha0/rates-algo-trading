@@ -16,6 +16,7 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 | P4 | Smart order router | 8 | 0.5 to 1 | 1 (one working session, on branch `claude/p4-router-43caad`) | 2026-10-31 | gate open |
 | P5 | Back-tester with pre-registration (W7), Python quant research (W10); latency jobs | 18 | 1.5 | 0.3 (branch work, 2026-10-31) | 2026-10-31 | gate open |
 | P6 | Documentation, regulation mapping, knowledge check, release | 16 (this branch: 11) | 1 | 0.3 for the branch share (see below) | 2026-10-31 | in progress: post-trade, compliance inventory, operations and regulation chapters done on the branch; knowledge check, final documentation pass and release after integration |
+| R2 | Wiring: one trading process from the phase modules (`rates-app`), smoke test, replay-hash and back-test bindings, deploy, docs | not planned in plan-days | 1 (as briefed) | about 0.1 (one session of about 2.5 hours on 2026-10-31) | 2026-10-31 | gate open: local verify green, CI pending |
 
 ## Estimate versus actual
 
@@ -110,8 +111,28 @@ Gate results, from `mvn -B -ntp verify` on JDK 25.0.5, Windows 11, 2026-10-31, b
 | Allocation-free per-RFQ path after warm-up | five windows of 20,000 RFQs: 280, 0, 0, 0, 0 bytes (DR-P3-08) | `QuotingAllocationTest` |
 | Coverage at or above the floor, SpotBugs clean | JaCoCo line floor 0.85 met and SpotBugs clean in every module | `mvn -B -ntp verify` |
 
+### Round 2 wiring gate
+
+Planned: one wall-clock day as briefed. Actual: about 2.5 hours in one session on 2026-10-31, of which roughly an hour was reading the phase modules' interfaces and an hour finding why the first smoke runs did not trade (the sync check, the start time, the spread; DR-R2W-09, DR-R2W-13). The work was faster than planned because every phase had built to pinned interfaces with stubs; the bindings were adapters, not redesigns.
+
+| Check | Where | Result |
+|---|---|---|
+| Whole process for ten simulated minutes, seed 7 | `SmokeTest`, recipe 22 | 43 RFQs, 43 quotes, 25 fills, 261 hedge parents, 266 hedge fills, 29,040 book updates, 7,200 curve messages |
+| Kill switch through the control endpoint pulls everything | `SmokeTest` | 0 live quotes, 0 router children, nothing resting at the CLOB, KillSwitch on the control ring |
+| Positions from the journals, reconciled with both venues | `SmokeTest` | 291 trades in 9 positions; 291 ours, 291 theirs, 291 matched, 0 breaks |
+| Replay hash of the smoke day | `SmokeTest` | 97,044 inbound frames, 308 of 308 outbound messages, hash equal |
+| Replay hash of a day run with the loops on their own threads | `BacktestBindingTest` | equal (about 256 outbound messages; the count varies run to run) |
+| Daily report on the recorded journal | `BacktestBindingTest`, recipe 22 | written and deterministic; recipe 22: 43 RFQs, 22 client fills, 268 hedge fills |
+| Pricing binding against direct analytics | `PricingBindingTest` | par rate and PV within 1e-12, ladder within 1e-12 of the parallel DV01 |
+| Feed gap and lost session pull quotes through the loop | `VenueBindingTest` | pulled, cancelled at the venue, quoting resumed |
+| Loop allocation with the real desk | `WiredLoopAllocationTest` | windows after warm-up within 1,024 bytes, at least one 0 (DR-R2W-12) |
+| Hot-path rules on the process classes | `AppHotPathRulesTest` | met |
+| `LoopAllocationTest` and `HotPathRulesTest` in rates-core | `mvn -B -ntp verify` | unchanged, met |
+
 ## Open items
 
 - P0: local verification done on 2026-10-31 (mvn verify on JDK 25.0.5 and JDK 27: 50 Java tests, coverage floor met, SpotBugs clean; ruff, mypy, pytest 16 passed; mkdocs build --strict clean; cookbook recipes recorded and checked by tools/check_cookbook.py). The gate closes when the same jobs are green in GitHub Actions on Linux and Windows.
 - P0: the repository is private until the owner is satisfied (DR-001 amendment); the site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md).
-- P6 (branch): bind the interfaces in API_SPEC.md Section 17.14 at integration; map P2 `TradeBust` (44) onto `PostTradeBust`; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as planned in docs/compliance/RTS6_INVENTORY.md.
+- P6 (branch): bind the interfaces in API_SPEC.md Section 17.14 at integration; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as planned in docs/compliance/RTS6_INVENTORY.md.
+- R2 (deferred): bind `MarkSource`, `CarrySource`, `BusinessCalendar`, `VenueStatusPort` and `QuotingControl` (API_SPEC.md 17.14) beyond fixtures; tail the journals into the position keeper live instead of after the run; a futures simulator for the routers and the hedger (DR-R2W-08); a trade feed for the routers' queue model; a second currency and so a second loop; the CLOB quoter is built but not enabled; the SEF simulator is not connected; reconcile the router on reconnect (`SmartOrderRouter.reconcile` with an OrderMassStatusRequest); retire one of the two cancel message pairs (DR-R2W-04).
+- R2 (findings outside its scope): `Venues.T0` is documented as 13:30Z, 08:30 New York, but is 14:30Z, 09:30 New York; the D2C arrival peak is at 08:30, so tests starting at `T0` see the base rate only.

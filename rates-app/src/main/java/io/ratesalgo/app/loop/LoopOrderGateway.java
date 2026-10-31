@@ -36,7 +36,21 @@ final class LoopOrderGateway implements OrderGateway {
   private final MessageHeaderEncoder header = new MessageHeaderEncoder();
   private final NewOrderEncoder newOrder = new NewOrderEncoder();
   private final OrderCancelEncoder cancel = new OrderCancelEncoder();
-  private ChildLookup childLookup;
+  /** Until the router is built: a cancel before then has no child to describe. */
+  private static final ChildLookup UNBOUND =
+      new ChildLookup() {
+        @Override
+        public Side side(final long clOrdId) {
+          throw new IllegalStateException("child lookup not bound");
+        }
+
+        @Override
+        public long quantity(final long clOrdId) {
+          throw new IllegalStateException("child lookup not bound");
+        }
+      };
+
+  private ChildLookup childLookup = UNBOUND;
 
   LoopOrderGateway(final EventLoop loop, final int instrumentId) {
     this.loop = loop;
