@@ -263,7 +263,63 @@ Planned for P3 (quoting, risk, hedging). It will cover key-rate DV01, the ladder
 
 ## 9. Smart order routing in fixed income
 
-Planned for P4 (routing). It will cover venue selection for hedges and client fills, splitting across venues, the information cost of showing size, latency-aware routing, and the measurement of execution quality by markout.
+### Plain idea
+
+A smart order router takes one order that is too large, or too urgent, to send to a single place and decides where, how and when to work it. For each venue it estimates what a child order would cost: the spread it would pay or earn, the price impact of its size, the fees, the chance that a resting order is filled before the market moves, and the delay to the venue. It then splits the order to minimise the total, sends passive orders first where waiting is cheap, escalates to aggressive orders when time runs out, and re-routes when the book moves away. Everything it decided, with the numbers it decided on, goes into the journal.
+
+### Why bonds differ from equities
+
+Equity routers in the United States work against a consolidated quote and a trade-through rule: the national best bid and offer is public, and a venue may not execute through a better price displayed elsewhere. Treasuries and swaps have neither. There is no consolidated tape of quotes, and each venue's book is visible only to its participants. The dealer-to-dealer market in on-the-run Treasuries trades on a few central limit order books with deep top-of-book size, clip sizes of millions, ticks of 1/128 or 1/64 of a point, and a workup protocol after each trade (Section 6). Off-the-run bonds and most swaps trade by request for quote. Futures are the deepest liquidity for duration risk and are often the hedge instrument of choice, at the cost of basis risk. A rates router therefore chooses among a handful of venues with very different microstructure, and its biggest decision is often which instrument and protocol to use, which in this project belongs to the hedger (Section 8); the router places a parent in one instrument across the venues that list it.
+
+### CLOB versus RFQ for hedging
+
+Hedging on a CLOB is anonymous and immediate. Crossing the spread pays half of it plus the impact of the size; resting earns half the spread but risks not being filled, or being filled just before the price moves through the order (adverse selection). Hedging by RFQ shows the size and the direction to several dealers before any trade, which is information leakage: the losing dealers know a hedge is coming and can trade ahead of it. For the small, frequent hedges a market maker generates, the CLOB with a router is the usual choice; RFQ is for sizes the books cannot absorb. The router in this project routes to CLOB and futures venues only.
+
+### Queue position
+
+A resting limit order joins the back of the queue at its price. It fills when the volume traded at that price exceeds the quantity ahead of it, minus what cancels ahead of it. The router uses the pure-death queue of Cont, Stoikov and Talreja (2010): unit market orders arrive at rate \(\mu\), each unit ahead cancels at rate \(\theta\), and the probability that an order of \(s\) units behind \(q\) units fills completely within \(T\) is
+
+\[
+P = \Pr\Big(\sum_{k=1}^{q} E_k + \sum_{i=1}^{s} F_i \le T\Big),\qquad E_k \sim \mathrm{Exp}(\mu + \theta k),\; F_i \sim \mathrm{Exp}(\mu),
+\]
+
+evaluated by uniformisation (`QueueFillModel`, the algorithm pinned in the owner's earlier execution library). Deeper queues, slower flow and shorter horizons all lower \(P\); cancellations ahead raise it.
+
+### Passive first, then escalate
+
+The cost of a passive child of size \(q\) on venue \(v\), with half spread \(h\), impact \(I(q)\), latency cost \(L\), fees \(f_m\) (maker) and \(f_t\) (taker), and an expected adverse move \(A\) if it is not filled, is
+
+\[
+c_{\text{pass}}(q) = P\,(-h + I + f_m) + (1 - P)\,(A + h + I + f_t) + L,
+\qquad
+c_{\text{aggr}}(q) = h + I + f_t + L,
+\]
+
+per unit, in price points. The unfilled part is assumed to cross at the end of the passive time limit, which is why it carries \(A + h + f_t\). Impact is charged to both, because the square-root law \(I(q) = y\,\sigma_{\text{day}}\sqrt{q/\mathrm{ADV}}\) describes the price pressure of traded volume whatever the order type. The router allocates a slice across venues to minimise \(\sum_v q_v\,\min(c_{\text{pass},v}, c_{\text{aggr},v})\) under minimum sizes, lot sizes and participation caps (API_SPEC.md Section 15.2). Urgency \(u \in [0, 1]\) shortens the schedule and the passive time limit in proportion to \(1 - u\); at \(u = 1\) everything crosses at once. When a passive child reaches its limit, the router cancels it and routes the remainder aggressively. When the touch moves away from a resting child by the threshold, the router cancels it and routes the remainder again, passively if time allows. Quantity is re-routed only after the venue confirms the cancel, so late fills can never make the children exceed the parent.
+
+### Anti-gaming
+
+A router that sends the same size at the same interval is easy to detect: another participant who sees a 5 million clip every 15 seconds can trade ahead of the next one. The router draws each slice size and each interval from a uniform band around its nominal value (25 and 30 percent half-widths by default), from a seeded random source so that tests and back-tests are reproducible. `ChildRandomiserTest` checks that 2000 draws stay inside the band, show no lag-1 to lag-10 autocorrelation beyond \(3/\sqrt{n}\), and pass a runs test about the median, and that a sawtooth sequence fails the same checks.
+
+### Worked example
+
+COOKBOOK.md recipe 17 routes a 20 million buy of a 10-year note across two simulated CLOBs at urgency 0.5. The first slice is 4 million. On venue 1 the touch is 98.500000 / 98.515625 (one tick of 1/64), 12 million rests on the bid, and the router's estimate of flow is 1 lot per second each side. For the 3 million it evaluated there:
+
+- half spread \(h = 0.0078125\);
+- impact \(I = 0.6 \times 0.5 \times \sqrt{3/46\,800} = 0.002402\) (ADV of 46,800 lots is twice the arrival rate over a 23,400-second day);
+- latency cost \(L = 1.0 \times (0.5/\sqrt{23\,400}) \times \sqrt{0.00025} = 0.000052\);
+- aggressive cost \(0.0078125 + 0.002402 + 0.0005 + 0.000052 = 0.010766\), as printed;
+- fill probability within 15 seconds \(P = 0.8161\), and passive cost \(-0.001065\), so the child rests.
+
+The decision table, the journaled RouteDecisionVenue rows and a re-evaluation from those rows agree to the last digit (`DecisionReplayTest`).
+
+### What the back-test shows
+
+Over 40 seeded synthetic days of 15 parents each, the router's mean cost was -0.1957 bps of price, against 2.6822 for sending each parent as one aggressive order to the primary venue and 2.5108 for an even split across three venues. The mean daily saving was 2.8780 bps (95 percent block-bootstrap interval 2.7210 to 2.9855) and 2.7065 bps (2.5309 to 2.8272) respectively (`BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` (rates-router), run 2026-10-31 on JDK 25.0.5, Windows 11). The market is synthetic and its assumptions are listed in API_SPEC.md Section 15.6: a random-walk price with no informed flow beyond the price moves themselves, Poisson market orders, queue cancellations at a constant rate, and permanent impact proportional to the size taken. The number says the router's logic works as designed in that world, not what it would save on a real desk.
+
+### Measuring execution quality
+
+Markout is the change in mid a fixed time after a fill, signed so that positive is good for the order (Section 17). A router that rests passively earns spread but is filled more often just before an adverse move; its markouts show it. The post-trade analysis of P5 and P6 reads the journaled decisions next to the fills and their markouts, so a poor result can be traced to the cost estimate that caused it.
 
 ## 10. Back-testing honestly: pre-registration, holdouts, attribution
 
@@ -390,3 +446,9 @@ Terms defined in Phase 0 and Phase 1 (Sections 2 to 5). Later sections add to th
 - **Implied repo**: the financing rate at which a cash-and-carry delivery breaks even.
 - **Delivery option**: the futures short's choice of bond and delivery day.
 - **Convexity adjustment** (futures): the excess of a daily-settled futures rate over the forward rate.
+- **Smart order router**: the component that splits a parent order across venues and over time to minimise expected cost, and records why.
+- **Parent and child orders**: the parent is the quantity to be worked; children are the orders actually sent to venues. The sum of the children never exceeds the parent.
+- **Queue position**: the quantity resting ahead of an order at its price; with the flow and the cancellation rate it determines the fill probability of a passive order.
+- **Escalation**: cancelling a passive child that has not filled within its time limit and sending the remainder as an aggressive order.
+- **Participation cap**: the largest fraction of a venue's visible and expected liquidity one routing decision may take.
+- **Anti-gaming**: randomising child sizes and timing so that other participants cannot infer and trade ahead of the next child.

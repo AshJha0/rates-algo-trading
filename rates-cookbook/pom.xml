@@ -32,6 +32,7 @@
     <dependency>
       <groupId>io.ratesalgo</groupId>
       <artifactId>rates-analytics</artifactId>
+      <artifactId>rates-router</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

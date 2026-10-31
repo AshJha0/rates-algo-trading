@@ -30,4 +30,15 @@
       <Bug pattern="EI_EXPOSE_REP2" />
     </Or>
   </Match>
+  <!-- rates-router (P4): the router, its child order book and its codecs share collaborators
+       with their caller by design (the journal sink, the book view, the decoded table handed to a
+       frame handler, the child book exposed for inspection); everything runs on one thread and
+       copying would allocate on the per-order path. -->
+  <Match>
+    <Package name="~io\.ratesalgo\.router(\..*)?" />
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>

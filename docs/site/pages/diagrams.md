@@ -41,3 +41,11 @@ Quotes and fixings become one instrument per pillar; `CurveBuilder` solves them 
 ```mermaid
 --8<-- "docs/diagrams/curve_build.mmd"
 ```
+
+## Child order lifecycle
+
+The router's child order states and the reports and actions that move between them, as pinned in [API contract](api-spec.md) Section 15.4. Late fills after a cancel are counted up to the cumulative quantity the venue reported with the cancel.
+
+```mermaid
+--8<-- "docs/diagrams/child_order_lifecycle.mmd"
+```

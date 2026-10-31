@@ -10,7 +10,7 @@ graph TD
   venues["rates-venues<br/>FIX 4.4, SBE book feed, simulators<br/>(planned P2)"]
   quoting["rates-quoting<br/>(planned P3)"]
   risk["rates-risk<br/>risk engine, hedger<br/>(planned P3)"]
-  router["rates-router<br/>(planned P4)"]
+  router["rates-router<br/>SmartOrderRouter, cost model, state machine<br/>(P4)"]
   backtest["rates-backtest<br/>(planned P5)"]
   posttrade["rates-posttrade<br/>(planned P5)"]
 
@@ -29,6 +29,9 @@ graph TD
   quoting -.-> analytics
   risk -.-> core
   risk -.-> analytics
+  router --> common
+  router --> messages
+  router --> agrona
   router -.-> core
   router -.-> venues
   backtest -.-> journal
@@ -37,4 +40,4 @@ graph TD
   posttrade -.-> analytics
 
   classDef planned stroke-dasharray: 5 5
-  class core,venues,quoting,risk,router,backtest,posttrade planned
+  class core,venues,quoting,risk,backtest,posttrade planned

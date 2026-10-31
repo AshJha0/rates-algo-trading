@@ -108,6 +108,51 @@
       <validValue name="SessionLoss">4</validValue>
       <validValue name="StaleReference">5</validValue>
     </enum>
+    <!-- P4 router (API_SPEC.md Sections 2 and 15). Appended; no existing type changes. -->
+    <enum name="VenueKind" encodingType="uint8">
+      <validValue name="Clob">1</validValue>
+      <validValue name="Futures">2</validValue>
+    </enum>
+
+    <enum name="RouteReason" encodingType="uint8" description="Why the router made an allocation decision">
+      <validValue name="Slice">1</validValue>
+      <validValue name="Escalation">2</validValue>
+      <validValue name="BookMove">3</validValue>
+      <validValue name="Retry">4</validValue>
+      <validValue name="Deadline">5</validValue>
+      <validValue name="Reconcile">6</validValue>
+    </enum>
+
+    <enum name="VenueExclusion" encodingType="uint8" description="Why a venue received nothing in a decision">
+      <validValue name="None">0</validValue>
+      <validValue name="NoQuote">1</validValue>
+      <validValue name="SelfCross">2</validValue>
+      <validValue name="BelowMinimum">3</validValue>
+      <validValue name="CapReached">4</validValue>
+      <validValue name="LimitPrice">5</validValue>
+    </enum>
+
+    <enum name="ChildState" encodingType="uint8" description="Router child order state (API_SPEC.md Section 15.4)">
+      <validValue name="New">1</validValue>
+      <validValue name="Acknowledged">2</validValue>
+      <validValue name="PartiallyFilled">3</validValue>
+      <validValue name="Filled">4</validValue>
+      <validValue name="CancelRequested">5</validValue>
+      <validValue name="Cancelled">6</validValue>
+      <validValue name="Replaced">7</validValue>
+      <validValue name="Rejected">8</validValue>
+    </enum>
+
+    <enum name="TransitionCause" encodingType="uint8">
+      <validValue name="Sent">1</validValue>
+      <validValue name="Ack">2</validValue>
+      <validValue name="Fill">3</validValue>
+      <validValue name="CancelSent">4</validValue>
+      <validValue name="CancelConfirmed">5</validValue>
+      <validValue name="Rejected">6</validValue>
+      <validValue name="CancelRejected">7</validValue>
+      <validValue name="Reconciled">8</validValue>
+    </enum>
   </types>
 
   <sbe:message name="Heartbeat" id="1" description="Liveness of a source; also the clock tick in replay">
@@ -218,6 +263,73 @@
     <field name="scopeId" id="2" type="int32" description="0 for the whole process, else an instrument group"/>
     <field name="requestedBy" id="3" type="PartyId"/>
     <field name="timestampNanos" id="4" type="EpochNanos"/>
+  </sbe:message>
+
+  <!-- P4 router messages, template ids 80 to 89 reserved for the router (API_SPEC.md Section 15). -->
+  <sbe:message name="RouteDecision" id="80" description="Header of one routing decision; followed by venueCount RouteDecisionVenue rows">
+    <field name="decisionId" id="1" type="int64"/>
+    <field name="parentId" id="2" type="int64"/>
+    <field name="instrumentId" id="3" type="InstrumentId"/>
+    <field name="side" id="4" type="Side"/>
+    <field name="reason" id="5" type="RouteReason"/>
+    <field name="configVersion" id="6" type="int32"/>
+    <field name="venueCount" id="7" type="uint8"/>
+    <field name="sliceIndex" id="8" type="int32"/>
+    <field name="parentQuantity" id="9" type="Quantity"/>
+    <field name="sliceQuantity" id="10" type="Quantity"/>
+    <field name="allocatedQuantity" id="11" type="Quantity"/>
+    <field name="urgency" id="12" type="Decimal9"/>
+    <field name="passiveHorizonNanos" id="13" type="int64" description="Passive time limit; 0 means passive is not allowed in this decision"/>
+    <field name="sliceIntervalNanos" id="14" type="int64" description="Interval used for the participation cap"/>
+    <field name="arrivalMid" id="15" type="Decimal9"/>
+    <field name="expectedCost" id="16" type="Decimal9" description="Quantity-weighted expected cost per unit, price points"/>
+    <field name="timestampNanos" id="17" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="RouteDecisionVenue" id="81" description="One venue row of a routing decision: cost inputs, costs and the allocation">
+    <field name="decisionId" id="1" type="int64"/>
+    <field name="row" id="2" type="uint8"/>
+    <field name="venueId" id="3" type="VenueId"/>
+    <field name="kind" id="4" type="VenueKind"/>
+    <field name="bestBid" id="5" type="Decimal9"/>
+    <field name="bestAsk" id="6" type="Decimal9"/>
+    <field name="tick" id="7" type="Decimal9"/>
+    <field name="lotSize" id="8" type="Quantity"/>
+    <field name="minSize" id="9" type="Quantity"/>
+    <field name="sameSideDepth" id="10" type="Quantity"/>
+    <field name="oppositeDepth" id="11" type="Quantity"/>
+    <field name="tradeRate" id="12" type="Decimal9" description="Quantity per second"/>
+    <field name="takerFee" id="13" type="Decimal9"/>
+    <field name="makerFee" id="14" type="Decimal9"/>
+    <field name="latencyNanos" id="15" type="int64"/>
+    <field name="participationCap" id="16" type="Quantity"/>
+    <field name="passiveAllowed" id="17" type="uint8"/>
+    <field name="aggressiveAllowed" id="18" type="uint8"/>
+    <field name="exclusion" id="19" type="VenueExclusion"/>
+    <field name="evaluatedQuantity" id="20" type="Quantity"/>
+    <field name="allocatedQuantity" id="21" type="Quantity"/>
+    <field name="passive" id="22" type="uint8"/>
+    <field name="fillProbability" id="23" type="Decimal9"/>
+    <field name="queueWaitNanos" id="24" type="int64"/>
+    <field name="impactCost" id="25" type="Decimal9"/>
+    <field name="passiveCost" id="26" type="Decimal9"/>
+    <field name="aggressiveCost" id="27" type="Decimal9"/>
+    <field name="chosenCost" id="28" type="Decimal9"/>
+  </sbe:message>
+
+  <sbe:message name="ChildOrderTransition" id="82" description="Audit record of one router child order state change or applied fill">
+    <field name="clOrdId" id="1" type="int64"/>
+    <field name="parentId" id="2" type="int64"/>
+    <field name="venueId" id="3" type="VenueId"/>
+    <field name="fromState" id="4" type="ChildState"/>
+    <field name="toState" id="5" type="ChildState"/>
+    <field name="cause" id="6" type="TransitionCause"/>
+    <field name="execId" id="7" type="int64"/>
+    <field name="orderedQuantity" id="8" type="Quantity"/>
+    <field name="cumQuantity" id="9" type="Quantity"/>
+    <field name="leavesQuantity" id="10" type="Quantity"/>
+    <field name="cancelledQuantity" id="11" type="Quantity"/>
+    <field name="timestampNanos" id="12" type="EpochNanos"/>
   </sbe:message>
 
 </sbe:messageSchema>
