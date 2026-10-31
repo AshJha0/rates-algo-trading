@@ -90,10 +90,11 @@ public final class Recipe27PackageRfq {
           dir.byId(pkg.instrumentId(i)).symbol(), q > 0 ? "pays" : "receives", Math.abs(q) / 1e8,
           Decimal9.toDouble(r.legPrice(i))));
     }
+    System.out.println(String.format(Locale.ROOT, "  legs one by one %.0f USD: spread %.0f + inventory %.0f",
+        r.legChargeSum(), r.spreadChargeSum(), r.legChargeSum() - r.spreadChargeSum()));
     System.out.println(String.format(Locale.ROOT,
-        "  legs alone %.0f = spread %.0f + inventory; package %.0f = spread %.0f - hedge saving %.0f %+.0f inventory",
-        r.legChargeSum(), r.spreadChargeSum(), r.charge(), r.spreadChargeSum(), r.hedgeSaving(),
-        r.inventoryCharge()));
+        "  package %.0f USD: spread %.0f - hedge saving %.0f + inventory on the net ladder %.0f",
+        r.charge(), r.spreadChargeSum(), r.hedgeSaving(), r.inventoryCharge()));
     System.out.println(String.format(Locale.ROOT, "  distance %.4f bp on every leg", r.distanceBp()));
     final Dv01Vector net = new Dv01Vector(CurrencyCode.USD);
     r.netLadder(net);

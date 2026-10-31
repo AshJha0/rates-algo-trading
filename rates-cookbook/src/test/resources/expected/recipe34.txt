@@ -1,0 +1,8 @@
+deploy/config/trading-blue.yaml errors: []
+  trading-blue role trading colour blue port 8081 instruments 2 retention 5y
+edited document: 4 errors
+  $: missing required property 'retention'
+  $.process.colour: red is not one of [blue, green]
+  $.http.port: 80810 is above the maximum 65535
+  $.journal.capacityBytes: expected integer, found String 64MB
+RATES_HTTP_PORT=70000 refused: [$.http.port: 70000 is above the maximum 65535]

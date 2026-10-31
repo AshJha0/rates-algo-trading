@@ -39,6 +39,8 @@ Sources (checked 2026-10-31): Commission Delegated Regulation (EU) 2017/589 as i
 | 29 Entry into force | Not a control | out of scope | No obligation |
 | Annex I Self-assessment criteria | Nature, scale and complexity of the algorithmic trading | evidenced | Answered section by section in [SELF_ASSESSMENT_TEMPLATE.md](SELF_ASSESSMENT_TEMPLATE.md) |
 
+The controls above are drawn by group (pre-trade, real-time monitoring, kill, post-trade, surveillance and stress, change management) in [RTS 6 control map](../site/pages/diagrams.md#rts-6-control-map).
+
 ## FCA MAR 7A and PRA SS5/18
 
 | Reference | Requirement in brief | Status | Control and evidence |

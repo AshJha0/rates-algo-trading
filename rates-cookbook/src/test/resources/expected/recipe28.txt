@@ -1,0 +1,13 @@
+1. time to live: the quote lapses at its validUntil, no message is sent
+  t=    0 ms  rfq 1: FIRM NONE quote 1 valid to t=1000 ms
+  t= 1000 ms  live 0, expiries 1
+2. stale reference: quoted from a 1.5 s old fair value, pulled when it passes 2 s
+  t= 1500 ms  rfq 2: FIRM NONE quote 2 valid to t=2500 ms
+  t= 1900 ms  inputs 1.9 s old, live 1
+  t= 2100 ms  QuoteWithdraw quote 2 reason StaleInput
+3. feed gap: book sequence 101, 102, 105 on venue 7 pulls every quote
+  t= 2400 ms  rfq 3: FIRM NONE quote 3 valid to t=3400 ms
+  t= 2401 ms  QuoteWithdraw quote 3 reason FeedGap
+  t= 2401 ms  rfq 4: PASS UNHEALTHY
+  t= 2701 ms  rfq 5: FIRM NONE quote 4 valid to t=3701 ms
+rfqs 5 quotes 4 passes 1 expiries 2 pulls 2
