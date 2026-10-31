@@ -39,6 +39,9 @@ import org.agrona.concurrent.UnsafeBuffer;
  *       at or below our own resting buy.
  *   <li>Every order passes {@link RiskEngine#checkOrder} and reserves its quantity until the venue
  *       reports it filled, cancelled or rejected. Cancels are never rate limited.
+ *   <li>Prices are on the venue's tick: the bid target rounds down and the ask target up to a
+ *       multiple of the tick given to {@link #enable(int, long)} (DR-R2R-12); a venue refuses an
+ *       order off its tick.
  * </ul>
  *
  * Allocation-free after construction; up to 32 instruments.
@@ -122,6 +125,7 @@ public final class ClobQuoter implements KillSwitchListener {
   private final long maxInputAgeNanos;
 
   private final int[] ids = new int[MAX];
+  private final long[] tick = new long[MAX];
   private int count;
   // per instrument and side (index 2*i for bid, 2*i+1 for ask)
   private final long[] clOrdId = new long[2 * MAX];
@@ -171,12 +175,21 @@ public final class ClobQuoter implements KillSwitchListener {
     return new Config();
   }
 
-  /** Starts quoting an instrument. */
+  /**
+   * Starts quoting an instrument on the Decimal9 grid (tick 1 mantissa). A venue with a coarser
+   * tick needs {@link #enable(int, long)}.
+   */
   public void enable(final int instrumentId) {
-    if (count == MAX || directory.byId(instrumentId) == null) {
-      throw new IllegalArgumentException("cannot enable " + instrumentId);
+    enable(instrumentId, 1L);
+  }
+
+  /** Starts quoting an instrument whose venue tick is {@code tickMantissa} (Decimal9). */
+  public void enable(final int instrumentId, final long tickMantissa) {
+    if (count == MAX || directory.byId(instrumentId) == null || tickMantissa <= 0) {
+      throw new IllegalArgumentException("cannot enable " + instrumentId + " tick " + tickMantissa);
     }
     ids[count] = instrumentId;
+    tick[count] = tickMantissa;
     lastSignalMid[count] = Double.NaN;
     count++;
   }
@@ -227,8 +240,9 @@ public final class ClobQuoter implements KillSwitchListener {
     if (suppressBid) {
       adversePulls += cancelSide(2 * i, CancelReason.AdverseSignal, nowNanos) ? 1 : 0;
     }
-    final long bidTarget = Decimal9.floor(fair - config.halfSpreadBp * qpb);
-    final long askTarget = Decimal9.ceil(fair + config.halfSpreadBp * qpb);
+    final long t = tick[i];
+    final long bidTarget = Math.floorDiv(Decimal9.floor(fair - config.halfSpreadBp * qpb), t) * t;
+    final long askTarget = -Math.floorDiv(-Decimal9.ceil(fair + config.halfSpreadBp * qpb), t) * t;
     if (!suppressBid) {
       side(i, true, bidTarget, bs, qpb, nowNanos);
     }
