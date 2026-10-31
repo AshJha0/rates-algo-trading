@@ -1,0 +1,74 @@
+name: Ops
+
+# Deployment and operations checks (P6): the configuration schema, the dashboards and alert
+# rules, the container images when Docker is available, and the deployment rehearsal in process
+# mode with the kill switch exercised. ci.yml stays the gate for the Java and Python builds.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ops-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  config-and-dashboards:
+    name: Config schema, dashboards and alert rules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "jsonschema==4.26.0" "pyyaml==6.0.3"
+      - name: Validate configuration against the schema (Python jsonschema)
+        run: python tools/validate_config.py
+      - name: Lint dashboards and alert rules
+        run: python tools/lint_dashboards.py
+      - name: Blue/green script syntax
+        run: bash -n deploy/bluegreen.sh
+
+  rehearsal:
+    name: Deployment rehearsal (process mode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Package the process jars
+        run: mvn -B -ntp -DskipTests package -pl rates-ops,rates-posttrade -am
+      - name: Validate configuration with the Java validator the processes use
+        run: |
+          java -cp "rates-ops/target/rates-ops-0.1.0-SNAPSHOT.jar:rates-ops/target/lib/*" \
+            io.ratesalgo.ops.config.ConfigValidatorMain \
+            deploy/config/schema/process-config.schema.json deploy/config/*.yaml
+      - name: Rehearsal with the kill switch
+        run: python deploy/rehearsal.py --mode process --timeout 90
+      - name: Build the images when Docker is available
+        run: |
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "::notice::Docker not available on this runner; images not built"
+            exit 0
+          fi
+          docker build -f deploy/trading/Dockerfile -t rates-trading:ci .
+          docker build -f deploy/venue-sim/Dockerfile -t rates-venue-sim:ci .
+          docker build -f deploy/report/Dockerfile -t rates-report:ci .
+          docker compose -f deploy/compose.yaml config --quiet
+        env:
+          RATES_CONTROL_TOKEN: ci-only-not-a-secret

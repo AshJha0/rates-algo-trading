@@ -27,3 +27,7 @@ journals/*.raj
 # OS
 .DS_Store
 Thumbs.db
+
+# Deployment state and local report output
+deploy/state/
+deploy/out/

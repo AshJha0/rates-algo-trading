@@ -1,0 +1,67 @@
+# Alert rules. Every rule names a runbook under docs/runbooks/ and only metrics listed in
+# deploy/prometheus/metrics.txt; tools/lint_dashboards.py checks both in CI (ops.yml).
+groups:
+  - name: rates-trading
+    rules:
+      - alert: TradingProcessDown
+        expr: up{job="trading"} == 0
+        for: 30s
+        labels:
+          severity: page
+        annotations:
+          summary: "Trading process {{ $labels.instance }} is not answering scrapes"
+          runbook: docs/runbooks/standby-takeover.md
+      - alert: QuotesLiveAfterKill
+        expr: rates_kill_switch_engaged == 1 and rates_quotes_live > 0
+        for: 5s
+        labels:
+          severity: page
+        annotations:
+          summary: "Kill switch engaged but quotes are still live"
+          runbook: docs/runbooks/limit-breach.md
+      - alert: KillSwitchEngaged
+        expr: rates_kill_switch_engaged == 1
+        labels:
+          severity: page
+        annotations:
+          summary: "Kill switch engaged on {{ $labels.instance }}"
+          runbook: docs/runbooks/limit-breach.md
+      - alert: LimitUtilisationHigh
+        expr: rates_limit_utilisation_ratio > 0.9
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Limit {{ $labels.limit }} above 90 percent"
+          runbook: docs/runbooks/limit-breach.md
+      - alert: UnexplainedReconciliationBreaks
+        expr: sum(rates_recon_breaks{explained="false"}) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "Reconciliation has unexplained breaks"
+          runbook: docs/runbooks/reconciliation-break.md
+      - alert: InboundQueueBacklog
+        expr: rates_queue_depth{queue="inbound"} > 1000
+        for: 30s
+        labels:
+          severity: warn
+        annotations:
+          summary: "Inbound ring buffer backlog; check the feed and the loop"
+          runbook: docs/runbooks/feed-gap.md
+      - alert: PricingStageSlow
+        expr: histogram_quantile(0.99, sum by (le) (rate(rates_stage_latency_seconds_bucket{stage="price"}[5m]))) > 0.001
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Pricing stage p99 above 1 ms"
+          runbook: docs/runbooks/pricing-fault.md
+      - alert: VenueSimulatorDown
+        expr: up{job="venue-sim"} == 0
+        for: 30s
+        labels:
+          severity: warn
+        annotations:
+          summary: "Venue session endpoint is not answering"
+          runbook: docs/runbooks/venue-disconnect.md
