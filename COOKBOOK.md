@@ -9,30 +9,28 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 1. How do I use the ManualClock and TimerWheel in a test? (P0, written below)
 2. How do I write frames to a journal and replay them? (P0, written below)
 3. How do I encode and decode a QuoteRequest with the SBE codecs? (P0, written below)
-4. How do I bootstrap a USD SOFR discount curve from OIS quotes? (P1)
-5. How do I price a swap and get its par rate and DV01? (P1)
-6. How do I price a Treasury from yield and get accrued interest? (P1)
-7. How do I compute a gilt's accrued interest inside the ex-dividend period? (P1)
-8. How do I find the CTD and net basis for a Treasury futures contract? (P1)
-9. How do I compare a result to QuantLib within a stated tolerance? (P1)
+4. How do I bootstrap a USD SOFR discount curve from OIS quotes? (P1, written below)
+5. How do I price a swap and get its par rate and DV01? (P1, written below)
+6. How do I price a Treasury from yield and get accrued interest? (P1, written below)
+7. How do I compute a gilt's accrued interest inside the ex-dividend period? (P1, written below)
+8. How do I find the CTD and net basis for a Treasury futures contract? (P1, written below)
+9. How do I compare a result to QuantLib within a stated tolerance? (P1, written below; a test, not a program)
 10. How do I start a venue simulator and connect a FIX 4.4 session? (P2, written below)
 11. How do I subscribe to the SBE book feed and rebuild a book? (P2, written below)
 12. How do I run the event loop against a journal and check determinism? (P2, written below)
-13. How do I check that a hot-path package allocates nothing? (P2)
+13. How do I run the latency job and read the histogram? (P2, written below; P5 adds the rate sweep)
 14. How do I quote an RFQ through the engine and see a quoting parameter's effect on skew? (P3, written below)
 15. How do I read the DV01 ladder and compute a cost-aware hedge? (P3, written below)
 16. How do I set a risk limit and exercise the kill switch? (P3, written below)
 17. How do I route a hedge order and read the markout report? (P4, written below)
-18. How do I pre-register a back-test and open the holdout once? (P5)
-19. How do I run the latency job and read the histogram? (P5)
-17. How do I run the back-tester on one synthetic day? (P5, written below)
-18. How do I pre-register an experiment and record it in the ledger? (P5, written below)
-19. How do I reconcile attribution to position P&L? (P5, written below; a Python recipe)
-19. How do I run the latency job and read the histogram? (P2, written below; P5 adds the rate sweep)
-20. How do I verify a Java journal's hash chain from Python? (P5)
-21. How do I route a hedge order and read the markout report? (P4; was item 17 before P5 took 17 to 19)
-22. How do I run the latency job and read the histogram? (P5 latency harness; was item 19)
-20. How do I run the chaos test and read the break report? (P6, written below; the Python hash-chain recipe planned here for P5 is renumbered at integration)
+18. How do I run the back-tester on one synthetic day? (P5, written below)
+19. How do I pre-register an experiment and record it in the ledger? (P5, written below; covers the earlier planned "pre-register a back-test and open the holdout once")
+20. How do I reconcile attribution to position P&L? (P5, written below; a Python recipe)
+21. How do I run the chaos test and read the break report? (P6, written below)
+22. How do I check that a hot-path package allocates nothing? (P2, not yet written)
+23. How do I verify a Java journal's hash chain from Python? (P5, not yet written)
+
+The recipes were renumbered when the phase branches were combined, so that they run contiguously by phase (DECISIONS.md DR-P4-05 and DR-P2C-10, amended).
 
 ## 1. How do I use the ManualClock and TimerWheel in a test?
 
@@ -1490,7 +1488,7 @@ central won 163 of 398, hedges 14, spread 1639687.50, inventory 1230784.67, hedg
 high    won 129 of 398, hedges 15, spread 1748176.93, inventory 2386981.21, hedge -1116281.25, fees -71442.00, funding 2740.75, P&L 2950175.63, residual below a cent: true
 ```
 
-The journal line is the same on every machine because the generator is seeded and the hash is the RAJ1 chain hash. The three band points see the same RFQs, competitors and uniform draws (common random numbers keyed by RFQ id), so the only difference between the rows is the slope of the win probability: the high point, where price matters most, wins the fewest RFQs. Inventory dominates the day's P&L, which is why one session says little and experiments use many (recipe 18).
+The journal line is the same on every machine because the generator is seeded and the hash is the RAJ1 chain hash. The three band points see the same RFQs, competitors and uniform draws (common random numbers keyed by RFQ id), so the only difference between the rows is the slope of the win probability: the high point, where price matters most, wins the fewest RFQs. Inventory dominates the day's P&L, which is why one session says little and experiments use many (recipe 19).
 
 ## 19. How do I pre-register an experiment and record it in the ledger?
 

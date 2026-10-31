@@ -173,6 +173,7 @@ Context. Several OIS details vary between documents and systems: the end-of-mont
 Decision. End-of-month rule off for swaps; payment date is the period end moved by the payment lag in business days on the payment calendar (following); the pillar of a par OIS is its last payment date on either leg (QuantLib's `LastRelevantDate`); a forward-starting swap starts at spot plus the forward period moved to the next business day; an IMM swap starts on the first IMM date after spot.
 
 Consequences. These are the definitions the golden file uses. A desk convention that differs is a new `SwapConvention`, not a change to these.
+
 ## DR-P4-01: Router messages as fixed-length header and rows, template ids 80 to 82, schema version unchanged
 
 Date: 2026-10-31
@@ -234,6 +235,7 @@ Context. A rates hedge can be done in cash bonds or futures; a futures contract 
 Decision. A parent names one instrument; the router splits it across the venues that list it. Venue kind (CLOB or futures) selects default parameters only. Choosing between cash and futures, and the hedge ratio, belongs to the P3 hedger.
 
 Consequences. The router does not net or convert between instruments. A cross-instrument router would be a later change with its own decision record.
+
 ## DR-P5-01: Preset schema gains declared assumption bands
 
 Date: 2026-10-31
@@ -303,6 +305,7 @@ Context. The back-tester reads `data/presets.yaml`, pre-registrations, experimen
 Decision. `rates-backtest` depends on SnakeYAML 2.5 with its safe constructor and an implicit resolver without timestamps (dates stay strings). JSON output is written by a small canonical writer (`util.Json`) so ledger lines have stable bytes.
 
 Consequences. One more dependency, confined to a module that is off the hot path; hot-path modules (P2) do not depend on `rates-backtest`.
+
 ## DR-P6-01: Post-trade messages in schema v1, named PostTradeBust
 
 Date: 2026-10-31
@@ -372,6 +375,7 @@ Context. UK RTS 6 Article 28 and Annex II set the content and format of order re
 Decision. One record per order event with the Annex II Table 2 and Table 3 fields that apply to the flow, written as CSV in one directory per trading date, append only, retained for five years (configurable to seven) and searchable by venue order id. The record links back to the journal sequence. The commencement status is flagged in docs/compliance/RTS6_INVENTORY.md for the owner to confirm.
 
 Consequences. The record layout is readable without the platform. A production archive would add an index and write-once storage; the layout is the contract.
+
 ## DR-P2C-01: Two journals per loop, and replay compares the outbound stream by chain hash
 
 Date: 2026-10-31
@@ -473,6 +477,7 @@ Decision. The repository wins: the two recipes are 12 (run the event loop agains
 Consequences. No collision with the P1 recipes. The P5 session should extend recipe 19 rather than write a new one.
 
 Amendment (2026-10-31, branch integration). The P5 branch used 18 and 19 for its own recipes, and the combined cookbook is renumbered to run contiguously by phase (DR-P4-05 amendment). The latency recipe is now 13 (`Recipe13LatencyHistogram`, `expected/recipe13.txt`), next to the event-loop recipe 12; its content is unchanged. The rate sweep P5 was to add belongs in recipe 13.
+
 ## DR-P2V-01: Engine-side FIX codec of our own; QuickFIX/J only in the simulators
 
 Date: 2026-10-31
@@ -592,6 +597,7 @@ Context. The brief asked for recipe 11 to show adding a venue. COOKBOOK.md alrea
 Decision. Recipe 11 is the book feed recipe, as planned in the repository. Adding a venue is documented as a procedure in docs/ARCHITECTURE.md, venue layer.
 
 Consequences. The planned list stays as published; anyone looking for how to add a venue finds it next to the module map.
+
 ## DR-P3-01: A P3-owned interface module, rates-api, with its own PV01 value type
 
 Date: 2026-10-31
