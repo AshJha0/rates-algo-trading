@@ -61,6 +61,17 @@ class SettlementPropertiesTest {
     assertTrue(FailCost.failsChargeMinor(Side.Sell, proceeds, rate, days).signum() <= 0);
   }
 
+  /** a cancelled fail stops counting fail days on the cancel date. */
+  @Test
+  void failDaysStopAtTheCancelDate() {
+    final LocalDate settle = BusinessCalendar.WEEKENDS_ONLY.addBusinessDays(TRADE_DATE, 1);
+    final SettlementObligation o = new SettlementObligation(KEY, Side.Sell, settle, 1_000_000);
+    assertTrue(o.apply(SettlementEvent.FAIL, settle));
+    assertTrue(o.apply(SettlementEvent.CANCEL, settle.plusDays(4)));
+    assertEquals(4, o.daysFailed(settle.plusDays(4)));
+    assertEquals(4, o.daysFailed(settle.plusDays(40)));
+  }
+
   @Test
   void workedFailExample() {
     // we sell 10mm face for proceeds of 9,950,000.00 USD and fail for 3 days with funding at 4.30%
