@@ -8,8 +8,10 @@ graph TD
   analytics["rates-analytics<br/>curves, swaps, bonds, futures<br/>(planned P1)"]
   core["rates-core<br/>event loop, market state<br/>(planned P2)"]
   venues["rates-venues<br/>FIX 4.4, SBE book feed, simulators<br/>(planned P2)"]
-  quoting["rates-quoting<br/>(planned P3)"]
-  risk["rates-risk<br/>risk engine, hedger<br/>(planned P3)"]
+  api["rates-api<br/>interfaces to P1, P2, P4 and stubs<br/>(P3)"]
+  quoting["rates-quoting<br/>RFQ, package and CLOB quoting<br/>(P3)"]
+  risk["rates-risk<br/>DV01 ladder, limits, kill switch<br/>(P3)"]
+  hedge["rates-hedge<br/>cost-aware hedger<br/>(P3)"]
   router["rates-router<br/>(planned P4)"]
   backtest["rates-backtest<br/>(planned P5)"]
   posttrade["rates-posttrade<br/>(planned P5)"]
@@ -26,10 +28,15 @@ graph TD
   core -.-> analytics
   venues -.-> messages
   venues -.-> core
-  quoting -.-> core
-  quoting -.-> analytics
-  risk -.-> core
-  risk -.-> analytics
+  api --> common
+  api --> messages
+  risk --> api
+  hedge --> risk
+  quoting --> hedge
+  quoting --> risk
+  api -.-> analytics
+  api -.-> core
+  api -.-> router
   router -.-> core
   router -.-> venues
   backtest -.-> journal
@@ -38,4 +45,4 @@ graph TD
   posttrade -.-> analytics
 
   classDef planned stroke-dasharray: 5 5
-  class analytics,core,venues,quoting,risk,router,backtest,posttrade planned
+  class analytics,core,venues,router,backtest,posttrade planned

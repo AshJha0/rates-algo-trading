@@ -33,3 +33,19 @@ The 32-byte file header, the 32-byte frame header and the chain hash definition,
 ```mermaid
 --8<-- "docs/diagrams/journal_frame.mmd"
 ```
+
+## RFQ decision flow (P3)
+
+What the quoting engine does with one request for quote, in the order the checks run, and what happens to the quote afterwards (API_SPEC.md Section 12.6).
+
+```mermaid
+--8<-- "docs/diagrams/rfq_decision.mmd"
+```
+
+## Kill-switch state machine (P3)
+
+The three states of the process-wide kill switch and the four-eyes reset (API_SPEC.md Section 13.4).
+
+```mermaid
+--8<-- "docs/diagrams/kill_switch_state.mmd"
+```

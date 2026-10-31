@@ -93,11 +93,101 @@ Planned for P2 (venues). It will cover dealer-to-client request for quote with i
 
 ## 7. Dealer market making: inventory, skew, cover prices, winner's curse
 
-Planned for P3 (quoting, risk, hedging). It will cover the economics of quoting, inventory-driven skew, how the cover price is observed and modelled, the winner's curse in multi-dealer RFQ, and the assumption band the project declares for win probability (DECISIONS.md DR-008).
+### Plain idea
+
+A dealer answering a request for quote (RFQ) sells immediacy. The client asks several dealers at once; the best price wins; the winner takes the position onto its book and must later get rid of the risk. The dealer's price is fair value plus a margin, and the margin pays for three things: the chance that the client knows something (adverse selection), the cost of hedging the position, and the fact that winning against other dealers is itself bad news about one's own price (the winner's curse). Too wide and the dealer never trades; too tight and it trades at a loss. Inventory changes the answer: a dealer already long duration wants to sell more than to buy, so it shades both prices down. That shading is the skew.
+
+### Formal statement
+
+Let s be the distance of our quote from fair value, in basis points of value (the quote move that changes the position's value by one basis point of PV01). Let P(s) be the probability of winning and c the expected cost of a fill in the same units. The expected profit of one request is
+
+\[
+E(s) = P(s)\,(s - c),
+\]
+
+and the engine quotes the s that maximises it (API_SPEC.md Section 12.2). With a logistic win probability \(P(s) = 1 / (1 + e^{-(z_0 + b_1 s)})\), where \(z_0\) collects size, tenor, time of day and dealer count and \(b_1 < 0\), the first-order condition is
+
+\[
+s^* = c + \frac{1}{-b_1 \,(1 - P(s^*))}.
+\]
+
+The margin above cost is the inverse of how fast the win probability falls, scaled up when the dealer usually loses anyway.
+
+The cost has three parts. Adverse selection is measured per client by markout: the move in fair value, from our side, a fixed time after each fill; a client whose fills are followed by moves against us pays its negative mean markout. The winner's curse grows with the number of competitors n: if each dealer's estimate of fair value carries an independent error, the winning quote is the one with the most favourable error to the client, and the expected maximum of n normal errors grows like \(\sqrt{2 \ln n}\). The hedge cost is what it costs to lay the trade's PV01 off in the cheapest hedge instrument.
+
+Inventory enters through a reservation price, as in Avellaneda and Stoikov's market-making model. With book ladder p, the instrument's per-unit ladder u, its parallel PV01 U and the key-rate covariance \(\Sigma\), adding one unit changes the book's risk penalty \(\tfrac{1}{2}\kappa\, p^\top \Sigma p\) by \(\kappa\, u^\top \Sigma p\) to first order, so both sides move by
+
+\[
+\text{skew} = \kappa \frac{u^\top \Sigma p}{|U|}
+\]
+
+basis points of value, bounded by a maximum, plus a size term \(\tfrac{1}{2} \kappa Q\, u^\top \Sigma u / |U|\) that widens large clips on both sides. The skew is positive when the book is long the instrument's risk, which lowers the offer and the bid alike: a long book offers better and bids worse.
+
+After a trade the venue may show the winner the cover, the second-best price. The distance between the winning price and the cover is money left on the table, and it is information: a quote that won by 0.5 bp would also have won 0.5 bp wider. The engine learns from wins, losses and covers by moving the logistic's intercept and slope one gradient step at a time, never outside the declared assumption band (DECISIONS.md DR-008, DR-P3-02). Losses carry less information, because a losing dealer never sees the winning price.
+
+### Glossary
+
+- Cover: the second-best price in a multi-dealer RFQ, shown to the winner by some venues.
+- Markout: P&L of a fill measured against fair value a fixed time later, from the dealer's side.
+- Adverse selection: the expected loss from trading with clients who know more than the dealer.
+- Winner's curse: the bias in a winning quote that comes from winning only when one's own error favours the client.
+- Skew: a shift of both bid and offer, in the same direction, driven by inventory.
+- Reservation price: fair value adjusted for the dealer's inventory, around which the spread is set.
+- Firm quote: a price the client can trade on until it expires, with no last look; a subject quote is indicative.
+
+### Worked example
+
+Take a request for 25 million of a 10-year Treasury against four dealers in the New York afternoon, using the shipped default preset (`rates-quoting/src/main/resources/quoting-hit-rate-default.yaml`): \(b_0 = 1.0\), spread coefficient \(b_1 = -1.6\), size term zero for a typical clip, tenor \(-0.01 \times 10\), liquid session \(+0.2\), dealers \(-0.35 \times 3\). So \(z_0 = 1.0 - 0.1 + 0.2 - 1.05 = 0.05\). A quote 0.5 bp from fair wins with probability \(1 / (1 + e^{-(0.05 - 0.8)}) = 0.32\).
+
+The winner's curse charge with four dealers is \(0.1 \times \sqrt{2 \ln 4} = 0.1 \times 1.665 = 0.167\) bp. With a cost of 0.2 bp in total, the optimum is \(s^* = 0.965\) bp, where \(P = 0.183\) and the expected profit is \(0.183 \times (0.965 - 0.2) = 0.140\) bp per request. With no cost it would be 0.806 bp; with 0.5 bp of cost, 1.219 bp. These were computed by grid search on 2026-10-31 and agree with the first-order condition, which `PackageAndClobTest.presetParsingAndSpreadOptimum` checks for the engine's golden-section search to 1e-6.
+
+COOKBOOK.md recipe 14 runs the engine itself on this request (recorded 2026-10-31, `rates-cookbook/src/test/resources/expected/recipe14.txt`). With a flat book and no hedge instruments, so that the cost is the winner's curse alone, the half-spread is 0.938 bp, the size term 0.948 bp, the offer 1.886 bp from fair, and the model win probability 0.049. Long 150 million, the skew reaches its 2 bp bound and the same request is offered 0.114 bp through fair, a better price than fair, with win probability 0.558: the desk pays to reduce risk. A client who wants to sell to that long book is bid 3.886 bp below fair, with win probability 0.002.
+
+### How it is tested
+
+`QuotingEngineTest` checks the direction of the skew, its bound, the improve limit, tier spreads, toxicity widening, cover learning, subject quotes and every pass reason. `MillionRfqTest` runs one million RFQs with fills drawn from the model's own win probability and audits every message at the gateway: on 2026-10-31 it sent 476,215 quotes, won 30,933, passed 509,281 requests for lack of risk capacity and 14,504 for the re-quote throttle, with zero limit violations at the sink (`mvn -B -ntp verify`, JDK 25.0.5, Windows 11).
 
 ## 8. Hedging and the DV01 ladder
 
-Planned for P3 (quoting, risk, hedging). It will cover key-rate DV01, the ladder by tenor bucket, hedging swaps with futures and benchmark bonds, hedge ratios, residual risk, and the hedger's decision rules.
+### Plain idea
+
+A rates book is a list of positions, but its risk is a handful of numbers: how much it gains or loses if each part of the curve moves by one basis point. Those numbers, one per tenor bucket, form the DV01 ladder. Hedging means trading liquid instruments, mostly futures and on-the-run swaps, whose own ladders cancel the book's. Cancelling the total (net DV01) is easy and leaves curve risk; cancelling every bucket costs more. The hedger's job is to buy as much risk reduction as is worth its cost, and to buy it gradually when trading fast is expensive.
+
+### Formal statement
+
+The key-rate PV01 of a position at pillar k is the change in its value when only the zero rate at pillar k rises by one basis point (the pillars are 1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y and 30Y; between pillars the bump is interpolated linearly). In this project PV01 is PV(rates + 1bp) minus PV(base), so a long bond is negative and a payer swap positive (API_SPEC.md Section 13). The ladder r of a book is the sum of its positions' ladders. If daily rate changes have covariance \(\Sigma\) (bp squared), the one-day P&L variance of the book is \(r^\top \Sigma r\).
+
+With hedge instruments whose per-lot ladders are the columns of H and x lots traded, the residual is r + Hx. The hedger solves
+
+\[
+\min_x \tfrac{1}{2} \kappa\,(r + Hx)^\top \Sigma (r + Hx) + \sum_j \big(a_j |x_j| + b_j x_j^2\big)
+\]
+
+with \(a_j\) the half spread plus any basis cost of using instrument j and \(b_j\) its market impact (API_SPEC.md Section 14). Futures are cheap and fast but carry basis: a bond future tracks its cheapest-to-deliver bond, not the key rate exactly, and the cost model charges for that. Swaps hedge a key rate directly but cost more per unit of PV01 in small size and less in large size because their impact is lower. When the basis widens, the futures' linear cost rises and the solution moves to swaps.
+
+Staged hedging sends part of the plan at once and the rest over time. With quadratic impact, trading x lots in two halves costs \(2 b (x/2)^2 = b x^2 / 2\) instead of \(b x^2\), at the price of carrying some risk for longer. The hedger sends a first tranche and then a fraction \(1 - 2^{-\Delta t / t_{1/2}}\) of the remaining plan per timer, so the residual decays with half-life \(t_{1/2}\).
+
+### Glossary
+
+- DV01, PV01: value change for a one basis point rise in rates; key-rate PV01 bumps one pillar at a time.
+- DV01 ladder: key-rate PV01 by pillar for a book.
+- Net DV01: the sum of the ladder; gross DV01, the sum of absolute values.
+- Basis: the difference between a future's implied yield and the cash or swap rate it hedges.
+- Hedge ratio: lots of a hedge per unit of the position, here the ratio of PV01s.
+- Residual risk: the ladder left after hedging, and its variance.
+- Arrival mid: the mid price when the hedge was decided, against which slippage is measured.
+
+### Worked example
+
+A curve position: long 200 million 10-year Treasuries, short 400 million 2-year, long 50 million 30-year (COOKBOOK.md recipe 15, recorded 2026-10-31). With PV01 per unit of face of -8.2e-4, -1.9e-4 and -1.7e-3, the ladder is +76,000 at 2Y, -164,000 at 10Y and -85,000 at 30Y; net -173,000 per basis point. Under the default covariance the unhedged one-day standard deviation is 1,135,508 USD.
+
+Hedging the net alone means selling 173,000 / 80 = 2,162 ten-year futures (80 USD of PV01 per contract). Net DV01 goes to zero, but the curve risk remains: the residual standard deviation is still 647,435 USD and the modelled cost 108,079 USD, most of it impact. The cost-aware plan uses six instruments, buying 2-year futures and receiving 2-year swaps against the short 2s, selling 10-year futures and paying 10-year swaps, and covering the 30-year with both futures and swaps. It leaves a standard deviation of 7,634 USD at a modelled cost of 57,307 USD. The test `HedgePlannerTest.costAwarePlanBeatsImmediateFullHedgeOnVarianceAndCost` runs the same position with the test cost table: 10,352 USD residual at 62,418 USD cost against 647,435 USD at 111,862 USD for the immediate full hedge in futures (2026-10-31).
+
+Staging the same plan over time: in `HedgerTest.stagedHedgingCostsLessThanImmediateExecution`, a 300 million 10-year position hedged in tranches cost 37,964 USD in the model against 52,091 USD for executing the plan at once, ending with a residual standard deviation of 4,624 USD (2026-10-31).
+
+### How it is tested
+
+`RiskEngineTest.incrementalLadderEqualsFullRevaluation` replays 300 random sequences of fills and curve moves and requires the incrementally maintained ladder to equal a full revaluation within 1e-6 of gross notional. `BoxQpSolverTest` checks the solver against brute-force enumeration of active sets on 400 random problems. `ChaosTest` repeats the ladder check at the end of each of its 10,000 scenarios.
 
 ## 9. Smart order routing in fixed income
 

@@ -10,10 +10,10 @@ This document describes the system as designed and marks, component by component
 | Event core | One thread per instrument group draining a ring buffer, applying events to owned state, emitting outputs, appending inputs to the journal | planned P2 (clock, timers, journal and messages exist in P0) |
 | Market state | Books, last trades, curve inputs per instrument group, updated incrementally | planned P2 |
 | Pricing | Curves, swap and bond pricers, futures analytics, incremental revaluation on input change, validated against QuantLib | planned P1 |
-| Quoting engine | Turn an RFQ or book state plus inventory and risk into a two-way quote with skew; manage quote lifetimes with timers | planned P3 |
+| Quoting engine | Turn an RFQ or book state plus inventory and risk into a two-way quote with skew; manage quote lifetimes | P3 (`rates-quoting`), against stubs until P1 and P2 are bound |
 | Smart order router | Choose venue and size for hedge and client orders; record decision inputs for markout analysis | planned P4 |
-| Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | planned P3 |
-| Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | planned P3 |
+| Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | P3 (`rates-risk`) |
+| Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | P3 (`rates-hedge`) |
 | Journal and replay | Append-only hash-chained record of inputs; replayer that drives the same handlers and verifies the chain | exists in P0 (`rates-journal`) |
 | Back-tester | Replay journals or simulated days through the live code path with pre-registered hypotheses and holdouts; attribution | planned P5 |
 | Analytics (research) | Python: provenance, calibration of simulator parameters, result analysis | partly exists in P0 (`research/ratesresearch`: provenance and chain hash); calibration planned P1, P5 |
@@ -96,3 +96,30 @@ The workflow files live under `.github/workflows/`.
 3. State the module's contract in API_SPEC.md if other modules or the Python side depend on it.
 4. Add a row to the component table above, the module map, and `docs/diagrams/module_deps.mmd`.
 5. Add tests of each kind in the table that apply, and a CHANGELOG entry.
+
+## Phase 3 modules: quoting, risk and hedging
+
+```
+rates-api       io.ratesalgo.api       seams to P1, P2 and P4, with in-memory stubs
+rates-risk      io.ratesalgo.risk      RiskEngine, RiskLimits, TokenBucket, KillSwitchController
+rates-hedge     io.ratesalgo.hedge     BoxQpSolver, HedgePlanner, Hedger, HedgeAnalytics, cost model
+rates-quoting   io.ratesalgo.quoting   QuotingEngine, FairValueEngine, SpreadModel, HitRateModel,
+                                       PackageQuoter, ClobQuoter, QuotingEventHandler, Desk
+```
+
+Dependencies run one way: `rates-quoting` on `rates-hedge` on `rates-risk` on `rates-api`, which depends on `rates-common` and `rates-messages`. Nothing in P3 depends on P1, P2 or P4 directly; `rates-api` declares what P3 needs from them (DECISIONS.md DR-P3-01):
+
+| Interface | Provided by | What P3 calls |
+|---|---|---|
+| `InstrumentDirectory` | P1 securities master | static data and a dense index per instrument |
+| `FairValueSource` | P1 pricing | fair mid (Decimal9) and the stamp of its newest input |
+| `SensitivityProvider` | P1 risk analytics (`Dv01Ladder`, adapted) | key-rate PV01 of a signed quantity at current curves |
+| `BookSource` | P2 market state | top of the composite book and its update stamp |
+| `OutboundSink` | P2 gateway and control-plane rings | SBE messages out: Quote, QuoteCancel, NewOrder, OrderCancel, RiskLimitBreach, KillSwitch |
+| `HedgeOrderSink` | P4 router | parent hedge orders, cancel, cancel all |
+
+`Desk` wires one instrument group: kill switch, risk engine, one hedger per currency, fair value, quoting engine, package and CLOB quoters, and `QuotingEventHandler`, which P2's loop calls with each inbound message and its journal sequence. Everything runs on the group's single writer thread; there are no locks and no scheduler. Time comes from the `Clock` the loop provides, and housekeeping (`QuotingEngine.poll`, `Hedger.onTimer`, `ClobQuoter.update`) is called by the loop.
+
+Hot-path packages added in P3: `io.ratesalgo.quoting` (RFQ, response and poll paths), `io.ratesalgo.risk` and the axe query in `io.ratesalgo.hedge`. `QuotingAllocationTest` asserts that the per-RFQ path allocates nothing after warm-up (DR-P3-08). Message flow inside a decision: the engine checks with the risk engine, reserves the quantity, then writes to the gateway sink, so a message that reaches a gateway has always passed the check (API_SPEC.md Section 13.2). The RFQ decision flow and the kill-switch state machine are in docs/diagrams/rfq_decision.mmd and docs/diagrams/kill_switch_state.mmd.
+
+P3 tests by kind: unit tests per class; property tests for the incremental ladder (`RiskEngineTest`), the key-rate split (`ApiStubsTest`) and the solver against brute force (`BoxQpSolverTest`); simulation gates `MillionRfqTest` (one million RFQs, independent sink auditor), `ChaosTest` (10,000 seeded scenarios of fills, curve shocks, disconnects, feed gaps, heartbeat loss, stale inputs, kills and resets) and `QuotingAllocationTest`; and recipes 14 to 16 in `RecipesTest`.
