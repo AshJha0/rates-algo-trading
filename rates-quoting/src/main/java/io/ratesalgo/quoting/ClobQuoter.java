@@ -305,6 +305,12 @@ public final class ClobQuoter implements KillSwitchListener {
     return i < 0 ? 0L : queueAhead[2 * i + (bid ? 0 : 1)];
   }
 
+  /** Quantity this side holds reserved with the risk engine. */
+  public long reserved(final int instrumentId, final boolean bid) {
+    final int i = slot(instrumentId);
+    return i < 0 ? 0L : reserved[2 * i + (bid ? 0 : 1)];
+  }
+
   /** Whether a cancel is outstanding on that side. */
   public boolean cancelPending(final int instrumentId, final boolean bid) {
     final int i = slot(instrumentId);

@@ -22,7 +22,10 @@ import java.util.Arrays;
  * </pre>
  *
  * floored at {@code minHalfSpreadBp * max_i P_i}. The bracket is the netted-hedge saving; the last
- * term is the inventory charge on the net ladder against the book {@code p}. The charge is spread
+ * term is the inventory charge on the net ladder against the book {@code p}. The sum of the legs
+ * priced one by one is {@code sum_i (h_i P_i + kappa (d_i' Sigma p + 0.5 d_i' Sigma d_i))} with
+ * {@code d_i} the dealer's ladder of leg i; the package is cheaper by the hedge saving and by the
+ * cross terms {@code -kappa sum_{i<j} d_i' Sigma d_j}, which are positive for offsetting legs. The charge is spread
  * over the legs as an equal bp distance on each, in the client-worse direction. Every leg passes
  * the risk engine's quote check one-sided; the package is passed if any leg fails.
  *
@@ -84,6 +87,7 @@ public final class PackageQuoter {
     private boolean quoted;
     private final long[] legPrice = new long[4];
     private double legChargeSum;
+    private double spreadChargeSum;
     private double hedgeSaving;
     private double inventoryCharge;
     private double charge;
@@ -100,9 +104,14 @@ public final class PackageQuoter {
       return legPrice[leg];
     }
 
-    /** Sum of the legs' standalone charges, currency. */
+    /** Sum of the legs' standalone charges (spread plus inventory), currency. */
     public double legChargeSum() {
       return legChargeSum;
+    }
+
+    /** Sum of the legs' spread charges {@code h_i P_i}, currency. */
+    public double spreadChargeSum() {
+      return spreadChargeSum;
     }
 
     /** Hedge cost saved by netting, currency. */
@@ -143,6 +152,7 @@ public final class PackageQuoter {
   private final KeyRateCovariance covariance;
   private final double[] fair = new double[4];
   private final double[] l = new double[K];
+  private final double[][] legLadder = new double[4][K];
   private final double[] p = new double[K];
   private final Dv01Vector book = new Dv01Vector(CurrencyCode.USD);
 
@@ -217,7 +227,8 @@ public final class PackageQuoter {
       totalPv01 += legPv01;
       maxPv01 = Math.max(maxPv01, legPv01);
       for (int k = 0; k < K; k++) {
-        l[k] -= risk.unitPv01(id, k) * qMajor;
+        legLadder[i][k] = -risk.unitPv01(id, k) * qMajor;
+        l[k] += legLadder[i][k];
       }
     }
     double netPar = 0.0;
@@ -229,6 +240,11 @@ public final class PackageQuoter {
     risk.ladder(first.currency(), book);
     book.copyTo(p);
     final double inventory = cfg.kappa() * (covariance.quadratic(l, p) + 0.5 * covariance.quadratic(l, l));
+    double standaloneInventory = 0.0;
+    for (int i = 0; i < pkg.legs(); i++) {
+      standaloneInventory +=
+          cfg.kappa() * (covariance.quadratic(legLadder[i], p) + 0.5 * covariance.quadratic(legLadder[i], legLadder[i]));
+    }
     final double charge = Math.max(cfg.minHalfSpreadBp * maxPv01, chargeSum - saving + inventory);
     final double distance = totalPv01 > 0.0 ? charge / totalPv01 : 0.0;
     for (int i = 0; i < pkg.legs(); i++) {
@@ -249,7 +265,8 @@ public final class PackageQuoter {
     for (int k = 0; k < K; k++) {
       out.netLadder.set(k, l[k]);
     }
-    out.legChargeSum = chargeSum;
+    out.legChargeSum = chargeSum + standaloneInventory;
+    out.spreadChargeSum = chargeSum;
     out.hedgeSaving = saving;
     out.inventoryCharge = inventory;
     out.charge = charge;
