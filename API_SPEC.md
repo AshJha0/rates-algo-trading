@@ -1447,3 +1447,47 @@ The first dispatched message of any template starts the desk: it requires the cu
 | `PricingBindingTest` | Section 18.3 tolerances |
 | `VenueBindingTest` | a feed gap and a lost session pull quotes through the loop and the venue; quoting resumes after the snapshot and after logon; injected GatewayStatus faults |
 | `WiredLoopAllocationTest`, `AppHotPathRulesTest` | DR-R2W-12 |
+
+## Section 19. Desk features (rates-strategy, R2)
+
+Module `rates-strategy`, package `io.ratesalgo.strategy`. Section 18 is reserved for `rates-app` (branch `claude/r2-wiring-c31ae4`); this section is numbered 19 so the two merge without renumbering. Each feature sits behind an interface whose default reproduces today's engine; the measured results are in docs/research/DESK_FEATURES.md and the decisions in DR-R2B-01 to DR-R2B-10. Units: DV01 in major currency per 1 bp rise (positive gains when rates rise), positions in minor units, spreads and premiums in bp, times in epoch nanoseconds. Every method named allocation-free allocates nothing after warm-up (`DeskQuoterAllocationTest`).
+
+### 19.1 RiskLadder
+
+`RiskLadder(List<Instrument>)`: positions per instrument and their DV01 ladder. Buckets: 0 = 2Y (tenor up to 3 years), 1 = 5Y (up to 7), 2 = 10Y (up to 15), 3 = 30Y. `setPosition(index, minor)`, `recompute()`, `net()`, `bucket(b)`, `ladderNorm()` (Euclidean norm of the buckets), `tradeDv01(index, weBuy, quantity)`, `indexOf(instrumentId)` (dense index or -1). Swaps, bonds and futures share one ladder, so opposing flow nets across products before any hedge. Allocation-free.
+
+### 19.2 HedgeBudget (feature 1)
+
+`double excessDv01(RiskLadder, long nanosSinceClientFill)`: DV01 to remove now with the sign of the exposure (the hedge sent is `-excess`), zero for none. `long holdNanos()`: when to ask again after a client fill, zero for never. Default `HedgeBudget.threshold(t)` (`ThresholdHedgeBudget`): `|net| > t` gives `net`. `NettingHedgeBudget(soft, hard, retain, holdNanos)`, `0 <= retain <= soft <= hard`: `|net| > hard` gives `net - sign(net) * soft`; `|net| > soft` and age at least `hold` gives `net - sign(net) * retain`; otherwise zero.
+
+### 19.3 Axes (feature 2)
+
+`AxeBook(RiskLadder, maxBp, budgetDv01, bucketWeight)` implements `io.ratesalgo.hedge.AxeSource`: `axeBp(instrumentId, ourSide) = maxBp * min(1, |e| / budget)` when trading `ourSide` reduces `e = (1 - w) * net + w * bucket(instrument)`, else 0; `axeQuantity` is `|e| / |dv01PerUnit|` on the axed side; `publish()` returns `List<Axe(instrumentId, ourSide, improveBp, quantity)>` in ascending instrument order (allocates). Default `AxeSource.NONE`. No SBE message: template ids 120 to 129 stay unused (DR-R2B-06).
+
+### 19.4 QuoteSizer (feature 3)
+
+`long maxQuantity(RiskLadder, index, tradeDv01, requested)` and `double premiumBp(RiskLadder, index, tradeDv01, sizeMillions)` (never negative). A D2C RFQ is all-or-none in the back-tester, so a maximum below the request is a decline. Default `QuoteSizer.UNLIMITED`. `EnvelopeSizer(limitDv01, softUtil, hardUtil, riskPremiumBp, blockSizeMm, blockPremiumBp)`: with `post = |net + tradeDv01|` and `u = post / limit`, a risk-reducing request (`post <= |net|`) gets full size and no risk premium; `u > hardUtil` declines; otherwise the premium is `riskPremiumBp * min(1, (u - softUtil) / (hardUtil - softUtil))^2` when `u > softUtil`, plus `blockPremiumBp * ln(size / blockSizeMm)` when `size > blockSizeMm`. `lognormalQuantileMm(mu, sigma, z) = exp(mu + z sigma)`.
+
+### 19.5 ClientTiering (feature 4)
+
+`int tier(clientId)` (1 best, allocation-free), `boolean wantsMarkouts()`, `void onMarkout(clientId, markoutBp, now)` (allocation-free), `void review(now)` (may publish a table version and allocate; runs at the review cadence). The markout is `sign(q) * (mid(t + h) - mid(t)) / |priceChangePerBp|`, bp of value from our side. Default `StaticTiering(clientsPerTier)`: `1 + (clientId - 1) / clientsPerTier`. `MarkoutTiering(tiers, demoteBelow[], promoteAbove[], minSample, alpha, startIndex, reviewIntervalNanos, proposerId, approverId, capacity)`: requires `promoteAbove[t] > demoteBelow[t - 1]` and `proposerId != approverId`; publishes through `io.ratesalgo.quoting.TierTableControl.propose` and `approve`, versions strictly increasing from 1.
+
+### 19.6 HedgeTiming (feature 5)
+
+`Action decide(excessDv01, now)` with `Action` IMMEDIATE, STAGED (send `1 / slices()` now, ask again after `sliceIntervalNanos()`) and WAIT (ask again after `waitNanos()`); `onClientFill(tradeDv01, now)`; `reset()`. Default `HedgeTiming.ALWAYS_IMMEDIATE`. `OptimalStoppingTiming(FlowRateEstimator, gamma, sigmaBpPerSqrtSecond, hedgeCostPerDv01, impactPerDv01Squared, waitStepNanos, maxWaitNanos, slices, sliceIntervalNanos)`: WAIT when `c * min(a, lambda dt) > gamma / 2 * sigma^2 * a^2 * dt` and the wait so far plus `dt` is within `maxWait`; else STAGED when `k a^2 (1 - 1/n) > gamma / 2 * sigma^2 * a^2 * ds * sum_{j=1}^{n-1} ((n - j) / n)^2`; else IMMEDIATE. `FlowRateEstimator(tauSeconds, priorDv01PerSecond)`: decaying rates of DV01-raising and DV01-lowering client fills; `opposingRate(exposure, now)`.
+
+### 19.7 InventoryPenalty (feature 6)
+
+`double penaltyBp(RiskLadder, index, weBuy, quantity)`: cost in bp of the trade's DV01, negative for a trade that reduces inventory. Default `InventoryPenalty.NONE`. `FundingPenalty(ladder, couponByIndex[], bondBsPerYear, swapBsPerYear, holdingDays)`: bonds `((repo - coupon) * dPos + bsBond * dGross) * 100 * v * H / 360`, swaps `bsSwap * dGross * 0.01 * H / 360`, futures 0, divided by `quantity * |dv01PerUnit|`; `repo` is the instrument's funding rate. `CouponCarry(Map<Integer, Double>)` implements the back-tester's `CarryModel`: bonds accrue `position * 100 * v * coupon * dt / 360 days`.
+
+### 19.8 DeskQuoter
+
+`DeskQuoter(name, Features)` implements the back-tester's `Strategy`; `Features(ladder, SpreadOptimizer, HedgeBudget, HedgeTiming, AxeSource, QuoteSizer, ClientTiering, InventoryPenalty, markoutHorizonNanos)`. `baselineFeatures(ladder, spread, threshold, clientsPerTier, horizon)` sets every default. Per RFQ: refresh the ladder from the context; decline if the sizer's maximum is below the request; `extra = premiumBp + penaltyBp`; `s = SpreadOptimizer.optimalHalfSpreadBp(instrument, size, tier, dealers, inWindow, extra)` with `E[edge](s) = P(s) (s - adverse(tier) - hedgeCost - extra)`; half-spread `max(0, s - axeBp)` around mid, rounded to tick outward. Per client fill: feed the timing, schedule a markout when the tiering wants one, then ask the budget and the timing; one hedge in flight at a time, into the 10-year note future. With the defaults the output chain hash equals that of `ModelSpreadStrategy` on the same journal. Counters: `quotes`, `sizeDeclines`, `clientFills`, `hedgesSent`, `waits`, `stagedSlices`, `markoutsRecorded`.
+
+### 19.9 Experiments
+
+`DeskFactory(config, presets, instruments)`: `baseline()`, `treatment(name, tiering)` for `internalisation`, `axes`, `sizing`, `tiering`, `timing`, `funding` and `desk_all`, and `deskDefault()` (the baseline with the adopted features, `ADOPTED`). `DeskExperiment(repoRoot, configFile).run(days, workDir)` and `DeskExperimentCli --preregs a.yaml,...,g.yaml [--ledger] [--repo] [--work] [--scope evaluation|holdout] [--commit] [--dirty]`: refuses (exit 2, nothing recorded) unless every pre-registration is valid (Section 16.8), they share config, period and holdout, each has baseline `baseline` and one known treatment, and a holdout has not been opened; then runs once and appends one ledger record per pre-registration. Config `data/experiments/R2B.config.yaml`: `band` (`dealers_min`, `dealers_max`, `informed_share_multiplier` at `low`, `central`, `high`; the slope comes from preset `usd_rfq_hit_rate` at the same point), `limits`, `carry`, `baseline`, one section per feature, `statistics`. Record `results`: `treatment`, `baseline`, `metric`, `metric_unit`, `orientation`, `days`, `band.<point>` (`baseline_mean`, `treatment_mean`, `difference_mean`, `improvement_mean`, `improvement_ci_low`, `improvement_ci_high`, `paired_p`, `holm_p`, `verdict` improved, worse or inconclusive, `pnl_difference_mean`, `pnl_difference_ci_low`, `pnl_difference_ci_high`, `pnl_guard`, `limit_breach_days`, `new_limit_breach_days`, `secondary_means`), `statistics`, `guards`, `adopted_as_default`; the record's `verdict` is `supported` or `not supported`.
+
+### 19.10 Desk report (feature 7)
+
+`DeskMetrics.of(BacktestResult, InstrumentSet, Settings(limitDv01, positionLimitMm, horizonIndex, gamma, sigma, bondBsPerYear, swapBsPerYear))`: scalar metrics by name (`pnl`, `client_dv01_traded`, `hedge_dv01_traded`, `pnl_per_dv01`, `capture_per_dv01`, `hedge_ratio`, `spread_capture`, `adverse_selection`, `other_inventory`, `hedge_cost`, `carry`, `funding`, `fees`, `residual`, `hedges`, `hedge_slippage`, `hedge_slippage_per_dv01`, `risk_charge`, `risk_adjusted_hedge_cost`, `mean_abs_net_dv01`, `max_abs_net_dv01`, `limit_utilisation`, `balance_sheet_charge`, `funding_net`, `inventory_half_life_s`, `limit_breach`, `adverse_tier_1` to `adverse_tier_3`) and `hitRateCounts()` by tier, then product and tenor bucket. Waterfall: `spread_capture + adverse_selection + other_inventory + hedge_cost + carry + funding + fees = position P&L - residual`. `DeskReport(date, strategy, metrics)`: `toMap`, `toJson`, `toMarkdown`. `DeskReportCli --config --date [--strategy] [--band] [--repo] [--out]` writes `desk_report.json` and `desk_report.md`.

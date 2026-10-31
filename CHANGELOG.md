@@ -28,6 +28,13 @@ Round 2, cookbook recipes and diagrams (branch `claude/r2-cookbook-diagrams-6560
 - Programs `Recipe23NssRichCheap` to `Recipe30ClobWorkup` and `Recipe34ConfigSchema` in `rates-cookbook` with recorded output under `src/test/resources/expected`, checked by `RecipesTest`; Python recipes `research/recipes/recipe31_pca_hedge.py`, `recipe32_hitrate.py` and `recipe33_markouts.py`; every recipe registered in `tools/check_cookbook.py`.
 - Diagrams: `system_context`, `ci_pipeline`, `hedge_route_sequence`, `multi_curve_bootstrap`, `replay_determinism`, `research_to_production`, `rfq_end_to_end_timed` and `rts6_control_map` in `docs/diagrams`, shown on the site's diagrams page; `experiment_lifecycle` updated.
 
+R2 desk features (branch `claude/r2-business-6cda18`).
+
+- `rates-strategy` (new): `RiskLadder`; seven desk features behind interfaces whose defaults are today's engine: `HedgeBudget` (`ThresholdHedgeBudget`, `NettingHedgeBudget`), `AxeBook` (an `AxeSource`), `QuoteSizer` (`EnvelopeSizer`), `ClientTiering` (`StaticTiering`, `MarkoutTiering` publishing through `TierTableControl`), `HedgeTiming` (`OptimalStoppingTiming`, `FlowRateEstimator`), `InventoryPenalty` (`FundingPenalty`), `CouponCarry`; `SpreadOptimizer`; `DeskQuoter`, which reproduces `ModelSpreadStrategy` byte for byte at its defaults; `DeskMetrics`, `DeskReport`, `DeskReportCli` (desk P&L view and waterfall); `DeskFactory`, `BandScenario`, `DeskExperiment`, `DeskExperimentCli`.
+- Experiments: pre-registrations R2B-001 to R2B-007 (`data/preregs/`), config `data/experiments/R2B.config.yaml`, seven ledger records (R2B-001 to R2B-007, seq 12 to 18). Internalisation and netting supported and adopted as the desk default (`DeskFactory.deskDefault`); axes, sizing, tiering, hedge timing, funding and all six together not supported. Simulator consistency checks only (DR-008).
+- Tests: baseline equivalence, feature formulas, allocation-free per-RFQ and per-fill paths, waterfall reconciliation, experiment harness and refusals.
+- Docs: docs/research/DESK_FEATURES.md (site page "Desk features"), API_SPEC.md Section 19, DECISIONS DR-R2B-01 to DR-R2B-10, diagrams "Internalisation flow" and "Desk P&L waterfall". SpotBugs exclusion for shared desk state (DR-R2B-08).
+
 ### Fixed
 
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).

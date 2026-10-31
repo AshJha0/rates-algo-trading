@@ -58,6 +58,9 @@ public record DeskSettings(
         .requoteThrottleNanos(0L)
         .minHalfSpreadBp(0.02)
         .maxHalfSpreadBp(0.08)
+        // DR-INT-05: the engine passes an RFQ whose expected cost reaches the cap (NEGATIVE_EDGE,
+        // DR-R2R); the default 0.10 bp winner's curse alone is 0.15 bp with three dealers
+        .winnersCurseBp(0.02)
         .kappa(2e-6)
         .maxSkewBp(0.05);
   }

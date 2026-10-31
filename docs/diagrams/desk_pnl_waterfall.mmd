@@ -1,0 +1,12 @@
+flowchart LR
+  sc["Spread captured<br/>client fills against mid at the fill"]
+  as["Adverse selection<br/>mid move over 60 s after each client fill"]
+  oi["Other inventory P&L<br/>inventory MTM less adverse selection"]
+  hc["Hedge cost<br/>hedge fills against mid"]
+  ca["Carry<br/>bond coupon accrual"]
+  fu["Funding<br/>repo on bond inventory"]
+  fe["Fees<br/>hedge and venue fees"]
+  pnl["Position P&L<br/>cash plus position at the last mid<br/>residual below one cent"]
+  sc -->|plus| as -->|plus| oi -->|plus| hc -->|plus| ca -->|plus| fu -->|plus| fe --> pnl
+  bs["Balance-sheet charge<br/>reported beside funding, not booked"]
+  fu -.-> bs
