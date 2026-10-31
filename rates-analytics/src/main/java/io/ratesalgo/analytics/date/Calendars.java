@@ -221,21 +221,14 @@ public final class Calendars {
       }
       return new JointCalendar(members);
     }
-    switch (name) {
-      case "US-SIFMA":
-        return US_SIFMA;
-      case "US-SOFR":
-        return US_SOFR;
-      case "US-FED":
-        return US_FED;
-      case "TARGET":
-        return TARGET;
-      case "LONDON":
-        return LONDON;
-      case "NONE":
-        return NONE;
-      default:
-        throw new IllegalArgumentException("unknown calendar " + name);
-    }
+    return switch (name) {
+      case "US-SIFMA" -> US_SIFMA;
+      case "US-SOFR" -> US_SOFR;
+      case "US-FED" -> US_FED;
+      case "TARGET" -> TARGET;
+      case "LONDON" -> LONDON;
+      case "NONE" -> NONE;
+      default -> throw new IllegalArgumentException("unknown calendar " + name);
+    };
   }
 }

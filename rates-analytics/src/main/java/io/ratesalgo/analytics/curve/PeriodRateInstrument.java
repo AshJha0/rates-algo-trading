@@ -29,6 +29,8 @@ public final class PeriodRateInstrument implements CurveInstrument {
   private double quote;
 
   /**
+   * Creates the instance from its parts.
+   *
    * @param label description
    * @param tenor ladder label
    * @param start period start (may be today)

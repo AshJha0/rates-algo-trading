@@ -16,6 +16,8 @@ public final class FixingHistory {
   private final double[] rates;
 
   /**
+   * Creates the instance from its parts.
+   *
    * @param dates strictly increasing fixing dates (the date each rate applies to)
    * @param rates decimal rates, one per date
    */

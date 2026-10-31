@@ -141,15 +141,11 @@ public record SwapConvention(
 
   /** Looks a convention up by currency code. */
   public static SwapConvention forCurrency(final String ccy) {
-    switch (ccy) {
-      case "USD":
-        return USD_SOFR;
-      case "EUR":
-        return EUR_ESTR;
-      case "GBP":
-        return GBP_SONIA;
-      default:
-        throw new IllegalArgumentException("no OIS convention for " + ccy);
-    }
+    return switch (ccy) {
+      case "USD" -> USD_SOFR;
+      case "EUR" -> EUR_ESTR;
+      case "GBP" -> GBP_SONIA;
+      default -> throw new IllegalArgumentException("no OIS convention for " + ccy);
+    };
   }
 }

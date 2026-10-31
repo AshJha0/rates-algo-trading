@@ -135,7 +135,8 @@ def is_decimal_text(text: str) -> bool:
     if not s or s.count(".") > 1:
         return False
     digits = s.replace(".", "", 1)
-    return digits.isdigit()
+    # ASCII only: str.isdigit also accepts superscripts and other scripts' digits.
+    return digits != "" and all(c in "0123456789" for c in digits)
 
 
 def _clean_number(text: str, *, where: str) -> str:

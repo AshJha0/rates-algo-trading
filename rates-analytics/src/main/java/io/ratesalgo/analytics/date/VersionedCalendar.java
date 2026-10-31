@@ -25,6 +25,8 @@ public final class VersionedCalendar implements HolidayCalendar {
   @FunctionalInterface
   public interface Rule {
     /**
+     * Creates the instance from its parts.
+     *
      * @param year calendar year
      * @param month 1 to 12
      * @param day day of month

@@ -135,25 +135,25 @@ public final class Schedule {
         reg.set(reg.size() - 2, d.get(d.size() - 2).equals(d.get(d.size() - 1)));
       }
       d.set(d.size() - 2, d.get(d.size() - 1));
-      d.remove(d.size() - 1);
-      reg.remove(reg.size() - 1);
+      removeAt(d, d.size() - 1);
+      removeAt(reg, reg.size() - 1);
     }
     if (d.size() >= 2 && d.get(1) <= d.get(0)) {
       reg.set(1, d.get(1).equals(d.get(0)));
       d.set(1, d.get(0));
-      d.remove(0);
-      reg.remove(0);
+      removeAt(d, 0);
+      removeAt(reg, 0);
     }
     if (d.size() < 2) {
       throw new IllegalStateException("degenerate schedule from " + Dates.format(effective));
     }
     if (stub == StubRule.LONG_FRONT && d.size() > 2 && !reg.get(0)) {
-      d.remove(1);
-      reg.remove(0);
+      removeAt(d, 1);
+      removeAt(reg, 0);
       reg.set(0, false);
     } else if (stub == StubRule.LONG_BACK && d.size() > 2 && !reg.get(reg.size() - 1)) {
-      d.remove(d.size() - 2);
-      reg.remove(reg.size() - 1);
+      removeAt(d, d.size() - 2);
+      removeAt(reg, reg.size() - 1);
       reg.set(reg.size() - 1, false);
     }
     final int[] out = new int[d.size()];
@@ -165,6 +165,10 @@ public final class Schedule {
       regOut[i] = reg.get(i);
     }
     return new Schedule(out, regOut, periodMonths, calendar, convention, endOfMonth);
+  }
+
+  private static void removeAt(final List<?> list, final int index) {
+    list.subList(index, index + 1).clear();
   }
 
   /** Number of dates; one more than the number of periods. */

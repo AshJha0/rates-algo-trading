@@ -18,26 +18,19 @@ public enum BusinessDayConvention {
 
   /** Applies the convention on the calendar. Allocation-free. */
   public int adjust(final int date, final HolidayCalendar calendar) {
-    switch (this) {
-      case UNADJUSTED:
-        return date;
-      case FOLLOWING:
-        return following(date, calendar);
-      case PRECEDING:
-        return preceding(date, calendar);
-      case MODIFIED_FOLLOWING:
-        {
-          final int d = following(date, calendar);
-          return Dates.month(d) != Dates.month(date) ? preceding(date, calendar) : d;
-        }
-      case MODIFIED_PRECEDING:
-        {
-          final int d = preceding(date, calendar);
-          return Dates.month(d) != Dates.month(date) ? following(date, calendar) : d;
-        }
-      default:
-        throw new IllegalStateException("unknown convention " + this);
-    }
+    return switch (this) {
+      case UNADJUSTED -> date;
+      case FOLLOWING -> following(date, calendar);
+      case PRECEDING -> preceding(date, calendar);
+      case MODIFIED_FOLLOWING -> {
+        final int d = following(date, calendar);
+        yield Dates.month(d) != Dates.month(date) ? preceding(date, calendar) : d;
+      }
+      case MODIFIED_PRECEDING -> {
+        final int d = preceding(date, calendar);
+        yield Dates.month(d) != Dates.month(date) ? following(date, calendar) : d;
+      }
+    };
   }
 
   private static int following(final int date, final HolidayCalendar calendar) {

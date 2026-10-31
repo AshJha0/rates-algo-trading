@@ -27,14 +27,11 @@ public enum DayCount {
 
   /** Day count between two dates under this convention. */
   public int dayCount(final int d1, final int d2) {
-    switch (this) {
-      case THIRTY_360_US:
-        return thirty360Us(d1, d2);
-      case THIRTY_E_360:
-        return thirtyE360(d1, d2);
-      default:
-        return d2 - d1;
-    }
+    return switch (this) {
+      case THIRTY_360_US -> thirty360Us(d1, d2);
+      case THIRTY_E_360 -> thirtyE360(d1, d2);
+      default -> d2 - d1;
+    };
   }
 
   /**
@@ -55,22 +52,14 @@ public enum DayCount {
    * @param refEnd reference period end
    */
   public double yearFraction(final int d1, final int d2, final int refStart, final int refEnd) {
-    switch (this) {
-      case ACT_360:
-        return (d2 - d1) / 360.0;
-      case ACT_365F:
-        return (d2 - d1) / 365.0;
-      case ACT_ACT_ISDA:
-        return actActIsda(d1, d2);
-      case ACT_ACT_ICMA:
-        return actActIcma(d1, d2, refStart, refEnd);
-      case THIRTY_360_US:
-        return thirty360Us(d1, d2) / 360.0;
-      case THIRTY_E_360:
-        return thirtyE360(d1, d2) / 360.0;
-      default:
-        throw new IllegalStateException("unknown day count " + this);
-    }
+    return switch (this) {
+      case ACT_360 -> (d2 - d1) / 360.0;
+      case ACT_365F -> (d2 - d1) / 365.0;
+      case ACT_ACT_ISDA -> actActIsda(d1, d2);
+      case ACT_ACT_ICMA -> actActIcma(d1, d2, refStart, refEnd);
+      case THIRTY_360_US -> thirty360Us(d1, d2) / 360.0;
+      case THIRTY_E_360 -> thirtyE360(d1, d2) / 360.0;
+    };
   }
 
   private static double actActIsda(final int d1, final int d2) {
