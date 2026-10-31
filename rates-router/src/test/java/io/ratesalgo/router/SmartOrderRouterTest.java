@@ -166,7 +166,12 @@ class SmartOrderRouterTest {
     assertEquals(BID + 2 * TICK, again.price());
     final int slot = r.children().slotOf(passive.id());
     assertEquals(-1, slot, "the replaced child is released");
-    assertEquals(3 * MM, again.qty());
+    // venue 2's book is now two ticks above venue 1's, so the re-route no longer sends the whole
+    // 3 MM back to venue 2: the cheaper venue takes part of it (DR-R2R-04)
+    final CostTable reroute = tables.get(tables.size() - 1);
+    assertEquals(3 * MM, reroute.allocatedQuantity, reroute.format());
+    assertTrue(reroute.allocated[0] > 0, reroute.format());
+    assertTrue(again.qty() < 3 * MM);
   }
 
   @Test

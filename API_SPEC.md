@@ -924,13 +924,13 @@ Parameters, config version 1 (`RouterParams`, `VenueParams`; defaults in `Router
 For row \(v\) of a decision and quantity \(q\), with bid \(b\), ask \(a\), same-side displayed depth \(Q\), trade rate \(r\) (quantity per second, both sides), lot \(\lambda\), passive horizon \(T\) (0 when passive is not allowed) and \(\sigma_s = \sigma_d/\sqrt{D}\):
 
 \[
-h = \tfrac{a-b}{2},\quad I(q) = y\,\sigma_d\,(q/\mathrm{ADV})^{\alpha},\quad L = k_L\,\sigma_s\sqrt{\ell},\quad A = k_A\,\sigma_s\sqrt{T}
+o = s\,\big(\tfrac{a+b}{2} - m\big),\quad h = \tfrac{a-b}{2},\quad I(q) = y\,\sigma_d\,(q/\mathrm{ADV})^{\alpha},\quad L = k_L\,\sigma_s\sqrt{\ell},\quad A = k_A\,\sigma_s\sqrt{T}
 \]
 \[
-c_{aggr}(q) = h + I(q) + f_t + L,\qquad c_{pass}(q) = P\,(-h + I(q) + f_m) + (1-P)\,(A + h + I(q) + f_t) + L
+c_{aggr}(q) = o + h + I(q) + f_t + L,\qquad c_{pass}(q) = o + P\,(-h + I(q) + f_m) + (1-P)\,(A + h + I(q) + f_t) + L
 \]
 
-where \(P\) is `QueueFillModel.probability(ceil(Q/λ), ceil(q/λ), r/(2λ), θ, T)` (complete-fill probability, Cont, Stoikov and Talreja 2010, uniformisation as in the owner's earlier library, API_SPEC.md Section 13.1 there; tolerance 1e-10 against the Poisson tail when \(\theta = 0\), `CostModelTest`). The chosen cost is \(c_{pass}\) if passive is allowed and either aggressive is not allowed or \(c_{pass} < c_{aggr}\); otherwise \(c_{aggr}\). The expected queue wait reported is \((\lceil Q/\lambda\rceil + \lceil q/\lambda\rceil)/(r/2\lambda)\), capped at 1e6 s. All doubles are rounded to Decimal9 with `Math.round(x * 1e9)` when written to the table; inputs that enter the model as doubles (trade rate, fees) are taken from the rounded table values, so a decision re-evaluated from the journal reproduces every mantissa.
+where \(s\) is +1 for a buy and -1 for a sell, \(m\) is the consolidated mid (the mid of the highest bid and lowest ask over the decision's rows with a two-sided quote), so the venue offset \(o\) charges a venue whose book sits at a worse price than the others (zero when all mids agree; DR-R2R-04, `CostModelTest.aVenueQuotingAtABetterPriceWinsTheSlice`), \(P\) is `QueueFillModel.probability(ceil(Q/λ), ceil(q/λ), r/(2λ), θ, T)` (complete-fill probability, Cont, Stoikov and Talreja 2010, uniformisation as in the owner's earlier library, API_SPEC.md Section 13.1 there; tolerance 1e-10 against the Poisson tail when \(\theta = 0\), `CostModelTest`). The chosen cost is \(c_{pass}\) if passive is allowed and either aggressive is not allowed or \(c_{pass} < c_{aggr}\); otherwise \(c_{aggr}\). The expected queue wait reported is \((\lceil Q/\lambda\rceil + \lceil q/\lambda\rceil)/(r/2\lambda)\), capped at 1e6 s. All doubles are rounded to Decimal9 with `Math.round(x * 1e9)` when written to the table; inputs that enter the model as doubles (trade rate, fees) are taken from the rounded table values, so a decision re-evaluated from the journal reproduces every mantissa.
 
 ### 15.2 Routing objective and allocation
 
@@ -1005,9 +1005,11 @@ Result (`BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` (rates-route
 
 | Strategy | Mean cost (bps of price) | Mean saving of the router (bps) | 95% block-bootstrap interval |
 |---|---|---|---|
-| router | -0.1957 | | |
-| single-venue aggressive | 2.6822 | 2.8780 | [2.7210, 2.9855] |
-| even split aggressive | 2.5108 | 2.7065 | [2.5309, 2.8272] |
+| router | -0.2565 | | |
+| single-venue aggressive | 2.6822 | 2.9388 | [2.7792, 3.0631] |
+| even split aggressive | 2.5108 | 2.7673 | [2.5802, 2.9026] |
+
+Re-run 2026-10-31 after the venue offset of DR-R2R-04 was added to the cost model; the P4 gate run before it gave a router cost of -0.1957 and savings of 2.8780 [2.7210, 2.9855] and 2.7065 [2.5309, 2.8272] bps.
 
 The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_BPS`). The router's cost is below zero because most of its quantity rests and earns part of the spread in a market whose only adverse selection is the random walk; the number measures the router's logic in this declared world and is not a forecast of desk savings. Refitting the impact and queue parameters from P2 simulator data is deferred (DR-P4-03).
 
