@@ -51,6 +51,8 @@ public final class QuotingEngine implements KillSwitchListener {
 
   private static final int K = KeyRateTenors.COUNT;
   private static final int MARKOUTS = 4096;
+  /** Expired quotes remembered so a Done that raced the expiry is still booked (DR-R2R-13). */
+  private static final int TOMBSTONES = 1024;
   private static final int DEFAULT_DEALERS = 3;
 
   private final InstrumentDirectory directory;
@@ -129,6 +131,12 @@ public final class QuotingEngine implements KillSwitchListener {
   private long expiries;
   private long pulls;
   private long unmatchedResponses;
+  private long lateFills;
+  private final long[] tQuoteId = new long[TOMBSTONES];
+  private final int[] tInstrument = new int[TOMBSTONES];
+  private final boolean[] tBuy = new boolean[TOMBSTONES];
+  private final long[] tQty = new long[TOMBSTONES];
+  private int tHead;
   private double coverDistanceBp;
   private long coverObservations;
 
@@ -400,6 +408,9 @@ public final class QuotingEngine implements KillSwitchListener {
       final long quoteId, final QuoteStatus status, final long tradedPrice, final long tradedQuantity, final long coverPrice) {
     final int slot = (int) quoteSlot.get(quoteId);
     if (slot < 0) {
+      if (status == QuoteStatus.Done && bookLateFill(quoteId, tradedPrice, tradedQuantity)) {
+        return;
+      }
       unmatchedResponses++;
       return;
     }
@@ -447,6 +458,7 @@ public final class QuotingEngine implements KillSwitchListener {
         if (sValidUntil[s] <= nowNanos) {
           expiries++;
           release(s);
+          remember(s);
           free(s);
           continue;
         }
@@ -561,6 +573,11 @@ public final class QuotingEngine implements KillSwitchListener {
     return pulls;
   }
 
+  /** Done responses booked for quotes that had already expired here. */
+  public long lateFills() {
+    return lateFills;
+  }
+
   /** Responses for quotes the engine no longer holds. */
   public long unmatchedResponses() {
     return unmatchedResponses;
@@ -657,6 +674,34 @@ public final class QuotingEngine implements KillSwitchListener {
 
   private void release(final int s) {
     risk.release(sInstrument[s], sBuy[s] ? sQty[s] : 0L, sBuy[s] ? 0L : sQty[s]);
+  }
+
+  private void remember(final int s) {
+    tQuoteId[tHead] = sQuoteId[s];
+    tInstrument[tHead] = sInstrument[s];
+    tBuy[tHead] = sBuy[s];
+    tQty[tHead] = sQty[s];
+    tHead = (tHead + 1) % TOMBSTONES;
+  }
+
+  /**
+   * A Done for a quote that expired here first: the venue accepted the client's lift before our
+   * expiry reached it, so the trade stands and is booked (its reservation was already released).
+   * The hit-rate model is not taught, the quote's features being gone. Returns false if the quote
+   * is not among the last {@code TOMBSTONES} expiries.
+   */
+  private boolean bookLateFill(final long quoteId, final long tradedPrice, final long tradedQuantity) {
+    for (int k = 0; k < TOMBSTONES; k++) {
+      if (tQuoteId[k] == quoteId && tQty[k] > 0) {
+        final long qty = Math.min(Math.max(tradedQuantity, 0L), tQty[k]);
+        tQty[k] = 0;
+        lateFills++;
+        fills++;
+        risk.onFill(tInstrument[k], tBuy[k] ? qty : -qty, tradedPrice);
+        return true;
+      }
+    }
+    return false;
   }
 
   private void free(final int s) {

@@ -269,6 +269,29 @@ class QuotingEngineTest {
     assertEquals(RfqDecision.FIRM, ask(2, TestMarket.UST10, Side.Buy, 10 * FACE_1M));
   }
 
+  /**
+   * DR-R2R-13: a Done that the venue accepted before expiry but that arrives after poll expired
+   * the quote is still booked to risk, once; a repeat is unmatched.
+   */
+  @Test
+  void aDoneAfterExpiryIsStillBooked() {
+    assertEquals(RfqDecision.FIRM, ask(2, TestMarket.UST10, Side.Buy, 25 * FACE_1M));
+    final RfqOutcome o = engine.outcome();
+    final long id = o.quoteId();
+    final long price = o.price();
+    m.clock.advance(6_000_000_000L);
+    engine.poll(m.clock.epochNanos());
+    assertEquals(0, engine.heldQuotes());
+    assertEquals(0L, risk.pendingSell(TestMarket.UST10));
+    engine.onQuoteResponse(id, QuoteStatus.Done, price, 25 * FACE_1M, 0L);
+    assertEquals(-25 * FACE_1M, risk.position(TestMarket.UST10));
+    assertEquals(1, engine.lateFills());
+    assertEquals(0, engine.unmatchedResponses());
+    engine.onQuoteResponse(id, QuoteStatus.Done, price, 25 * FACE_1M, 0L);
+    assertEquals(-25 * FACE_1M, risk.position(TestMarket.UST10));
+    assertEquals(1, engine.unmatchedResponses());
+  }
+
   @Test
   void subjectTierIsMarkedWithZeroValidity() {
     assertEquals(RfqDecision.SUBJECT, ask(3, TestMarket.UST10, Side.Sell, 10 * FACE_1M));

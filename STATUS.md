@@ -110,6 +110,8 @@ Gate results, from `mvn -B -ntp verify` on JDK 25.0.5, Windows 11, 2026-10-31, b
 | Allocation-free per-RFQ path after warm-up | five windows of 20,000 RFQs: 280, 0, 0, 0, 0 bytes (DR-P3-08) | `QuotingAllocationTest` |
 | Coverage at or above the floor, SpotBugs clean | JaCoCo line floor 0.85 met and SpotBugs clean in every module | `mvn -B -ntp verify` |
 
+Re-run on 2026-10-31, branch `claude/r2-review-6e9f43`, after the risk-reducing exemption started counting working reservations (DECISIONS.md DR-R2R-09): `MillionRfqTest` 1,000,000 RFQs, 533,266 quotes, 55,600 fills, 3,298 hedge parents, 3,288 risk rejects, 0 violations; `ChaosTest` 10,000 scenarios, 9,269 kills and 643 resets, 0 invariant failures. Hedge parents that would carry the book through zero once other working parents fill are now checked against the limits and some are refused, so less of the envelope is reserved and more RFQs find capacity. The hedger and allocation rows are unchanged.
+
 ## Open items
 
 - P0: local verification done on 2026-10-31 (mvn verify on JDK 25.0.5 and JDK 27: 50 Java tests, coverage floor met, SpotBugs clean; ruff, mypy, pytest 16 passed; mkdocs build --strict clean; cookbook recipes recorded and checked by tools/check_cookbook.py). The gate closes when the same jobs are green in GitHub Actions on Linux and Windows.
