@@ -91,7 +91,7 @@ public final class Brent {
         final double s = fb / fa;
         double p;
         double q;
-        if (a == c) {
+        if (Double.compare(a, c) == 0) {
           p = 2.0 * m * s;
           q = 1.0 - s;
         } else {
