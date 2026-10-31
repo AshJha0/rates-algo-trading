@@ -210,3 +210,69 @@ The fixes above, grouped into four packages that share no source file, so four p
 - **r2-review.** Items 6, 13 and 14 are correctness defects found by reading; none has a test yet.
 - **After the r2-wiring merge.** Re-run AUDIT-01 to AUDIT-04 through `DeskBacktest` to size items 1 to 11 on the production engine, under new pre-registration ids.
 - **Back-tester owner.** In `HedgeCostModel`, any positive impact rounds a market hedge one full tick beyond the touch. That is fair for 1,400-lot blocks, but it overstates the cost of small hedges, and a sliced hedger will look worse than it is until the model fills by displayed depth.
+
+## Production-engine re-run (audit fix package D, AUDIT-11 to AUDIT-14)
+
+Added 2026-10-31 on branch `claude/fix-d-backtest-cdd6aa`. The DR-008 caveat applies to every number here: these are simulator consistency checks, not edge.
+
+### What changed in the back-tester first
+
+- **Hedge fills by displayed depth.** `HedgeCostModel.withDepthWalk(true)` fills a market order against the touch's displayed quantity, then the same quantity one tick further out per level, up to `max_impact_ticks` beyond the touch, at the quantity-weighted price. The books carry only the top level, so each deeper level is assumed to show the touch's quantity. The rule before package D (any positive impact rounds one full tick beyond the touch) stays the default of `fromPreset`, because P5-001 and AUDIT-01 to AUDIT-04 must still reproduce from their ledger rows (`FirstExperimentTest` pins P5-001). Switching the default is a decision for DECISIONS.md, not this package.
+- **Best-price client.** `RfqOutcomeModel.ClientChoice.BEST_PRICE` wins only when our spread is inside the cover; a tie is decided on the uniform draw. It uses the same random draws as the hit-rate client, so the two compare on common random numbers. The default is unchanged (`HIT_RATE`).
+- **Bond coupon carry.** `CarryModel.bondCoupons` accrues each bond's coupon (ACT/365, on face) on the carry line next to funding. `BacktestConfig.fromPresets` still uses `CarryModel.NONE`.
+- **Tests.** `FixPackageDTest` covers all three rules, including two end-to-end runner checks.
+
+### How the re-run was made
+
+- **Engine.** rates-app's `DeskStrategy` runs the production QuotingEngine, RiskEngine, Hedger and routers, replayed by the P5 back-tester as `DeskBacktest.run` does. The harness is `research/audit/DeskAudit.java`, launched by `run_desk_audit.sh`.
+- **Variants.** They change only what the production code exposes:
+  - the desk's live `QuotingConfig` (half-spread clamp, kappa, skew cap, event multiplier);
+  - the `DeskSettings` record (hedge interval, lots per plan);
+  - the back-tester's client rule, hedge fill rule and carry model.
+- **Baseline ("engine").** `DeskSettings.defaults()` with depth-walk hedge fills, coupon carry and the hit-rate client.
+- **Sessions.** 20 recordings of rates-app's `TradingProcess`, the D2C RFQ and CLOB simulators with the production desk in the loop, driven single-threaded. Each runs 15 simulated minutes from 08:25 New York on 2026-11-02, so it spans the 08:30 release. The seed is 8,000,000 plus the epoch day of the labels 2026-03-02 to 2026-03-27 (8,020,514 to 8,020,539). The outcome seed is 7. Each session holds 53.25 RFQs on average.
+- **Scope of a session.** A session is 15 minutes, not a day, because one replay of the desk costs about 3 s of CPU per simulated minute.
+- **Statistics.** As in AUDIT-01 to AUDIT-04: paired session differences with a 95 percent moving-block bootstrap interval (blocks of 2, 2,000 resamples, seed 11), and Holm-adjusted Welch p. Every registered verdict is "inconclusive" except one, `unclamped` at L. Where an interval excludes zero, the text says so.
+- **Determinism.** A pilot on fitting-period labels gave identical session P&L with 10 and 3 replay threads.
+- **Attribution.** The residual was below 1e-5 USD on every run.
+- **Code commit.** Every run used commit 04edc03, which comes before b4658da (DR-INT-05, `winnersCurseBp` 0.02 in `DeskSettings`). The production engine has changed since these runs. Re-run AUDIT-11 to AUDIT-14 under new ids before using these sizes for planning.
+- **Ledger rows.** Seq 12 (AUDIT-11), 13 (AUDIT-12), 14 (AUDIT-13) and 15 (AUDIT-14) on this branch, renumbered at merge, with copies in `research/audit/results/AUDIT-1n.json`.
+- **The `code_dirty` flag.** Rows 13 to 15 record `code_dirty: true` only because the ledger file itself had been appended to by the previous row. AUDIT-02 to AUDIT-04 carry the same flag for the same reason.
+
+### The production engine against model_spread
+
+The two engines ran on different days, so absolute USD values are not comparable. The comparison is of signs and of sizes per 1mm USD of client DV01. Engine figures are at C.
+
+| Measure | model_spread (AUDIT-01, synthetic day) | production desk (AUDIT-11, 15-min session) |
+|---|---|---|
+| P&L | +2.22mm USD/day, +799k per 1mm client DV01 | -72k USD/session (interval -122k to -22k), -129k per 1mm client DV01 |
+| Spread capture per 1mm DV01 | about 788k | 120k (half-spread clamped to [0.02, 0.08] bp) |
+| Hedge cost per DV01 hedged | 0.328 bp (blocks, linear rule) | 0.089 bp (depth walk); 0.174 bp under the linear rule |
+| Hedge orders | one block above 100k net DV01 | 403 child orders a session for 27 client fills |
+| Won trades against the cover (DV01-weighted) | 0.44 bp behind | 0.09 bp inside |
+| Engine P&L across the band, L / C / H | 3.45mm / 2.22mm / 0.97mm | -82k / -72k / -105k |
+
+The production desk at its default settings loses money in every band point. Its clamp keeps it inside the cover, so it wins about half of what it quotes at a spread too thin to pay for the 5-minute adverse move (client markout -51k a session at C) and its hedging. The loss is consistent across the band because the clamp, not the hit-rate slope, sets the price. Under DR-008 this is a statement about the default settings in this simulator, not about the market.
+
+### Item by item, production sizes against the original ones
+
+All differences are paired means per session at C unless stated, with 95 percent intervals.
+
+| Item | Original (model_spread) | Production desk | Reading |
+|---|---|---|---|
+| 1, 10: hedge execution | -704k/day, 0.328 bp per DV01 hedged; 250k trigger -334k | Hedge line -49k a session, 0.089 bp per DV01 hedged. Measuring the residual every 5 s instead of 250 ms cuts orders from 403 to 120 a session but changes P&L by -7k (-23k to +2k). At most 100 lots per plan: -0.6k (-1.2k to +0.1k). 2,000 lots: identical to the engine, because the 500-lot cap never binds | The sliced production hedger pays about a quarter of the block cost per DV01. Hedging less often does not help in a 15-minute session |
+| Cost-model bias (the HedgeCostModel note) | the linear rule charged blocks about a full sweep | The linear rule lowers P&L by 48k a session (-55k to -41k) at C, -46k at L, -51k at H. It doubles the hedge line (0.174 against 0.089 bp) | The note is confirmed. Under the old rule a sliced hedger looks twice as expensive as it is |
+| 2, 11: slope and spread setting | slope_known H +949k; cover_integrated C +69k | With the clamp opened to [0, 2] bp, the hit-rate optimiser earns +128k at C (73k to 181k), +176k at L (128k to 226k; supported, Holm p 0.002) and +105k at H (the desk then quotes outside the cover and trades nothing). Raising only the cap to 0.25 bp: +63k at C (27k to 95k), +76k at L, +83k at H | The largest lever on the production engine is the [0.02, 0.08] bp clamp in DeskSettings, not the slope |
+| 3: wins behind the cover | wins 0.44 bp behind cover; P&L falls 72 percent from L to H | A best-price client lowers P&L by 64k at C (-139k to -2k), 55k at L (-138k to +9k) and 32k at H (-92k to +22k). The desk wins inside the cover already, so the loss comes from the trades it still does: hedge orders rise from 403 to 642 and the hedge line from -49k to -75k | The production desk does not live on clients accepting worse prices. Its exposure to price-driven clients is about -114k per 1mm DV01, through hedging rather than lost volume |
+| 4, 5: adverse flow | widen_tier3 L +93k; declining informed loses | Widening every client by 0.05 bp: +6k at C (-23k to +34k), +25k at L (12k to 41k), +22k at H (2k to 46k). By 0.10 bp: +33k at C (4k to 63k), +42k at L (32k to 53k), +56k at H (21k to 93k). The decline variants could not be expressed: there is one tier, and the simulator labels no informed clients | Widening helps at every point. This is the same clamp finding seen from the other side |
+| 7: inventory skew | skew_0p05 C +97k (-48k to 366k) | Skew off: -40k at C (-59k to -25k), -23k at L, -48k at H. Skew 4x (kappa 8e-6, cap 0.20 bp): +31k at C (4k to 53k), +60k at L (39k to 78k), +75k at H (-1k to +148k) | The production skew pays. A stronger skew pays more at every point; the intervals exclude zero at L and C |
+| 9: release guard | +20k at C (-14k to +70k) | Event multiplier 4 from 60 s before to 30 s after 08:30: exactly 0 at every point | The multiplier acts before the clamp, and the desk already quotes at the 0.08 bp cap, so widening for a release has no effect while the clamp is in place |
+| 17: coupon carry | not modelled; funding -3.4k to +0.8k/day | Carry +8 USD a session at C (-1 at L, +22 at H); funding -12. no_coupon_carry differs by less than 25 USD | Small, because the desk ends a 15-minute session nearly flat in bonds. It matters for a desk that warehouses overnight, which these sessions do not test |
+
+### What this changes in the ranked table
+
+- **The clamp is a new top item.** `DeskSettings.quoting()` holds the half-spread in [0.02, 0.08] bp. On the production engine, opening it is the largest measured gain (+128k a session at C). Opening it also restores the effect of the event multiplier, so item 9 depends on it. The clamp belongs to rates-app (r2-wiring, DR-R2W-09), not to package A.
+- **Item 1 shrinks.** Most of its size was model_spread's block hedge priced by the linear rule. On the sliced production hedger with depth-walk fills it is 0.089 bp per DV01 hedged.
+- **Item 3's risk moves.** The production desk does not depend on loyal clients the way model_spread does. A best-price client costs it through extra hedging, not through lost volume.
+- **Item 7 is confirmed on production** with the existing covariance skew, and a stronger setting looks better.
+- **Re-run before planning.** These runs predate DR-INT-05 (b4658da). Re-run them under new ids before any size here is used for planning.
