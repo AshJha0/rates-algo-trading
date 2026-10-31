@@ -380,7 +380,8 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     if (fill > 0) {
       pFilled[ps] += fill;
       pNotional[ps] += (double) children.lastFillPrice() * fill;
-      pOutstanding[ps] -= fill;
+      // an overfill was already taken out of outstanding when the cancel freed it
+      pOutstanding[ps] -= fill - children.lastOverfill();
     }
     final long freed = children.lastFreed();
     if (freed > 0) {
@@ -390,7 +391,9 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       onFreed(cs, ps, freed);
     }
     releaseIfDone(cs);
-    if (pFilled[ps] == pQty[ps]) {
+    // after an overfill the parent can be filled past its quantity; it finishes once nothing is
+    // left outstanding on its children, so no live child keeps a freed parent slot
+    if (pFilled[ps] >= pQty[ps] && pOutstanding[ps] == 0) {
       finishParent(ps);
     }
   }
