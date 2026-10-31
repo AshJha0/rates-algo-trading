@@ -2,6 +2,7 @@ package io.ratesalgo.core;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.common.time.SystemClock;
 import io.ratesalgo.journal.JournalWriter;
@@ -22,10 +23,22 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The P2 allocation gate: after warm-up, one million QuoteRequests go through a live loop on its
- * own thread (inbound ring, inbound and outbound journals, a handler that decodes and publishes a
- * Quote, a timer every 1024 messages) and the loop thread's allocated-bytes counter must not move.
- * Warm-up is one million messages, then rounds of 100,000 until a round allocates nothing.
+ * The P2 allocation gate: after warm-up, QuoteRequests go through a live loop on its own thread
+ * (inbound ring, inbound and outbound journals, a handler that decodes and publishes a Quote, a
+ * timer every 1024 messages) and the loop thread's allocated-bytes counter must not move.
+ *
+ * <p>The check is windowed (DR-INT-02). Warm-up is one million messages; then three consecutive
+ * windows of one million messages are measured. The last window must allocate exactly nothing and
+ * no window after the first may allocate more than {@link #LATER_WINDOW_BOUND} bytes. The first
+ * window is reported but not bounded: a one-off allocation of a few hundred bytes just after
+ * warm-up (a late JIT recompile, a rare path such as backpressure taken for the first time) is not
+ * a per-message leak, and a per-message leak of even one byte shows as at least a megabyte in every
+ * window. The message prints each window's bytes with its dropped-message and backpressure counts,
+ * since a slow drainer moves the loop onto the backpressure path.
+ *
+ * <p>The counter is read from the test thread with the loop thread's id, so the read cannot
+ * allocate on the loop thread; it is also read once before warm-up so that any first-call cost of
+ * the bean falls outside the windows.
  *
  * <p>When this fails, rerun with {@code -XX:StartFlightRecording=settings=profile} and look at the
  * jdk.ObjectAllocationSample events for the thread named "alloc-check-loop".
@@ -33,9 +46,9 @@ import org.junit.jupiter.api.io.TempDir;
 class LoopAllocationTest {
 
   private static final int WARM_UP = 1_000_000;
-  private static final int MEASURED = 1_000_000;
-  private static final int SETTLE_ROUND = 100_000;
-  private static final int MAX_SETTLE_ROUNDS = 20;
+  private static final int WINDOW = 1_000_000;
+  private static final int WINDOWS = 3;
+  private static final long LATER_WINDOW_BOUND = 1024L;
 
   @TempDir Path dir;
 
@@ -73,8 +86,10 @@ class LoopAllocationTest {
     final EventClock clock = new EventClock(new AnchoredClock(SystemClock.INSTANCE));
     final ManyToOneRingBuffer inbound = RingBufferContract.newInbound(RingBufferContract.DEFAULT_INBOUND_CAPACITY);
     final OneToOneRingBuffer outbound = RingBufferContract.newOutbound(RingBufferContract.DEFAULT_INBOUND_CAPACITY);
-    // 96-byte inbound frames and 120-byte outbound frames, plus clock ticks
-    try (JournalWriter in = JournalWriter.create(dir.resolve("in.raj"), 512 << 20, clock);
+    // 4 million messages: 96-byte inbound and 120-byte outbound frames, plus clock ticks. On a
+    // 2-CPU runner the drainer can fall behind and every dropped Quote adds a 64-byte Backpressure
+    // frame to the inbound journal, so that journal is sized for every message being dropped.
+    try (JournalWriter in = JournalWriter.create(dir.resolve("in.raj"), 768 << 20, clock);
         JournalWriter out = JournalWriter.create(dir.resolve("out.raj"), 512 << 20, clock)) {
       final EventLoop loop =
           EventLoop.builder(clock)
@@ -108,37 +123,53 @@ class LoopAllocationTest {
               .start();
       final com.sun.management.ThreadMXBean threads =
           (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+      assertTrue(threads.isThreadAllocatedMemoryEnabled(), "thread allocation accounting is off");
       final long loopThread = runner.threadId();
+      // first call outside the windows: some JDKs allocate on the first use of the bean
+      threads.getThreadAllocatedBytes(loopThread);
 
       final InboundPublisher publisher = new InboundPublisher(inbound);
       publish(publisher, 1, WARM_UP);
       awaitInbound(loop, WARM_UP);
-      // keep warming until a round allocates nothing: the JIT may still recompile after the
-      // first million (seen as a one-off 72 to 296 bytes on 2026-10-31, never repeated)
+
+      final long[] bytes = new long[WINDOWS];
+      final long[] dropped = new long[WINDOWS];
+      final long[] backpressure = new long[WINDOWS];
       int sent = WARM_UP;
-      int rounds = 0;
-      long roundBytes;
-      do {
-        final long start = threads.getThreadAllocatedBytes(loopThread);
-        publish(publisher, sent + 1, sent + SETTLE_ROUND);
-        sent += SETTLE_ROUND;
+      for (int w = 0; w < WINDOWS; w++) {
+        final long droppedBefore = loop.counters().get(LoopCounters.OUTBOUND_DROPPED);
+        final long backpressureBefore = loop.counters().get(LoopCounters.BACKPRESSURE_EVENTS);
+        final long before = threads.getThreadAllocatedBytes(loopThread);
+        publish(publisher, sent + 1, sent + WINDOW);
+        sent += WINDOW;
         awaitInbound(loop, sent);
-        roundBytes = threads.getThreadAllocatedBytes(loopThread) - start;
-        rounds++;
-      } while (roundBytes != 0 && rounds < MAX_SETTLE_ROUNDS);
-      final long before = threads.getThreadAllocatedBytes(loopThread);
-      publish(publisher, sent + 1, sent + MEASURED);
-      sent += MEASURED;
-      awaitInbound(loop, sent);
-      final long after = threads.getThreadAllocatedBytes(loopThread);
+        bytes[w] = threads.getThreadAllocatedBytes(loopThread) - before;
+        dropped[w] = loop.counters().get(LoopCounters.OUTBOUND_DROPPED) - droppedBefore;
+        backpressure[w] = loop.counters().get(LoopCounters.BACKPRESSURE_EVENTS) - backpressureBefore;
+      }
 
       runner.close();
       draining.set(false);
       drainer.join();
       assertNull(runner.failure());
       assertEquals(sent, loop.counters().get(LoopCounters.OUTBOUND));
-      assertEquals(0L, after - before, "bytes allocated on the loop thread over " + MEASURED + " messages");
+
+      final String report = report(bytes, dropped, backpressure);
+      for (int w = 1; w < WINDOWS; w++) {
+        assertTrue(bytes[w] <= LATER_WINDOW_BOUND, "a window after the first exceeded " + LATER_WINDOW_BOUND + " bytes: " + report);
+      }
+      assertEquals(0L, bytes[WINDOWS - 1], "the last window allocated on the loop thread: " + report);
     }
+  }
+
+  private static String report(final long[] bytes, final long[] dropped, final long[] backpressure) {
+    final StringBuilder sb = new StringBuilder("bytes allocated on the loop thread per window of ").append(WINDOW).append(" messages:");
+    for (int w = 0; w < bytes.length; w++) {
+      sb.append(" window ").append(w + 1).append('=').append(bytes[w])
+          .append(" (outbound dropped ").append(dropped[w])
+          .append(", backpressure events ").append(backpressure[w]).append(')');
+    }
+    return sb.toString();
   }
 
   private static void publish(final InboundPublisher publisher, final int from, final int to) {

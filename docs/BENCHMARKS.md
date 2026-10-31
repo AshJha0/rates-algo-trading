@@ -54,6 +54,8 @@ p50, p99, p99.9, p99.99 and max, in microseconds, for each interval. The sample 
 
 On the event core thread, `ThreadMXBean.getThreadAllocatedBytes(threadId)` is read after warm-up and again after the measured phase. The delta must be zero for a run to be labelled allocation-free. A non-zero delta is reported with the number of bytes and the run is still reported, labelled accordingly. Where the delta is non-zero, an allocation profile (JFR) is attached.
 
+The gating unit test, `LoopAllocationTest`, uses windows rather than a single delta (DR-INT-02). After one million warm-up messages it measures three consecutive windows of one million messages each, reading the loop thread's counter from the test thread by thread id (the bean is called once before warm-up, so a first-call cost cannot land in a window). The last window must be exactly zero and the second and third must each be at most 1,024 bytes; the first is reported but not bounded. A one-off cost after warm-up, such as a rarely taken path running for the first time, shows in one window only, while a leak of even one byte per message shows as at least a megabyte in every window. The failure message lists each window's bytes with its dropped-message and backpressure counts.
+
 ## Where it runs
 
 Hosted CI runners (GitHub-hosted Linux and Windows) produce informational numbers only. Their hardware is shared and varies between runs, so no threshold gates on them. Gating applies only on a self-hosted, pinned runner with a recorded configuration, when one exists (DECISIONS.md DR-005). Until then, reports come from the development machine and say so.

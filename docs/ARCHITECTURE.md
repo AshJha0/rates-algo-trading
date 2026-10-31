@@ -38,7 +38,7 @@ What exists (P2, `rates-core`):
 Rules that follow from this:
 
 - Cross-thread handoff is only through ring buffers carrying SBE-encoded bytes. No shared mutable objects, no locks, no `volatile` fields outside the buffer implementations, the runner's run flag and the counters.
-- No allocation on the hot path after warm-up. Flyweight codecs are reused; collections are pre-sized; primitives are preferred to boxed values. `LoopAllocationTest` checks a zero `ThreadMXBean.getThreadAllocatedBytes` delta on the loop thread over one million messages; a journal segment roll is the one allocating event and segments are sized to make it rare.
+- No allocation on the hot path after warm-up. Flyweight codecs are reused; collections are pre-sized; primitives are preferred to boxed values. `LoopAllocationTest` checks the `ThreadMXBean.getThreadAllocatedBytes` delta on the loop thread over three windows of one million messages after warm-up (the last must be zero, see docs/BENCHMARKS.md and DR-INT-02); a journal segment roll is the one allocating event and segments are sized to make it rare.
 - Pricing is incremental. A book update reprices the affected instruments, not the group. A curve input reprices what depends on that curve node.
 - Replay is the test. The same handler code runs live and in replay; the inbound journal plus a `ManualClock` reproduces every output, which `LoopReplayTest` and `LoopPropertiesTest` check. Agents and day hooks are not replayed (DR-P2C-04).
 - Research is in Python, off the hot path, and consumes journals and reports rather than sharing code with the core.
