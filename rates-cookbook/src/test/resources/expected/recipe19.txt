@@ -1,0 +1,4 @@
+raw        samples=10000 p50=10.0us p99=10.0us p99.9=10.0us max=10002.4us
+corrected  samples=10499 p50=10.0us p99=7921.7us p99.9=9805.8us max=10002.4us
+from JSON  samples=10499 p50=10.0us p99=7921.7us p99.9=9805.8us max=10002.4us
+p99.99 supported: false
