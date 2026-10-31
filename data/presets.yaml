@@ -28,3 +28,58 @@
 #     notes: "placeholder, replaced in P1"
 
 presets: []
+
+# Smart order router (P4), config version 1. Read by rates-router: RouterPresets holds the same
+# values and RouterPresetsTest fails if they differ. These are declared assumptions, not fits
+# (DECISIONS.md DR-P4-03); the impact and queue parameters are to be refitted from the P2 venue
+# simulators' output once those exist.
+#
+# Schema: every parameter is { value: number, unit: "text", range: [low, high] }; the range is
+# what RouterParams and VenueParams accept, inclusive. Prices and fees are in price points (per
+# 100 of face); quantities in minor units of face (USD cents); times as named in the unit.
+# API_SPEC.md Section 15.1 defines each parameter.
+
+router:
+  config_version: 1
+  fitted_from: assumption
+  method: "declared; sigma from a 6 bp daily yield move on a 10-year note (DV01 about 8.5 per 100), impact y from the square-root law literature range"
+  global:
+    sigma_daily_points: { value: 0.5, unit: "price points per day", range: [0.000001, 10] }
+    trading_seconds_per_day: { value: 23400, unit: "seconds", range: [3600, 86400] }
+    impact_y: { value: 0.6, unit: "dimensionless", range: [0, 5] }
+    impact_alpha: { value: 0.5, unit: "dimensionless", range: [0.000001, 1] }
+    adverse_factor: { value: 0.5, unit: "sigma over the passive horizon", range: [0, 5] }
+    latency_risk_factor: { value: 1.0, unit: "sigma over the venue latency", range: [0, 10] }
+    passive_horizon_max_nanos: { value: 30000000000, unit: "nanoseconds", range: [0, 600000000000] }
+    passive_horizon_min_nanos: { value: 1000000000, unit: "nanoseconds", range: [0, 600000000000] }
+    max_slices: { value: 8, unit: "count", range: [1, 64] }
+    schedule_horizon_nanos: { value: 120000000000, unit: "nanoseconds", range: [0, 3600000000000] }
+    size_jitter: { value: 0.25, unit: "fraction", range: [0, 0.5] }
+    interval_jitter: { value: 0.3, unit: "fraction", range: [0, 0.5] }
+    book_move_threshold_ticks: { value: 2, unit: "ticks", range: [1, 100] }
+    aggressive_collar_ticks: { value: 8, unit: "ticks", range: [0, 100] }
+    retry_delay_nanos: { value: 500000000, unit: "nanoseconds", range: [1, 60000000000] }
+    max_steps: { value: 32, unit: "count", range: [1, 1024] }
+  venue_kinds:
+    clob:
+      tick_mantissa: { value: 15625000, unit: "price mantissa, exponent -9 (1/64)", range: [1, 1000000000000] }
+      lot_size: { value: 100000000, unit: "minor units (1 million USD face)", range: [1, 100000000000000] }
+      min_size: { value: 100000000, unit: "minor units", range: [1, 100000000000000] }
+      taker_fee: { value: 0.0005, unit: "price points per unit", range: [0, 1] }
+      maker_fee: { value: 0.0002, unit: "price points per unit", range: [-1, 1] }
+      latency_nanos: { value: 250000, unit: "nanoseconds", range: [0, 1000000000] }
+      cancel_rate_per_second: { value: 0.05, unit: "per unit queued ahead per second", range: [0, 10] }
+      adv: { value: 3000000000000, unit: "minor units per day (30 billion USD face)", range: [1, 1000000000000000000] }
+      participation_cap: { value: 0.25, unit: "fraction", range: [0.000001, 1] }
+      depth_levels: { value: 5, unit: "levels", range: [1, 20] }
+    futures:
+      tick_mantissa: { value: 15625000, unit: "price mantissa, exponent -9 (1/64)", range: [1, 1000000000000] }
+      lot_size: { value: 10000000, unit: "minor units (one 100,000 USD contract)", range: [1, 100000000000000] }
+      min_size: { value: 10000000, unit: "minor units", range: [1, 100000000000000] }
+      taker_fee: { value: 0.0015, unit: "price points per unit", range: [0, 1] }
+      maker_fee: { value: 0.0015, unit: "price points per unit", range: [-1, 1] }
+      latency_nanos: { value: 500000, unit: "nanoseconds", range: [0, 1000000000] }
+      cancel_rate_per_second: { value: 0.03, unit: "per unit queued ahead per second", range: [0, 10] }
+      adv: { value: 15000000000000, unit: "minor units per day (1.5 million contracts)", range: [1, 1000000000000000000] }
+      participation_cap: { value: 0.2, unit: "fraction", range: [0.000001, 1] }
+      depth_levels: { value: 5, unit: "levels", range: [1, 20] }

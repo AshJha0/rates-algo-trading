@@ -118,4 +118,10 @@ public record RouterParams(
       throw new IllegalArgumentException(what + ", got " + value);
     }
   }
+
+  static void check(final boolean ok, final String what, final long value) {
+    if (!ok) {
+      throw new IllegalArgumentException(what + ", got " + value);
+    }
+  }
 }

@@ -94,6 +94,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private final long[] cTimer;
   private final boolean[] cEscalate;
 
+  private boolean polling;
   private long nextClOrdId;
   private long nextDecisionId;
   private long decisions;
@@ -246,13 +247,19 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     pSliceInterval[ps] = horizon / slices;
     pPassiveHorizon[ps] = passive;
     final long now = clock.nanoTime();
-    pDeadlineTimer[ps] = schedule(now + horizon + passive, DEADLINE, ps);
+    pDeadlineTimer[ps] =
+        schedule(now + horizon + passive + params.retryDelayNanos(), DEADLINE, ps);
     runSlice(ps);
   }
 
   /** Fires due timers. Call from the owning loop as often as it runs. */
   public int poll() {
-    return wheel.poll(clock.nanoTime());
+    polling = true;
+    try {
+      return wheel.poll(clock.nanoTime());
+    } finally {
+      polling = false;
+    }
   }
 
   @Override
@@ -596,11 +603,11 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       limitBlocked = buy ? join > parentLimit : join < parentLimit;
     }
     t.aggressiveAllowed[r] = buy ? limit >= far : limit <= far;
-    t.passiveAllowed[r] = !selfBlocked && !limitBlocked;
+    t.passiveAllowed[r] = !selfBlocked && !limitBlocked && t.passiveHorizonNanos > 0;
     joinPrice[r] = join;
     aggressivePrice[r] = limit;
     if (!t.aggressiveAllowed[r] && !t.passiveAllowed[r]) {
-      t.exclusion[r] = selfBlocked || own > 0 ? VenueExclusion.SelfCross : VenueExclusion.LimitPrice;
+      t.exclusion[r] = own > 0 ? VenueExclusion.SelfCross : VenueExclusion.LimitPrice;
       return;
     }
     final double liquidity = opp + rate * (t.sliceIntervalNanos / SCALE);
@@ -608,15 +615,18 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     t.participationCap[r] = capQty - capQty % vp.lotSize();
   }
 
-  /** Our best resting price on {@code side} at a venue: lowest sell or highest buy; 0 if none. */
+  /**
+   * Our most aggressive live price on {@code side} at a venue (lowest sell or highest buy), over
+   * resting and in-flight children alike, since an IOC in flight and a new resting order can reach
+   * the venue in either order; 0 if none.
+   */
   private long ownBestOpposite(final int venueId, final Side side) {
     long best = 0;
     final int hw = children.highWater();
     for (int cs = 0; cs < hw; cs++) {
       if (!children.inUse(cs)
           || children.venueId(cs) != venueId
-          || children.side(cs) != side
-          || !children.passive(cs)) {
+          || children.side(cs) != side) {
         continue;
       }
       final ChildState st = children.state(cs);
@@ -684,7 +694,9 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   }
 
   private void cancelTimer(final long id) {
-    if (id != NONE && timerPayload.remove(id) != NONE) {
+    // Inside poll() a timer due in the same poll may already be queued for firing, and
+    // TimerWheel.cancel does not handle that case; dropping the payload makes the firing a no-op.
+    if (id != NONE && timerPayload.remove(id) != NONE && !polling) {
       wheel.cancel(id);
     }
   }
