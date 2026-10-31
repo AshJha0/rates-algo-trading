@@ -1,16 +1,16 @@
-10 simulated minutes: 39 RFQs, 34 quotes, 22 RFQ fills, 302 hedge parents, 291 hedge fills
-after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":34,"fills":22,"hedgesRouted":302,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000}
+10 simulated minutes: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills
+after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":27,"fills":16,"hedgesRouted":210,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000}
   1/1/2001 net 1,000,000,000
-  1/1/2002 net 10,000,000,000
+  1/1/2002 net 7,500,000,000
   1/1/2003 net 10,000,000,000
-  1/1/2004 net -11,000,000,000
-  1/1/2005 net 6,000,000,000
-  2/1/1003 net 1,100,000,000
-  2/1/1006 net 5,500,000,000
-  2/1/1007 net 17,500,000,000
-  2/1/1009 net -10,200,000,000
-reconciliation: 313 ours, 313 theirs, 313 matched, 0 breaks
-replay: 97166 inbound frames, 353 of 353 outbound messages, hash matches
-back-test: 39 RFQs, 19 client fills, 283 hedge fills
+  1/1/2004 net -14,500,000,000
+  1/1/2005 net -4,000,000,000
+  2/1/1003 net 500,000,000
+  2/1/1006 net 7,400,000,000
+  2/1/1007 net 7,300,000,000
+  2/1/1009 net -14,000,000,000
+reconciliation: 229 ours, 229 theirs, 229 matched, 0 breaks
+replay: 96864 inbound frames, 240 of 240 outbound messages, hash matches
+back-test: 36 RFQs, 14 client fills, 171 hedge fills
 # Daily back-test report, 2026-11-02
-| TOTAL | 62185.49 | 104306.58 | -64687.5 | 0 | 11.27 | -621 | 0 | 101194.85 |
+| TOTAL | 54049.48 | -19345.88 | -45781.25 | 0 | 10.45 | -439.5 | 0 | -11506.7 |
