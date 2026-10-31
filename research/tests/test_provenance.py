@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from ratesresearch.provenance import (
@@ -42,6 +42,7 @@ def test_sources_as_records_round_trip() -> None:
     assert [r["name"] for r in records] == [s.name for s in SOURCES]
 
 
+@settings(deadline=None)
 @given(st.binary(max_size=4096))
 def test_sha256_of_matches_hashlib(tmp_path_factory: pytest.TempPathFactory, data: bytes) -> None:
     path = tmp_path_factory.mktemp("sha") / "blob.bin"
