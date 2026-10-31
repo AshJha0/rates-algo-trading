@@ -138,6 +138,27 @@ class HedgerTest {
     assertEquals(0, h.onTimer(f.clock.epochNanos()), "nothing while killed");
   }
 
+  /** DR-R2R-13: a fill that raced the kill's cancel-all is booked, not refused as unknown. */
+  @Test
+  void aFillThatRacedTheKillIsBooked() {
+    final HedgeFixture f = new HedgeFixture();
+    final Hedger h = f.hedger(Hedger.config().triggerStdDev(1_000.0));
+    f.risk.onFill(B10, 100 * M, f.fair.fairMid(B10));
+    assertTrue(h.onTimer(f.clock.epochNanos()) > 0);
+    final RecordingHedgeOrderSink.Parent p = f.sink.parents().get(0);
+    final long before = f.risk.position(p.instrumentId());
+    f.kill.trigger(KillReason.Manual, 0, 1);
+    assertEquals(0, h.workingParents());
+    h.onHedgeFill(p.parentId(), p.limitPrice(), p.quantityMinor());
+    final long signed = p.side() == Side.Buy ? p.quantityMinor() : -p.quantityMinor();
+    assertEquals(before + signed, f.risk.position(p.instrumentId()));
+    assertEquals(1, h.lateFills());
+    assertEquals(0L, f.risk.pendingBuy(p.instrumentId()) + f.risk.pendingSell(p.instrumentId()));
+    // the parent is used up: a further fill on it is an error
+    assertThrows(IllegalArgumentException.class,
+        () -> h.onHedgeFill(p.parentId(), p.limitPrice(), p.quantityMinor()));
+  }
+
   @Test
   void refusalsAndPartialFills() {
     final HedgeFixture f = new HedgeFixture(new RiskLimits().maxOrderSize(10 * HedgeFixture.CONTRACT));
