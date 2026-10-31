@@ -15,7 +15,9 @@ import org.agrona.concurrent.UnsafeBuffer;
  * <ul>
  *   <li>ACTIVE to KILLED on {@link #trigger}: every listener withdraws what it has outstanding, in
  *       registration order, then one KillSwitch message is sent to the control sink. Triggering
- *       while KILLED only counts the request.
+ *       while KILLED only counts the request. A listener that throws does not stop the others or
+ *       the message: every listener is called, the message is sent, the failure is counted
+ *       ({@link #listenerFailures}) and the first one is rethrown.
  *   <li>RESET_PENDING to KILLED on {@link #trigger}: a new kill during a pending reset cancels the
  *       reset and is a full kill, with listeners called and a KillSwitch message sent.
  *   <li>KILLED to RESET_PENDING on {@link #requestReset} by an operator.
@@ -43,6 +45,7 @@ public final class KillSwitchController {
   private long killCount;
   private long triggerRequests;
   private int resetRequestedBy;
+  private long listenerFailures;
 
   /** A switch that reports to {@code control} and stamps from {@code clock}. */
   public KillSwitchController(final OutboundSink control, final Clock clock) {
@@ -68,8 +71,18 @@ public final class KillSwitchController {
     lastReason = reason;
     killCount++;
     final long now = clock.epochNanos();
+    RuntimeException firstFailure = null;
     for (int i = 0; i < listenerCount; i++) {
-      listeners[i].onKill(reason, now);
+      // one listener that fails must not leave the later ones (another currency's hedger) live
+      // or the KillSwitch message unsent; the first failure is rethrown once all have run
+      try {
+        listeners[i].onKill(reason, now);
+      } catch (final RuntimeException e) {
+        listenerFailures++;
+        if (firstFailure == null) {
+          firstFailure = e;
+        }
+      }
     }
     encoder
         .wrapAndApplyHeader(buffer, 0, header)
@@ -78,6 +91,9 @@ public final class KillSwitchController {
         .requestedBy(requestedBy)
         .timestampNanos(now);
     control.send(buffer, 0, MessageHeaderEncoder.ENCODED_LENGTH + encoder.encodedLength());
+    if (firstFailure != null) {
+      throw firstFailure;
+    }
     return true;
   }
 
@@ -122,6 +138,11 @@ public final class KillSwitchController {
   /** Number of ACTIVE to KILLED transitions. */
   public long killCount() {
     return killCount;
+  }
+
+  /** Number of listener calls that threw during a kill. */
+  public long listenerFailures() {
+    return listenerFailures;
   }
 
   /** Number of trigger calls, effective or not. */
