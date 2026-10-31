@@ -840,7 +840,7 @@ Per instrument: position (minor units), reserved buy and sell quantity, the PV01
 10. DailyLoss: P&L since `startOfDay` below minus `dailyLoss`.
 11. QuoteRate or OrderRate, then MessageRate: token buckets of `rate * burstSeconds` tokens.
 
-A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting skip 7 to 10 (DR-P3-05). Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
+A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting, counting every other working reservation on the same side as filled, skip 7 to 10 (DR-P3-05, DR-R2R-09). Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
 
 ### 13.3 Post-trade alerts
 
