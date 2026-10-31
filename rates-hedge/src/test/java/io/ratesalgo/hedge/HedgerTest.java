@@ -53,6 +53,30 @@ class HedgerTest {
   }
 
   /**
+   * DR-R2R-02: a hedge fill that breaches the daily loss limit fires the kill switch from inside
+   * onHedgeFill. The kill must complete: no exception, one KillSwitch message, no parent left
+   * working and no reservation left behind.
+   */
+  @Test
+  void hedgeFillThatTripsTheLossLimitKillsCleanly() {
+    final HedgeFixture f = new HedgeFixture(new RiskLimits().dailyLoss(50_000.0));
+    final Hedger h = f.hedger(Hedger.config());
+    f.risk.onFill(B10, 100 * M * 100, Decimal9.round(98.25));
+    assertTrue(h.onTimer(f.clock.epochNanos()) > 0);
+    final RecordingHedgeOrderSink.Parent p = f.sink.parents().get(0);
+    final long five = Decimal9.round(5.0);
+    final long bad = p.side() == Side.Sell ? p.limitPrice() - five : p.limitPrice() + five;
+    h.onHedgeFill(p.parentId(), bad, p.quantityMinor());
+    assertEquals(io.ratesalgo.risk.KillState.KILLED, f.kill.state());
+    assertEquals(1, f.control.count(io.ratesalgo.messages.sbe.KillSwitchDecoder.TEMPLATE_ID));
+    assertEquals(0L, f.kill.listenerFailures());
+    assertEquals(0, h.workingParents());
+    for (final RecordingHedgeOrderSink.Parent q : f.sink.parents()) {
+      assertEquals(0L, f.risk.pendingBuy(q.instrumentId()) + f.risk.pendingSell(q.instrumentId()));
+    }
+  }
+
+  /**
    * Staged execution against the same plan executed at once: with quadratic impact, trading in
    * tranches costs less in the model.
    */

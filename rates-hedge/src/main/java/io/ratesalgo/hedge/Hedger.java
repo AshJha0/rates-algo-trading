@@ -204,15 +204,19 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     final long qty = Math.min(quantityMinor, Math.abs(remaining));
     final long signed = remaining > 0 ? qty : -qty;
     final int instrumentId = parentInstrument[p];
+    final long arrival = parentArrival[p];
     risk.release(instrumentId, signed > 0 ? qty : 0L, signed > 0 ? 0L : qty);
-    risk.onFill(instrumentId, signed, price);
-    final Instrument inst = risk.directory().byId(instrumentId);
-    analytics.onFill(
-        inst, signed, price, parentArrival[p], risk.quotePerBp(instrumentId), risk.unitParallelPv01(instrumentId));
+    // the parent's book entry is brought up to date before the fill reaches the risk engine: a
+    // fill can trip a post-trade limit, and the kill switch then calls onKill, which releases
+    // and drops every parent, so the entry must already match the reservation it describes
     parentRemaining[p] = remaining - signed;
     if (parentRemaining[p] == 0) {
       remove(p);
     }
+    risk.onFill(instrumentId, signed, price);
+    final Instrument inst = risk.directory().byId(instrumentId);
+    analytics.onFill(
+        inst, signed, price, arrival, risk.quotePerBp(instrumentId), risk.unitParallelPv01(instrumentId));
   }
 
   /** The router finished a parent without filling the rest (cancelled, expired, rejected). */
