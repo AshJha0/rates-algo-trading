@@ -754,6 +754,23 @@ Decision. The journal branch's design stands unchanged. At integration `TradingP
 
 Consequences. A roll in the trading process no longer maps, creates or allocates on the loop thread. Each journal now keeps one prepared 64 MiB segment and one background thread from the start. Switching the process to the ring mode is a one-argument change to the `LoopJournals.create` call.
 
+## DR-INT-04: Ledger rows from parallel branches are appended in merge order with new seq and prev_sha256
+
+Date: 2026-10-31
+
+Context. `data/ledger/ledger.jsonl` is an append-only hash chain: each line carries `seq` (1-based) and `prev_sha256`, the SHA-256 of the previous line's text, and both readers (`Ledger.entries()` in `rates-backtest`, `prereg.read_ledger` in `research/ratesresearch`) refuse a line whose `seq` is not its position or whose `prev_sha256` does not match. In round 2, several branches ran experiments in parallel and each appended its rows after the same base, P5-001 at seq 1. `claude/r2-edge-research-6aba2e` appended EDGE-E1 to EDGE-E6 as seq 2 to 7, and `claude/r2-pnl-audit-e32be7` appended AUDIT-01 to AUDIT-04 as seq 2 to 5, so the two chains cannot both stand.
+
+Decision. Rows already on `round2-integration` are kept unchanged, and each later branch's rows are appended after them in their original order. The edge rows merged first, onto a ledger that held only seq 1, so they kept seq 2 to 7. The audit rows were re-appended with the project's own `Ledger.append` (`rates-backtest`), which assigns `seq` and `prev_sha256`. Everything else in each row stays as recorded: results, `config_sha256`, `journal_sha256`, `prereg_sha256`, `code_commit`, `code_dirty`, `look`, `recorded_utc` and the journal list. Each written line was checked to be byte-identical to the original with only those two values replaced. The chain verifies end to end in both `Ledger.entries()` and `prereg.read_ledger` (11 rows). `research/audit/summarize.py` re-reads the rows, recomputes every interval and Holm p from the stored daily P&L and asserts them against the rows; it reproduces `research/audit/results/summary.md` except the four headings, which print the new seq. References to the old numbers in `docs/research/PNL_AUDIT.md`, `research/audit/README.md` and `summary.md` were renumbered, with the experiment id added beside each seq. The copies in `research/audit/results/AUDIT-0n.json` carry no seq or chain field and are unchanged.
+
+| Experiment | Original seq (audit branch) | Seq on round2-integration | prev_sha256 before | prev_sha256 after |
+|---|---:|---:|---|---|
+| AUDIT-01 | 2 | 8 | `850a5e40a004...` | `2f8551ce748d...` |
+| AUDIT-02 | 3 | 9 | `f16a70a4cc23...` | `300529794edf...` |
+| AUDIT-03 | 4 | 10 | `05fbad304512...` | `be7e052c8319...` |
+| AUDIT-04 | 5 | 11 | `1d9907487c7a...` | `3ac99a2f43d0...` |
+
+Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (r2-business and the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31

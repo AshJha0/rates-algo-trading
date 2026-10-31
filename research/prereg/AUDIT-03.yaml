@@ -1,0 +1,50 @@
+# Pre-registration AUDIT-03, part of the P&L audit (docs/research/PNL_AUDIT.md). Written, hashed
+# and committed before the evaluation period was run. Format: API_SPEC.md Section 16.8, validated
+# by PreRegistration.requireValid and ratesresearch.prereg.validate. Run with
+# research/audit/run_audit.sh, which records one ledger row whatever the result.
+prereg_version: 1
+id: AUDIT-03
+title: "Hedge trigger, hedge instrument and hedge order type"
+hypothesis: >
+  The engine hedges net DV01 above 100,000 USD into the 10-year note future with market
+  orders. Each alternative earns a different mean total daily P&L from the engine: thresholds of
+  25,000, 250,000 and 1,000,000 USD; bucketed hedging (2Y and 5Y swaps and the 2Y note hedged
+  in the 2Y note, the rest in the future); passive hedging (a limit order at the touch of the
+  future, no cancel, filled by the back-tester's queue model). The direction is not
+  predicted; the size of each difference and the daily P&L standard deviation are the outputs.
+  A verdict of supported means the alternative earns more.
+metric: >
+  Total position P&L per synthetic session in USD, rounded to cents (cash plus the final position
+  at the final mid; attribution reconciled to it on every run). Unit of analysis: one session.
+  Each difference is also reported per 1,000,000 USD of client DV01 traded and in bp of client
+  notional, both normalised by the engine's mean per day at that band point.
+baseline: engine
+treatments: [threshold_25k, threshold_250k, threshold_1m, bucketed, passive_ty]
+period: {start: 2026-03-02, end: 2026-03-27}
+fitting_period: {start: 2026-01-05, end: 2026-01-16}
+holdout: [2026-04-06, 2026-04-07, 2026-04-08, 2026-04-09, 2026-04-10]
+success_threshold: >
+  Per variant and band point (low, central, high): Welch's two-sided test of variant against
+  engine daily P&L, Holm-adjusted over every (variant, band point) test of this pre-registration,
+  below 0.05, and the 95 percent moving-block bootstrap interval (blocks of 2 sessions, 2000
+  resamples, seed 11) of the paired daily difference entirely above zero: supported. Adjusted p
+  below 0.05 and interval entirely below zero: reversed. Otherwise inconclusive. The size of the
+  leak is the paired mean difference with its interval, reported whatever the verdict. The row is
+  void if the engine variant does not reproduce the back-tester's model_spread to the cent on
+  every run (results.replica_check.mismatches must be 0).
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/AUDIT-03.config.yaml
+config_sha256: 9871b617e340893daa4d0292404eaf0e69bd3cb0dfe2a428c7c83ced86c32d36
+limitations: >
+  Synthetic sessions only (DR-008): competitors, informed flow and the win-probability slope are
+  declared assumptions, so every number is a simulator consistency check, not edge. The
+  back-tester runs a simplified quoter (model_spread), not rates-quoting's QuotingEngine. The
+  engine's pricing inputs were estimated on the fitting period by P5; nothing is re-estimated
+  here. A pilot on fitting-period days (2026-01-05..2026-01-09) with a scratch ledger checked the
+  harness before this file was committed; its numbers are not used. The holdout is not opened by
+  this audit.
