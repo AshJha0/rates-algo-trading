@@ -38,3 +38,6 @@ data/raw/
 # Deployment state and local report output
 deploy/state/
 deploy/out/
+
+# jqwik run database
+.jqwik-database
