@@ -438,6 +438,20 @@ A load generator sends events at a fixed rate, independent of how fast the syste
 
 Two boundaries are measured. Core decode-to-encode is the time from the first byte of an input event being readable in the ring buffer to the last byte of the output being published. Tick-to-wire adds the gateway on both ends. Hosted CI runners produce informational numbers only, because their neighbours are unknown; gating thresholds apply only on a pinned, self-hosted machine. In Phase 0 nothing has been measured, and this document will cite the first report by file name and date when one exists.
 
+### The ring-buffer contract and the replay comparison (P2)
+
+Plain idea. A gateway and the loop agree on three things and nothing more: what a record on the ring looks like, how big it may be, and what happens when the ring is full. With that agreement the venue session can be written without reading the loop's code. Replay then answers one question: given the same inputs, did the loop say exactly the same things?
+
+Formal statement. A record on an inbound or outbound ring is an Agrona record whose type is the SBE template id of its payload, and whose payload is the SBE message header followed by the body, at most 1024 bytes (API_SPEC.md Section 9.2). The same bytes are appended to the journal. When the inbound ring is full the gateway's publish returns false: market data is dropped and counted, session messages are retried (Section 9.3). When an outbound ring is full the loop drops the message, counts it, and after the handler returns journals a Backpressure record and tells the quoting layer, which pulls its quotes (Section 9.5).
+
+Determinism needs time and timers to be inputs too. The loop reads the clock once per duty cycle, and every handler and journal frame in that cycle sees the same value. When timers fire, the loop journals a clock tick, so that replay fires the same timers between the same two messages (DECISIONS.md DR-P2C-02). Agents are not replayed, so anything that should change the loop's state reaches it as a message on a ring.
+
+Replay builds a fresh loop from the same factory, feeds it the inbound journal through the `Replayer` and a `ManualClock`, and chains every outbound message it produces with the journal's FNV-1a chain hash. Each produced hash is compared with the recorded outbound journal's frame of the same sequence. Because the chain covers every payload byte in order, equal final hashes mean equal outbound streams, and the first unequal hash names the first message that differs.
+
+Glossary. Duty cycle: one pass of the loop over its rings, timers and agents. Clock tick: a journaled Heartbeat with source id 0 recording that timers fired at the cycle's time. Backpressure event: the record that outbound messages were dropped because a gateway's ring was full. First mismatch: the outbound sequence at which a replay first differs from the recording.
+
+Worked example. Recipe 12 in COOKBOOK.md runs 100 QuoteRequests through a loop that quotes 100 with a half-spread of 0.002 (mantissa 2,000,000), journaling into 4 KiB segments. Replaying with the same handler reproduces the outbound hash exactly. Replaying with a half-spread of 0.0025 reports the first mismatch at outbound sequence 1, the first Quote, because its bid and ask bytes differ. `LoopPropertiesTest` checks the same equality for generated runs with dropped, duplicated, delayed and reordered inputs, timers, backpressure and disconnects (`rates-core`, 2026-10-31).
+
 ## 12. Regulation: UK RTS 6 (FCA MAR 7A), PRA SS5/18, MiFIR transparency, Dodd-Frank SEF rules
 
 ### Plain idea

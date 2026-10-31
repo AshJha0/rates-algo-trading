@@ -29,6 +29,8 @@ RECIPES = {
     6: ("Recipe06Treasury.java", "recipe06.txt"),
     7: ("Recipe07GiltExDividend.java", "recipe07.txt"),
     8: ("Recipe08Ctd.java", "recipe08.txt"),
+    12: ("Recipe12LoopReplay.java", "recipe12.txt"),
+    13: ("Recipe13LatencyHistogram.java", "recipe13.txt"),
     17: ("Recipe17RouteHedge.java", "recipe17.txt"),
     18: ("Recipe18Backtest.java", "recipe18.txt"),
     19: ("Recipe19Ledger.java", "recipe19.txt"),

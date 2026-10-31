@@ -68,4 +68,30 @@
       <Bug pattern="EI_EXPOSE_REP2" />
     </Or>
   </Match>
+  <!-- rates-core: the loop builder, the inbound publisher and the runner hold the rings,
+       journal sinks and failure their caller created and shares with them; holding the
+       caller's object is the design (API_SPEC.md Section 9). -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.core.EventLoop$Builder" />
+      <Class name="io.ratesalgo.core.InboundPublisher" />
+      <Class name="io.ratesalgo.core.LoopRunner" />
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2" />
+  </Match>
+  <!-- JMH writes its harness classes into rates-bench's target/classes; not ours to lint. -->
+  <Match>
+    <Package name="~.*\.jmh_generated" />
+  </Match>
+  <!-- rates-bench is a measurement tool, not product code: the harness hands its histograms and
+       the generator's schedule array to the caller on purpose, MachineInfo reads Linux /proc and
+       /sys paths by design, and JMH state classes are initialised in @Setup, not constructors. -->
+  <Match>
+    <Package name="io.ratesalgo.bench" />
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2,DMI_HARDCODED_ABSOLUTE_FILENAME" />
+  </Match>
+  <Match>
+    <Package name="io.ratesalgo.bench.jmh" />
+    <Bug pattern="UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR" />
+  </Match>
 </FindBugsFilter>

@@ -34,6 +34,8 @@ class RecipesTest {
         Arguments.of("recipe06.txt", (Main) Recipe06Treasury::main),
         Arguments.of("recipe07.txt", (Main) Recipe07GiltExDividend::main),
         Arguments.of("recipe08.txt", (Main) Recipe08Ctd::main),
+        Arguments.of("recipe12.txt", (Main) Recipe12LoopReplay::main),
+        Arguments.of("recipe13.txt", (Main) Recipe13LatencyHistogram::main),
         Arguments.of("recipe17.txt", (Main) Recipe17RouteHedge::main),
         Arguments.of("recipe18.txt", (Main) Recipe18Backtest::main),
         Arguments.of("recipe19.txt", (Main) Recipe19Ledger::main),

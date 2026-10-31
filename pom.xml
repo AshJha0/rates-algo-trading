@@ -30,6 +30,8 @@
     <module>rates-backtest</module>
     <module>rates-posttrade</module>
     <module>rates-ops</module>
+    <module>rates-core</module>
+    <module>rates-bench</module>
     <module>rates-cookbook</module>
   </modules>
 

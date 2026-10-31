@@ -26,6 +26,14 @@ The sequence for a dealer-to-client request for quote: request, pre-trade risk c
 --8<-- "docs/diagrams/rfq_sequence.mmd"
 ```
 
+## One duty cycle of the event loop
+
+What `EventLoop.doWork()` does on its thread (P2): latch the clock, drain the inbound rings with journal-then-dispatch, publish and journal outbound messages, raise backpressure after the handler, poll the timers and journal a clock tick when any fired, then run the agents. The contract is [API contract](api-spec.md) Section 9.
+
+```mermaid
+--8<-- "docs/diagrams/event_loop_cycle.mmd"
+```
+
 ## Journal frame layout
 
 The 32-byte file header, the 32-byte frame header and the chain hash definition, as pinned in [API contract](api-spec.md) Section 1.
