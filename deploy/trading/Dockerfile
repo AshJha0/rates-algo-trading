@@ -1,7 +1,9 @@
-# Trading process image. Build from the repository root after packaging the jars:
-#   mvn -B -ntp -DskipTests package -pl rates-ops -am
+# Trading process image: rates-app's TradingProcessMain with the D2C and CLOB simulators in
+# process (API_SPEC.md Section 18.1). Build from the repository root after packaging the jars:
+#   mvn -B -ntp -DskipTests package -pl rates-app -am
 #   docker build -f deploy/trading/Dockerfile -t rates-trading:dev .
-# The process validates its configuration at start and exits 2 if it is invalid.
+# The process validates its configuration at start and exits 2 if it is invalid. The reference
+# data fixtures are copied because the simulators and the pricing binding load them at start.
 FROM eclipse-temurin:25-jre
 
 RUN apt-get update \
@@ -13,9 +15,10 @@ RUN apt-get update \
  && chown -R rates:rates /var/lib/rates
 
 WORKDIR /opt/rates
-COPY rates-ops/target/lib/ lib/
-COPY rates-ops/target/rates-ops-*.jar lib/
+COPY rates-app/target/lib/ lib/
+COPY rates-app/target/rates-app-*.jar lib/
 COPY deploy/config/ config/
+COPY data/refdata/ data/refdata/
 
 USER rates
 EXPOSE 8081
@@ -31,6 +34,6 @@ ENTRYPOINT ["java", \
   "--add-opens", "java.base/java.nio=ALL-UNNAMED", \
   "-XX:+UseZGC", "-XX:+AlwaysPreTouch", "-Xms512m", "-Xmx512m", \
   "-cp", "/opt/rates/lib/*", \
-  "io.ratesalgo.ops.process.OpsProcessMain"]
+  "io.ratesalgo.app.TradingProcessMain"]
 CMD ["--config", "/opt/rates/config/trading-blue.yaml", \
      "--schema", "/opt/rates/config/schema/process-config.schema.json"]

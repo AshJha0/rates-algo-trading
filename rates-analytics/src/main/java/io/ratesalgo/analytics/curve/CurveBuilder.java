@@ -178,7 +178,9 @@ public final class CurveBuilder {
   public double maxRepricingError() {
     curve.setActivePillars(n);
     double max = 0.0;
-    for (final CurveInstrument inst : instruments) {
+    // indexed, not for-each: an incremental rebuild runs on the event loop, which must not allocate
+    for (int i = 0; i < n; i++) {
+      final CurveInstrument inst = instruments.get(i);
       max = Math.max(max, Math.abs(inst.impliedQuote(context) - inst.quote()));
     }
     return max;

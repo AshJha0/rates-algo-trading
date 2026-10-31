@@ -6,21 +6,21 @@ This document describes the system as designed and marks, component by component
 
 | Component | Responsibility | Status |
 |---|---|---|
-| Venue gateways | Speak FIX 4.4 (RFQ, orders) and the SBE book feed to venues and simulators; translate to internal SBE messages; own session state and sequence numbers | planned P2 |
+| Venue gateways | Speak FIX 4.4 (RFQ, orders) and the SBE book feed to venues and simulators; translate to internal SBE messages; own session state and sequence numbers | wired (round 2): P2's `VenueGateway` per FIX session in `rates-app`'s `VenueSession`, inbound through `InboundRouter` into the groups' rings, outbound read from each group's ring; the book feed through `FeedBinding` (API_SPEC.md Section 18.5) |
 | Event core | One thread per instrument group draining a ring buffer, applying events to owned state, emitting outputs, appending inputs and outputs to journals | exists from P2 (`rates-core`: `EventLoop`, `LoopRunner`, `LoopReplay`, fault injection); latency harness in `rates-bench` |
-| Market state | Books, last trades, curve inputs per instrument group, updated incrementally | planned P2 |
-| Pricing | Curves, swap and bond pricers, futures analytics, incremental revaluation on input change, validated against QuantLib | exists in P1 (`rates-analytics`) |
-| Quoting engine | Turn an RFQ or book state plus inventory and risk into a two-way quote with skew; manage quote lifetimes | P3 (`rates-quoting`), against stubs until P1 and P2 are bound |
-| Smart order router | Choose venue and size for hedge and client orders; record decision inputs for markout analysis | exists in P4 (`rates-router`) |
-| Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | P3 (`rates-risk`) |
-| Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | P3 (`rates-hedge`) |
+| Market state | Books, last trades, curve inputs per instrument group, updated incrementally | wired (round 2): `LoopBook` keeps 16 levels a side per venue and instrument on the loop, gives P3 the composite top of book and each router its venue view; curve inputs move the pricing binding's curve |
+| Pricing | Curves, swap and bond pricers, futures analytics, incremental revaluation on input change, validated against QuantLib | P1 (`rates-analytics`); wired (round 2) by `AnalyticsPricing`, P3's `FairValueSource` and `SensitivityProvider`, one pillar rebuild per CurveInput on the loop (Section 18.3) |
+| Quoting engine | Turn an RFQ or book state plus inventory and risk into a two-way quote with skew; manage quote lifetimes | P3 (`rates-quoting`); wired (round 2) as `DeskGroup` handlers on the loop, quoting the D2C simulator over FIX |
+| Smart order router | Choose venue and size for hedge and client orders; record decision inputs for markout analysis | P4 (`rates-router`); wired (round 2): one router per hedge instrument behind the hedger's `HedgeOrderSink`, children to the CLOB through the outbound ring, decisions to the `route` journal (DR-R2W-07) |
+| Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | P3 (`rates-risk`); wired (round 2) on the loop with the pricing binding's ladders; the kill switch is reached through `POST /control/kill` as an inbound KillSwitch message (DR-R2W-10) |
+| Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | P3 (`rates-hedge`); wired (round 2): on the loop's housekeeping timer every 250 ms, Treasuries on the CLOB only (no futures venue yet) |
 | Journal and replay | Append-only hash-chained record of inputs; replayer that drives the same handlers and verifies the chain | exists in P0 (`rates-journal`); segment rolling and the loop's outbound replay comparison from P2 |
-| Back-tester | Replay journals or simulated days through the live code path with pre-registered hypotheses and holdouts; attribution | exists from P5 (`rates-backtest`); bound to the P2 loop's replay mode by the coordinator |
+| Back-tester | Replay journals or simulated days through the live code path with pre-registered hypotheses and holdouts; attribution | P5 (`rates-backtest`); wired (round 2): `LoopReplay` with the desk's factory reproduces a recorded day's outbound hash, and `DeskStrategy` runs the same desk under the back-tester for the daily report (Section 18.7) |
 | Analytics (research) | Python: provenance, calibration of simulator parameters, result analysis | partly exists in P0 (`research/ratesresearch`: provenance and chain hash); calibration planned P1, P5 |
-| Control plane | Start, stop, parameter changes with approval, limit changes, kill switch operation; all changes journaled | planned P3 |
+| Control plane | Start, stop, parameter changes with approval, limit changes, kill switch operation; all changes journaled | partly wired (round 2): the kill switch, journaled as an input; parameter and limit changes with approval are planned |
 | AI assistants | Draft, review and summarise under `docs/AI_USE_POLICY.md`; never change production parameters without a human-approved PR | policy exists in P0; tooling planned P6 |
-| Post-trade, books and records | Positions, fills, P&L by attribution, end-of-day marks, order records, clearing and settlement state, reconciliations, restart procedure, surveillance hooks | exists, P6 (`rates-posttrade`); bound to P1 to P5 at integration |
-| Operations | Health, readiness, metrics and control endpoints, configuration validation, stress harness, images, rehearsal, runbooks | exists, P6 (`rates-ops`, `deploy/`, `docs/runbooks/`) |
+| Post-trade, books and records | Positions, fills, P&L by attribution, end-of-day marks, order records, clearing and settlement state, reconciliations, restart procedure, surveillance hooks | P6 (`rates-posttrade`); wired (round 2): `JournalFeed` feeds the loop's journals to the position keeper, `VenueReconciliation` checks it against both venues' trade registers; marks, carry, calendars and the venue status port stay on fixtures |
+| Operations | Health, readiness, metrics and control endpoints, configuration validation, stress harness, images, rehearsal, runbooks | P6 (`rates-ops`, `deploy/`, `docs/runbooks/`); the images and the rehearsal start `rates-app`'s `TradingProcessMain` (DR-R2W-14) |
 
 ## Event loop design
 
@@ -45,6 +45,27 @@ Rules that follow from this:
 - Replay is the test. The same handler code runs live and in replay; the inbound journal plus a `ManualClock` reproduces every output, which `LoopReplayTest` and `LoopPropertiesTest` check. Agents and day hooks are not replayed (DR-P2C-04).
 - Research is in Python, off the hot path, and consumes journals and reports rather than sharing code with the core.
 
+## Process topology (round 2)
+
+`rates-app` assembles the modules into one process (API_SPEC.md Section 18; diagrams `docs/diagrams/module_deps.mmd` and `docs/diagrams/data_flow.mmd`).
+
+```
+ rates-gateways thread                          rates-loop-usd thread (one per instrument group)
+ ---------------------                          -------------------------------------------------
+ D2C simulator  <-FIX->  VenueSession(101) --+                      +--> outbound ring 0 --> VenueSession(101)
+ CLOB simulator <-FIX->  VenueSession(102) --+--> InboundRouter     |    outbound ring 1 --> VenueSession(102)
+ CLOB book feed -------> FeedBinding --------+    (by instrument)   |    outbound ring 2 --> control counters
+ curve feed (D2C mids) ----------------------+          |           |
+ CLOB liquidity (LP), SimClock, venue events       inbound ring --> EventLoop: DeskGroup handlers, timers
+                                                                      journals: in, out, route
+ HTTP thread: OpsHttpServer -- KillSwitch --> InboundRouter     status agent --> /control/status, /metrics
+```
+
+- One loop per instrument group; a group is a currency (DR-R2W-03), so the USD universe runs one loop, `usd`, journaling to `<journal dir>/usd/in`, `out` and `route`.
+- The gateways, the feed, the curve feed and the simulated venues share one driver thread, which also paces simulated time; it reaches loop state only through the rings.
+- The desk's graph on the loop: pricing binding, composite book, P3 desk, one router per hedge instrument (Section 18.4). The status agent is the loop's only agent and only reads.
+- Post-trade and the back-test read the journals after the run (`JournalFeed`, `DeskBacktest`); tailing them live is a later step.
+
 ## Phase 0 module map
 
 ```
@@ -61,6 +82,14 @@ rates-analytics   io.ratesalgo.analytics       (P1) date, curve, swap, bond, fut
 rates-router      io.ratesalgo.router          SmartOrderRouter, Allocator, ChildOrderBook, DecisionCodec (P4)
 rates-posttrade   io.ratesalgo.posttrade       position keeper, records, marks, clearing, settlement, recon (P6)
 rates-ops         io.ratesalgo.ops             health and control endpoints, metrics, config, stress harness (P6)
+rates-app         io.ratesalgo.app             TradingProcess, TradingProcessMain (round 2)
+                  io.ratesalgo.app.pricing     AnalyticsPricing, Dv01Adapter, UsdUniverse
+                  io.ratesalgo.app.market      LoopBook
+                  io.ratesalgo.app.loop        DeskLoopFactory, DeskGroup, RouterHedgeSink, AppIds
+                  io.ratesalgo.app.gateway     VenueSession, InboundRouter, FeedBinding
+                  io.ratesalgo.app.sim         SimClock, SimulatedVenues, CurveFeed, ClobLiquidity
+                  io.ratesalgo.app.posttrade   JournalFeed, VenueReconciliation
+                  io.ratesalgo.app.backtest    JournalExport, DeskStrategy, DeskBacktest
 ```
 
 `rates-analytics` depends on nothing outside the JDK. Its packages: `date` (epoch-day dates, versioned calendars, day counts, conventions, schedules, IMM dates), `curve` (discount curves, interpolators, bootstrap instruments, `CurveBuilder`, Hull-White convexity), `swap` (OIS conventions, swaps, pricer, fixings), `bond` (bonds, pricer, bills, carry, fitted curves), `futures` (conversion factors, basis, CTD), `funding` (repo curve), `risk` (`Dv01Ladder`, `KeyRateRisk`), `math` (Brent, LU, Levenberg-Marquardt). Pricing calls on built objects do not allocate; builders and schedule generation do. The curve build is drawn in `docs/diagrams/curve_build.mmd`.
@@ -137,7 +166,7 @@ Errors that indicate corruption or a contract break (journal hash mismatch, sche
 | Unit | Each class against its contract | JUnit 5 | P0 for the three modules |
 | Property-based | Wide input spaces: timer ordering, journal round trips, codec round trips | jqwik (Java), hypothesis (Python) | P0 |
 | Golden against QuantLib | Pricing within stated tolerances | `data/golden/analytics_golden.json`, regeneration checked in CI (DR-P1-06) | P1 (`AnalyticsGoldenTest`) |
-| Conformance | Gateway behaviour against FIX 4.4 and SBE book feed specifications | venue simulators | planned P2 |
+| Conformance | Gateway behaviour against FIX 4.4 and SBE book feed specifications | venue simulators | P2 certification scripts; end to end from round 2 in `SmokeTest` and `VenueBindingTest` |
 | Replay-hash determinism | Same journal, same output hash, across runs and platforms | `Replayer` plus output journal hash | P0 for the chain check; back-tester `DeterminismTest` in P5; loop replay comparison and jqwik property from P2 (`LoopPropertiesTest`) |
 | Latency and allocation | Fixed-rate load, coordinated-omission correction, zero-allocation delta | HdrHistogram, ThreadMXBean | P2: `LoopAllocationTest` (gating), `rates-bench` harness (informational CI job); P5 adds the rate sweep |
 | Chaos | Dropped and duplicated venue messages, late timers, full buffers | `FaultInjector` (P2) and fault-injecting simulators | P2 for the loop; simulators planned P5 |

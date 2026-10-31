@@ -550,7 +550,8 @@ public final class D2cRfqSimulator extends VenueSimulator {
 
   private void recordTrade(final Rfq rfq, final QuoteEntry best, final long mid) {
     final int index = trades.size();
-    trades.add(new TradeRecord(rfq.id, best.dealer, rfq.buy, best.price, rfq.quantity, rfq.informed, mid, 0));
+    trades.add(new TradeRecord(rfq.id, best.dealer, rfq.buy, best.price, rfq.quantity, rfq.informed, mid, 0,
+        best.engine ? best.quoteId : 0L, inst0(rfq), clock.epochNanos()));
     final Instrument inst = rfq.instrument;
     if (rfq.informed) {
       final long jump = round(config.informedJumpMultiple() * halfSpreadMedian(inst), inst.tick());
@@ -562,8 +563,12 @@ public final class D2cRfqSimulator extends VenueSimulator {
     schedule(clock.nanoTime() + config.markoutHorizonNanos(), () -> {
       final TradeRecord t = trades.get(index);
       trades.set(index, new TradeRecord(t.rfqId(), t.winner(), t.clientBuys(), t.price(), t.quantity(), t.informed(),
-          t.midAtTrade(), midNow(inst)));
+          t.midAtTrade(), midNow(inst), t.quoteId(), t.instrumentId(), t.tradeNanos()));
     });
+  }
+
+  private static int inst0(final Rfq rfq) {
+    return rfq.instrument.instrumentId();
   }
 
   private Message response(final Rfq rfq, final long quoteId, final int type, final String outcome, final long price,

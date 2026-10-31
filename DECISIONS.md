@@ -740,6 +740,16 @@ Decision. `EventLoop`'s constructor now encodes a Backpressure message into its 
 
 Consequences. The gate still fails on any per-message allocation, since one byte per message is a megabyte per window, and on any allocation in the last window. A one-off cost on a path first taken just after warm-up no longer fails the build, but it shows in the message. The test now always sends 4 million messages, where before it sent between 2.1 and 4 million.
 
+## DR-INT-03: The trading process binds its loop journals through LoopJournals
+
+Date: 2026-10-31
+
+Context. Round 2 ran two branches at once. `claude/r2-journal-latency-ee2034` took segment creation, mapping and page faults off the loop thread (DR-R2J-01, DR-R2J-02), added a ring mode (DR-R2J-03) and made the mode a loop configuration choice through `LoopJournals` and `EventLoop.Builder.journals(LoopJournals)`. `claude/r2-wiring-c31ae4` built `TradingProcess` in the new `rates-app` module against the P2 API: it created its inbound, outbound and route journals with `SegmentedJournal.create(dir, name, size, clock)`, without preallocation, so each roll mapped a new file on the loop thread, which is the cost DR-R2J-02 removed. Neither branch changed the other's files; the overlap is the call site.
+
+Decision. The journal branch's design stands unchanged. At integration `TradingProcess` creates the loop's inbound and outbound journals with `LoopJournals.create(dir, "in", "out", SEGMENT_BYTES, clock)` in the default mode (`DIRECT`, DR-R2J-04) and passes them with `.journals(...)`; the route journal, which the desk also appends to on the loop thread, is created with preallocation (`SegmentedJournal.create(..., true)`). File names, segment size and the frame format are unchanged, so `JournalFeed`, `JournalExport` and `--replay` read the same files. `WiredLoopAllocationTest` keeps its single-file `JournalWriter` journals, which do not roll.
+
+Consequences. A roll in the trading process no longer maps, creates or allocates on the loop thread. Each journal now keeps one prepared 64 MiB segment and one background thread from the start. Switching the process to the ring mode is a one-argument change to the `LoopJournals.create` call.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31
@@ -793,3 +803,153 @@ Context. A sibling session wires the modules into `rates-app` at the same time a
 Decision. Additions only, except where noted. `JournalWriter.append(templateId, schemaVersion, timestampNanos, payload, offset, length)` and `SegmentedJournal.append` with the same parameters take the stamp explicitly; the existing overloads read the clock as before. `SegmentedJournal.rollWaits()` is new. `SegmentedJournal.create(..., true)` now touches the first segment before returning and prepares each next segment immediately rather than at half full (behaviour, not signature). New public types: `RingJournal` (`rates-journal`), `JournalMode` and `LoopJournals` (`rates-core`), and `EventLoop.Builder.journals(LoopJournals)`. `FrameSource`, `JournalReader`, `SegmentedJournalReader`, `Replayer` and the file format are unchanged. In `rates-bench`, the `HarnessConfig` record gains two components, `journalMode` and `ringBytes`, after `journal` (a source change for any caller of its canonical constructor; `HarnessConfig.parse` is unchanged for existing options), the harness takes `--journal-mode` and `--ring-bytes` (`-Dlatency.journalMode`), and its JSON report gains `config.journalMode`, `config.ringBytes`, `counts.journalRollWaits`, `counts.journalRingWaits`, `counts.gcCollections` and `counts.gcMillis` under the same schema name, since the change only adds fields.
 
 Consequences. Code that passes `SegmentedJournal::append` as a `JournalSink` keeps working and gets the touched, allocation-free roll if it creates the journal with preallocation. Code that wants the mode switch uses `LoopJournals`.
+
+## DR-R2W-01: Dv01Ladder and Dv01Vector stay two types, joined by an adapter
+
+Date: 2026-10-31
+
+Context. P1's `Dv01Ladder` (rates-analytics) is immutable, allocates, and has one pillar per curve instrument (for the SOFR curve of the trading process: 2Y, 5Y, 10Y, 12Y, 30Y). P3's `Dv01Vector` (rates-api) is mutable, allocation-free and has the eight key-rate tenors of `KeyRateTenors`. Both are the value change for a one basis point rise: positive for a payer swap, negative for a long bond.
+
+Decision. Keep both. `io.ratesalgo.app.pricing.Dv01Adapter` splits each ladder pillar's DV01 onto the two neighbouring key-rate tenors linearly in curve years (`KeyRateTenors.split`), with no sign flip. The pricing binding applies the same weights in place on the loop; `toVector(Dv01Ladder)` is the allocating form for start of day and tests.
+
+Consequences. Unifying would have meant either an allocating type on the hot path or a mutable type in P1's public API. The parallel DV01 is preserved exactly; `PricingBindingTest` asserts each tenor against `KeyRateRisk.fromGradient` mapped by the adapter to 1e-12 of the parallel DV01.
+
+## DR-R2W-02: The pricing binding: one OIS curve, rebuilt one pillar at a time on the loop
+
+Date: 2026-10-31
+
+Context. P3 needs a fair mid and a key-rate PV01 per instrument without allocating; P1 provides the bootstrap, the pricers and their gradients.
+
+Decision. `AnalyticsPricing` bootstraps a USD SOFR OIS curve (linear in log discount factor, sequential solver) from the par rates of the five SOFR swap templates. A CurveInput of kind ParSwap moves one pillar through `CurveBuilder.rebuild`, which re-solves that pillar and the ones after it; then every swap's par rate and every instrument's unit ladder are recomputed into preallocated arrays: swaps from `OisSwapPricer.pvGradient`, bonds from `BondPricer.dirtyFromCurveGradient`, both mapped through `CurveBuilder.quoteSensitivities`. The unit swap's fixed rate is the template's starting par rate, so the swap object is built once. Bond fair value is the composite book (the quoting engine already prefers the microprice). Before the first CurveInput the reference time is `NO_VALUE`, so the desk does not quote off the starting curve.
+
+Consequences. A 30-year pillar rebuild costs milliseconds of loop time (daily SOFR compounding over about 7,500 days); at the curve feed's 500 ms interval that is acceptable, and a faster feed would need a coalescing step. `PricingBindingTest` asserts par rates and PVs equal a fresh bootstrap of the same quotes to 1e-12.
+
+## DR-R2W-03: Instrument groups are currencies; a QuoteResponse follows its QuoteRequest
+
+Date: 2026-10-31
+
+Context. API_SPEC.md Section 9 runs one loop per instrument group, but the risk engine's limits and the hedger's residual are per currency (DR-P3-12), so splitting a currency across loops would split one risk book.
+
+Decision. A group is a currency. The universe is USD only, so the process runs one group, `usd`, and its journals live in `<journal dir>/usd/`. The inbound router partitions by instrument id; a QuoteResponse carries none, so it goes to the group that received its QuoteRequest (remembered by venue and RFQ id until a final, non-Rejected response); Heartbeat, GatewayStatus and KillSwitch go to every group.
+
+Consequences. Adding EUR or GBP adds a group without changing the gateways. `InboundRouterTest` covers two groups; the process itself has run with one.
+
+## DR-R2W-04: The venue gateway accepts the quoting engine's withdrawals
+
+Date: 2026-10-31
+
+Context. DR-INT-01 left two cancel pairs: the quoting engine sends QuoteWithdraw (60) and OrderWithdraw (61), and the venue gateway knew only QuoteCancel (43) and OrderCancel (41).
+
+Decision. `VenueGateway.offer` translates 60 to FIX Z exactly as 43, and 61 to FIX F; OrderWithdraw has no quantity, so F takes the order quantity `OrderStateTracker` recorded from the NewOrder (new accessor `orderQuantity`). The router's cancels are encoded by the binding as OrderCancel (41) with full fields.
+
+Consequences. No schema change. Retiring one pair remains open.
+
+## DR-R2W-05: Feed gaps reach the loop; a snapshot rebuild is announced with GatewayStatus
+
+Date: 2026-10-31
+
+Context. P3's input health marks a book-feed gap when a venue sequence number jumps and clears it on `onFeedRecovered`, which nothing called. P2's `BookFeedConsumer` recovers from a snapshot inside the gateway, out of the loop's sight. The loop accepts only GatewayStatus from the control schema.
+
+Decision. `FeedBinding` forwards every frame, the gapped one included, so the loop sees the gap; the desk's BookUpdate handler polls the quoting engine at once when input is unhealthy, which pulls every quote (the quote-pull-on-gap path). The binding then forwards the venue's snapshot (a Clear and the levels at the snapshot sequence) and publishes GatewayStatus CONNECTED with the feed's status id 3; the desk calls `onFeedRecovered` on it.
+
+Consequences. Recovery is journaled and replays. `VenueBindingTest` drops two feed frames at the venue and asserts that the pull reached the venue and that quoting resumed.
+
+## DR-R2W-06: An RFQ trade is booked once, from the QuoteResponse
+
+Date: 2026-10-31
+
+Context. The D2C simulator confirms a won RFQ twice: a QuoteResponse (AJ, type 1) and an ExecutionReport (8) carrying the quote id and the client's side. The gateway turns both into SBE. The position keeper books the first as the RFQ trade `venue:R:quoteId` and would book the second as an Execution trade, with the opposite side.
+
+Decision. The second is a confirmation. The desk counts and ignores ExecutionReports from the RFQ venue (the quoting engine books the fill from the QuoteResponse), and `JournalFeed` does not feed them to the keeper.
+
+Consequences. The trade reconciliation matches every RFQ trade against the venue's own register by quote id (`TradeRecord.quoteId`, added).
+
+## DR-R2W-07: One router per hedge instrument; hedger urgency as a fraction of the schedule
+
+Date: 2026-10-31
+
+Context. P4's `BookView` has no instrument argument, so a `SmartOrderRouter` routes one instrument. P3's `HedgeOrderSink` has `cancel` and `cancelAll`, which the router lacked, and states urgency as a deadline in nanoseconds where the router takes a number in [0, 1].
+
+Decision. The desk builds one router per hedge instrument (the four on-the-run Treasuries), each with its own client order id range (`ROUTER_BASE + (j << 40)`). `RouterHedgeSink` dispatches by instrument, maps urgency to `1 - (deadline - now) / scheduleHorizon` clipped to [0, 1] (a deadline of 0 is fully urgent), and refuses with false what a router cannot take. `SmartOrderRouter` gains `cancel(parentId)`, `cancelAll()`, `parentsLive()` and `maxParents()`: a cancelled parent stops routing, cancels its live children and finishes once each child has filled or confirmed. A cancel's ClOrdID is the child id with bit 61 set, so the venue's acknowledgement maps back without a table.
+
+Consequences. Router fills reach the hedger through the desk's ExecutionReport handler (`onHedgeFill`, then `onParentDone` when the router has finished the parent); a fill after the kill switch released the parent goes to the risk engine directly.
+
+## DR-R2W-08: The router assumes a configured trade rate; no futures venue yet
+
+Date: 2026-10-31
+
+Context. The router's queue model needs a traded quantity per second, and the SBE book feed carries no trades. P2 has no futures simulator.
+
+Decision. `LoopBook.view` reports a configured rate (2,000,000,000 minor units per second, 20 million of face, `DeskSettings.tradeRatePerSecond`). The routers route to the CLOB only.
+
+Consequences. A trade feed or an average of our own fills would replace the constant; a futures venue adds a row to `VenueParams[]` when P2 provides one. Both are deferred.
+
+## DR-R2W-09: The smoke day's declared assumptions
+
+Date: 2026-10-31
+
+Context. The simulators were built separately from the desk; run together they need a common market and settings under which the desk trades.
+
+Decision. The day starts at 2026-11-02T13:25Z, 08:25 New York, five minutes before the 08:30 peak of the D2C arrival model; `Venues.T0` is 14:30Z (09:30 New York), not 08:30 as its comment says. The curve feed publishes the D2C simulator's swap mids every 500 ms, and a market maker (`ClobLiquidity`, owner `LP`) keeps three levels a side on the CLOB around the D2C bond mids, refreshed every second. The desk's half spread is held between 0.02 and 0.08 bp because the simulated dealers quote a median of 0.25 bp for swaps; the hedger hedges once the residual's daily standard deviation exceeds 20,000 USD. These are declared values, not fits.
+
+Consequences. On seed 7 the smoke day sends 43 quotes and is filled 25 times (`SmokeTest`, 2026-10-31); with a 0.25 bp maximum half spread it was filled none of 5 times.
+
+## DR-R2W-10: The kill switch enters the loop as a message
+
+Date: 2026-10-31
+
+Context. The control endpoint runs on the HTTP thread; the kill switch belongs to the loop's state.
+
+Decision. `POST /control/kill` publishes a KillSwitch (31, reason Manual, scope 0, requestedBy from `X-Requested-By`) into every group's inbound ring; the desk's handler triggers its `KillSwitchController`, whose listeners pull quotes and cancel every router parent through the real gateways, and the controller's own KillSwitch goes to the control ring. With the loops on their own threads the endpoint waits up to two seconds for every group to report the switch engaged and no live quote.
+
+Consequences. The kill is journaled as an input, so replay reproduces the pulls; the rehearsal's "kill switch journaled" check reads the inbound journal.
+
+## DR-R2W-11: The back-test binding reshapes the journal and runs the desk as a strategy
+
+Date: 2026-10-31
+
+Context. P5's back-tester reads one RAJ1 file of schema-1 frames, keeps a top of book from level-0 BookUpdates, settles RFQs itself, has no resting-order cancel, and does not pass Heartbeats to strategies.
+
+Decision. `JournalExport` copies QuoteRequest, CurveInput and the curve feed's Heartbeat from a loop's inbound journal and turns every change of each instrument's top of book into Clear, Add bid and Add ask at level 0 with a renumbered sequence. `DeskStrategy` runs the desk's `DeskGroup` on its own loop, synchronously per callback; it sends every child order as a market order, drops router cancels, and restores the curve heartbeat with each curve input. `DeskBacktest` runs it under `data/presets.yaml` at the central band point with the universe's own instrument set and writes P5's daily report.
+
+Consequences. The back-test's hedge fills come from P5's hedge cost model, not from the CLOB's queue, so the report's hedge slippage is that model's. The replay of the same journal through `LoopReplay` is the exactness test; the back-test produces the report.
+
+## DR-R2W-12: The allocation and hot-path gates with the real desk
+
+Date: 2026-10-31
+
+Context. rates-core's gates cover the loop with a trivial handler. With the desk registered, two allocations showed (JFR with TLABs off): `SmartOrderRouter.venues()` clones its array, which the hedge sink called per parent, and `CurveBuilder.maxRepricingError` iterated an immutable list on every rebuild. After both were removed, a few hundred bytes still appeared in some windows at irregular times, attributed by JFR to enum class initialisation and to call sites that do not allocate (deoptimisation).
+
+Decision. The hedge sink caches each router's lot increment; `CurveBuilder` uses an indexed loop. `WiredLoopAllocationTest` sends 600,000 messages of warm-up and four windows of 150,000: no window after the first may allocate more than 1,024 bytes and at least one must allocate nothing. `AppHotPathRulesTest` applies rates-core's ArchUnit rules to the classes marked `@HotPath` in rates-app, except that Agrona's primitive-keyed maps are allowed.
+
+Consequences. A per-message leak of one byte still fails (150,000 bytes a window). The gate is weaker than rates-core's in one way: the clean window need not be the last.
+
+## DR-R2W-13: Simulated time, two ways to run, and quiescence by FIX sequence numbers
+
+Date: 2026-10-31
+
+Context. The simulators run their own QuickFIX/J threads; the process must run a seeded day reproducibly in tests and in real time in a container.
+
+Decision. One `SimClock` (an immutable reading behind a volatile field) drives the venues, the curve feed and the liquidity. The loops read it through `AnchoredClock`, so a latched monotonic time and wall time always come from one reading. The FIX sessions take intervals from the system monotonic clock and stamps from simulated time, so heartbeats keep real time with QuickFIX/J. `TradingProcess.step` drives everything on one thread and, after each step, pumps until no work is left and each venue's QuickFIX/J sequence numbers equal ours (`getExpectedSenderNum` is the venue's own outgoing number). `startThreads` runs each loop on a `LoopRunner` and the rest on a driver thread pacing simulated time.
+
+Consequences. Two runs of the smoke day gave the same counts on the laptop (2026-10-31). The threaded run is not reproducible step for step, but its journals replay exactly (`BacktestBindingTest`).
+
+## DR-R2W-14: The rehearsal starts rates-app
+
+Date: 2026-10-31
+
+Context. The P6 rehearsal started `OpsProcessMain`'s simulated quoter and checked that a quote was live right after readiness.
+
+Decision. Both images and the process-mode rehearsal start `io.ratesalgo.app.TradingProcessMain`; the trading role runs the simulators in process at ten times real time from 08:25 New York, and the venue-sim role serves health and metrics. A real quote lives for the venue's five-second window, so the rehearsal polls the status for up to 60 s until one is live instead of reading it once. The trading image copies `data/refdata`.
+
+Consequences. `OpsProcessMain` and `SimulatedQuoter` remain in rates-ops but no image uses them.
+
+## DR-R2W-15: SpotBugs in rates-app
+
+Date: 2026-10-31
+
+Context. SpotBugs reported 17 items on the new module. Twelve were EI_EXPOSE_REP and EI_EXPOSE_REP2: the assembly hands collaborators to each other and returns them to tests and the status endpoint. The rest were real: `TradingProcess` synchronised on its own instance (reachable by any caller) and read its driver thread field without the lock, `start` rethrew a caught exception, two fields were set after construction, and the pricing binding compared quotes with `!=`.
+
+Decision. `config/spotbugs-exclude.xml` excludes EI_EXPOSE_REP and EI_EXPOSE_REP2 for `io.ratesalgo.app` and its subpackages, as DR-P2V-07 and DR-P3-09 did for theirs. The other findings are fixed: a private lock object and a volatile driver field, a success flag in `start`, constructor-set fields (an unbound child lookup that throws until the router exists), and `Double.compare` for the quote change test.
+
+Consequences. Every other pattern stays enabled for rates-app.

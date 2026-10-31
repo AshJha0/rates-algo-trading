@@ -116,6 +116,35 @@ class SmartOrderRouterTest {
   }
 
   @Test
+  void cancellingAParentCancelsItsChildrenAndKeepsTheirFills() {
+    passiveFriendlyVenue2();
+    final SmartOrderRouter r = router(oneSlice(30_000_000_000L));
+    r.submit(21, 10, Side.Buy, 3 * MM, 0.0, 0L);
+    final StubVenues.Order passive = venues.last();
+    report(r, passive, OrdStatus.New, 0, 0);
+    report(r, passive, OrdStatus.PartiallyFilled, MM, MM);
+    final int sentBefore = venues.orders.size();
+    assertTrue(r.cancel(21));
+    assertTrue(r.cancel(21), "a second cancel of a cancelling parent is accepted");
+    assertEquals(1, venues.cancels.size());
+    assertTrue(r.isActive(21), "live until the venue confirms the cancel");
+    report(r, passive, OrdStatus.Cancelled, 0, MM);
+    assertFalse(r.isActive(21));
+    assertEquals(sentBefore, venues.orders.size(), "nothing re-routed after the cancel");
+    assertFalse(r.cancel(21));
+
+    r.submit(22, 10, Side.Buy, 2 * MM, 0.0, 0L);
+    r.submit(23, 10, Side.Sell, 2 * MM, 0.0, 0L);
+    assertEquals(2, r.cancelAll());
+    for (final StubVenues.Order o : new ArrayList<>(venues.orders.subList(sentBefore, venues.orders.size()))) {
+      report(r, o, OrdStatus.Cancelled, 0, 0);
+    }
+    assertFalse(r.isActive(22));
+    assertFalse(r.isActive(23));
+    assertEquals(0, r.cancelAll());
+  }
+
+  @Test
   void bookMovingAwayCancelsAndReroutes() {
     passiveFriendlyVenue2();
     final SmartOrderRouter r = router(oneSlice(30_000_000_000L));

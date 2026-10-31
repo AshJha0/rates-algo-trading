@@ -11,6 +11,9 @@ package io.ratesalgo.venues.d2c;
  * @param informed whether the client was informed
  * @param midAtTrade mid when traded
  * @param midAtHorizon mid at the markout horizon, 0 until measured
+ * @param quoteId the winning engine quote's id, 0 when a simulated dealer won
+ * @param instrumentId wire id of the instrument
+ * @param tradeNanos epoch nanoseconds of the client's decision (the AJ TransactTime)
  */
 public record TradeRecord(
     long rfqId,
@@ -20,7 +23,10 @@ public record TradeRecord(
     long quantity,
     boolean informed,
     long midAtTrade,
-    long midAtHorizon) {
+    long midAtHorizon,
+    long quoteId,
+    int instrumentId,
+    long tradeNanos) {
 
   /** Dealer markout per unit at the horizon: positive is a gain for the dealer. */
   public long dealerMarkout() {

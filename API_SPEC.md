@@ -2,7 +2,7 @@
 
 This document is the contract between modules and between the Java and Python sides. Anything stated here is fixed for the schema or format version it names; a change needs a new version number, a decision record in `DECISIONS.md` and a migration note in `CHANGELOG.md`. Where code and this document disagree, the one that was reviewed last is wrong and the pull request that fixes it must say which.
 
-Phase 0 pins Sections 0 to 4. Phase 1 pins Sections 5 to 8 (analytics). Phase 2 pins Section 9 (event loop and ring buffers) and Section 1.5 (journal segments); the P2 venue half pins Sections 10 and 11 (FIX, book feed, simulators, reference data) and Section 2.2. Phase 3 pins Sections 12 to 14 (quoting, risk limits, hedger). Phase 4 pins Section 15 (router). Phase 5 pins Section 16 (back-tester). Phase 6 pins Section 17 (post-trade and operations) and Section 2.1.
+Phase 0 pins Sections 0 to 4. Phase 1 pins Sections 5 to 8 (analytics). Phase 2 pins Section 9 (event loop and ring buffers) and Section 1.5 (journal segments); the P2 venue half pins Sections 10 and 11 (FIX, book feed, simulators, reference data) and Section 2.2. Phase 3 pins Sections 12 to 14 (quoting, risk limits, hedger). Phase 4 pins Section 15 (router). Phase 5 pins Section 16 (back-tester). Round 2 pins Section 18 (process assembly). Phase 6 pins Section 17 (post-trade and operations) and Section 2.1.
 
 ## Section 0. Units and conventions
 
@@ -1353,3 +1353,83 @@ The list is pinned in `deploy/prometheus/metrics.txt`; `MetricsRegistryTest` che
 | `MessageSink` | rates-ops | P2 event loop inbound ring buffer |
 | Attribution file (17.5) | rates-posttrade | P5 back-tester output |
 | P2 `TradeBust` (44) | rates-posttrade | A case in `PositionKeeper.onFrame` that applies it as a PostTradeBust with reason VenueError |
+
+The 17.14 bindings stand as follows after round 2 (Section 18): `TradeBust` (44) is applied by `PositionKeeper.onFrame` (DR-R2W-06 for the RFQ case); `BookMapper`, `InstrumentCatalogue` and `ValuationConvention` are bound by `io.ratesalgo.app.posttrade.JournalFeed` (catalogue from the pricing binding's directory, books by product); `OpsHttpServer.Control` is bound to `TradingProcess.kill` and `statusJson` (DR-R2W-10); `MessageSink` (stress harness) takes `InboundRouter::offer`. `MarkSource`, `CarrySource`, `BusinessCalendar`, `VenueStatusPort`, `QuotingControl` and the attribution file stay on their fixtures (deferred, STATUS.md).
+
+## Section 18. Process assembly (round 2)
+
+Module `rates-app`, package `io.ratesalgo.app`. It wires the phase modules into one trading process. Nothing in it re-implements a phase: every binding adapts one module's interface to another's.
+
+### 18.1 Entry point and run modes
+
+`TradingProcessMain --config FILE --schema FILE [--seed N] [--time-scale X]` validates the rates-ops process configuration (Section 17.11; exit 2 if refused). Role `trading` starts `TradingProcess` with its simulators, runs each instrument group's loop on its own `LoopRunner` thread and the gateways, feed, curve feed and venues on one driver thread (`rates-gateways`) that advances simulated time by `X` (default 10) times real time from 2026-11-02T13:25Z, and serves the rates-ops endpoints (Section 17.12). Role `venue-sim` serves health and metrics only. `TradingProcessMain --replay DIR` replays every group directory under `DIR` through `LoopReplay` with the desk's factory and prints one line per group; exit 0 if every outbound hash matches.
+
+`TradingProcess.step(nanos, stepNanos)` runs the same assembly on the calling thread: per step it moves the `SimClock` under both venues' locks, runs the venues' due events, the curve feed and the CLOB liquidity, then pumps gateways, feed, control rings and loops until three consecutive passes do no work and each venue's QuickFIX/J sequence numbers equal the engine session's (`getExpectedSenderNum` equals our `expectedInSeq`, `getExpectedTargetNum` equals our `nextOutSeq`), or two seconds pass (DR-R2W-13).
+
+### 18.2 Fixed identifiers (`AppIds`)
+
+| Name | Value | Meaning |
+|---|---|---|
+| D2C venue id | 101 | stamped by the D2C gateway on its SBE messages |
+| CLOB venue id | 102 | the CLOB's FIX gateway and its SBE book feed (`ClobSimulator.VENUE_ID`) |
+| Outbound gateway ids | 0 D2C, 1 CLOB, 2 control | in every loop, in the order the rings are added (Section 9.2) |
+| GatewayStatus ids | 0 D2C session, 1 CLOB session, 3 CLOB feed | inbound template 65003; id 3 CONNECTED means the feed was rebuilt from a snapshot |
+| Curve heartbeat source | 900 | Heartbeat `sourceId` of the curve feed; the desk requires it |
+| SOFR curve id | 1 | CurveInput `curveId` |
+| Router child ids | from `2^52 + (j << 40)` | router `j`; a cancel request's ClOrdID is the child id with bit 61 set |
+| Engine CompID | RALGO | on every venue |
+
+### 18.3 Pricing binding
+
+`AnalyticsPricing` implements `FairValueSource` and `SensitivityProvider` (Section 12) over one USD SOFR OIS curve bootstrapped by `CurveBuilder` (linear in log discount factor) from the par rates of the swap templates 2001 to 2005 (2Y, 5Y, 10Y, 30Y, 12Y). A CurveInput of kind ParSwap whose instrument is a template moves that pillar: value is the par rate in percent as a Decimal9 mantissa, converted to a decimal by multiplying by 1e-11; `CurveBuilder.rebuild(pillar, quote)` re-solves it and the later pillars; every swap's par rate and every instrument's unit key-rate ladder are then recomputed in place.
+
+- Swap fair mid: `Decimal9.round(parRate * 100)`; reference time: the newest CurveInput stamp, `NO_VALUE` before the first.
+- Bond fair mid: the mid of the composite book, `NO_VALUE` without both sides; reference time: the book's update stamp.
+- Unit ladder: value change of one major unit (one currency unit of notional or face) for a one basis point rise in each curve quote, mapped onto the eight `KeyRateTenors` by `Dv01Adapter` (DR-R2W-01). `pv01(id, quantityMinor, out)` scales it by `quantityMinor / 100`.
+- Tolerance: par rates and PVs equal a fresh bootstrap of the same quotes to 1e-12; tenor DV01s equal `KeyRateRisk.fromGradient` mapped by the adapter to 1e-12 of the parallel DV01 (`PricingBindingTest`).
+
+### 18.4 The desk on the loop and agent registration order
+
+`DeskLoopFactory` is the `LoopFactory` of the live loop and of `LoopReplay`. It sets the timer wheel to 1 ms ticks, 1024 slots, 4096 timers, builds the loop and one `DeskGroup`, which constructs, in this order: `AnalyticsPricing`; `LoopBook` (composite book over the CLOB); one `SmartOrderRouter` per hedge instrument with its `LoopOrderGateway`; `RouterHedgeSink`; P3's `Desk` (kill switch, risk engine, a hedger per currency, fair value, quoting engine, package and CLOB quoters; DR-P3 order of kill-switch listeners: quoting, CLOB quoter, hedgers). The desk's input health tracks venues 101 and 102.
+
+Handlers, registered in this order:
+
+| Template | Handler |
+|---|---|
+| 1 Heartbeat, 10 QuoteRequest, 12 QuoteResponse | `Desk.handler()` (input health, quoting engine) |
+| 2 BookUpdate | `LoopBook.apply`, `Desk.handler()`, `RiskEngine.onFairValue` (bonds with a two-sided book), the instrument's router `onBookUpdate`; a quoting poll if input is unhealthy |
+| 3 CurveInput | `AnalyticsPricing.onCurveInput`; on a moved pillar `RiskEngine.onCurveMove(USD)` and `onFairValue` |
+| 21 ExecutionReport | from the RFQ venue: counted, not booked (DR-R2W-06); router child ids: the router, then the hedger (`onHedgeFill`, `onParentDone`); other ids: the CLOB quoter |
+| 31 KillSwitch | `KillSwitchController.trigger(reason, scope, requestedBy)` |
+| 44 TradeBust | reverses the fill in the risk engine |
+| 65003 GatewayStatus | input health `onSession` (ids 0, 1) or `onFeedRecovered` (id 3), then a quoting poll |
+
+The first dispatched message of any template starts the desk: it requires the curve heartbeat, calls `RiskEngine.startOfDay` and schedules the housekeeping timer, which every 10 ms polls the quoting engine and each router and every 250 ms calls `Hedger.onTimer`, then reschedules itself from the timer's own deadline. Starting on the first message, not at construction, makes every deadline relative to an input, so live and replay agree. The only agent is the status agent the process adds (`TradingProcess.Group.publishStatus`), which copies counters into volatile fields; agents do not run in replay (DR-P2C-04).
+
+`OutboundSink` (gateway) publishes to the gateway id of the message's venue (its first field); `OutboundSink` (control) publishes to gateway 2.
+
+### 18.5 Venue binding and instrument-group partitioning
+
+`VenueSession` owns a `TcpInitiator`, a `FixSession` (heartbeat 30 s, reset on logon) and P2's `VenueGateway`, whose inbound sink is an `InboundRouter`. Its duty cycle reads the socket, runs the session timers and drains this venue's outbound ring in every group into `VenueGateway.offer`. Logon and disconnect publish GatewayStatus with the session's id.
+
+`InboundRouter` (one per publishing thread) sends a message naming an instrument (BookUpdate, CurveInput, QuoteRequest, ExecutionReport, TradeBust) to that instrument's group; a QuoteResponse to the group that received the QuoteRequest with the same venue and RFQ id, forgotten at the first final response that is not Rejected; everything else (Heartbeat, GatewayStatus, KillSwitch) to every group. A full ring drops and counts BookUpdate, CurveInput and Heartbeat and retries every other message until the loop takes it (Section 9.3). An instrument group is a currency (DR-R2W-03).
+
+`FeedBinding` forwards every BookUpdate from the venue's feed channel, including the first after a sequence gap; on a gap it requests the venue's snapshot, forwards its frames, skips buffered frames the snapshot covers and publishes GatewayStatus CONNECTED with id 3 (DR-R2W-05).
+
+### 18.6 Post-trade binding
+
+`JournalFeed.feed(dir, "in", "out", handler)` merges a group's inbound and outbound journals by timestamp (inbound first at equal stamps, journal order within each), drops control-schema frames and the RFQ venue's fill confirmations, and numbers the merged frames from 1. `JournalFeed.keeper` feeds a `PositionKeeper` with books 1 (RFQ trades) and 2 (hedges) and the catalogue of the pricing binding (bonds multiplier 1, swaps the annuity). `VenueReconciliation.run(keeper, d2c, clob)` reconciles the keeper's live trades with the D2C simulator's trades won by RALGO (key `101:R:quoteId`) and the CLOB simulator's unbusted fills to RALGO (key `102:E:execId`), venue quantities times 100, with `Reconciler.Tolerance.DEFAULT`.
+
+### 18.7 Back-test binding
+
+`JournalExport.export(dir, "in", target, capacity)` writes one RAJ1 file: QuoteRequest, CurveInput and the curve feed's Heartbeat copied unchanged with their stamps, and every change of an instrument's top of book as BookUpdates Clear, Add bid, Add ask at level 0 with venue sequence numbers from 1. `DeskStrategy` is a P5 `Strategy` that runs a `DeskGroup` on its own loop per callback; a Quote becomes `ctx.quote(rfqId, px, px)`, a NewOrder becomes a market order (`ctx.sendOrder`), the back-tester's QuoteResponse and ExecutionReport return with the desk's quote and child ids, and the curve heartbeat is restored with each curve input (DR-R2W-11). `DeskBacktest.run(groupDir, presets, outDir, seed)` runs it under `data/presets.yaml` at the central band point and writes `results.raj`, the tables of Section 16 and `report.md`, `report.json`.
+
+### 18.8 Acceptance tests
+
+| Test | Asserts |
+|---|---|
+| `SmokeTest` | ten simulated minutes from 08:25 on seed 7: quotes sent, RFQ fills, hedge parents routed and filled, book updates through the feed; after `POST /control/kill` no live quote, no router child, nothing resting at the CLOB, a KillSwitch on the control ring; positions from the journals; reconciliation with no break; replay hash equal |
+| `BacktestBindingTest` | a day recorded with the loops on their own threads replays to the same outbound hash; the daily report runs on its journal and is deterministic |
+| `PricingBindingTest` | Section 18.3 tolerances |
+| `VenueBindingTest` | a feed gap and a lost session pull quotes through the loop and the venue; quoting resumes after the snapshot and after logon; injected GatewayStatus faults |
+| `WiredLoopAllocationTest`, `AppHotPathRulesTest` | DR-R2W-12 |

@@ -52,7 +52,35 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
   private boolean lateFillOnNextCancel;
   private long trades;
 
-  private record ExecRecord(String owner, ClobOrder order, long price, long quantity) {}
+  private record ExecRecord(String owner, ClobOrder order, long price, long quantity, int instrumentId, long nanos) {}
+
+  /**
+   * One fill the venue sent to an engine owner, as the venue's own trade register keeps it: the
+   * venue side of the daily trade reconciliation.
+   *
+   * @param execId ExecID
+   * @param clOrdId the owner's order id
+   * @param instrumentId wire id
+   * @param buy the owner's side
+   * @param price mantissa
+   * @param quantity currency units
+   * @param epochNanos time of the fill
+   */
+  public record Execution(
+      long execId, long clOrdId, int instrumentId, boolean buy, long price, long quantity, long epochNanos) {}
+
+  /** Fills sent to an owner and not busted, in ExecID order. */
+  public synchronized List<Execution> executions(final String owner) {
+    final List<Execution> out = new ArrayList<>();
+    for (final Map.Entry<Long, ExecRecord> e : new java.util.TreeMap<>(executions).entrySet()) {
+      final ExecRecord r = e.getValue();
+      if (r.owner().equals(owner)) {
+        out.add(new Execution(e.getKey(), r.order().clOrdId, r.instrumentId(), r.order().buy, r.price(),
+            r.quantity(), r.nanos()));
+      }
+    }
+    return out;
+  }
 
   /** Creates the simulator. */
   public ClobSimulator(
@@ -181,6 +209,11 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
 
   private final Map<Long, Integer> orderInstrument = new HashMap<>();
 
+  private int orderInstrument(final ClobOrder o) {
+    final Integer id = orderInstrument.get(o.venueOrderId);
+    return id == null ? 0 : id;
+  }
+
   // ------------------------------------------------------------------ book listener
 
   @Override
@@ -191,7 +224,7 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
     for (final ClobOrder o : new ClobOrder[] {aggressor, passive}) {
       if (isEngine(o.owner)) {
         final long execId = nextId();
-        executions.put(execId, new ExecRecord(o.owner, o, price, quantity));
+        executions.put(execId, new ExecRecord(o.owner, o, price, quantity, orderInstrument(o), clock.epochNanos()));
         final Message er = executionReport(o, 'F', o.done ? '2' : '1');
         er.setString(17, Long.toString(execId));
         er.setString(32, Long.toString(quantity));
@@ -533,7 +566,7 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final long qty = config.minQty();
       final long execId = nextId();
       o.cumQty += qty;
-      executions.put(execId, new ExecRecord(owner, o, o.price, qty));
+      executions.put(execId, new ExecRecord(owner, o, o.price, qty, orderInstrument(o), clock.epochNanos()));
       final Message late = executionReport(o, 'F', '4');
       late.setString(17, Long.toString(execId));
       late.setString(32, Long.toString(qty));

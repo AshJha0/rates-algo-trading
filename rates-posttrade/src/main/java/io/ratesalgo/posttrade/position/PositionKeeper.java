@@ -1,6 +1,7 @@
 package io.ratesalgo.posttrade.position;
 
 import io.ratesalgo.journal.FrameHandler;
+import io.ratesalgo.messages.sbe.BustReason;
 import io.ratesalgo.messages.sbe.ExecutionReportDecoder;
 import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
 import io.ratesalgo.messages.sbe.NewOrderDecoder;
@@ -13,6 +14,7 @@ import io.ratesalgo.messages.sbe.QuoteStatus;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TimeInForce;
 import io.ratesalgo.messages.sbe.TradeAmendDecoder;
+import io.ratesalgo.messages.sbe.TradeBustDecoder;
 import io.ratesalgo.messages.sbe.PostTradeBustDecoder;
 import io.ratesalgo.messages.sbe.TradeSource;
 import io.ratesalgo.posttrade.records.OrderRecord;
@@ -44,7 +46,9 @@ import org.agrona.DirectBuffer;
  * state is a function of the frames it has seen. It reads ExecutionReport fills, QuoteResponse
  * {@code Done} outcomes for RFQ trades (joined to their QuoteRequest for instrument and side),
  * NewOrder and Quote for the order records, and the post-trade messages PostTradeBust (100) and
- * TradeAmend (101).
+ * TradeAmend (101). A venue's TradeBust (44, FIX ExecType H through the gateway) is applied as a
+ * PostTradeBust of the Execution trade {@code (venueId, execId)} with reason VenueError
+ * (DECISIONS.md DR-P6-01, API_SPEC.md Section 17.14).
  *
  * <ul>
  *   <li>Duplicates: a second fill with a booked trade key is ignored; if its economics differ it is
@@ -76,6 +80,7 @@ public final class PositionKeeper implements FrameHandler {
   private final QuoteResponseDecoder quoteResponse = new QuoteResponseDecoder();
   private final NewOrderDecoder newOrder = new NewOrderDecoder();
   private final PostTradeBustDecoder tradeBust = new PostTradeBustDecoder();
+  private final TradeBustDecoder venueBust = new TradeBustDecoder();
   private final TradeAmendDecoder tradeAmend = new TradeAmendDecoder();
 
   private final Map<TradeKey, Trade> trades = new HashMap<>();
@@ -171,6 +176,10 @@ public final class PositionKeeper implements FrameHandler {
       case PostTradeBustDecoder.TEMPLATE_ID -> {
         tradeBust.wrapAndApplyHeader(buffer, offset, header);
         onBust(sequence);
+      }
+      case TradeBustDecoder.TEMPLATE_ID -> {
+        venueBust.wrapAndApplyHeader(buffer, offset, header);
+        onVenueBust(sequence);
       }
       case TradeAmendDecoder.TEMPLATE_ID -> {
         tradeAmend.wrapAndApplyHeader(buffer, offset, header);
@@ -338,9 +347,16 @@ public final class PositionKeeper implements FrameHandler {
   }
 
   private void onBust(final long sequence) {
-    final TradeKey key =
-        new TradeKey(tradeBust.venueId(), tradeBust.tradeSource(), tradeBust.tradeId());
-    final String reason = tradeBust.reason().name();
+    bust(new TradeKey(tradeBust.venueId(), tradeBust.tradeSource(), tradeBust.tradeId()),
+        tradeBust.reason().name(), sequence);
+  }
+
+  private void onVenueBust(final long sequence) {
+    bust(new TradeKey(venueBust.venueId(), TradeSource.Execution, venueBust.execId()),
+        BustReason.VenueError.name(), sequence);
+  }
+
+  private void bust(final TradeKey key, final String reason, final long sequence) {
     final Trade t = trades.get(key);
     if (t == null) {
       if (pendingBusts.putIfAbsent(key, sequence) == null) {

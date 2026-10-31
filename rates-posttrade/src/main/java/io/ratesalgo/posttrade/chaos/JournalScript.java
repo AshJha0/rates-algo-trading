@@ -17,6 +17,7 @@ import io.ratesalgo.messages.sbe.QuoteStatus;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TimeInForce;
 import io.ratesalgo.messages.sbe.TradeAmendEncoder;
+import io.ratesalgo.messages.sbe.TradeBustEncoder;
 import io.ratesalgo.messages.sbe.TradeSource;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
@@ -38,6 +39,7 @@ public final class JournalScript implements AutoCloseable {
   private final QuoteEncoder quote = new QuoteEncoder();
   private final QuoteResponseEncoder response = new QuoteResponseEncoder();
   private final PostTradeBustEncoder bust = new PostTradeBustEncoder();
+  private final TradeBustEncoder venueBust = new TradeBustEncoder();
   private final TradeAmendEncoder amend = new TradeAmendEncoder();
 
   /** Creates a journal of {@code capacity} bytes whose first frame is no earlier than {@code startNanos}. */
@@ -111,6 +113,15 @@ public final class JournalScript implements AutoCloseable {
     bust.wrapAndApplyHeader(buffer, 0, header).venueId(venueId).tradeSource(source).tradeId(tradeId)
         .venueOrderId(venueOrderId).instrumentId(instrumentId).reason(reason).timestampNanos(at);
     return append(at, PostTradeBustEncoder.TEMPLATE_ID, MessageHeaderEncoder.ENCODED_LENGTH + bust.encodedLength());
+  }
+
+  /** A venue's TradeBust (template 44): the gateway's form of FIX ExecType H. */
+  public long venueBust(final long at, final int venueId, final long clOrdId, final long execId,
+      final int instrumentId, final Side side, final long price, final long quantity) {
+    venueBust.wrapAndApplyHeader(buffer, 0, header).venueId(venueId).clOrdId(clOrdId).execId(execId)
+        .instrumentId(instrumentId).side(side).quantity(quantity).timestampNanos(at);
+    venueBust.price().mantissa(price);
+    return append(at, TradeBustEncoder.TEMPLATE_ID, MessageHeaderEncoder.ENCODED_LENGTH + venueBust.encodedLength());
   }
 
   /** A trade amendment by a named person. */

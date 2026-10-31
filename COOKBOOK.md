@@ -27,8 +27,9 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 19. How do I pre-register an experiment and record it in the ledger? (P5, written below; covers the earlier planned "pre-register a back-test and open the holdout once")
 20. How do I reconcile attribution to position P&L? (P5, written below; a Python recipe)
 21. How do I run the chaos test and read the break report? (P6, written below)
-22. How do I check that a hot-path package allocates nothing? (P2, not yet written)
+22. How do I run the trading process on a synthetic day and read the daily report? (round 2, written below; the brief for round 2 assigned this number)
 23. How do I verify a Java journal's hash chain from Python? (P5, not yet written)
+24. How do I check that a hot-path package allocates nothing? (P2, not yet written; was item 22 before round 2; `WiredLoopAllocationTest` in rates-app is a worked example until then)
 
 The recipes were renumbered when the phase branches were combined, so that they run contiguously by phase (DECISIONS.md DR-P4-05 and DR-P2C-10, amended).
 
@@ -1775,3 +1776,101 @@ after every late message: breaks=0 unexplained=0
 ```
 
 How to read it. The first block has one line per reconciliation: `ours` and `theirs` are the items on each side after identical repeats are suppressed (`dup-suppressed=2` is the two duplicated drop-copy lines), `matched` agree on side, quantity, price to the mantissa and transaction time to one second, and `unexplained` counts breaks whose explanation does not clear them. The break lines give the reconciliation, the trade key (`venue:E:execId` for an order fill, `venue:R:quoteId` for an RFQ trade), the class and the explanation the journal supports. The three `MISSING_OURS LATE_ARRIVAL` breaks are the fills injected after the cut: the venue has them, our snapshot at the cut does not, and the full journal shows them arriving later. The `MISSING_THEIRS BUSTED_AFTER_CUT` break is the trade the venue busted after the cut. `drop-copy-pos` shows no break because the position reconciliation adjusts our side for exactly these explained trade breaks. The duplicate fills and the in-day busts produce no break at all: the keeper suppressed and applied them, and its audit trail records each one. The last line reconciles again after every late message has arrived and finds nothing. A break with explanation `NONE` or `DUPLICATE_CONFLICT` goes to operations under docs/runbooks/reconciliation-break.md.
+
+## 22. How do I run the trading process on a synthetic day and read the daily report?
+
+The trading process is `TradingProcess` in `rates-app`: P2's D2C RFQ and CLOB simulators started in this JVM, our FIX gateways connected to them over TCP, the CLOB's SBE book feed, a curve feed and one event loop for the USD instrument group with its journals (API_SPEC.md Section 18). `step(nanos, stepNanos)` moves simulated time and pumps everything on the calling thread until the FIX sessions are quiet, so a seeded day repeats exactly.
+
+The program runs ten simulated minutes from 08:25 New York on seed 7, across the 08:30 peak of the D2C arrival model, then pulls the kill switch and runs one more second. It then does what the desk does after the close: it books the journals into the position keeper (`JournalFeed`), reconciles the keeper with both venues' trade registers (`VenueReconciliation`), replays the journals through a freshly built desk (`TradingProcessMain.replayGroup`, the same check as `--replay`), and runs P5's back-tester over the recorded day with the desk as its strategy (`DeskBacktest`), which writes the daily report. The program prints the report's title and its P&L total row.
+
+Positions print as book/account/instrument: book 1 holds the RFQ trades in the five SOFR swaps, book 2 the Treasury hedges the routers bought and sold on the CLOB. The back-test's numbers differ from the live day's because the back-tester settles RFQs with P5's outcome model and fills hedges with its hedge cost model (DECISIONS.md DR-R2W-11); its P&L columns are those of API_SPEC.md Section 16.4.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.app.TradingProcess;
+import io.ratesalgo.app.TradingProcessMain;
+import io.ratesalgo.app.backtest.DeskBacktest;
+import io.ratesalgo.app.loop.DeskGroup;
+import io.ratesalgo.app.loop.DeskSettings;
+import io.ratesalgo.app.posttrade.JournalFeed;
+import io.ratesalgo.app.posttrade.VenueReconciliation;
+import io.ratesalgo.core.ReplayResult;
+import io.ratesalgo.posttrade.position.Position;
+import io.ratesalgo.posttrade.position.PositionKeeper;
+import io.ratesalgo.posttrade.recon.ReconResult;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 22: run the trading process on a synthetic day and read the daily report. */
+public final class Recipe22TradingDay {
+
+  private Recipe22TradingDay() {}
+
+  public static void main(final String[] args) throws IOException {
+    final Path dir = Files.createTempDirectory("recipe22");
+    // the D2C and CLOB simulators, both gateways and the USD loop, from 08:25 New York
+    final TradingProcess p = TradingProcess.start(new TradingProcess.Options(dir, 7L, DeskSettings.defaults()));
+    final DeskGroup desk = p.group(0).desk();
+    try {
+      p.step(10 * 60_000_000_000L, 10_000_000L);
+      System.out.println(String.format(Locale.ROOT,
+          "10 simulated minutes: %d RFQs, %d quotes, %d RFQ fills, %d hedge parents, %d hedge fills",
+          desk.desk().quoting().rfqs(), desk.desk().quoting().quotesSent(), desk.desk().quoting().fills(),
+          desk.hedgesRouted(), desk.hedgeFills()));
+      p.kill(9001);
+      p.step(1_000_000_000L, 10_000_000L);
+      System.out.println("after the kill switch: " + p.statusJson());
+    } finally {
+      p.close();
+    }
+
+    // post-trade: positions from the journals, reconciled with the venues' trade registers
+    final PositionKeeper keeper =
+        JournalFeed.keeper(p.group(0).dir(), "in", "out", JournalFeed.books(p.universe()),
+            JournalFeed.catalogue(desk.pricing()));
+    for (final Position pos : keeper.positions()) {
+      System.out.println(String.format(Locale.ROOT, "  %s net %,d", pos.key().text(), pos.netQuantity()));
+    }
+    final ReconResult recon = VenueReconciliation.run(keeper, p.venues().d2c(), p.venues().clob());
+    System.out.println(String.format(Locale.ROOT, "reconciliation: %d ours, %d theirs, %d matched, %d breaks",
+        recon.oursCount(), recon.theirsCount(), recon.matched(), recon.breaks().size()));
+
+    // the same journals through a fresh desk: the outbound stream must repeat exactly
+    final ReplayResult replay = TradingProcessMain.replayGroup(p.group(0).dir());
+    System.out.println(String.format(Locale.ROOT, "replay: %d inbound frames, %d of %d outbound messages, %s",
+        replay.inboundFrames(), replay.outboundProduced(), replay.outboundRecorded(),
+        replay.matches() ? "hash matches" : "MISMATCH"));
+
+    // the daily report: the back-tester replays the day with the desk as its strategy
+    final DeskBacktest.Run run = DeskBacktest.run(p.group(0).dir(), DeskBacktest.presets(), dir.resolve("report"), 1L);
+    System.out.println(String.format(Locale.ROOT, "back-test: %d RFQs, %d client fills, %d hedge fills",
+        run.result().rfqs().size(), run.result().clientFills(), run.result().hedgeFills()));
+    final String report = Files.readString(dir.resolve("report").resolve("report.md"));
+    report.lines().filter(l -> l.startsWith("| TOTAL") || l.startsWith("# ")).forEach(System.out::println);
+  }
+}
+```
+
+Expected output (recorded 2026-10-31, JDK 25.0.5, Windows 11; `SmokeTest` asserts the same day's counts):
+
+```
+10 simulated minutes: 43 RFQs, 43 quotes, 25 RFQ fills, 261 hedge parents, 266 hedge fills
+after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":43,"fills":25,"hedgesRouted":261,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000}
+  1/1/2001 net -6,500,000,000
+  1/1/2002 net 10,000,000,000
+  1/1/2003 net 7,500,000,000
+  1/1/2004 net -8,500,000,000
+  1/1/2005 net 1,000,000,000
+  2/1/1003 net -5,600,000,000
+  2/1/1006 net 9,300,000,000
+  2/1/1007 net 9,300,000,000
+  2/1/1009 net -8,000,000,000
+reconciliation: 291 ours, 291 theirs, 291 matched, 0 breaks
+replay: 97044 inbound frames, 308 of 308 outbound messages, hash matches
+back-test: 43 RFQs, 22 client fills, 268 hedge fills
+# Daily back-test report, 2026-11-02
+| TOTAL | 77672.69 | -477196.01 | -70000 | 0 | 25.94 | -672 | 0 | -470169.38 |
+```

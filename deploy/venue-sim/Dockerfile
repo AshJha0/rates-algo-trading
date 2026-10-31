@@ -1,6 +1,8 @@
-# Venue simulator image. Until P2 binds its simulator main class here, the process serves
-# health and metrics only (role venue-sim). Build from the repository root after packaging the jars:
-#   mvn -B -ntp -DskipTests package -pl rates-ops -am
+# Venue simulator image (role venue-sim). The D2C and CLOB simulators run inside the trading
+# process (deploy/trading/Dockerfile), so this process serves health and metrics only; it stays
+# as the slot a separately deployed simulator takes. Build from the repository root after
+# packaging the jars:
+#   mvn -B -ntp -DskipTests package -pl rates-app -am
 #   docker build -f deploy/venue-sim/Dockerfile -t rates-venue-sim:dev .
 # The process validates its configuration at start and exits 2 if it is invalid.
 FROM eclipse-temurin:25-jre
@@ -14,8 +16,8 @@ RUN apt-get update \
  && chown -R rates:rates /var/lib/rates
 
 WORKDIR /opt/rates
-COPY rates-ops/target/lib/ lib/
-COPY rates-ops/target/rates-ops-*.jar lib/
+COPY rates-app/target/lib/ lib/
+COPY rates-app/target/rates-app-*.jar lib/
 COPY deploy/config/ config/
 
 USER rates
@@ -32,6 +34,6 @@ ENTRYPOINT ["java", \
   "--add-opens", "java.base/java.nio=ALL-UNNAMED", \
   "-XX:+UseZGC", "-XX:+AlwaysPreTouch", "-Xms256m", "-Xmx256m", \
   "-cp", "/opt/rates/lib/*", \
-  "io.ratesalgo.ops.process.OpsProcessMain"]
+  "io.ratesalgo.app.TradingProcessMain"]
 CMD ["--config", "/opt/rates/config/venue-sim.yaml", \
      "--schema", "/opt/rates/config/schema/process-config.schema.json"]

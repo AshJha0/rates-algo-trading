@@ -88,6 +88,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private final long[] pRetryTimer;
   private final long[] pDeadlineTimer;
   private final boolean[] pDeadlineMode;
+  private final boolean[] pCancelled;
 
   // per child slot
   private final int[] cParent;
@@ -184,6 +185,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     pRetryTimer = new long[maxParents];
     pDeadlineTimer = new long[maxParents];
     pDeadlineMode = new boolean[maxParents];
+    pCancelled = new boolean[maxParents];
     cParent = new int[maxChildren];
     cTimer = new long[maxChildren];
     cEscalate = new boolean[maxChildren];
@@ -232,6 +234,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     pLimit[ps] = limitPrice;
     pSliceIndex[ps] = 0;
     pDeadlineMode[ps] = false;
+    pCancelled[ps] = false;
     pSliceTimer[ps] = NONE;
     pRetryTimer[ps] = NONE;
     pArrivalMid[ps] = referenceMid();
@@ -250,6 +253,59 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     pDeadlineTimer[ps] =
         schedule(now + horizon + passive + params.retryDelayNanos(), DEADLINE, ps);
     runSlice(ps);
+  }
+
+  /**
+   * Cancels the unfilled remainder of a parent (the hedger's {@code HedgeOrderSink.cancel}, bound
+   * at integration, DR-R2W-07): routing stops, every live child gets a cancel, and the parent
+   * finishes once each child has filled or confirmed its cancel. Quantity a child fills before its
+   * cancel lands still counts. Returns false if the parent is not live.
+   */
+  public boolean cancel(final long parentId) {
+    final int ps = (int) parentSlot.get(parentId);
+    if (ps < 0) {
+      return false;
+    }
+    if (pCancelled[ps]) {
+      return true;
+    }
+    pCancelled[ps] = true;
+    cancelTimer(pSliceTimer[ps]);
+    cancelTimer(pRetryTimer[ps]);
+    cancelTimer(pDeadlineTimer[ps]);
+    pSliceTimer[ps] = NONE;
+    pRetryTimer[ps] = NONE;
+    pDeadlineTimer[ps] = NONE;
+    pSlicesLeft[ps] = 0;
+    pRetryQty[ps] = 0;
+    pQty[ps] = pFilled[ps] + pOutstanding[ps];
+    final int hw = children.highWater();
+    for (int cs = 0; cs < hw; cs++) {
+      if (children.inUse(cs)
+          && cParent[cs] == ps
+          && children.parentId(cs) == parentId
+          && ChildOrderBook.isLive(children.state(cs))
+          && children.requestCancel(children.clOrdId(cs), false)) {
+        cancelTimer(cTimer[cs]);
+        cTimer[cs] = NONE;
+        gateway.cancel(children.venueId(cs), children.clOrdId(cs));
+      }
+    }
+    if (pFilled[ps] == pQty[ps]) {
+      finishParent(ps);
+    }
+    return true;
+  }
+
+  /** Cancels every live parent, as {@link #cancel} does for one; the kill switch's path. */
+  public int cancelAll() {
+    int n = 0;
+    for (int ps = 0; ps < maxParents; ps++) {
+      if (parentSlot.get(pId[ps]) == ps && !pCancelled[ps] && cancel(pId[ps])) {
+        n++;
+      }
+    }
+    return n;
   }
 
   /** Fires due timers. Call from the owning loop as often as it runs. */
@@ -396,6 +452,10 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   }
 
   private void onFreed(final int cs, final int ps, final long freed) {
+    if (pCancelled[ps]) {
+      pQty[ps] -= freed;
+      return;
+    }
     final long routed;
     if (pDeadlineMode[ps]) {
       routed = decide(ps, freed, RouteReason.Deadline, false);
@@ -723,6 +783,16 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   }
 
   // ------------------------------------------------------------------ queries
+
+  /** Parents live now. */
+  public int parentsLive() {
+    return maxParents - parentFreeTop;
+  }
+
+  /** Most parents live at once. */
+  public int maxParents() {
+    return maxParents;
+  }
 
   /** True while the parent has unfilled quantity. */
   public boolean isActive(final long parentId) {

@@ -39,6 +39,7 @@
     <module>rates-risk</module>
     <module>rates-hedge</module>
     <module>rates-quoting</module>
+    <module>rates-app</module>
     <module>rates-cookbook</module>
   </modules>
 
