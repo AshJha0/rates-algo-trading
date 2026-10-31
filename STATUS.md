@@ -134,12 +134,12 @@ Planned: one wall-clock day as briefed. Actual: about 2.5 hours in one session o
 
 | Check | Where | Result |
 |---|---|---|
-| Whole process for ten simulated minutes, seed 7 | `SmokeTest`, recipe 22 | 39 RFQs, 34 quotes, 22 fills, 302 hedge parents, 291 hedge fills after the round 2 review merge (DR-INT-05); before it 43 RFQs, 43 quotes, 25 fills, 261 hedge parents, 266 hedge fills, 29,040 book updates, 7,200 curve messages |
+| Whole process for ten simulated minutes, seed 7 | `SmokeTest`, recipe 22 | 36 RFQs, 27 quotes, 16 fills, 210 hedge parents, 213 hedge fills with the review and audit fixes (DR-INT-07); after the review merge alone 39, 34, 22, 302 and 291 (DR-INT-05); before it 43 RFQs, 43 quotes, 25 fills, 261 hedge parents, 266 hedge fills, 29,040 book updates, 7,200 curve messages |
 | Kill switch through the control endpoint pulls everything | `SmokeTest` | 0 live quotes, 0 router children, nothing resting at the CLOB, KillSwitch on the control ring |
 | Positions from the journals, reconciled with both venues | `SmokeTest` | 291 trades in 9 positions; 291 ours, 291 theirs, 291 matched, 0 breaks |
 | Replay hash of the smoke day | `SmokeTest` | 97,044 inbound frames, 308 of 308 outbound messages, hash equal |
 | Replay hash of a day run with the loops on their own threads | `BacktestBindingTest` | equal in every run (258, 256 and 103 outbound messages in three runs; the threaded day is not reproducible step for step) |
-| Daily report on the recorded journal | `BacktestBindingTest`, recipe 22 | written and deterministic; recipe 22: 39 RFQs, 19 client fills, 283 hedge fills (DR-INT-05) |
+| Daily report on the recorded journal | `BacktestBindingTest`, recipe 22 | written and deterministic; recipe 22: 36 RFQs, 14 client fills, 171 hedge fills (DR-INT-07) |
 | Pricing binding against direct analytics | `PricingBindingTest` | par rate and PV within 1e-12, ladder within 1e-12 of the parallel DV01 |
 | Feed gap and lost session pull quotes through the loop | `VenueBindingTest` | pulled, cancelled at the venue, quoting resumed |
 | Loop allocation with the real desk | `WiredLoopAllocationTest` | windows after warm-up within 1,024 bytes, at least one 0 (DR-R2W-12) |

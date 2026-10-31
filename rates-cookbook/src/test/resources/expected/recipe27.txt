@@ -1,17 +1,17 @@
 CURVE quoted true
-  SOFR2   client pays     100.0m at 3.811106%
-  SOFR10  client receives   23.0m at 3.838894%
-  legs one by one 65429 USD: spread 33730 + inventory 31700
-  package 42046 USD: spread 33730 - hedge saving 3782 + inventory on the net ladder 12098
-  distance 1.1106 bp on every leg
+  SOFR2   client pays     100.0m at 3.806750%
+  SOFR10  client receives   23.0m at 3.843250%
+  legs one by one 66265 USD; net-risk PV01 16542 USD per bp
+  package 25556 USD: spread 17239 - hedge saving 3782 + inventory on the net ladder 12098
+  distance 0.6750 bp on every leg
   dealer net DV01 1Y 0 2Y -19000 3Y 0 5Y 0 7Y 0 10Y 18860 20Y 0 30Y 0
   parallel -140, gross 37860 USD per bp
 BUTTERFLY quoted true
-  SOFR2   client pays      59.0m at 3.809262%
-  SOFR5   client receives   50.0m at 3.690738%
-  SOFR10  client pays      14.0m at 3.859262%
-  legs one by one 76712 USD: spread 40503 + inventory 36210
-  package 41853 USD: spread 40503 - hedge saving 4511 + inventory on the net ladder 5861
-  distance 0.9262 bp on every leg
+  SOFR2   client pays      59.0m at 3.803333%
+  SOFR5   client receives   50.0m at 3.696667%
+  SOFR10  client pays      14.0m at 3.853333%
+  legs one by one 77734 USD; net-risk PV01 11217 USD per bp
+  package 15062 USD: spread 13712 - hedge saving 4511 + inventory on the net ladder 5861
+  distance 0.3333 bp on every leg
   dealer net DV01 1Y 0 2Y -11210 3Y 0 5Y 22500 7Y 0 10Y -11480 20Y 0 30Y 0
   parallel -190, gross 45190 USD per bp

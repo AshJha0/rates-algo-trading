@@ -874,6 +874,76 @@ Decision. `RouterParams` gains `filledAdverseFactor` (the expected adverse move 
 
 Consequences. Routing is unchanged until a desk selects the controls preset. The order-to-trade figures are visible daily either way.
 
+## DR-FIX-A2-01: Every RFQ's decision and outcome is recorded with the signed cover gap and our rank
+
+Date: 2026-10-31
+
+Context. P&L audit item 3 (docs/research/PNL_AUDIT.md; AUDIT-01, seq 8): won trades sat 0.44 bp behind the cover (DV01-weighted, C), so the desk's volume rested on clients accepting quotes behind the best competitor, and production did not record it.
+
+Decision. The engine reports each decision and each response to an `RfqRecordListener`, with the cover gap signed from the client's side and our rank as far as the cover shows it, and it counts wins from behind the cover. This is the recording side of the item. Changing prices in response is left to a pre-registered run on the recorded data.
+
+Consequences. The cost of winning from behind the cover can be measured on live and back-tested days alike. The listener is allocation-free and off by default (`NONE`).
+
+## DR-FIX-A2-02: Client markouts are measured from fair value at the trade
+
+Date: 2026-10-31
+
+Context. Item 4 (AUDIT-01, AUDIT-02): the toxicity markout was measured from the traded price, so the half spread the desk captured netted out the adverse move. The 5-minute adverse move for tier 3 was 0.31 bp against 0.13 bp charged.
+
+Decision. Markouts are measured from the fair value at the time of the trade.
+
+Consequences. Toxicity estimates rise by about the captured half spread, and the adverse cost the engine charges per client rises with them. With the review's NEGATIVE_EDGE pass (DR-INT-05), a client whose learned cost reaches the cap is no longer quoted.
+
+## DR-FIX-A2-03: A live quote is withdrawn when fair value moves against it
+
+Date: 2026-10-31
+
+Context. Item 8 (AUDIT-01 diagnostics): firm quotes stood through market moves for their whole time to live. Within a 1.5 s window, +31.7k a day moved in clients' favour.
+
+Decision. `poll` withdraws a live quote with `AdverseSignal` when fair value has moved against it by more than `fairMoveWithdrawBp`, default 0.25 bp, and 0 turns it off.
+
+Consequences. A withdrawn firm quote can still be lifted if the venue accepts the lift first; such fills are booked as late fills (DR-R2R-13).
+
+## DR-FIX-A2-04: The release calendar is on by default
+
+Date: 2026-10-31
+
+Context. Item 9 (AUDIT-01, AUDIT-04 `release_guard`): quoting within 2 minutes of the 08:30 and 10:00 New York releases captured 36.7k a day of spread and lost 37.5k to the 5-minute move. Pulling from 60 s before to 30 s after earned +20k at C. Edge study E3 measured the release variance (supported).
+
+Decision. The default `QuotingConfig` carries the 08:30 and 10:00 New York releases on weekdays of 2026 and 2027. From 60 s before to 30 s after, quotes are pulled and RFQs passed with `RELEASE_WINDOW`. For 5 minutes after the window, half spreads are multiplied by 2.355, the E3 holdout ratio. The calendar is a declared schedule of release times, not a list of actual release days.
+
+Consequences. Every desk and test that runs across 08:30 or 10:00 New York sees the pull. The rates-app smoke day starts at 08:25, so its counts changed, and recipe 22 was re-recorded. A real calendar source is a follow-up.
+
+## DR-FIX-A2-05: Package RFQs pass the single-RFQ controls and pay for their net risk
+
+Date: 2026-10-31
+
+Context. Item 12 (code reading of PackageQuoter): package RFQs skipped the kill switch, health, throttle, input-age and risk checks that single RFQs pass, reserved nothing, and were priced on the sum of their legs.
+
+Decision. `PackageQuoter` applies the single-RFQ gates in the same order and reserves every leg for the time to live. It books Dones to risk, including late ones. It charges the PV01-weighted mean of the legs' optimal half spreads on the net ladder's risk-equivalent PV01, plus hedge cost less the netting saving plus the inventory term, floored at the minimum half spread on the largest leg.
+
+Consequences. A DV01-neutral curve or fly is charged for its curve risk only, which recipe 27 now shows. The desk does not yet register the package quoter with the kill switch; until it does, the quoter reads the switch on every quote.
+
+## DR-FIX-A2-06: A late single-RFQ Done reaches the recorder and the hedger
+
+Date: 2026-10-31
+
+Context. Item 13 (code reading of QuotingEngine): a Done that raced our expiry could miss risk and the hedger. The review books such fills (DR-R2R-13).
+
+Decision. A late Done is also reported to the recorder, and it reaches the hedger through the risk engine's fill, which a test shows.
+
+Consequences. No trade the venue accepted is left unhedged because of the race.
+
+## DR-INT-07: One winner's-curse setting for the wired desk, and the final smoke-day numbers
+
+Date: 2026-10-31
+
+Context. Fix package A2 (`claude/fix-a2-engine-8168e0`) met the same NEGATIVE_EDGE problem as DR-INT-05 and set `DeskSettings.winnersCurseBp(0.01)` in commit 2031b7a. When it merged round2-integration it took DR-INT-05's 0.02 bp, and it then re-recorded recipes 22 and 27 on that tree (ac1bba3).
+
+Decision. The wired desk keeps `winnersCurseBp(0.02)` (DR-INT-05), so there is one setting. Recipe 22's output on the merged tree with packages A1, B, C and A2 equals A2's recording, and `RecipesTest` and `check_cookbook.py` pass on it. README.md and STATUS.md quote that output: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills, 229 trades reconciled, and a back-test of 36 RFQs, 14 client fills and 171 hedge fills.
+
+Consequences. The smoke-day numbers move again whenever a quoting default changes. Recipe 22's recorded output is the reference, and README and STATUS follow it.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31

@@ -41,23 +41,30 @@ class PackageAndClobTest {
     assertTrue(Decimal9.toDouble(r.legPrice(1)) < m.levelOf(TestMarket.SW10));
   }
 
+  /** Steps past the client re-quote throttle, which packages pass like single RFQs. */
+  private PackageQuoter.PackageRequest next(final PackageQuoter.PackageRequest pkg) {
+    m.clock.advance(300_000_000L);
+    m.refreshAll(m.clock.epochNanos());
+    return pkg;
+  }
+
   @Test
   void everyStructuredTypeBuildsAndPrices() {
     final PackageQuoter pq = m.desk.packages();
     final PackageQuoter.Result r = new PackageQuoter.Result();
-    assertTrue(pq.quote(pq.butterfly(TestMarket.SW2, TestMarket.SW5, 50 * FACE_1M, TestMarket.SW10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.butterfly(TestMarket.SW2, TestMarket.SW5, 50 * FACE_1M, TestMarket.SW10)), 1, 3, r).quoted());
     assertEquals(PackageQuoter.Type.BUTTERFLY, pq.butterfly(TestMarket.SW2, TestMarket.SW5, FACE_1M, TestMarket.SW10).type());
-    assertTrue(pq.quote(pq.neutralPair(PackageQuoter.Type.SPREAD_OVER, TestMarket.UST10, 50 * FACE_1M, TestMarket.SW10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SPREAD_OVER, TestMarket.UST10, 50 * FACE_1M, TestMarket.SW10)), 1, 3, r).quoted());
     assertTrue(r.hedgeSaving() > 0.0, "asset swap nets: long bond, pay fixed");
-    assertTrue(pq.quote(pq.neutralPair(PackageQuoter.Type.INVOICE_SPREAD, TestMarket.TY, 50 * FACE_1M, TestMarket.SW10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.neutralPair(PackageQuoter.Type.INVOICE_SPREAD, TestMarket.TY, 50 * FACE_1M, TestMarket.SW10)), 1, 3, r).quoted());
     final PackageQuoter.PackageRequest roll = pq.neutralPair(PackageQuoter.Type.IMM_ROLL, TestMarket.TY, 50 * FACE_1M, TestMarket.TY);
     assertEquals(-50 * FACE_1M, roll.clientQuantity(1));
-    assertTrue(pq.quote(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10), 1, 3, r).quoted());
+    assertTrue(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10)), 1, 3, r).quoted());
     assertEquals(2, roll.legs());
     // mixed currencies are refused
-    assertFalse(pq.quote(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST10, 50 * FACE_1M, TestMarket.BUND10), 1, 3, r).quoted());
+    assertFalse(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST10, 50 * FACE_1M, TestMarket.BUND10)), 1, 3, r).quoted());
     risk.limits().priceCollarBp(0.01);
-    assertFalse(pq.quote(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10), 1, 3, r).quoted());
+    assertFalse(pq.quote(next(pq.neutralPair(PackageQuoter.Type.SWITCH, TestMarket.UST5, 50 * FACE_1M, TestMarket.UST10)), 1, 3, r).quoted());
     assertNotEquals(0, r.rejection());
   }
 

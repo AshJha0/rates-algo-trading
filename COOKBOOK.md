@@ -1869,22 +1869,22 @@ public final class Recipe22TradingDay {
 Expected output (recorded 2026-10-31 after the round 2 review merge, JDK 25.0.5, Windows 11; `SmokeTest` asserts the same day's counts; DR-INT-05):
 
 ```
-10 simulated minutes: 39 RFQs, 34 quotes, 22 RFQ fills, 302 hedge parents, 291 hedge fills
-after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":34,"fills":22,"hedgesRouted":302,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000}
+10 simulated minutes: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills
+after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":27,"fills":16,"hedgesRouted":210,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000}
   1/1/2001 net 1,000,000,000
-  1/1/2002 net 10,000,000,000
+  1/1/2002 net 7,500,000,000
   1/1/2003 net 10,000,000,000
-  1/1/2004 net -11,000,000,000
-  1/1/2005 net 6,000,000,000
-  2/1/1003 net 1,100,000,000
-  2/1/1006 net 5,500,000,000
-  2/1/1007 net 17,500,000,000
-  2/1/1009 net -10,200,000,000
-reconciliation: 313 ours, 313 theirs, 313 matched, 0 breaks
-replay: 97166 inbound frames, 353 of 353 outbound messages, hash matches
-back-test: 39 RFQs, 19 client fills, 283 hedge fills
+  1/1/2004 net -14,500,000,000
+  1/1/2005 net -4,000,000,000
+  2/1/1003 net 500,000,000
+  2/1/1006 net 7,400,000,000
+  2/1/1007 net 7,300,000,000
+  2/1/1009 net -14,000,000,000
+reconciliation: 229 ours, 229 theirs, 229 matched, 0 breaks
+replay: 96864 inbound frames, 240 of 240 outbound messages, hash matches
+back-test: 36 RFQs, 14 client fills, 171 hedge fills
 # Daily back-test report, 2026-11-02
-| TOTAL | 62185.49 | 104306.58 | -64687.5 | 0 | 11.27 | -621 | 0 | 101194.85 |
+| TOTAL | 54049.48 | -19345.88 | -45781.25 | 0 | 10.45 | -439.5 | 0 | -11506.7 |
 ```
 
 ## 23. How do I fit a Nelson-Siegel-Svensson curve to Treasury yields and read rich and cheap bonds?
@@ -2349,7 +2349,7 @@ public final class Recipe27PackageRfq {
     final Desk desk = new Desk(new Desk.Inputs(dir, pv01, fair, new InMemoryBookSource(16),
         new RiskLimits().bucketPv01(250_000.0).netPv01(400_000.0).grossPv01(1_500_000.0).priceCollarBp(15.0),
         universe, costs, new RecordingOutboundSink(), new RecordingOutboundSink(), new RecordingHedgeOrderSink(),
-        clock, new QuotingConfig(), TierTable.single(1, new ClientTier(1, 1.0, 500 * FACE_1M, true, false)),
+        clock, new QuotingConfig().requoteThrottleNanos(0L), TierTable.single(1, new ClientTier(1, 1.0, 500 * FACE_1M, true, false)),
         HitRatePreset.shippedDefault(), Hedger.config(), ClobQuoter.config()));
     final PackageQuoter quoter = desk.packages();
 
@@ -2369,8 +2369,8 @@ public final class Recipe27PackageRfq {
           dir.byId(pkg.instrumentId(i)).symbol(), q > 0 ? "pays" : "receives", Math.abs(q) / 1e8,
           Decimal9.toDouble(r.legPrice(i))));
     }
-    System.out.println(String.format(Locale.ROOT, "  legs one by one %.0f USD: spread %.0f + inventory %.0f",
-        r.legChargeSum(), r.spreadChargeSum(), r.legChargeSum() - r.spreadChargeSum()));
+    System.out.println(String.format(Locale.ROOT, "  legs one by one %.0f USD; net-risk PV01 %.0f USD per bp",
+        r.legChargeSum(), r.netRiskPv01()));
     System.out.println(String.format(Locale.ROOT,
         "  package %.0f USD: spread %.0f - hedge saving %.0f + inventory on the net ladder %.0f",
         r.charge(), r.spreadChargeSum(), r.hedgeSaving(), r.inventoryCharge()));
@@ -2392,25 +2392,25 @@ Expected output:
 
 ```
 CURVE quoted true
-  SOFR2   client pays     100.0m at 3.811106%
-  SOFR10  client receives   23.0m at 3.838894%
-  legs one by one 65429 USD: spread 33730 + inventory 31700
-  package 42046 USD: spread 33730 - hedge saving 3782 + inventory on the net ladder 12098
-  distance 1.1106 bp on every leg
+  SOFR2   client pays     100.0m at 3.806750%
+  SOFR10  client receives   23.0m at 3.843250%
+  legs one by one 66265 USD; net-risk PV01 16542 USD per bp
+  package 25556 USD: spread 17239 - hedge saving 3782 + inventory on the net ladder 12098
+  distance 0.6750 bp on every leg
   dealer net DV01 1Y 0 2Y -19000 3Y 0 5Y 0 7Y 0 10Y 18860 20Y 0 30Y 0
   parallel -140, gross 37860 USD per bp
 BUTTERFLY quoted true
-  SOFR2   client pays      59.0m at 3.809262%
-  SOFR5   client receives   50.0m at 3.690738%
-  SOFR10  client pays      14.0m at 3.859262%
-  legs one by one 76712 USD: spread 40503 + inventory 36210
-  package 41853 USD: spread 40503 - hedge saving 4511 + inventory on the net ladder 5861
-  distance 0.9262 bp on every leg
+  SOFR2   client pays      59.0m at 3.803333%
+  SOFR5   client receives   50.0m at 3.696667%
+  SOFR10  client pays      14.0m at 3.853333%
+  legs one by one 77734 USD; net-risk PV01 11217 USD per bp
+  package 15062 USD: spread 13712 - hedge saving 4511 + inventory on the net ladder 5861
+  distance 0.3333 bp on every leg
   dealer net DV01 1Y 0 2Y -11210 3Y 0 5Y 22500 7Y 0 10Y -11480 20Y 0 30Y 0
   parallel -190, gross 45190 USD per bp
 ```
 
-For the curve trade the client pays fixed on 100m 2-year and receives on 23m 10-year, which matches the 2-year's DV01; the dealer's net ladder is -19,000 at 2Y and +18,860 at 10Y, 140 USD per bp parallel after rounding the 10-year to whole millions. Priced leg by leg the two trades cost the client 65,429 USD, of which 31,700 is the inventory charge on two separate ladders; as a package it costs 42,046, because the hedge is netted (3,782 saved) and the inventory charge on the offsetting ladder is 12,098. That charge is spread as 1.11 bp on every leg, in the client-worse direction. `PackageAndClobTest.curvePackageCostsLessThanItsLegsByTheNettedHedgeSaving` checks the identity charge = spread - saving + inventory and the DV01 neutrality; LEARN.md Section 8 covers the ladder.
+For the curve trade the client pays fixed on 100m 2-year and receives on 23m 10-year, which matches the 2-year's DV01; the dealer's net ladder is -19,000 at 2Y and +18,860 at 10Y, 140 USD per bp parallel after rounding the 10-year to whole millions. Priced leg by leg the two trades cost the client 66,265 USD. As a package it costs 25,556: the spread is charged on the net ladder's risk-equivalent PV01 (16,542 USD per bp, against 37,860 gross), the hedge is netted (3,782 saved) and the inventory charge on the offsetting ladder is 12,098. That charge is spread as 0.675 bp on every leg, in the client-worse direction. The package passes the same kill, health, release, throttle, fair-value and risk checks as a single RFQ; the program turns the client re-quote throttle off because it prices two packages for one client at the same instant. `PackageAndClobTest.curvePackageCostsLessThanItsLegsByTheNettedHedgeSaving` checks the identity charge = spread - saving + inventory and the DV01 neutrality; LEARN.md Section 8 covers the ladder.
 
 ## 28. How do I see the quote lifecycle controls pull stale quotes (time to live, stale reference, feed gap)?
 

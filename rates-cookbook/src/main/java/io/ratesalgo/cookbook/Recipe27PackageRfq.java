@@ -70,7 +70,7 @@ public final class Recipe27PackageRfq {
     final Desk desk = new Desk(new Desk.Inputs(dir, pv01, fair, new InMemoryBookSource(16),
         new RiskLimits().bucketPv01(250_000.0).netPv01(400_000.0).grossPv01(1_500_000.0).priceCollarBp(15.0),
         universe, costs, new RecordingOutboundSink(), new RecordingOutboundSink(), new RecordingHedgeOrderSink(),
-        clock, new QuotingConfig(), TierTable.single(1, new ClientTier(1, 1.0, 500 * FACE_1M, true, false)),
+        clock, new QuotingConfig().requoteThrottleNanos(0L), TierTable.single(1, new ClientTier(1, 1.0, 500 * FACE_1M, true, false)),
         HitRatePreset.shippedDefault(), Hedger.config(), ClobQuoter.config()));
     final PackageQuoter quoter = desk.packages();
 
@@ -90,8 +90,8 @@ public final class Recipe27PackageRfq {
           dir.byId(pkg.instrumentId(i)).symbol(), q > 0 ? "pays" : "receives", Math.abs(q) / 1e8,
           Decimal9.toDouble(r.legPrice(i))));
     }
-    System.out.println(String.format(Locale.ROOT, "  legs one by one %.0f USD: spread %.0f + inventory %.0f",
-        r.legChargeSum(), r.spreadChargeSum(), r.legChargeSum() - r.spreadChargeSum()));
+    System.out.println(String.format(Locale.ROOT, "  legs one by one %.0f USD; net-risk PV01 %.0f USD per bp",
+        r.legChargeSum(), r.netRiskPv01()));
     System.out.println(String.format(Locale.ROOT,
         "  package %.0f USD: spread %.0f - hedge saving %.0f + inventory on the net ladder %.0f",
         r.charge(), r.spreadChargeSum(), r.hedgeSaving(), r.inventoryCharge()));

@@ -5,6 +5,10 @@ import io.ratesalgo.messages.sbe.Side;
 /** The engine's last RFQ decision and the numbers behind it; reused, never allocated per RFQ. */
 public final class RfqOutcome {
 
+  int venueId;
+  long rfqId;
+  int clientId;
+  int instrumentId;
   RfqDecision decision = RfqDecision.PASS;
   PassReason reason = PassReason.NONE;
   long quoteId;
@@ -24,6 +28,10 @@ public final class RfqOutcome {
   int limitRejection;
 
   void reset() {
+    venueId = 0;
+    rfqId = 0;
+    clientId = 0;
+    instrumentId = 0;
     decision = RfqDecision.PASS;
     reason = PassReason.NONE;
     quoteId = 0;
@@ -41,6 +49,22 @@ public final class RfqOutcome {
     winProbability = 0.0;
     validUntilNanos = 0;
     limitRejection = 0;
+  }
+
+  public int venueId() {
+    return venueId;
+  }
+
+  public long rfqId() {
+    return rfqId;
+  }
+
+  public int clientId() {
+    return clientId;
+  }
+
+  public int instrumentId() {
+    return instrumentId;
   }
 
   public RfqDecision decision() {

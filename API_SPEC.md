@@ -859,6 +859,18 @@ Diagram: [RFQ end to end with timings](docs/site/pages/diagrams.md#rfq-end-to-en
 
 `ClobQuoter.inventorySkew(covariance, kappa, maxSkewBp)` turns on inventory skew with the RFQ engine's parameters (`QuotingConfig.kappa()`, `maxSkewBp()`) and its key-rate covariance. At each update both targets move by `skew = clamp(kappa * u' Sigma p / |U|, -maxSkewBp, maxSkewBp)` bp: the bid target is `fair - (halfSpreadBp + skew)` and the ask target `fair + (halfSpreadBp - skew)`, each then rounded to the venue tick (12.8). A long book (positive skew) lowers both sides. Kappa 0 turns it off; it is off until called. `lastSkewBp()` is the skew at the last update.
 
+### 12.11 RFQ recording, fair-move withdraw, release calendar and package controls (round 2 fix A2)
+
+`QuotingEngine.recorder(RfqRecordListener)` (default `RfqRecordListener.NONE`). `onDecision(RfqOutcome)` is called for every RFQ decision, pass or quote, and the outcome object is reused after the call. `onResult(rfqId, quoteId, status, ourPrice, coverPrice, coverGapBp, rank)` is called for every venue outcome of our quotes, matched or booked late. `coverGapBp` is how far our price sat behind the cover for the client (positive when the cover was better; NaN without a cover). `rank` is 1 when our price was at least as good as the cover (or a Done without a cover), 2 when the cover was better, and 0 when unknown. `RfqOutcome` exposes `venueId()`, `rfqId()`, `clientId()`, `instrumentId()` and the decision. Counters: `coversRecorded()`, `wonBehindCover()`, `meanWonBehindCoverBp()`, `fairMovePulls()`.
+
+Client markouts are measured from the fair value at the trade, not from the traded price.
+
+`QuotingConfig.fairMoveWithdrawBp(v)` (default 0.25 bp; 0 off): `poll` withdraws a live quote with `CancelReason.AdverseSignal` when fair value has moved against it by more than `v`.
+
+Release calendar, on by default: `QuotingConfig.usReleaseSchedule(from, to)` returns the epoch nanos of 08:30 and 10:00 New York on weekdays in the range, and the default calendar covers 2026 and 2027. `releaseCalendar(releaseNanos)` replaces it, `releasePullNanos(before, after)` sets the pull window (default 60 s before, 30 s after) and `releaseWidening(afterNanos, multiplier)` sets the widening after it (default 5 minutes at 2.355, the E3 holdout). In the pull window live quotes are pulled and RFQs are passed with `PassReason.RELEASE_WINDOW`. `releases()` and `inReleasePull(nowNanos)` read the calendar.
+
+`PackageQuoter` (Section 12.7) applies the single-RFQ gates in the same order: kill switch, input health, release pull window, instrument and currency, client re-quote throttle, fair value with input age, and `RiskEngine.checkQuote` on every leg. A quoted package reserves every leg until answered or expired. `onResponse(packageId, done)` books a Done to risk, including one that arrives after expiry, `poll(nowNanos)` expires packages, and `onKill(reason, epochNanos)` withdraws them. The spread is charged on the net ladder's risk-equivalent PV01, `R = sqrt(L' Sigma L) * sum P_i / sum sqrt(d_i' Sigma d_i)`, so a DV01-neutral curve trade pays for its curve risk, not for the sum of its legs. `Result` exposes `reason()`, `packageId()`, `validUntilNanos()` and `netRiskPv01()`. Counters: `heldPackages()`, `packagesQuoted()`, `packageFills()`, `lateFills()`, `expiries()`, `unmatchedResponses()`. The desk does not register the quoter with the kill switch yet; until it does, `quote` reads the kill switch itself.
+
 ## Section 13. Risk limit semantics and check order (P3)
 
 `io.ratesalgo.risk.RiskEngine` in `rates-risk`. PV01 is PV(rates + 1bp) minus PV(base) in major currency units, per pillar of `KeyRateTenors` (1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y, 30Y); a long bond is negative.

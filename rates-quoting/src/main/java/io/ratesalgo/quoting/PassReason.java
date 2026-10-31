@@ -6,6 +6,8 @@ public enum PassReason {
   DUPLICATE,
   KILLED,
   UNHEALTHY,
+  /** Within the pull window around a scheduled release (QuotingConfig.releaseCalendar). */
+  RELEASE_WINDOW,
   UNKNOWN_INSTRUMENT,
   EXPIRED_REQUEST,
   CLIENT_BLOCKED,

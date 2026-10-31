@@ -43,8 +43,11 @@ import org.agrona.concurrent.UnsafeBuffer;
  * answered.
  *
  * <p>{@link #poll} expires quotes at their time to live, pulls every quote when an input becomes
- * unhealthy and any quote whose oldest input has grown older than the maximum age, and measures
- * fill markouts for the toxicity table. Single-writer; the RFQ, response and poll paths do not
+ * unhealthy or a scheduled release's pull window opens, pulls any quote whose oldest input has
+ * grown older than the maximum age or whose fair value has moved against it by more than {@code
+ * fairMoveWithdrawBp}, and measures fill markouts for the toxicity table from the mid at the
+ * trade. Every RFQ decision and every response, with the cover and our rank where the venue gives
+ * one, goes to the {@link RfqRecordListener}. Single-writer; the RFQ, response and poll paths do not
  * allocate after warm-up (QuotingAllocationTest).
  */
 public final class QuotingEngine implements KillSwitchListener {
@@ -93,6 +96,13 @@ public final class QuotingEngine implements KillSwitchListener {
   private final long[] sOldest;
   private final double[] sBase;
   private final double[] sDistance;
+  private final long[] sPrice;
+  private final double[] sFair;
+  private final int[] held;
+  private final int[] heldPos;
+  private int heldCount;
+  private boolean pulledForRelease;
+  private RfqRecordListener recorder = RfqRecordListener.NONE;
   private final int[] freeSlots;
   private int freeTop;
   private final Long2LongHashMap quoteSlot;
@@ -136,9 +146,15 @@ public final class QuotingEngine implements KillSwitchListener {
   private final int[] tInstrument = new int[TOMBSTONES];
   private final boolean[] tBuy = new boolean[TOMBSTONES];
   private final long[] tQty = new long[TOMBSTONES];
+  private final long[] tRfqId = new long[TOMBSTONES];
+  private final long[] tPrice = new long[TOMBSTONES];
   private int tHead;
   private double coverDistanceBp;
   private long coverObservations;
+  private long coversRecorded;
+  private long wonBehindCover;
+  private double wonBehindCoverBp;
+  private long fairMovePulls;
 
   /** Wires an engine; see the class comment for each collaborator's role. */
   public QuotingEngine(
@@ -186,6 +202,10 @@ public final class QuotingEngine implements KillSwitchListener {
     sOldest = new long[capacity];
     sBase = new double[capacity];
     sDistance = new double[capacity];
+    sPrice = new long[capacity];
+    sFair = new double[capacity];
+    held = new int[capacity];
+    heldPos = new int[capacity];
     freeSlots = new int[capacity];
     for (int i = 0; i < capacity; i++) {
       freeSlots[i] = capacity - 1 - i;
@@ -195,6 +215,41 @@ public final class QuotingEngine implements KillSwitchListener {
     seen = new LongHashSet(config.duplicateWindow * 4);
     seenRing = new long[config.duplicateWindow];
     lastQuoteTime = new Long2LongHashMap(Math.max(64, config.duplicateWindow * 2), 0.5f, Long.MIN_VALUE);
+  }
+
+  /**
+   * Receives every RFQ decision and every response (PNL_AUDIT item 3). Called on the event loop;
+   * an implementation must not allocate or block.
+   */
+  public interface RfqRecordListener {
+    /** No recording. */
+    RfqRecordListener NONE =
+        new RfqRecordListener() {
+          @Override
+          public void onDecision(final RfqOutcome outcome) {}
+
+          @Override
+          public void onResult(
+              final long rfqId, final long quoteId, final QuoteStatus status, final long ourPrice,
+              final long coverPrice, final double coverGapBp, final int rank) {}
+        };
+
+    /** One RFQ's decision, pass or quote; {@code outcome} is reused after the call returns. */
+    void onDecision(RfqOutcome outcome);
+
+    /**
+     * The venue's outcome for one of our quotes, matched or booked late. {@code coverGapBp} is how
+     * far our price sat behind the cover for the client (positive: the cover was better for the
+     * client than ours; NaN without a cover). {@code rank} is our price rank as far as the cover
+     * shows it: 1 when our price was at least as good as the cover, 2 when the cover was better, 1
+     * for a Done without a cover, 0 when unknown.
+     */
+    void onResult(long rfqId, long quoteId, QuoteStatus status, long ourPrice, long coverPrice, double coverGapBp, int rank);
+  }
+
+  /** Sets the recorder of RFQ decisions and responses; {@code null} turns recording off. */
+  public void recorder(final RfqRecordListener listener) {
+    recorder = listener == null ? RfqRecordListener.NONE : listener;
   }
 
   /** Sets the daily realised volatility of a currency's rates, bp (supplied by market state). */
@@ -234,6 +289,10 @@ public final class QuotingEngine implements KillSwitchListener {
     rfqs++;
     outcome.reset();
     outcome.requestedQuantity = quantity;
+    outcome.venueId = venueId;
+    outcome.rfqId = rfqId;
+    outcome.clientId = clientId;
+    outcome.instrumentId = instrumentId;
     final boolean weBuy = clientSide == Side.Sell;
     outcome.ourSide = weBuy ? Side.Buy : Side.Sell;
     if (!remember(venueId, rfqId)) {
@@ -244,6 +303,9 @@ public final class QuotingEngine implements KillSwitchListener {
     }
     if (!health.healthy(now)) {
       return pass(PassReason.UNHEALTHY);
+    }
+    if (config.inReleasePull(now)) {
+      return pass(PassReason.RELEASE_WINDOW);
     }
     final Instrument inst = directory.byId(instrumentId);
     if (inst == null || quantity <= 0 || risk.quotePerBp(instrumentId) <= 0.0) {
@@ -301,10 +363,8 @@ public final class QuotingEngine implements KillSwitchListener {
       return pass(PassReason.NEGATIVE_EDGE);
     }
     final double optimal = spread.optimal(base, cost, config.maxHalfSpreadBp);
-    final double widened =
-        optimal * config.eventMultiplier(now)
-            + Math.max(0.0, volBp[ccy] - config.baselineVolBp) * config.volWideningPerBp;
-    final double half = clamp(widened * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp);
+    final double half =
+        clamp(widen(optimal, inst.currency(), now) * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp);
 
     // skew: kappa * u' Sigma p / |U|, size term 0.5 kappa q u' Sigma u / |U|
     risk.ladder(inst.currency(), book);
@@ -380,6 +440,10 @@ public final class QuotingEngine implements KillSwitchListener {
     sOldest[slot] = fairValue.oldestNanos();
     sBase[slot] = base;
     sDistance[slot] = distance;
+    sPrice[slot] = price;
+    sFair[slot] = fair;
+    heldPos[slot] = heldCount;
+    held[heldCount++] = slot;
     quoteSlot.put(quoteId, slot);
     nextExpiry = Math.min(nextExpiry, validUntil);
     nextStale = Math.min(nextStale, sOldest[slot] + config.maxInputAgeNanos);
@@ -389,6 +453,7 @@ public final class QuotingEngine implements KillSwitchListener {
     outcome.quoteId = quoteId;
     outcome.validUntilNanos = validUntil;
     outcome.decision = firm ? RfqDecision.FIRM : RfqDecision.SUBJECT;
+    recorder.onDecision(outcome);
     return outcome.decision;
   }
 
@@ -402,7 +467,7 @@ public final class QuotingEngine implements KillSwitchListener {
    * teaches the hit-rate model one win; a disclosed cover worse for the client than our price adds
    * its distance to the cover statistics, but is not a second observation (one RFQ, one label;
    * DR-R2R-08). TradedAway teaches a loss. Every outcome releases the quote's reservation and frees
-   * it.
+   * it, and goes to the recorder with the cover gap and our rank.
    */
   public void onQuoteResponse(
       final long quoteId, final QuoteStatus status, final long tradedPrice, final long tradedQuantity, final long coverPrice) {
@@ -415,6 +480,7 @@ public final class QuotingEngine implements KillSwitchListener {
       return;
     }
     final int instrumentId = sInstrument[slot];
+    record(sRfqId[slot], quoteId, status, sBuy[slot], sPrice[slot], coverPrice, instrumentId);
     if (status == QuoteStatus.Done) {
       final long qty = Math.min(Math.max(tradedQuantity, 0L), sQty[slot]);
       fills++;
@@ -432,7 +498,7 @@ public final class QuotingEngine implements KillSwitchListener {
           coverObservations++;
         }
       }
-      scheduleMarkout(slot, tradedPrice);
+      scheduleMarkout(slot);
     } else {
       release(slot);
       if (status == QuoteStatus.TradedAway) {
@@ -448,6 +514,17 @@ public final class QuotingEngine implements KillSwitchListener {
    * due markouts.
    */
   public void poll(final long nowNanos) {
+    if (config.inReleasePull(nowNanos)) {
+      if (!pulledForRelease) {
+        pullAll(CancelReason.AdverseSignal, nowNanos);
+        pulledForRelease = true;
+      }
+    } else {
+      pulledForRelease = false;
+    }
+    if (config.fairMoveWithdrawBp > 0.0) {
+      pullOnFairMove(nowNanos);
+    }
     if (nowNanos >= nextExpiry || nowNanos >= nextStale) {
       long expiry = Long.MAX_VALUE;
       long stale = Long.MAX_VALUE;
@@ -578,6 +655,26 @@ public final class QuotingEngine implements KillSwitchListener {
     return lateFills;
   }
 
+  /** Quotes withdrawn because fair value moved against them by more than the threshold. */
+  public long fairMovePulls() {
+    return fairMovePulls;
+  }
+
+  /** Responses that carried a cover price. */
+  public long coversRecorded() {
+    return coversRecorded;
+  }
+
+  /** Done responses whose cover was better for the client than our price. */
+  public long wonBehindCover() {
+    return wonBehindCover;
+  }
+
+  /** Mean distance our price sat behind the cover on the Dones that won from behind it, bp. */
+  public double meanWonBehindCoverBp() {
+    return wonBehindCover == 0 ? 0.0 : wonBehindCoverBp / wonBehindCover;
+  }
+
   /** Responses for quotes the engine no longer holds. */
   public long unmatchedResponses() {
     return unmatchedResponses;
@@ -632,13 +729,66 @@ public final class QuotingEngine implements KillSwitchListener {
     return best == Double.MAX_VALUE ? 0.0 : best / pv01;
   }
 
+  /**
+   * Half-spread after the event and release multiplier and the volatility widening; shared with
+   * the package quoter.
+   */
+  double widen(final double optimal, final CurrencyCode currency, final long nowNanos) {
+    return optimal * config.eventMultiplier(nowNanos)
+        + Math.max(0.0, volBp[currency.index()] - config.baselineVolBp) * config.volWideningPerBp;
+  }
+
+  InputHealth health() {
+    return health;
+  }
+
   // ---------------------------------------------------------------- internals
 
   private RfqDecision pass(final PassReason reason) {
     passes++;
     outcome.decision = RfqDecision.PASS;
     outcome.reason = reason;
+    recorder.onDecision(outcome);
     return RfqDecision.PASS;
+  }
+
+  private void record(
+      final long rfqId, final long quoteId, final QuoteStatus status, final boolean weBuy, final long ourPrice,
+      final long coverPrice, final int instrumentId) {
+    double gap = Double.NaN;
+    int rank = status == QuoteStatus.Done ? 1 : 0;
+    if (coverPrice != 0L) {
+      // client-worse distance of ours from the cover: a higher bid or a lower offer is better for the client
+      gap = Decimal9.toDouble(weBuy ? coverPrice - ourPrice : ourPrice - coverPrice) / risk.quotePerBp(instrumentId);
+      rank = gap > 0.0 ? 2 : 1;
+      coversRecorded++;
+      if (status == QuoteStatus.Done && gap > 0.0) {
+        wonBehindCover++;
+        wonBehindCoverBp += gap;
+      }
+    }
+    recorder.onResult(rfqId, quoteId, status, ourPrice, coverPrice, gap, rank);
+  }
+
+  /** Withdraws every live quote whose fair value has moved against it by more than the threshold. */
+  private void pullOnFairMove(final long nowNanos) {
+    for (int k = 0; k < heldCount; k++) {
+      final int s = held[k];
+      if (cancelling[s] || sValidUntil[s] <= nowNanos) {
+        continue;
+      }
+      final Instrument inst = directory.byId(sInstrument[s]);
+      if (inst == null || !fairValue.compute(inst, nowNanos)) {
+        continue;
+      }
+      // against us: fair falls under our bid's fair or rises over our offer's, so the client gains by trading
+      final double move =
+          (sBuy[s] ? sFair[s] - fairValue.fair() : fairValue.fair() - sFair[s]) / risk.quotePerBp(sInstrument[s]);
+      if (move > config.fairMoveWithdrawBp) {
+        fairMovePulls++;
+        pull(s, CancelReason.AdverseSignal, nowNanos);
+      }
+    }
   }
 
   private boolean remember(final int venueId, final long rfqId) {
@@ -681,6 +831,8 @@ public final class QuotingEngine implements KillSwitchListener {
     tInstrument[tHead] = sInstrument[s];
     tBuy[tHead] = sBuy[s];
     tQty[tHead] = sQty[s];
+    tRfqId[tHead] = sRfqId[s];
+    tPrice[tHead] = sPrice[s];
     tHead = (tHead + 1) % TOMBSTONES;
   }
 
@@ -697,6 +849,7 @@ public final class QuotingEngine implements KillSwitchListener {
         tQty[k] = 0;
         lateFills++;
         fills++;
+        record(tRfqId[k], quoteId, QuoteStatus.Done, tBuy[k], tPrice[k], 0L, tInstrument[k]);
         risk.onFill(tInstrument[k], tBuy[k] ? qty : -qty, tradedPrice);
         return true;
       }
@@ -705,19 +858,30 @@ public final class QuotingEngine implements KillSwitchListener {
   }
 
   private void free(final int s) {
+    final int pos = heldPos[s];
+    final int last = held[--heldCount];
+    held[pos] = last;
+    heldPos[last] = pos;
     quoteSlot.remove(sQuoteId[s]);
     used[s] = false;
     cancelling[s] = false;
     freeSlots[freeTop++] = s;
   }
 
-  private void scheduleMarkout(final int s, final long tradedPrice) {
+  /**
+   * Schedules a markout from the mid at the trade (PNL_AUDIT item 4): measuring from the traded
+   * price would net the captured half-spread against the adverse move and hide it. Falls back to
+   * the fair value the quote was priced from when none can be computed now.
+   */
+  private void scheduleMarkout(final int s) {
     final int i = mHead;
+    final long now = clock.epochNanos();
+    final Instrument inst = directory.byId(sInstrument[s]);
     mInstrument[i] = sInstrument[s];
     mClient[i] = sClient[s];
     mBuy[i] = sBuy[s];
-    mPrice[i] = Decimal9.toDouble(tradedPrice);
-    mDue[i] = clock.epochNanos() + config.markoutHorizonNanos;
+    mPrice[i] = inst != null && fairValue.compute(inst, now) ? fairValue.fair() : sFair[s];
+    mDue[i] = now + config.markoutHorizonNanos;
     mHead = (mHead + 1) % MARKOUTS;
     mCount = Math.min(mCount + 1, MARKOUTS);
   }
@@ -731,7 +895,7 @@ public final class QuotingEngine implements KillSwitchListener {
     toxicity.record(mClient[i], move / risk.quotePerBp(mInstrument[i]));
   }
 
-  private static double liquidSession(final CurrencyCode ccy, final long epochNanos) {
+  static double liquidSession(final CurrencyCode ccy, final long epochNanos) {
     final long sod = Math.floorMod(epochNanos / 1_000_000_000L, 86_400L);
     if (ccy == CurrencyCode.USD) {
       return sod >= 43_200L && sod < 75_600L ? 1.0 : 0.0;

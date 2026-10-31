@@ -55,6 +55,16 @@ Round 2 fixes from the P&L audit, package C (branch `claude/fix-c-controls-1e778
 - Audit item 18: the router charges a cost per order message (`RouterParams.messageCostPoints`, 0.0001 points per lot in `globalWithControls`); `QuoteStuffingDetector` counts cancels, replaces and withdrawals with new messages (`messages(id)`, `cancels(id)`, `instruments()`); `EodReportMain` writes per-instrument message and cancel counts (DR-FIX-C-03).
 - Tests: `RiskControlsTest`, `HedgeControlsTest`, `RouterControlsTest`, `QuoteStuffingCancelsTest`, `DeskWiringTest`; the desk-level oracle in `SinkAuditor` and `ChaosTest` follows the new breach rule.
 
+Round 2 fixes from the P&L audit, package A2 (branch `claude/fix-a2-engine-8168e0`, commits 78615e5, 2031b7a and ac1bba3).
+
+- Audit item 3 (recording side): every RFQ decision and every response goes to a `QuotingEngine.RfqRecordListener` (`recorder(listener)`) with the signed cover gap and our rank; `coversRecorded()`, `wonBehindCover()` and `meanWonBehindCoverBp()` count wins from behind the cover (DR-FIX-A2-01).
+- Audit item 4: client markouts are measured from the fair value at the trade, not the traded price, so the captured half spread no longer hides the adverse move (DR-FIX-A2-02).
+- Audit item 8: `poll` withdraws a live quote (AdverseSignal) when fair value moves against it by more than `QuotingConfig.fairMoveWithdrawBp` (default 0.25 bp; 0 turns it off); `fairMovePulls()` counts them (DR-FIX-A2-03).
+- Audit item 9: a release calendar is on by default (`QuotingConfig.usReleaseSchedule`: 08:30 and 10:00 New York on weekdays of 2026 and 2027); quotes are pulled and RFQs passed with `PassReason.RELEASE_WINDOW` from 60 s before to 30 s after, then half spreads are multiplied by 2.355 for 5 minutes; `releaseCalendar`, `releasePullNanos`, `releaseWidening`, `releases()`, `inReleasePull(now)` (DR-FIX-A2-04).
+- Audit item 12: `PackageQuoter` passes the same gates as a single RFQ (kill, health, release window, throttle, fair-value age, the risk check on every leg), reserves its legs for the time to live, books Dones, late ones included, to risk, and charges its spread on the net ladder's risk-equivalent PV01 (DR-FIX-A2-05).
+- Audit item 13: a late single-RFQ Done (review DR-R2R-13) is recorded and reaches the hedger (DR-FIX-A2-06).
+- rates-app: the package's own winner's-curse setting (0.01 bp, commit 2031b7a) was superseded in its merge of round2-integration by DR-INT-05's 0.02 bp, which stands (DR-INT-07). COOKBOOK recipes 22 and 27 re-recorded. Tests: `AuditFixesTest`.
+
 ### Fixed
 
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).
