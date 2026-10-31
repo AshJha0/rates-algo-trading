@@ -5,6 +5,10 @@
 # The values below were chosen so that, for a typical-size 10Y request in the liquid session
 # against four dealers, a quote 0.5 bp from fair wins about one time in three and a quote 1 bp
 # from fair about one time in six. The bands are the ranges the back-tester (P5) sweeps.
+# The bands bound the starting assumption, not learning: HitRateModel learns the intercept and
+# the spread slope from the desk's own wins and losses within wider bounds (slope -8.0 to -0.2,
+# intercept -3.0 to 5.0; P&L audit item 2) and reports the learned slope and whether it has left
+# the band below.
 # Same schema as data/presets.yaml (API_SPEC.md Section 12.3); a preset of the same name in
 # data/presets.yaml takes precedence over this file.
 

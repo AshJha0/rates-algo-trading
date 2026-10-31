@@ -246,8 +246,9 @@ class PackageAndClobTest {
     for (int i = 0; i < 10_000; i++) {
       learning.update(base, 0.5, true);
     }
-    assertEquals(2.0, learning.coefficient(HitRateModel.INTERCEPT), 0.0, "clamped to band");
-    assertTrue(learning.coefficient(HitRateModel.SPREAD_BP) <= -1.0);
+    assertTrue(learning.coefficient(HitRateModel.INTERCEPT) <= learning.learnHigh(HitRateModel.INTERCEPT));
+    assertTrue(learning.coefficient(HitRateModel.SPREAD_BP) <= HitRateModel.SLOPE_LEARN_HIGH);
+    assertTrue(learning.winProbability(base, 0.5) > 0.9, "learned to win at 0.5 bp");
     assertEquals(0.5, HitRateModel.logistic(0.0), 0.0);
     assertTrue(HitRateModel.logistic(-800.0) >= 0.0);
   }
