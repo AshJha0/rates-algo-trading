@@ -8,6 +8,7 @@ site (to the mapped page) or on GitHub (for files that are not pages).
 
 from __future__ import annotations
 
+import json
 import posixpath
 import re
 from pathlib import Path
@@ -30,6 +31,9 @@ PAGES: dict[str, str] = {
     "changelog.md": "CHANGELOG.md",
     "publishing.md": "docs/GITHUB_PAGES.md",
 }
+
+# research notebooks (P5): page notebooks/<name>.md from research/notebooks/<name>.ipynb
+NOTEBOOKS = ("hitrate", "markouts", "spread", "flow", "backtest_analysis")
 
 _REVERSE: dict[str, str] = {source: page for page, source in PAGES.items()}
 _LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(\s+\"[^\"]*\")?\)")
@@ -64,4 +68,26 @@ def on_files(files: Files, config: MkDocsConfig) -> Files:
             raise FileNotFoundError(msg)
         content = _rewrite_links(source.read_text(encoding="utf-8"), source_rel, repo_url)
         files.append(File.generated(config, page, content=content))
+    for name in NOTEBOOKS:
+        files.append(File.generated(config, f"notebooks/{name}.md", content=_notebook_page(name)))
     return files
+
+
+def _notebook_page(name: str) -> str:
+    """The executed rendering when tools/run_notebooks.py has run, else the code cells only."""
+    built = REPO_ROOT / "research" / "notebooks" / "_build" / f"{name}.md"
+    if built.is_file():
+        return built.read_text(encoding="utf-8")
+    source = REPO_ROOT / "research" / "notebooks" / f"{name}.ipynb"
+    nb = json.loads(source.read_text(encoding="utf-8"))
+    parts = [
+        "!!! note\n    Outputs appear when `python tools/run_notebooks.py` has run before the"
+        " build; CI's docs job does that.\n"
+    ]
+    for cell in nb["cells"]:
+        text = "".join(cell["source"])
+        if cell["cell_type"] == "markdown":
+            parts.append(text + "\n")
+        else:
+            parts.append(f"```python\n{text}\n```\n")
+    return "\n".join(parts)

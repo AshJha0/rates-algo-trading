@@ -33,6 +33,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install -r docs/site/requirements.txt
+      - name: Execute research notebooks (rendered into the site by docs/site/hooks.py)
+        run: |
+          python -m pip install -e "research[notebooks]"
+          python tools/run_notebooks.py
       - name: Build
         run: mkdocs build --strict
       - name: Pages source

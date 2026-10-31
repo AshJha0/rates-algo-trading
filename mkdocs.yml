@@ -23,6 +23,12 @@ nav:
   - Decisions: decisions.md
   - Status: status.md
   - Diagrams: diagrams.md
+  - Research notebooks:
+      - Hit-rate model: notebooks/hitrate.md
+      - Markouts: notebooks/markouts.md
+      - Spread optimisation: notebooks/spread.md
+      - Order flow: notebooks/flow.md
+      - Back-test analysis: notebooks/backtest_analysis.md
   - AI use policy: ai-use-policy.md
   - Changelog: changelog.md
   - Publishing: publishing.md
