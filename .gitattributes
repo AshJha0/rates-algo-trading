@@ -1,0 +1,6 @@
+# Keep sources LF everywhere so hashes, goldens and diffs match across Linux and Windows.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.png binary
+*.jar binary
