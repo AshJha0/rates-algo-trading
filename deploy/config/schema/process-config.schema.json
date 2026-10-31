@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AshJha0/rates-algo-trading/deploy/config/schema/process-config.schema.json",
+  "title": "rates-algo-trading process configuration, schema version 1",
+  "description": "Validated at process start by io.ratesalgo.ops.config.ProcessConfig and in CI by tools/validate_config.py (API_SPEC.md Section 17.11). Only the keywords JsonSchema supports may appear here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "process", "http", "journal", "quoting", "limits", "recon", "retention"],
+  "properties": {
+    "schemaVersion": {"type": "integer", "const": 1},
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "role", "colour"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{1,40}$"},
+        "role": {"type": "string", "enum": ["trading", "venue-sim"]},
+        "colour": {"type": "string", "enum": ["blue", "green"]}
+      }
+    },
+    "http": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bindAddress", "port", "controlTokenEnv"],
+      "properties": {
+        "bindAddress": {"type": "string", "minLength": 1},
+        "port": {"type": "integer", "minimum": 0, "maximum": 65535},
+        "controlTokenEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}
+      }
+    },
+    "journal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directory", "capacityBytes"],
+      "properties": {
+        "directory": {"type": "string", "minLength": 1},
+        "capacityBytes": {"type": "integer", "minimum": 65536, "maximum": 2147483647}
+      }
+    },
+    "quoting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabledAtStart", "instruments"],
+      "properties": {
+        "enabledAtStart": {"type": "boolean"},
+        "instruments": {
+          "type": "array",
+          "maxItems": 512,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["instrumentId", "venueId", "maxQuoteSizeMinor"],
+            "properties": {
+              "instrumentId": {"type": "integer", "minimum": 1},
+              "venueId": {"type": "integer", "minimum": 1},
+              "maxQuoteSizeMinor": {"type": "integer", "minimum": 1}
+            }
+          }
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxOrderNotionalMinor", "maxNetDv01Minor", "maxMessagesPerSecond"],
+      "properties": {
+        "maxOrderNotionalMinor": {"type": "integer", "minimum": 1},
+        "maxNetDv01Minor": {"type": "integer", "minimum": 1},
+        "maxMessagesPerSecond": {"type": "integer", "minimum": 1, "maximum": 100000}
+      }
+    },
+    "recon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cutTimeUtc", "timingToleranceMillis"],
+      "properties": {
+        "cutTimeUtc": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"},
+        "timingToleranceMillis": {"type": "integer", "minimum": 0, "maximum": 60000}
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["years"],
+      "properties": {
+        "years": {"type": "integer", "minimum": 5, "maximum": 7}
+      }
+    }
+  }
+}

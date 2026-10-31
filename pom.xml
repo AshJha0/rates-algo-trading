@@ -28,6 +28,8 @@
     <module>rates-analytics</module>
     <module>rates-router</module>
     <module>rates-backtest</module>
+    <module>rates-posttrade</module>
+    <module>rates-ops</module>
     <module>rates-cookbook</module>
   </modules>
 

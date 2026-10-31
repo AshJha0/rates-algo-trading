@@ -35,3 +35,6 @@ Thumbs.db
 
 # Raw downloads (never committed, DECISIONS.md DR-006)
 data/raw/
+# Deployment state and local report output
+deploy/state/
+deploy/out/

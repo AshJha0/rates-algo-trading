@@ -36,7 +36,8 @@ class RecipesTest {
         Arguments.of("recipe08.txt", (Main) Recipe08Ctd::main),
         Arguments.of("recipe16.txt", (Main) Recipe16RouteHedge::main),
         Arguments.of("recipe17.txt", (Main) Recipe17Backtest::main),
-        Arguments.of("recipe18.txt", (Main) Recipe18Ledger::main));
+        Arguments.of("recipe18.txt", (Main) Recipe18Ledger::main),
+        Arguments.of("recipe20.txt", (Main) Recipe20ChaosBreakReport::main));
   }
 
   @ParameterizedTest(name = "{0}")

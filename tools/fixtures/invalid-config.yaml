@@ -1,0 +1,26 @@
+# Deliberately invalid: tools/validate_config.py checks that the schema refuses it.
+schemaVersion: 2
+process:
+  name: Trading_Blue
+  role: router
+  colour: purple
+http:
+  bindAddress: ""
+  port: 70000
+  controlTokenEnv: token
+journal:
+  directory: /var/lib/rates/journal
+  capacityBytes: 1024
+quoting:
+  enabledAtStart: "yes"
+  instruments: []
+limits:
+  maxOrderNotionalMinor: 0
+  maxNetDv01Minor: 1
+  maxMessagesPerSecond: 1
+recon:
+  cutTimeUtc: "5pm"
+  timingToleranceMillis: 1000
+retention:
+  years: 2
+unexpected: true

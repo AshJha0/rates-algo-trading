@@ -31,6 +31,7 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 20. How do I verify a Java journal's hash chain from Python? (P5)
 21. How do I route a hedge order and read the markout report? (P4; was item 17 before P5 took 17 to 19)
 22. How do I run the latency job and read the histogram? (P5 latency harness; was item 19)
+20. How do I run the chaos test and read the break report? (P6, written below; the Python hash-chain recipe planned here for P5 is renumbered at integration)
 
 ## 1. How do I use the ManualClock and TimerWheel in a test?
 
@@ -981,3 +982,104 @@ reconciles to the cent: True
 ```
 
 The explained lines sum to the position P&L exactly at two decimals, and the sums of fill edges equal the spread-capture and hedge-cost lines. Inventory is the line the fills alone cannot rebuild, since it needs the mid path; it is the difference that the identity pins down. `tools/check_cookbook.py` runs this script in CI and compares its output with the block above.
+
+## 20. How do I run the chaos test and read the break report?
+
+`SyntheticDay.generate(journal, seed, params)` writes a trading day to a journal: two Treasuries traded by order on venue 1 and a USD SOFR swap traded by RFQ on venue 2, with faults injected into our side (duplicate fills, fills delivered out of order, fills delivered after the 17:00 reconciliation cut, busts, one bust that arrives before its fill, a bust after the cut) and duplicate lines in the venue's drop copy. The day depends only on the seed. The program books the journal twice with `PositionKeeper`, once up to the cut sequence and once to the end, submits the cleared swaps to the clearing simulator, and runs `DailyReconciliation`, which prints one line per reconciliation and one line per break. The acceptance test `ChaosDayTest` runs the same day and asserts that nothing is unexplained (API_SPEC.md Section 17.8).
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.journal.JournalReader;
+import io.ratesalgo.posttrade.chaos.SyntheticDay;
+import io.ratesalgo.posttrade.clearing.ClearingHouseSimulator;
+import io.ratesalgo.posttrade.position.InstrumentCatalogue;
+import io.ratesalgo.posttrade.position.InstrumentReference;
+import io.ratesalgo.posttrade.position.PositionKeeper;
+import io.ratesalgo.posttrade.recon.BreakReport;
+import io.ratesalgo.posttrade.recon.DailyReconciliation;
+import io.ratesalgo.posttrade.trade.BookAssignment;
+import io.ratesalgo.posttrade.trade.FixedBookMapper;
+import io.ratesalgo.posttrade.trade.Trade;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+/** COOKBOOK.md recipe 20: run the chaos day and read the break report. */
+public final class Recipe20ChaosBreakReport {
+
+  private Recipe20ChaosBreakReport() {}
+
+  static PositionKeeper keeper(final Path journal, final long lastSequence) {
+    final InstrumentCatalogue catalogue = new InstrumentCatalogue()
+        .add(new InstrumentReference(1001, "US91282CLF0X", "USD", "PERC", BigDecimal.ONE))
+        .add(new InstrumentReference(1002, "US91282CLG0X", "USD", "PERC", BigDecimal.ONE))
+        .add(new InstrumentReference(2001, "USD-SOFR-10Y", "USD", "PERC", new BigDecimal("8.5")));
+    final FixedBookMapper books = new FixedBookMapper(new BookAssignment(1, 10, "ALG-UST-MM-01"))
+        .with(2001, new BookAssignment(2, 20, "ALG-SWP-RFQ-01"));
+    final PositionKeeper k = new PositionKeeper(books, catalogue);
+    try (JournalReader r = JournalReader.open(journal)) {
+      while (r.next((s, t, id, v, b, o, l) -> {
+        if (s <= lastSequence) {
+          k.onFrame(s, t, id, v, b, o, l);
+        }
+      })) {
+        // reading
+      }
+    }
+    return k;
+  }
+
+  static BreakReport reconcile(final SyntheticDay.Result day, final long cut) {
+    final PositionKeeper atCut = keeper(day.journal(), cut);
+    final PositionKeeper full = keeper(day.journal(), Long.MAX_VALUE);
+    final ClearingHouseSimulator ccp = new ClearingHouseSimulator((k, why) -> { }).limit(20, Long.MAX_VALUE);
+    for (final Trade t : atCut.trades()) {
+      if (t.isLive() && t.instrumentId() == SyntheticDay.SWAP) {
+        ccp.submit(t, SyntheticDay.CUT);
+      }
+    }
+    ccp.endOfCycle(SyntheticDay.CUT);
+    return DailyReconciliation.run(new DailyReconciliation.Inputs(day.date(), atCut, full, cut, day.dropCopy(),
+        atCut.orderRecords(), ccp.clearedReport(), i -> i == SyntheticDay.SWAP));
+  }
+
+  public static void main(final String[] args) throws IOException {
+    final Path dir = Files.createTempDirectory("recipe20");
+    final Path journal = dir.resolve("day.raj");
+    final SyntheticDay.Result day = SyntheticDay.generate(journal, 20261030L, SyntheticDay.Params.DEFAULT);
+    System.out.println("day " + day.date() + ": frames=" + day.frames() + " fills=" + day.fills()
+        + " cut-sequence=" + day.cutSequence());
+    System.out.println("injected: " + day.injected());
+
+    System.out.print(reconcile(day, day.cutSequence()).render());
+    final BreakReport endOfDay = reconcile(day, Long.MAX_VALUE);
+    System.out.println("after every late message: breaks=" + endOfDay.breaks().size()
+        + " unexplained=" + endOfDay.unexplained());
+    Files.delete(journal);
+    Files.delete(dir);
+  }
+}
+```
+
+Expected output:
+
+```
+day 2026-10-30: frames=336 fills=105 cut-sequence=332
+injected: duplicates=5 late-within-day=2 late-after-cut=3 busts=3 busts-after-cut=1 drop-copy-duplicates=2
+break report 2026-10-30
+  drop-copy          ours=99 theirs=101 matched=98 dup-suppressed=2 breaks=4 unexplained=0
+  drop-copy-pos      ours=3 theirs=3 matched=3 dup-suppressed=0 breaks=0 unexplained=0
+  books-records      ours=99 theirs=99 matched=99 dup-suppressed=0 breaks=0 unexplained=0
+  clearing           ours=1 theirs=1 matched=1 dup-suppressed=0 breaks=0 unexplained=0
+  pending-busts      ours=0 theirs=0 matched=0 dup-suppressed=0 breaks=0 unexplained=0
+  drop-copy 1:E:800024 MISSING_THEIRS BUSTED_AFTER_CUT ours[Sell 400000000@100843750000 t=1793354580002000000] theirs[-]
+  drop-copy 1:E:800050 MISSING_OURS LATE_ARRIVAL ours[-] theirs[Buy 600000000@100531250000 t=1793358360002000000]
+  drop-copy 1:E:800071 MISSING_OURS LATE_ARRIVAL ours[-] theirs[Buy 400000000@100812500000 t=1793362140003000000]
+  drop-copy 2:R:70024 MISSING_OURS LATE_ARRIVAL ours[-] theirs[Buy 41000000000@4252500000 t=1793366342000000000]
+unexplained breaks: 0
+after every late message: breaks=0 unexplained=0
+```
+
+How to read it. The first block has one line per reconciliation: `ours` and `theirs` are the items on each side after identical repeats are suppressed (`dup-suppressed=2` is the two duplicated drop-copy lines), `matched` agree on side, quantity, price to the mantissa and transaction time to one second, and `unexplained` counts breaks whose explanation does not clear them. The break lines give the reconciliation, the trade key (`venue:E:execId` for an order fill, `venue:R:quoteId` for an RFQ trade), the class and the explanation the journal supports. The three `MISSING_OURS LATE_ARRIVAL` breaks are the fills injected after the cut: the venue has them, our snapshot at the cut does not, and the full journal shows them arriving later. The `MISSING_THEIRS BUSTED_AFTER_CUT` break is the trade the venue busted after the cut. `drop-copy-pos` shows no break because the position reconciliation adjusts our side for exactly these explained trade breaks. The duplicate fills and the in-day busts produce no break at all: the keeper suppressed and applied them, and its audit trail records each one. The last line reconciles again after every late message has arrived and finds nothing. A break with explanation `NONE` or `DUPLICATE_CONFLICT` goes to operations under docs/runbooks/reconciliation-break.md.

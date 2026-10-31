@@ -32,6 +32,7 @@ RECIPES = {
     16: ("Recipe16RouteHedge.java", "recipe16.txt"),
     17: ("Recipe17Backtest.java", "recipe17.txt"),
     18: ("Recipe18Ledger.java", "recipe18.txt"),
+    20: ("Recipe20ChaosBreakReport.java", "recipe20.txt"),
 }
 
 PYTHON_RECIPES = {

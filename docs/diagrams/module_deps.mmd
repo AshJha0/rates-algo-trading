@@ -13,7 +13,8 @@ graph TD
   router["rates-router<br/>SmartOrderRouter, cost model, state machine<br/>(P4)"]
   backtest["rates-backtest<br/>runner, outcome models, ledger, report<br/>(P5)"]
   snakeyaml["SnakeYAML (external)"]
-  posttrade["rates-posttrade<br/>(planned P5)"]
+  posttrade["rates-posttrade<br/>positions, records, recon<br/>(P6)"]
+  ops["rates-ops<br/>health, metrics, config, stress<br/>(P6)"]
 
   journal --> common
   journal --> agrona
@@ -40,8 +41,11 @@ graph TD
   backtest --> common
   backtest --> snakeyaml
   backtest -.-> core
-  posttrade -.-> journal
+  posttrade --> journal
+  posttrade --> messages
   posttrade -.-> analytics
+  ops --> posttrade
+  ops --> journal
 
   classDef planned stroke-dasharray: 5 5
-  class core,venues,quoting,risk,posttrade planned
+  class core,venues,quoting,risk planned

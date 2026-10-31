@@ -1,0 +1,92 @@
+# The simulated environment: blue trading process, the venue simulator, Prometheus and Grafana.
+# Green and the end-of-day report job start only when their profile is named.
+#   mvn -B -ntp -DskipTests package -pl rates-ops,rates-posttrade -am
+#   docker compose -f deploy/compose.yaml up -d --build
+#   docker compose -f deploy/compose.yaml --profile green up -d trading-green
+#   docker compose -f deploy/compose.yaml --profile batch run --rm report --help
+# The control token comes from the shell environment and is never committed.
+name: rates-sim
+
+x-trading: &trading
+  build:
+    context: ..
+    dockerfile: deploy/trading/Dockerfile
+  image: rates-trading:dev
+  environment:
+    RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
+  volumes:
+    - journal:/var/lib/rates
+  restart: "no"
+
+services:
+  trading-blue:
+    <<: *trading
+    command: ["--config", "/opt/rates/config/trading-blue.yaml",
+              "--schema", "/opt/rates/config/schema/process-config.schema.json"]
+    environment:
+      RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
+      RATES_HTTP_PORT: "8081"
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      venue-sim:
+        condition: service_healthy
+
+  trading-green:
+    <<: *trading
+    profiles: ["green"]
+    command: ["--config", "/opt/rates/config/trading-green.yaml",
+              "--schema", "/opt/rates/config/schema/process-config.schema.json"]
+    environment:
+      RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
+      RATES_HTTP_PORT: "8082"
+    ports:
+      - "127.0.0.1:8082:8082"
+
+  venue-sim:
+    build:
+      context: ..
+      dockerfile: deploy/venue-sim/Dockerfile
+    image: rates-venue-sim:dev
+    environment:
+      RATES_HTTP_PORT: "8090"
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - venue-journal:/var/lib/rates
+
+  report:
+    profiles: ["batch"]
+    build:
+      context: ..
+      dockerfile: deploy/report/Dockerfile
+    image: rates-report:dev
+    volumes:
+      - journal:/var/lib/rates:ro
+      - ./out:/out
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--web.listen-address=:9090"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  journal:
+  venue-journal:

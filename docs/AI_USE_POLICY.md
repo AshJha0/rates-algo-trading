@@ -33,4 +33,4 @@ Assistant output is treated as a draft from a capable but unaccountable colleagu
 
 ## Relation to regulation
 
-RTS 6 Article 5 (as retained in UK law and applied through FCA MAR 7A) requires that changes to trading algorithms are tested, approved and recorded. This policy applies the same discipline to assisted changes in a project that is not itself a regulated firm: documented change (the PR), testing (CI and attached validation), approval (human review), record (label and change log). LEARN.md Section 12 (planned P6) will map each control to the regulatory text.
+RTS 6 Article 5 (as retained in UK law and applied through FCA MAR 7A) requires that changes to trading algorithms are tested, approved and recorded. This policy applies the same discipline to assisted changes in a project that is not itself a regulated firm: documented change (the PR), testing (CI and attached validation), approval (human review), record (label and change log). LEARN.md Section 12 explains the regulation, and docs/compliance/RTS6_INVENTORY.md maps each control, this policy included (RTS 6 Articles 5 and 11), to the regulatory text and to its evidence.

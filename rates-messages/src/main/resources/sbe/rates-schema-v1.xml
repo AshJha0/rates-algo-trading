@@ -152,6 +152,23 @@
       <validValue name="Rejected">6</validValue>
       <validValue name="CancelRejected">7</validValue>
       <validValue name="Reconciled">8</validValue>
+    <!-- P6 post-trade (template ids 100 to 119, API_SPEC.md Sections 2 and 17). -->
+    <enum name="TradeSource" encodingType="uint8" description="Which message created the trade">
+      <validValue name="Execution">1</validValue>
+      <validValue name="Rfq">2</validValue>
+    </enum>
+
+    <enum name="BustReason" encodingType="uint8">
+      <validValue name="VenueError">1</validValue>
+      <validValue name="ClearingRejected">2</validValue>
+      <validValue name="ErroneousTrade">3</validValue>
+      <validValue name="Manual">4</validValue>
+    </enum>
+
+    <enum name="AmendReason" encodingType="uint8">
+      <validValue name="PriceCorrection">1</validValue>
+      <validValue name="QuantityCorrection">2</validValue>
+      <validValue name="Reallocation">3</validValue>
     </enum>
   </types>
 
@@ -330,6 +347,25 @@
     <field name="leavesQuantity" id="10" type="Quantity"/>
     <field name="cancelledQuantity" id="11" type="Quantity"/>
     <field name="timestampNanos" id="12" type="EpochNanos"/>
+  <sbe:message name="PostTradeBust" id="100" description="A venue, clearing house or operator cancels a trade after execution">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="tradeSource" id="2" type="TradeSource"/>
+    <field name="tradeId" id="3" type="int64" description="execId for an Execution trade, quoteId for an Rfq trade"/>
+    <field name="venueOrderId" id="4" type="int64" description="Venue order id of the busted trade, 0 for an Rfq trade"/>
+    <field name="instrumentId" id="5" type="InstrumentId"/>
+    <field name="reason" id="6" type="BustReason"/>
+    <field name="timestampNanos" id="7" type="EpochNanos"/>
+  </sbe:message>
+
+  <sbe:message name="TradeAmend" id="101" description="A correction to the price or quantity of a booked trade, with the person who made it">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="tradeSource" id="2" type="TradeSource"/>
+    <field name="tradeId" id="3" type="int64"/>
+    <field name="newPrice" id="4" type="Decimal9"/>
+    <field name="newQuantity" id="5" type="Quantity"/>
+    <field name="amendedBy" id="6" type="PartyId"/>
+    <field name="reason" id="7" type="AmendReason"/>
+    <field name="timestampNanos" id="8" type="EpochNanos"/>
   </sbe:message>
 
 </sbe:messageSchema>

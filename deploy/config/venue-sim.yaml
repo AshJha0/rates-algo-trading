@@ -1,0 +1,25 @@
+# Venue simulator process. Until P2's simulator is bound it serves health and metrics only.
+schemaVersion: 1
+process:
+  name: venue-sim
+  role: venue-sim
+  colour: blue
+http:
+  bindAddress: 0.0.0.0
+  port: 8090
+  controlTokenEnv: RATES_CONTROL_TOKEN
+journal:
+  directory: /var/lib/rates/venue-journal
+  capacityBytes: 67108864
+quoting:
+  enabledAtStart: false
+  instruments: []
+limits:
+  maxOrderNotionalMinor: 25000000000
+  maxNetDv01Minor: 5000000
+  maxMessagesPerSecond: 1000
+recon:
+  cutTimeUtc: "17:00"
+  timingToleranceMillis: 1000
+retention:
+  years: 5

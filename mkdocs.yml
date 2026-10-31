@@ -29,6 +29,8 @@ nav:
       - Spread optimisation: notebooks/spread.md
       - Order flow: notebooks/flow.md
       - Back-test analysis: notebooks/backtest_analysis.md
+  - Compliance inventory: compliance.md
+  - Runbooks: runbooks.md
   - AI use policy: ai-use-policy.md
   - Changelog: changelog.md
   - Publishing: publishing.md

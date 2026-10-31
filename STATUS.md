@@ -14,7 +14,7 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 | P3 | Quoting engine, risk engine, hedger | to be set at P0 gate | | | | not started |
 | P4 | Smart order router | 8 | 0.5 to 1 | 1 (one working session, on branch `claude/p4-router-43caad`) | 2026-10-31 | gate open |
 | P5 | Back-tester with pre-registration (W7), Python quant research (W10); latency jobs | 18 | 1.5 | 0.3 (branch work, 2026-10-31) | 2026-10-31 | gate open |
-| P6 | Documentation, regulation mapping, knowledge check, release | to be set at P0 gate | | | | not started |
+| P6 | Documentation, regulation mapping, knowledge check, release | 16 (this branch: 11) | 1 | 0.3 for the branch share (see below) | 2026-10-31 | in progress: post-trade, compliance inventory, operations and regulation chapters done on the branch; knowledge check, final documentation pass and release after integration |
 
 ## Estimate versus actual
 
@@ -60,8 +60,18 @@ Gate checks, all run locally on 2026-10-31 on Windows 11 with JDK 25.0.5 and Pyt
 What the difference between plan and actual is attributed to: the plan assumed the venue simulators and the event loop would be available; building against synthetic journals and the back-tester's own outcome models removed that integration work from this phase and moved it to the coordinator's binding step.
 
 Deferred from P5, with reasons: the latency job and its histogram (the report reads the harness JSON when it exists; no harness was built in this branch); binding to the P2 loop's replay mode and to the venue simulators (not available to this session); FINRA Treasury data (API needs an account; loader and synthetic fixture shipped); opening the P5-001 holdout (kept unread; it opens once, in a later run).
+### P6 branch share (post-trade, compliance, operations)
+
+Planned: 11 of the 16 P6 plan-days (W11 post-trade and books and records 5, compliance inventory with the stress and surveillance hooks 2, deployment and operations 3, LEARN Sections 12 and 14 1). The other 5 plan-days are the knowledge check, pitfalls and further reading, the final documentation pass and the v1.0.0 release, which follow integration.
+
+Actual: started 2026-10-31 01:01 UTC, paused from about 01:25 to 06:25 UTC by the coordinating session (model change and budget pause), finished about 07:45 UTC; working wall-clock about 1 hour 50 minutes, measured from the session's commit times. CI time is not included: the branch has not run in GitHub Actions.
+
+Attributed to: one session building against its own fixtures without waiting on other phases; the parts that depend on P1 to P5 are interfaces with fixtures (API_SPEC.md Section 17.14).
+
+Local verification on 2026-10-31, Windows 11, JDK 25.0.5: `mvn -B -ntp verify` green with the coverage floor and SpotBugs; `rates-posttrade` 35 tests and `rates-ops` 14 tests; `python deploy/rehearsal.py --mode process` passed all 12 checks; `tools/validate_config.py`, `tools/lint_dashboards.py`, `tools/check_inventory.py` and `tools/check_cookbook.py` clean; `mkdocs build --strict` clean. Docker was not available on the machine, so the images were not built locally.
 
 ## Open items
 
 - P0: local verification done on 2026-10-31 (mvn verify on JDK 25.0.5 and JDK 27: 50 Java tests, coverage floor met, SpotBugs clean; ruff, mypy, pytest 16 passed; mkdocs build --strict clean; cookbook recipes recorded and checked by tools/check_cookbook.py). The gate closes when the same jobs are green in GitHub Actions on Linux and Windows.
 - P0: the repository is private until the owner is satisfied (DR-001 amendment); the site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md).
+- P6 (branch): bind the interfaces in API_SPEC.md Section 17.14 at integration; map P2 `TradeBust` (44) onto `PostTradeBust`; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as planned in docs/compliance/RTS6_INVENTORY.md.
