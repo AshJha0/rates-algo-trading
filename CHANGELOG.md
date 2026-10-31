@@ -42,6 +42,11 @@ Round 2 fixes from the P&L audit, package A1 (branch `claude/fix-a1-models-67fd0
 - Audit item 11: `SpreadModel` averages the win probability over a normal cover spread with 8-point Gauss-Hermite quadrature; `observeCoverGap(gapBp)`, `coverSigmaBp()`, `meanCoverGapBp()`, `coverGaps()` and `winProbability(base, s)`; with no gaps and no prior the optimum equals the point estimate (DR-FIX-A1-02).
 - Tests: `PricingModelsTest` (learning, bounds, cover averaging, tier defaults).
 
+Round 2 fixes from the P&L audit, package B (branch `claude/fix-b-clob-68d6c2`, commit 52b6df1).
+
+- Audit item 7: `ClobQuoter.inventorySkew(covariance, kappa, maxSkewBp)` moves both CLOB targets by `clamp(kappa u' Sigma p / |U|, maxSkewBp)` bp, the RFQ engine's inventory skew, before the venue tick rounding; off until called; `lastSkewBp()` reads it (DR-FIX-B-01).
+- Audit item 6: the tick rounding itself came with the review (DR-R2R-12); this package adds a test that checks every CLOB price against `ClobBook`'s tick rule for 1/32, 1/128 and 1/256 ticks on flat, long and short books.
+
 ### Fixed
 
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).

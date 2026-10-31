@@ -855,6 +855,10 @@ Diagram: [RFQ end to end with timings](docs/site/pages/diagrams.md#rfq-end-to-en
 
 `TierTable.standard(version, maxQuantity, clients)`: three firm tiers, none blocked, spread multipliers 1.0, 1.15 and 1.35 (`standardMultiplier(tier)`); unmapped clients get tier 2. `unblocked(newVersion, widening)` returns a copy in which every blocked tier quotes, with its multiplier times `widening` (at least 1; `DEFAULT_BLOCK_WIDENING` 1.5). `blockedTiers()` counts tiers that refuse every quote.
 
+### 12.10 CLOB inventory skew (round 2 fix B)
+
+`ClobQuoter.inventorySkew(covariance, kappa, maxSkewBp)` turns on inventory skew with the RFQ engine's parameters (`QuotingConfig.kappa()`, `maxSkewBp()`) and its key-rate covariance. At each update both targets move by `skew = clamp(kappa * u' Sigma p / |U|, -maxSkewBp, maxSkewBp)` bp: the bid target is `fair - (halfSpreadBp + skew)` and the ask target `fair + (halfSpreadBp - skew)`, each then rounded to the venue tick (12.8). A long book (positive skew) lowers both sides. Kappa 0 turns it off; it is off until called. `lastSkewBp()` is the skew at the last update.
+
 ## Section 13. Risk limit semantics and check order (P3)
 
 `io.ratesalgo.risk.RiskEngine` in `rates-risk`. PV01 is PV(rates + 1bp) minus PV(base) in major currency units, per pillar of `KeyRateTenors` (1Y, 2Y, 3Y, 5Y, 7Y, 10Y, 20Y, 30Y); a long bond is negative.

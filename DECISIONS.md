@@ -834,6 +834,16 @@ Decision. `TierTable.standard` builds three firm tiers with nothing blocked and 
 
 Consequences. Blocking stays possible through an explicit `ClientTier`, but no default builds one. Which table a desk runs remains a configuration choice approved through `TierTableControl`.
 
+## DR-FIX-B-01: The CLOB quoter skews for inventory with the RFQ engine's kappa, before the tick rounding
+
+Date: 2026-10-31
+
+Context. P&L audit item 7 (docs/research/PNL_AUDIT.md; AUDIT-04, seq 11): neither the back-tested engine nor the CLOB quoter leaned its prices against inventory. `skew_0p05` earned +97k a day at C (interval -48k to 366k) and +61k at L; `skew_0p20` +151k at L but -143k at C. Item 6: CLOB quotes were off the venue's tick grid, which the review fixed (DR-R2R-12).
+
+Decision. `ClobQuoter.inventorySkew` applies the RFQ engine's own skew, `kappa * u' Sigma p / |U|` clamped to `maxSkewBp`, to both CLOB targets, with the same parameters and covariance, so both channels lean the same way on the same book. The skew moves the targets before the tick rounding, so prices stay on the tick. It is off until called, which keeps today's CLOB output unchanged. A test checks every resulting price against `ClobBook`'s tick rule at 1/32, 1/128 and 1/256 ticks on flat, long and short books.
+
+Consequences. Whether a desk turns the skew on, and at which kappa, is configuration. AUDIT-04 shows that the level matters (gain at L, loss at C for 0.20 bp), so it should be tuned through a pre-registered run rather than set by hand.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31
