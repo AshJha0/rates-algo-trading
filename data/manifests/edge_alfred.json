@@ -1,0 +1,37 @@
+{
+  "created_utc": "2026-10-31T13:42:12+00:00",
+  "files": [
+    {
+      "downloaded_utc": "2026-10-31T13:42:11+00:00",
+      "name": "alfred_PAYEMS.htm",
+      "sha256": "f7668adfaeece83b7e5c567427dcd8830c01c8ddbd3426bf5ea0a4ad0e118c84",
+      "size": 99881,
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=PAYEMS"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:11+00:00",
+      "name": "alfred_CPIAUCSL.htm",
+      "sha256": "f4dc3e7c0c383e5c19c17fd2e63ee052e5413f15cb7d11dfedf040150fe59445",
+      "size": 84945,
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=CPIAUCSL"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:12+00:00",
+      "name": "alfred_GDPC1.htm",
+      "sha256": "b88d78cb7d00d4e9f883d3ba90b54697d5d000b9dbdab2486a0f36e7761df96f",
+      "size": 65039,
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=GDPC1"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:12+00:00",
+      "name": "alfred_PCEPI.htm",
+      "sha256": "9161776987391318b3eb18a2cc93f67f54064d3a7ab1fd4f0ba86377bf079c94",
+      "size": 56988,
+      "url": "https://alfred.stlouisfed.org/series/downloaddata?seid=PCEPI"
+    }
+  ],
+  "licence": "FRED/ALFRED terms of use (St. Louis Fed); series data from BLS and BEA.",
+  "manifest_version": 1,
+  "missing": [],
+  "source": "alfred"
+}

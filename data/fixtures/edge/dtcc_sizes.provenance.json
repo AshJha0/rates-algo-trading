@@ -1,0 +1,22 @@
+{
+  "fixture": "dtcc_sizes.csv",
+  "created_utc": "2026-10-31T14:01:56+00:00",
+  "sha256": "b753436387343ada14967ab9df40e24f3822d29d92b0dac6ff98537a311f8ee2",
+  "size": 1526813,
+  "rows": 62124,
+  "columns": [
+    "date",
+    "tenor",
+    "notional_mm",
+    "capped",
+    "count"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_dtcc.json"
+  ],
+  "raw_file_count": 436,
+  "raw_files": "listed in the manifests",
+  "transformation": "DTCC CFTC cumulative rates slices; trades NEWT/TRAD, USD SOFR OIS, not a package, spot-starting (effective within 7 days), standard tenor within 0.15 years, executed (New York time) on the file's day; days up to 2026-06-30. Per day, tenor (2, 5, 10, 30Y), notional (USD mm) and capped flag: count.",
+  "produced_by": "ratesresearch.edge.build"
+}

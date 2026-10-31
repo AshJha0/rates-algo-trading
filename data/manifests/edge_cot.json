@@ -1,0 +1,37 @@
+{
+  "created_utc": "2026-10-31T13:42:07+00:00",
+  "files": [
+    {
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "name": "fut_fin_txt_2023.zip",
+      "sha256": "43c3dbdd4d01fceefad5e457003751cdc0974c7cf46097b322e26e9e2fe44d7a",
+      "size": 506931,
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2023.zip"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "name": "fut_fin_txt_2024.zip",
+      "sha256": "3f00585741a7cf76c207df640951d644dd91ff22a1106b38ca37a2469c765637",
+      "size": 563591,
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2024.zip"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:06+00:00",
+      "name": "fut_fin_txt_2025.zip",
+      "sha256": "2ea0cda6395f7dd6501c27422be3763e1f2f5b41b768cfd36b871f092a07d438",
+      "size": 627068,
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2025.zip"
+    },
+    {
+      "downloaded_utc": "2026-10-31T13:42:07+00:00",
+      "name": "fut_fin_txt_2026.zip",
+      "sha256": "d2ebb15f9f0ea6acd21314fde082b5bc694cfca09466161ad2decec3cfecf5f7",
+      "size": 616753,
+      "url": "https://www.cftc.gov/files/dea/history/fut_fin_txt_2026.zip"
+    }
+  ],
+  "licence": "CFTC Commitments of Traders: work of the US federal government, public domain.",
+  "manifest_version": 1,
+  "missing": [],
+  "source": "cot"
+}

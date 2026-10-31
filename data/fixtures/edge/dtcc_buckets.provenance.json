@@ -1,0 +1,25 @@
+{
+  "fixture": "dtcc_buckets.csv",
+  "created_utc": "2026-10-31T14:01:55+00:00",
+  "sha256": "673d994f4b50215c10a7ecc44baa4dd3be90dadab8ef5a163ec07268d418fba1",
+  "size": 1455736,
+  "rows": 45148,
+  "columns": [
+    "date",
+    "bucket",
+    "n",
+    "rv",
+    "n2",
+    "n5",
+    "n10",
+    "n30"
+  ],
+  "read_end": "2026-06-30",
+  "manifests": [
+    "data/manifests/edge_dtcc.json"
+  ],
+  "raw_file_count": 436,
+  "raw_files": "listed in the manifests",
+  "transformation": "DTCC CFTC cumulative rates slices; trades NEWT/TRAD, USD SOFR OIS, not a package, spot-starting (effective within 7 days), standard tenor within 0.15 years, executed (New York time) on the file's day; days up to 2026-06-30. Per day and 5-minute bucket from 07:00 ET (bucket 0) to 17:00 ET (119): n = trades, rv = mean over 2, 5, 10, 30Y of the summed squared print-to-print rate changes in bp (gap <= 30 min, |change| <= 10 bp), n2/n5/n10/n30 = trades per tenor. Buckets with no trade and no RV are omitted (zero).",
+  "produced_by": "ratesresearch.edge.build"
+}

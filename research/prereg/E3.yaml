@@ -1,0 +1,57 @@
+# Pre-registration EDGE-E3. Written and hashed on 2026-10-31 before the DTCC files of
+# 2025-01-02 to 2026-06-30 and the release calendars were downloaded or read for this study
+# (P5 used nine DTCC files of 2025-10-01 to 2025-10-14 for an intraday trade-count profile; those
+# days are inside this study's holdout and their profile is a different statistic).
+# Format: API_SPEC.md Section 16.8; shared rules: research/prereg/edge_programme.yaml.
+# period is the holdout test period; holdout lists the reserve dates (not read by this programme).
+prereg_version: 1
+id: EDGE-E3
+title: Swap print volatility and intensity around 08:30 releases, FOMC and the SOFR publication
+hypothesis: >
+  Realised variance of USD SOFR OIS print rates per 5-minute bucket is at least 1.25 times its
+  control level from 08:30 to 08:45 ET on scheduled release days (E3a) and from 14:00 to 14:30
+  ET on FOMC statement days (E3b); trade intensity from 08:30 to 08:45 ET on release days is at
+  least 1.25 times control (E3d); the 08:00 ET SOFR publication bucket shows more realised
+  variance than its adjacent buckets (E3c, expected weak).
+metric: >
+  Per event day, window realised variance (or trade count) per 5-minute bucket divided by the
+  mean over control days of the period, minus one; unit one event day.
+baseline: control days of the same period (config day_types), ratio one
+treatments: [release_0830, fomc_1400, sofr_0800, release_0830_intensity]
+period: {start: 2025-07-01, end: 2026-06-30}
+fitting_period: {start: 2025-01-02, end: 2025-06-30}
+holdout: [
+  2026-07-01, 2026-07-02, 2026-07-03, 2026-07-06, 2026-07-07, 2026-07-08, 2026-07-09,
+  2026-07-10, 2026-07-13, 2026-07-14, 2026-07-15, 2026-07-16, 2026-07-17, 2026-07-20,
+  2026-07-21, 2026-07-22, 2026-07-23, 2026-07-24, 2026-07-27, 2026-07-28, 2026-07-29,
+  2026-07-30, 2026-07-31, 2026-08-03, 2026-08-04, 2026-08-05, 2026-08-06, 2026-08-07,
+  2026-08-10, 2026-08-11, 2026-08-12, 2026-08-13, 2026-08-14, 2026-08-17, 2026-08-18,
+  2026-08-19, 2026-08-20, 2026-08-21, 2026-08-24, 2026-08-25, 2026-08-26, 2026-08-27,
+  2026-08-28, 2026-08-31, 2026-09-01, 2026-09-02, 2026-09-03, 2026-09-04, 2026-09-07,
+  2026-09-08, 2026-09-09, 2026-09-10, 2026-09-11, 2026-09-14, 2026-09-15, 2026-09-16,
+  2026-09-17, 2026-09-18, 2026-09-21, 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25,
+  2026-09-28, 2026-09-29, 2026-09-30, 2026-10-01, 2026-10-02, 2026-10-05, 2026-10-06,
+  2026-10-07, 2026-10-08, 2026-10-09, 2026-10-12, 2026-10-13, 2026-10-14, 2026-10-15,
+  2026-10-16, 2026-10-19, 2026-10-20, 2026-10-21, 2026-10-22, 2026-10-23, 2026-10-26,
+  2026-10-27, 2026-10-28, 2026-10-29, 2026-10-30,
+]
+success_threshold: >
+  Each of E3a, E3b, E3c, E3d is judged by the programme test rule at the central band point
+  (all control days): positive mean of x_d, 95 percent moving-block bootstrap interval (blocks
+  of 2 days, 2000 resamples) above zero, Holm-adjusted p below 0.05, and ratio at least 1.25
+  (E3a, E3b, E3d) or above 1 (E3c). The study is supported if E3a or E3b passes; only passed
+  windows are promoted.
+assumption_band:
+  parameter: control set
+  points: [low, central, high]
+  values: {low: control days within 20 business days, central: all control days, high: adds Thursdays to control_0830}
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-10-31
+config: research/prereg/E3.config.yaml
+config_sha256: c38edc5bbb2367fd67556e013adc1d1ed778f2ca5111bbc1a7ee3a7fdd62e1e2
+limitations: >
+  Swap data repository prints are executions, not RFQs or quotes: intensity of prints stands in
+  for RFQ intensity. Print rates mix dealers, sizes and clearing venues, so print-to-print changes
+  contain bid-offer bounce; the 10 bp filter removes off-market prints but not bounce. Block
+  trades are disseminated late but carry their execution time. Eight FOMC days in the holdout
+  give low power for E3b.

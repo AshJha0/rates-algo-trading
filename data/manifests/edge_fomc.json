@@ -1,0 +1,16 @@
+{
+  "created_utc": "2026-10-31T13:42:07+00:00",
+  "files": [
+    {
+      "downloaded_utc": "2026-10-31T13:42:07+00:00",
+      "name": "fomccalendars.htm",
+      "sha256": "26499e380a6dfbd3296d889ec3991b6661fa8ca2e67ff5fac9482c99a1958c0a",
+      "size": 166350,
+      "url": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    }
+  ],
+  "licence": "Board of Governors of the Federal Reserve System website: public domain US government information unless marked otherwise; feds200628 is the Gurkaynak, Sack and Wright (2007) dataset, cite FEDS 2006-28. Read 2026-10-31.",
+  "manifest_version": 1,
+  "missing": [],
+  "source": "fomc"
+}

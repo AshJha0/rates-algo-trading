@@ -1,0 +1,65 @@
+# Edge-study programme EDGE-E1 to EDGE-E6: rules shared by the six pre-registrations.
+# Written and committed on 2026-10-31 before any data tested by these studies was downloaded or
+# read. The only contact with the sources before this commit was an availability probe (HTTP
+# HEAD, status code only, no content) of each URL on 2026-10-31.
+#
+# Each study file (research/prereg/E<n>.yaml) follows the P5-001 format (API_SPEC.md Section
+# 16.8) and passes ratesresearch.prereg.validate. Its config (research/prereg/E<n>.config.yaml)
+# names this file, and the config hash pins it. Field meaning in the edge studies:
+#   fitting_period  the earlier period: in-sample estimate, and any parameter the test needs
+#   period          the holdout test period, declared now, opened once; it decides the verdict
+#   holdout         reserve dates after the holdout test period: never downloaded or read by
+#                   this programme, kept for a later confirmation look
+programme: EDGE
+version: 1
+date: 2026-10-31
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+statistics:
+  bootstrap: moving block over the study's unit of analysis in time order
+  resamples: 2000
+  level: 0.95
+  seed: 20261031
+  p_value: >
+    Two-sided bootstrap p of the mean: p = (1 + #{b : |m_b - m| >= |m - m0|}) / (B + 1), where m
+    is the holdout mean of the unit-level statistic, m_b the bootstrap means, m0 the null value
+    (0 unless the study says otherwise), B the number of resamples.
+  standard_error: standard deviation of the bootstrap means
+  multiple_comparison: >
+    Holm step-down over the eleven primary tests listed under family, alpha 0.05. Secondary
+    numbers (band points, per-tenor splits, the fitting-period estimate) are reported without
+    inference claims.
+family:
+  - E1a pre-auction cheapening of the auctioned tenor on the par curve
+  - E1b post-auction richening of the auctioned tenor on the par curve
+  - E2 month-end flattening of 2s30s in high index-extension months
+  - E3a realised variance 08:30 to 08:45 ET on scheduled release days
+  - E3b realised variance 14:00 to 14:30 ET on FOMC statement days
+  - E3c realised variance 08:00 to 08:05 ET (SOFR publication) against adjacent buckets
+  - E3d trade intensity 08:30 to 08:45 ET on scheduled release days
+  - E4a calibration of the fitted 95th size percentile on the holdout (equivalence test)
+  - E4b clustering of trades after a large trade in the same tenor
+  - E5 next-week 10Y swap spread change forecast from CFTC positioning and the spread change
+  - E6 carry and roll-down inventory tilt against an equal-DV01 inventory, net of funding
+test_rule: >
+  A primary test is passed when, on the holdout test period at the central band point, the
+  estimate has the predicted sign, the 95 percent block-bootstrap interval excludes the null on
+  the predicted side, the Holm-adjusted p is below 0.05, and the estimate meets the study's
+  economic threshold. A test whose estimate is significant (same three conditions) with the
+  opposite sign is recorded as reversed.
+verdict_rule: >
+  supported: every primary test of the study passed (E3 and E4 state their own rule).
+  not supported: the study was run on downloaded data with at least the minimum sample size and
+  the rule for supported is not met.
+  inconclusive: the holdout sample is below the study's minimum, a required source could not be
+  downloaded and only a synthetic fixture in the documented layout was available, or a data
+  defect prevents the metric as registered.
+promotion_rule: >
+  Only a supported effect (for E3 and E4: only a passed test) becomes a preset in
+  data/presets.yaml. Promoted values are the holdout-period estimates with their bootstrap
+  standard errors, so the value the engine reads is an out-of-sample number. The preset names
+  the ledger record, the data range, the method and the holdout verdict. Unsupported and
+  inconclusive results are kept in the ledger and in docs/research/EDGE_STUDIES.md.
+deviations: >
+  Any change after this commit (a source that fails, a column that is not where the documented
+  layout says, a filter that removes a whole category) is recorded in the ledger row under
+  deviations, with the reason, and the verdict states whether it rests on the registered metric.

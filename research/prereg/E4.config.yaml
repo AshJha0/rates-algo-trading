@@ -1,0 +1,44 @@
+# Configuration of EDGE-E4 (trade size and arrival profile by tenor). Hashed into
+# research/prereg/E4.yaml.
+study: EDGE-E4
+programme: research/prereg/edge_programme.yaml
+programme_sha256: a66bde494ac4af654917c497b25c6f6c4ec252f488e189f2b5a5ecbed9750f7c
+sources:
+  dtcc: same files and trade filter as EDGE-E3, 2025-01-02 to 2026-06-30
+  finra: >
+    FINRA TRACE Treasury on-the-run transactions. FINRA's API answered HTTP 401 without an
+    account on 2026-10-31 (probe), so only the synthetic fixture in the documented layout is
+    expected; any FINRA number is labelled synthetic and enters no test
+tenors: [2, 5, 10, 30]
+size_model: >
+  per tenor, lognormal notional in USD mm fitted by maximum likelihood with right-censoring at
+  the dissemination cap (rows with the trailing +, the cap value as the censoring point), on the
+  fitting period
+tests:
+  E4a: >
+    calibration: on the holdout, per day the share of trades (all four tenors pooled) whose
+    notional is at or above the fitted 95th percentile of its tenor (a capped print counts as
+    above when the cap is at or above that percentile). Equivalence test on the mean daily share
+    q: H0 q <= 0.025 or q >= 0.10, two one-sided bootstrap tests, p = max of the two; passed
+    when that p (Holm-adjusted) is below 0.05 and the 95 percent interval lies inside
+    [0.025, 0.10]
+  E4b: >
+    clustering: a large trade is one at or above the fitted 90th percentile of its tenor. For
+    each large trade, n = trades in the same tenor in the next 5 minutes; e = the expected
+    count, the holdout mean count of that tenor in the same 5-minute bucket of the day over all
+    holdout days. Unit statistic per day: mean of (n - e) over the day's large trades; predicted
+    positive; threshold: mean excess >= 0.1 trades
+band: >
+  cap treatment: low drops capped prints, central censors them, high treats the cap as exact
+unit: business day in time order; block length 5 days
+minimum_holdout_days: 100
+verdict: supported if E4a passes (size limits are reliable out of sample); E4b is promoted
+  separately when it passes
+preset_if_supported:
+  name: usd_sofr_ois_size_by_tenor
+  parameters: >
+    per tenor: lognormal mu and sigma (holdout fit), p50, p90, p95, p99 in USD mm, trades per
+    day, and the 5-minute post-large-trade excess when E4b passed
+  engine_use: >
+    quote size limit per tenor = p95 (above it the engine quotes on request or widens);
+    simulator draws sizes from the lognormal with the cap and arrivals with the excess
