@@ -19,7 +19,7 @@ import net.jqwik.api.constraints.Size;
 import org.junit.jupiter.api.Test;
 
 /** The settlement lifecycle and the cost of a fail (API_SPEC.md Section 17.7). */
-class SettlementProperties {
+class SettlementPropertiesTest {
 
   private static final TradeKey KEY = new TradeKey(1, TradeSource.Execution, 9);
   private static final LocalDate TRADE_DATE = LocalDate.of(2026, 10, 30);

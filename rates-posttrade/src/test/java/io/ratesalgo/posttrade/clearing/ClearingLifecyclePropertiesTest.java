@@ -18,7 +18,7 @@ import net.jqwik.api.constraints.Size;
 import org.junit.jupiter.api.Test;
 
 /** The clearing lifecycle under arbitrary event sequences (API_SPEC.md Section 17.6). */
-class ClearingLifecycleProperties {
+class ClearingLifecyclePropertiesTest {
 
   private static final TradeKey KEY = new TradeKey(2, TradeSource.Rfq, 71);
 

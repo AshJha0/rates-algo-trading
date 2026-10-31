@@ -42,6 +42,46 @@ class BondAnalyticsTest {
     assertEquals(1, BondConvention.BUND.frequency());
   }
 
+  /**
+   * DR-R2R-01: a gilt held from before its ex-dividend date to a date inside the ex-dividend
+   * period, but before the coupon is paid, still receives that coupon. Carry and implied repo must
+   * count it, since the accrued at the horizon is already negative.
+   */
+  @Test
+  void giltHeldIntoTheExDividendPeriodCarriesTheCouponPaidAfterTheHorizon() {
+    final FixedRateBond g = new FixedRateBond("UKT 4.125 2027", BondConvention.GILT, 0.04125,
+        Dates.of(2022, 7, 22), Dates.of(2027, 1, 22));
+    final int settle = Dates.of(2025, 1, 10);
+    final int horizon = Dates.of(2025, 1, 15);
+    final int pay = g.couponDate(4);
+    assertTrue(settle < g.exDividendDate(4) && g.exDividendDate(4) <= horizon && horizon < pay);
+    assertEquals(g.exDividendDate(4), g.entitlementDate(4));
+    assertEquals(ust10().couponDate(0), ust10().entitlementDate(0));
+    final double c = g.couponAmount(4);
+    final double aiS = P.accrued(g, settle);
+    final double aiH = P.accrued(g, horizon);
+    assertTrue(aiH < 0);
+    final double clean = 99.5;
+    final BondCarry carry = new BondCarry();
+    // zero repo: carry is the accrual earned plus the coupon, a few hundredths, not minus a coupon
+    assertEquals(aiH + c - aiS, carry.carry(g, clean, settle, horizon, 0.0), 1e-12);
+    assertTrue(Math.abs(carry.carry(g, clean, settle, horizon, 0.0)) < 0.1);
+    final double r = 0.045;
+    final double dirty = clean + aiS;
+    final double fwdDirty = dirty * (1 + r * (horizon - settle) / 360.0)
+        - c * (1 + r * (horizon - pay) / 360.0);
+    assertEquals(fwdDirty - aiH, carry.forwardCleanPrice(g, clean, settle, horizon, r), 1e-12);
+    // a futures price that delivers at exactly the repo forward implies that repo rate
+    final double cf = 0.95;
+    final double futures = (fwdDirty - aiH) / cf;
+    final io.ratesalgo.analytics.futures.BasisAnalytics.Result res =
+        new io.ratesalgo.analytics.futures.BasisAnalytics()
+            .analyse(g, clean, futures, cf, settle, horizon, r);
+    assertEquals(r, res.impliedRepo(), 1e-12);
+    assertEquals(carry.carry(g, clean, settle, horizon, r), res.carry(), 1e-12);
+    assertEquals(0.0, res.netBasis(), 1e-12);
+  }
+
   @Test
   void zSpreadAndAssetSwapSpreadAreConsistent() {
     final FixedRateBond b = ust10();

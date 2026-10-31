@@ -8,8 +8,10 @@ import java.util.List;
  * Basis, implied repo and cheapest-to-deliver for a bond futures contract.
  *
  * <p>For a deliverable bond with spot clean price P, futures price F, conversion factor CF, spot
- * settlement s, delivery date D (d = D - s days), coupons C_i paid at dates t_i in (s, D] and
- * repo rate r (Act/360 simple):
+ * settlement s, delivery date D (d = D - s days), coupons C_i paid at dates t_i whose record date
+ * ({@link FixedRateBond#entitlementDate}) is in (s, D], and repo rate r (Act/360 simple). For a
+ * gilt delivered inside an ex-dividend period t_i is after D and the coupon enters at its value
+ * at D to first order in r, consistent with the negative AI(D) in the invoice:
  *
  * <pre>
  *   gross basis  = P - F CF
@@ -65,7 +67,10 @@ public final class BasisAnalytics {
     double couponTime = 0.0;
     for (int i = 0; i < bond.couponCount(); i++) {
       final int t = bond.couponDate(i);
-      if (t > settlement && t <= delivery && settlement < bond.exDividendDate(i)) {
+      // owned from s to D: paid every coupon whose record date falls in (s, D], including a gilt
+      // coupon paid after D when D is ex-dividend (D - t is then negative: discounted back to D)
+      final int record = bond.entitlementDate(i);
+      if (record > settlement && record <= delivery) {
         coupons += bond.couponAmount(i);
         couponTime += bond.couponAmount(i) * (delivery - t) / 360.0;
       }
