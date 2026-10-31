@@ -1,0 +1,16 @@
+stateDiagram-v2
+  [*] --> Normal
+  Normal --> Normal: order rests or trades at several prices
+  Normal --> Exclusive: trade at price P opens a workup at P
+  Exclusive --> Exclusive: participant trades at P; timer restarts
+  Exclusive --> Exclusive: outsider's marketable order is held
+  Exclusive --> Open: exclusive window ends; held orders trade at P
+  Open --> Open: anyone trades at P; timer restarts
+  Open --> Open: order that would trade at another price is held
+  Open --> Normal: workup timer expires; held orders processed in arrival order
+  note right of Exclusive
+    execution reports carry 9504=X
+  end note
+  note right of Open
+    execution reports carry 9504=W
+  end note

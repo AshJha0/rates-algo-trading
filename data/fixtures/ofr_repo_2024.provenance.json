@@ -1,0 +1,40 @@
+{
+  "fixture": "ofr_repo_2024.csv",
+  "created_utc": "2026-10-31T06:39:40+00:00",
+  "sha256": "1b7e19e4dadefaae730dd5cbd86d0d6125e7c6dc708b52581a5269e682e34fce",
+  "size": 16359,
+  "rows": 500,
+  "columns": [
+    "date",
+    "mnemonic",
+    "value"
+  ],
+  "date_range": [
+    "2024-01-02",
+    "2024-12-31"
+  ],
+  "source": {
+    "key": "ofr_repo",
+    "name": "OFR short-term funding monitor repo series",
+    "licence": "Office of Financial Research: work of the US federal government, public domain; the metadata 'rights' field is empty and the dataset page gives the suggested citation 'Office of Financial Research, OFR Short-term Funding Monitor, refreshed daily, https://www.financialresearch.gov/short-term-funding-monitor/ (accessed 2026-10-31)'. Read 2026-10-31.",
+    "terms_url": "https://www.financialresearch.gov/short-term-funding-monitor/datasets/repo/"
+  },
+  "raw_files": [
+    {
+      "name": "ofr_repo_tri_ar_oo_p.json",
+      "url": "https://data.financialresearch.gov/v1/series/timeseries?mnemonic=REPO-TRI_AR_OO-P",
+      "downloaded_utc": "2026-10-31T01:28:22+00:00",
+      "sha256": "54a032704c7e85162de47bfe78cc52b602686d9257bcf8bd5cccbd2fa4ab7783",
+      "size": 66162
+    },
+    {
+      "name": "ofr_repo_dvp_ar_oo_p.json",
+      "url": "https://data.financialresearch.gov/v1/series/timeseries?mnemonic=REPO-DVP_AR_OO-P",
+      "downloaded_utc": "2026-10-31T01:28:22+00:00",
+      "sha256": "83a277a9e3df71f87830e080bdb67a970b1627714f9535c8985f27231512298f",
+      "size": 46467
+    }
+  ],
+  "transformation": "Flattened the [date, value] arrays of both mnemonics into long form, kept 2024, null became an empty cell, sorted by date then mnemonic.",
+  "produced_by": "ratesresearch.data.fixtures"
+}

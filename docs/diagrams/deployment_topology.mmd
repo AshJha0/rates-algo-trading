@@ -1,0 +1,24 @@
+flowchart LR
+  subgraph host["Simulated environment (deploy/compose.yaml)"]
+    blue["trading-blue<br/>OpsProcessMain :8081<br/>journal volume"]
+    green["trading-green (standby colour)<br/>OpsProcessMain :8082"]
+    venue["venue-sim :8090<br/>(P2 simulator at integration)"]
+    prom["Prometheus :9090<br/>alerts.yml"]
+    graf["Grafana :3000<br/>rates-trading dashboard"]
+    report["report (batch)<br/>EodReportMain"]
+    vol[("journal volume")]
+  end
+  operator["Operator<br/>control token, party id"]
+
+  blue --- vol
+  green --- vol
+  report -->|reads| vol
+  blue <-->|FIX, SBE feed| venue
+  green -.->|after takeover| venue
+  prom -->|scrape /metrics| blue
+  prom -->|scrape /metrics| green
+  prom -->|scrape /metrics| venue
+  graf --> prom
+  operator -->|POST /control/kill| blue
+  operator -->|bluegreen.sh| green
+  blue -.->|journal over Aeron, warm standby design| green

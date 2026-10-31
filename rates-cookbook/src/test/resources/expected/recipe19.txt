@@ -1,0 +1,20 @@
+1. no pre-registration:
+   refused:
+   pre-registration not found: <repo>/data/preregs/demo.yaml
+   exit code 2
+2. holdout overlapping the fitting period:
+   refused:
+   holdout date 2026-01-09 overlaps the fitting period 2026-01-05..2026-01-16
+   exit code 2
+3. valid pre-registration:
+   DEMO-001 evaluation look 1: not supported (2 days)
+   recorded in data/ledger/ledger.jsonl
+   exit code 0
+ledger seq 1, prereg_sha256 matches file: true, journals 2, verdict not supported
+4. holdout opened twice:
+   DEMO-001 holdout look 1: not supported (2 days)
+   recorded in data/ledger/ledger.jsonl
+   exit code 0
+   refused: the holdout of DEMO-001 has already been opened once
+   exit code 2
+ledger lines: 2

@@ -1,0 +1,5 @@
+# Fixture closes for 2026-10-30, in the style of public settlement prices; not real market data
+date,instrument_id,mark
+2026-10-30,1001,99.65
+2026-10-30,1002,99.80
+2026-10-30,2001,4.27

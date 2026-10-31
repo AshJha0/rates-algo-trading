@@ -15,6 +15,11 @@
 #     parameters:   mapping of parameter name to { value: number, standard_error: number }
 #                   standard_error is null for assumptions and for parameters without one
 #     notes:        optional; scaling assumptions (DR-004) and caveats go here
+#     assumptions:  optional (added in P5, DR-P5-01); mapping of parameter name to
+#                   { band: { low: number, central: number, high: number }, rationale: text }
+#                   for declared assumptions reported across a band (DR-008)
+#
+# Dates are written as quoted strings so YAML readers do not turn them into timestamps.
 #
 # Example of the shape (not a real fit; values are placeholders and must not be used):
 #
@@ -27,4 +32,410 @@
 #       rate_per_minute: { value: 0.0, standard_error: 0.0 }
 #     notes: "placeholder, replaced in P1"
 
-presets: []
+presets:
+- name: usd_hedge_cost
+  fitted_from: assumption
+  data_range:
+    start: '2026-10-31'
+    end: '2026-10-31'
+  sample_size: 0
+  method: declared assumption, research/ratesresearch/assumptions.py::hedge_cost
+  parameters:
+    impact_ticks_per_lot:
+      value: 0.0002
+      standard_error: null
+    max_impact_ticks:
+      value: 1.0
+      standard_error: null
+    fee_per_lot:
+      value: 1.5
+      standard_error: null
+    queue_trade_share:
+      value: 0.6
+      standard_error: null
+    order_latency_ms:
+      value: 2.0
+      standard_error: null
+  notes: Futures hedges cross half the book spread plus 0.2 tick per 1000 contracts (capped at 1 ticks)
+    and pay 1.50 USD per contract in fees. In the queue model 60 percent of displayed size decreases are
+    trades.
+- name: usd_rfq_competition
+  fitted_from: assumption
+  data_range:
+    start: '2026-10-31'
+    end: '2026-10-31'
+  sample_size: 0
+  method: declared assumption, research/ratesresearch/assumptions.py::competition
+  parameters:
+    median_half_spread_bp:
+      value: 0.25
+      standard_error: null
+    tenor_slope:
+      value: 0.3
+      standard_error: null
+    size_slope:
+      value: 0.15
+      standard_error: null
+    bond_multiplier:
+      value: 0.5
+      standard_error: null
+    lognormal_sigma:
+      value: 0.35
+      standard_error: null
+    true_intercept:
+      value: 1.2
+      standard_error: null
+    true_log_size_mm:
+      value: -0.15
+      standard_error: null
+    true_tenor_years:
+      value: -0.01
+      standard_error: null
+    true_fixing_window:
+      value: 0.3
+      standard_error: null
+    true_dealer_count:
+      value: -0.25
+      standard_error: null
+  notes: Competing dealers quote lognormal half-spreads around a median that widens with tenor and size;
+    Treasuries quote half as wide in yield bp. The true_* coefficients are the logistic the label simulator
+    uses; the slope is the band below.
+  assumptions:
+    spread_to_cover_bp:
+      band:
+        low: -1.25
+        central: -2.5
+        high: -5.0
+      rationale: 'Win-probability slope per bp of spread-to-cover. No public source shows losing quotes
+        (DR-008), so the slope is declared: central -2.5 per bp (a quote 0.2 bp behind the cover loses
+        about 0.6 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients
+        pick the best price almost always). Results are reported at all three points.'
+- name: usd_rfq_flow
+  fitted_from: data/manifests/dtcc_rates_2025-10.json
+  data_range:
+    start: '2025-10-01'
+    end: '2025-10-14'
+  sample_size: 4342
+  method: quasi-Poisson IRLS on 5-minute counts with Gaussian event bumps; censored lognormal MLE for
+    sizes; research/ratesresearch/flow.py::fit_dtcc
+  parameters:
+    log_base_rate_per_min:
+      value: -0.5785474658
+      standard_error: 0.049602
+    event_count:
+      value: 4.0
+      standard_error: null
+    event_bump_width_minutes:
+      value: 20.0
+      standard_error: null
+    event_half_width_minutes:
+      value: 15.0
+      standard_error: null
+    utc_offset_hours:
+      value: -5.0
+      standard_error: null
+    size_mu_ln_mm:
+      value: 3.053396543
+      standard_error: 0.0259541
+    size_sigma_ln_mm:
+      value: 1.709392306
+      standard_error: 0.0184624
+    size_cap_mm:
+      value: 1000.0
+      standard_error: null
+    dispersion:
+      value: 4.239393804
+      standard_error: null
+    event_0_minute_et:
+      value: 510.0
+      standard_error: null
+    event_0_log_amplitude:
+      value: 0.3924368496
+      standard_error: 0.147148
+    event_1_minute_et:
+      value: 600.0
+      standard_error: null
+    event_1_log_amplitude:
+      value: 0.3902750046
+      standard_error: 0.143441
+    event_2_minute_et:
+      value: 660.0
+      standard_error: null
+    event_2_log_amplitude:
+      value: 0.9050897733
+      standard_error: 0.121279
+    event_3_minute_et:
+      value: 900.0
+      standard_error: null
+    event_3_log_amplitude:
+      value: 0.1821564223
+      standard_error: 0.158568
+    tenor_share_2y:
+      value: 0.1812627291
+      standard_error: null
+    tenor_share_5y:
+      value: 0.2790224033
+      standard_error: null
+    tenor_share_10y:
+      value: 0.3530210455
+      standard_error: null
+    tenor_share_30y:
+      value: 0.1866938221
+      standard_error: null
+  notes: DTCC SDR public dissemination, USD SOFR OIS new trades, non-package, spot-starting, 9 business
+    days; session 07:00-17:00 New York (EDT in the data). Trade arrivals stand in for RFQ arrivals (assumption).
+    event_half_width_minutes, utc_offset_hours (-5, for the February synthetic sessions) and size_cap_mm
+    are declared, not fitted, and carry no standard error.
+- name: usd_rfq_hit_rate
+  fitted_from: 'synthetic labels: ratesresearch.hitrate.simulate_labels(n=40000, seed=20261031) from usd_rfq_competition'
+  data_range:
+    start: '2026-10-31'
+    end: '2026-10-31'
+  sample_size: 40000
+  method: logistic regression, Newton-Raphson MLE, research/ratesresearch/hitrate.py::fit
+  parameters:
+    intercept:
+      value: 1.240823849
+      standard_error: 0.0578175
+    spread_to_cover_bp:
+      value: -2.574597077
+      standard_error: 0.0436463
+    log_size_mm:
+      value: -0.157251093
+      standard_error: 0.0110627
+    tenor_years:
+      value: -0.008049931038
+      standard_error: 0.00120681
+    fixing_window:
+      value: 0.3161668027
+      standard_error: 0.0303997
+    dealer_count:
+      value: -0.2604089275
+      standard_error: 0.0118778
+    oos_log_loss_model:
+      value: 0.614613803
+      standard_error: null
+    oos_log_loss_constant:
+      value: 0.6900216663
+      standard_error: null
+  assumptions:
+    spread_to_cover_bp:
+      band:
+        low: -1.25
+        central: -2.5
+        high: -5.0
+      rationale: 'Win-probability slope per bp of spread-to-cover. No public source shows losing quotes
+        (DR-008), so the slope is declared: central -2.5 per bp (a quote 0.2 bp behind the cover loses
+        about 0.6 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients
+        pick the best price almost always). Results are reported at all three points.'
+  notes: 'Fitted to labels drawn from the declared simulator model, so the fit recovers the assumption;
+    it is not a market hit rate (DR-008). The back-tester replaces spread_to_cover_bp by the band value
+    of each run. Out-of-sample log-loss on the last 12000 labels: model 0.6146, constant 0.6900.'
+- name: usd_synthetic_market
+  fitted_from: assumption
+  data_range:
+    start: '2026-10-31'
+    end: '2026-10-31'
+  sample_size: 0
+  method: declared assumption, research/ratesresearch/assumptions.py::market
+  parameters:
+    session_open_minute_et:
+      value: 420.0
+      standard_error: null
+    session_close_minute_et:
+      value: 1020.0
+      standard_error: null
+    level_vol_bp_per_sqrt_min:
+      value: 0.35
+      standard_error: null
+    idio_vol_bp_per_sqrt_min:
+      value: 0.06
+      standard_error: null
+    event_0_jump_bp:
+      value: 2.5
+      standard_error: null
+    event_1_jump_bp:
+      value: 1.2
+      standard_error: null
+    event_2_jump_bp:
+      value: 0.0
+      standard_error: null
+    event_3_jump_bp:
+      value: 0.0
+      standard_error: null
+    loading_2y:
+      value: 1.1
+      standard_error: null
+    loading_5y:
+      value: 1.05
+      standard_error: null
+    loading_10y:
+      value: 1.0
+      standard_error: null
+    loading_30y:
+      value: 0.85
+      standard_error: null
+    rate_2y_pct:
+      value: 3.6
+      standard_error: null
+    rate_5y_pct:
+      value: 3.65
+      standard_error: null
+    rate_10y_pct:
+      value: 3.95
+      standard_error: null
+    rate_30y_pct:
+      value: 4.3
+      standard_error: null
+    sofr_fixing_pct:
+      value: 4.3
+      standard_error: null
+    future_price_0:
+      value: 112.0
+      standard_error: null
+    basis_mean_reversion_per_min:
+      value: 0.05
+      standard_error: null
+    basis_vol_points_per_sqrt_min:
+      value: 0.004
+      standard_error: null
+    curve_input_interval_s:
+      value: 5.0
+      standard_error: null
+    bond_book_updates_per_s:
+      value: 0.2
+      standard_error: null
+    future_book_updates_per_s:
+      value: 0.5
+      standard_error: null
+    bond_spread_ticks:
+      value: 1.0
+      standard_error: null
+    future_spread_ticks:
+      value: 1.0
+      standard_error: null
+    book_depth_median_mm:
+      value: 50.0
+      standard_error: null
+    rfq_share_of_market:
+      value: 0.6
+      standard_error: null
+    bond_rfq_ratio:
+      value: 0.5
+      standard_error: null
+    mix_sofr_2y:
+      value: 0.12
+      standard_error: null
+    mix_sofr_5y:
+      value: 0.19
+      standard_error: null
+    mix_sofr_10y:
+      value: 0.23
+      standard_error: null
+    mix_sofr_30y:
+      value: 0.12
+      standard_error: null
+    mix_ust_2y:
+      value: 0.14
+      standard_error: null
+    mix_ust_10y:
+      value: 0.2
+      standard_error: null
+    bond_size_mu_ln_mm:
+      value: 2.3
+      standard_error: null
+    clients_per_tier:
+      value: 4.0
+      standard_error: null
+    tier_1_weight:
+      value: 0.5
+      standard_error: null
+    tier_2_weight:
+      value: 0.3
+      standard_error: null
+    tier_3_weight:
+      value: 0.2
+      standard_error: null
+    tier_1_informed_share:
+      value: 0.05
+      standard_error: null
+    tier_2_informed_share:
+      value: 0.2
+      standard_error: null
+    tier_3_informed_share:
+      value: 0.45
+      standard_error: null
+    informed_horizon_s:
+      value: 60.0
+      standard_error: null
+    dealers_min:
+      value: 2.0
+      standard_error: null
+    dealers_max:
+      value: 5.0
+      standard_error: null
+    quote_latency_ms:
+      value: 5.0
+      standard_error: null
+    client_decision_ms:
+      value: 1500.0
+      standard_error: null
+  notes: Synthetic USD session for SyntheticDay. Swap tenor mix follows the DTCC tenor shares of usd_rfq_flow
+    scaled to 0.66 of RFQs; Treasuries take the rest. Tier 1 is real money (mostly uninformed), tier 3
+    fast money (45 percent informed over 60 s). Informed share and horizon are what ratesresearch.markouts
+    tries to recover.
+
+# Smart order router (P4), config version 1. Read by rates-router: RouterPresets holds the same
+# values and RouterPresetsTest fails if they differ. These are declared assumptions, not fits
+# (DECISIONS.md DR-P4-03); the impact and queue parameters are to be refitted from the P2 venue
+# simulators' output once those exist.
+#
+# Schema: every parameter is { value: number, unit: "text", range: [low, high] }; the range is
+# what RouterParams and VenueParams accept, inclusive. Prices and fees are in price points (per
+# 100 of face); quantities in minor units of face (USD cents); times as named in the unit.
+# API_SPEC.md Section 15.1 defines each parameter.
+
+router:
+  config_version: 1
+  fitted_from: assumption
+  method: "declared; sigma from a 6 bp daily yield move on a 10-year note (DV01 about 8.5 per 100), impact y from the square-root law literature range"
+  global:
+    sigma_daily_points: { value: 0.5, unit: "price points per day", range: [0.000001, 10] }
+    trading_seconds_per_day: { value: 23400, unit: "seconds", range: [3600, 86400] }
+    impact_y: { value: 0.6, unit: "dimensionless", range: [0, 5] }
+    impact_alpha: { value: 0.5, unit: "dimensionless", range: [0.000001, 1] }
+    adverse_factor: { value: 0.5, unit: "sigma over the passive horizon", range: [0, 5] }
+    latency_risk_factor: { value: 1.0, unit: "sigma over the venue latency", range: [0, 10] }
+    passive_horizon_max_nanos: { value: 30000000000, unit: "nanoseconds", range: [0, 600000000000] }
+    passive_horizon_min_nanos: { value: 1000000000, unit: "nanoseconds", range: [0, 600000000000] }
+    max_slices: { value: 8, unit: "count", range: [1, 64] }
+    schedule_horizon_nanos: { value: 120000000000, unit: "nanoseconds", range: [0, 3600000000000] }
+    size_jitter: { value: 0.25, unit: "fraction", range: [0, 0.5] }
+    interval_jitter: { value: 0.3, unit: "fraction", range: [0, 0.5] }
+    book_move_threshold_ticks: { value: 2, unit: "ticks", range: [1, 100] }
+    aggressive_collar_ticks: { value: 8, unit: "ticks", range: [0, 100] }
+    retry_delay_nanos: { value: 500000000, unit: "nanoseconds", range: [1, 60000000000] }
+    max_steps: { value: 32, unit: "count", range: [1, 1024] }
+  venue_kinds:
+    clob:
+      tick_mantissa: { value: 15625000, unit: "price mantissa, exponent -9 (1/64)", range: [1, 1000000000000] }
+      lot_size: { value: 100000000, unit: "minor units (1 million USD face)", range: [1, 100000000000000] }
+      min_size: { value: 100000000, unit: "minor units", range: [1, 100000000000000] }
+      taker_fee: { value: 0.0005, unit: "price points per unit", range: [0, 1] }
+      maker_fee: { value: 0.0002, unit: "price points per unit", range: [-1, 1] }
+      latency_nanos: { value: 250000, unit: "nanoseconds", range: [0, 1000000000] }
+      cancel_rate_per_second: { value: 0.05, unit: "per unit queued ahead per second", range: [0, 10] }
+      adv: { value: 3000000000000, unit: "minor units per day (30 billion USD face)", range: [1, 1000000000000000000] }
+      participation_cap: { value: 0.25, unit: "fraction", range: [0.000001, 1] }
+      depth_levels: { value: 5, unit: "levels", range: [1, 20] }
+    futures:
+      tick_mantissa: { value: 15625000, unit: "price mantissa, exponent -9 (1/64)", range: [1, 1000000000000] }
+      lot_size: { value: 10000000, unit: "minor units (one 100,000 USD contract)", range: [1, 100000000000000] }
+      min_size: { value: 10000000, unit: "minor units", range: [1, 100000000000000] }
+      taker_fee: { value: 0.0015, unit: "price points per unit", range: [0, 1] }
+      maker_fee: { value: 0.0015, unit: "price points per unit", range: [-1, 1] }
+      latency_nanos: { value: 500000, unit: "nanoseconds", range: [0, 1000000000] }
+      cancel_rate_per_second: { value: 0.03, unit: "per unit queued ahead per second", range: [0, 10] }
+      adv: { value: 15000000000000, unit: "minor units per day (1.5 million contracts)", range: [1, 1000000000000000000] }
+      participation_cap: { value: 0.2, unit: "fraction", range: [0.000001, 1] }
+      depth_levels: { value: 5, unit: "levels", range: [1, 20] }

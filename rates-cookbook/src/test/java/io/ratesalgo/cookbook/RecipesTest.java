@@ -28,7 +28,23 @@ class RecipesTest {
     return Stream.of(
         Arguments.of("recipe01.txt", (Main) Recipe01TimerWheel::main),
         Arguments.of("recipe02.txt", (Main) Recipe02Journal::main),
-        Arguments.of("recipe03.txt", (Main) Recipe03QuoteRequest::main));
+        Arguments.of("recipe03.txt", (Main) Recipe03QuoteRequest::main),
+        Arguments.of("recipe04.txt", (Main) Recipe04SofrCurve::main),
+        Arguments.of("recipe05.txt", (Main) Recipe05SwapDv01::main),
+        Arguments.of("recipe06.txt", (Main) Recipe06Treasury::main),
+        Arguments.of("recipe07.txt", (Main) Recipe07GiltExDividend::main),
+        Arguments.of("recipe08.txt", (Main) Recipe08Ctd::main),
+        Arguments.of("recipe10.txt", (Main) Recipe10VenueSession::main),
+        Arguments.of("recipe11.txt", (Main) Recipe11BookFeed::main),
+        Arguments.of("recipe12.txt", (Main) Recipe12LoopReplay::main),
+        Arguments.of("recipe13.txt", (Main) Recipe13LatencyHistogram::main),
+        Arguments.of("recipe14.txt", (Main) Recipe14QuoteRfq::main),
+        Arguments.of("recipe15.txt", (Main) Recipe15CostAwareHedge::main),
+        Arguments.of("recipe16.txt", (Main) Recipe16LimitAndKillSwitch::main),
+        Arguments.of("recipe17.txt", (Main) Recipe17RouteHedge::main),
+        Arguments.of("recipe18.txt", (Main) Recipe18Backtest::main),
+        Arguments.of("recipe19.txt", (Main) Recipe19Ledger::main),
+        Arguments.of("recipe21.txt", (Main) Recipe21ChaosBreakReport::main));
   }
 
   @ParameterizedTest(name = "{0}")

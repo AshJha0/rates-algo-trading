@@ -1,0 +1,11 @@
+ladder USD [1Y=0.00, 2Y=76000.00, 3Y=0.00, 5Y=0.00, 7Y=0.00, 10Y=-164000.00, 20Y=0.00, 30Y=-85000.00]
+net -173000, curve 2s10s -162500
+  TU       +708.5 lots
+  TY       -268.4 lots
+  US        -89.7 lots
+  SOFR2    -322.6 lots
+  SOFR10   +172.4 lots
+  SOFR30    +41.3 lots
+unhedged daily sd 1135508
+all in TY: -2162 lots, sd 647435, cost 108079
+cost-aware: sd 7634, cost 57307, converged true

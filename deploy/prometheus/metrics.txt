@@ -1,0 +1,12 @@
+# Metric names exposed by rates-ops (API_SPEC.md Section 17.12). MetricNamesTest checks this file
+# against io.ratesalgo.ops.metrics.MetricNames.ALL; tools/lint_dashboards.py checks dashboards and
+# alert rules against it.
+rates_queue_depth
+rates_stage_latency_seconds
+rates_limit_utilisation_ratio
+rates_recon_breaks
+rates_quotes_live
+rates_kill_switch_engaged
+rates_quoting_enabled
+rates_journal_frames_total
+rates_process_info

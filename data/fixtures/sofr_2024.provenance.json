@@ -1,0 +1,40 @@
+{
+  "fixture": "sofr_2024.csv",
+  "created_utc": "2026-10-31T06:39:40+00:00",
+  "sha256": "b7c98e950d41ae81391ec8fac0f4ab24794407e7cc3a47e53d1e08333adcdc32",
+  "size": 7881,
+  "rows": 291,
+  "columns": [
+    "date",
+    "rate_percent",
+    "index"
+  ],
+  "date_range": [
+    "2023-12-01",
+    "2025-01-31"
+  ],
+  "source": {
+    "key": "nyfed_sofr",
+    "name": "NY Fed SOFR and SOFR Index",
+    "licence": "NY Fed Terms of Use (last updated 6/9/2023): non-exclusive licence to use, copy, distribute and make derivative works of website Content, keeping copyright notices and citing the source as '(c) [year] Federal Reserve Bank of New York'. Read 2026-10-31.",
+    "terms_url": "https://www.newyorkfed.org/privacy/termsofuse"
+  },
+  "raw_files": [
+    {
+      "name": "nyfed_sofr.csv",
+      "url": "https://markets.newyorkfed.org/api/rates/secured/sofr/search.csv?startDate=2023-10-01&endDate=2025-01-31",
+      "downloaded_utc": "2026-10-31T01:24:46+00:00",
+      "sha256": "56f3a6fed718f7c20a5e590f2359f511978291b74c270338e50a69fe41100213",
+      "size": 19327
+    },
+    {
+      "name": "nyfed_sofrai.csv",
+      "url": "https://markets.newyorkfed.org/api/rates/secured/sofrai/search.csv?startDate=2023-10-01&endDate=2025-01-31",
+      "downloaded_utc": "2026-10-31T01:24:46+00:00",
+      "sha256": "23b4fba98bd06643c5ba3b2db99728cfb17686db25220c0753420acf1c9c5bbd",
+      "size": 22324
+    }
+  ],
+  "transformation": "Joined the SOFR search (Rate (%)) and the SOFRAI search (SOFR Index) on Effective Date, converted MM/DD/YYYY to ISO, kept 2023-12-01 to 2025-01-31, sorted ascending; numbers copied as published.",
+  "produced_by": "ratesresearch.data.fixtures"
+}

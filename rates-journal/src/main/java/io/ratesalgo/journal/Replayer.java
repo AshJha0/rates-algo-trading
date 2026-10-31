@@ -9,8 +9,8 @@ import org.agrona.DirectBuffer;
  * the same timestamps it saw live.
  *
  * <p>Replay is the platform's test: the same binary that quoted live reads its own journal, and
- * the outbound events it produces are hashed and compared with the recorded ones (P2 wires that
- * comparison; P0 delivers the frames and the clock).
+ * the outbound events it produces are hashed and compared with the recorded ones ({@code
+ * io.ratesalgo.core.LoopReplay} in {@code rates-core} does that comparison).
  */
 public final class Replayer {
 
@@ -34,6 +34,11 @@ public final class Replayer {
 
   /** Replays every remaining frame of an open reader. */
   public long replay(final JournalReader reader, final FrameHandler handler) {
+    return replay((FrameSource) reader, handler);
+  }
+
+  /** Replays every remaining frame of a single-file or segmented journal. */
+  public long replay(final FrameSource reader, final FrameHandler handler) {
     final FrameHandler clocked =
         (sequence, timestampNanos, templateId, schemaVersion, buffer, offset, length) -> {
           if (timestampNanos > clock.epochNanos()) {

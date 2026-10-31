@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ratesresearch"
-version = "0.0.1"
-description = "Research package for rates-algo-trading: provenance, journal verification, calibration (planned)."
+version = "0.1.0"
+description = "Research package for rates-algo-trading: provenance, journal verification, flow and hit-rate fits, markouts, spread tables, back-test analysis."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
@@ -13,6 +13,7 @@ authors = [{ name = "Ashish Jha" }]
 dependencies = [
     "numpy>=1.26",
     "pandas>=2.1",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +23,18 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "pandas-stubs>=2.1",
+    "types-PyYAML>=6.0",
+    "scipy>=1.11",
+]
+notebooks = [
+    "nbformat>=5.9",
+    "nbclient>=0.10",
+    "ipykernel>=6.29",
+]
+# QuantLib golden generator (research/ratesresearch/goldens); the version is pinned so the
+# committed golden file regenerates exactly (DECISIONS.md DR-P1-06).
+golden = [
+    "QuantLib==1.44",
 ]
 
 [tool.setuptools.packages.find]

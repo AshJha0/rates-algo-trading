@@ -1,0 +1,29 @@
+flowchart TD
+  rfq["QuoteRequest and Quote<br/>(RFQ venue)"]
+  order["NewOrder and ExecutionReport<br/>(CLOB venue)"]
+  journal["Journal<br/>every message, hash chained"]
+  keeper["PositionKeeper<br/>dedupe, late fills, busts, amends"]
+  records["Order records<br/>RTS 6 Annex II, filed by date"]
+  clearing["Clearing lifecycle (swaps)<br/>NEW, SUBMITTED, ACCEPTED, CLEARED or REJECTED"]
+  settlement["Settlement (bonds)<br/>PENDING, SETTLED, FAILED or CANCELLED"]
+  bust["PostTradeBust<br/>reason ClearingRejected"]
+  marks["Official closes and carry"]
+  pnl["Official P&L<br/>realised, unrealised, carry"]
+  attribution["Back-tester attribution (P5)"]
+  recon["Daily reconciliation<br/>drop copies, clearing, books and records"]
+  report["Break report<br/>explained or to operations"]
+
+  rfq --> journal
+  order --> journal
+  journal --> keeper
+  keeper --> records
+  keeper --> clearing
+  keeper --> settlement
+  clearing -->|rejected| bust --> journal
+  keeper --> pnl
+  marks --> pnl
+  pnl -->|zero tolerance| attribution
+  keeper --> recon
+  records --> recon
+  clearing --> recon
+  recon --> report

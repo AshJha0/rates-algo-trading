@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.ratesalgo</groupId>
+    <artifactId>rates-algo-trading</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>rates-core</artifactId>
+  <name>rates-core</name>
+  <description>The single-writer event loop: ring-buffer inbound and outbound, journaling of every message, deterministic replay with outbound hash comparison, loop runner with core pinning, fault injection for tests.</description>
+
+  <properties>
+    <!-- Versions used only by this module, so the parent pom keeps one line per module. -->
+    <affinity.version>2026.2</affinity.version>
+    <archunit.version>1.5.1</archunit.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-messages</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-journal</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.agrona</groupId>
+      <artifactId>agrona</artifactId>
+    </dependency>
+    <dependency>
+      <!-- Core pinning on Linux only (CoreAffinity). Optional: a deployment that does not pin
+           leaves it off the class path and the runner skips pinning. -->
+      <groupId>net.openhft</groupId>
+      <artifactId>affinity</artifactId>
+      <version>${affinity.version}</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <version>${archunit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <!-- String concatenation compiles to StringBuilder calls instead of invokedynamic, so the
+             ArchUnit rule in HotPathRulesTest can see it in onMessage paths (DR-P2C-06). -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <compilerArgs combine.children="append">
+            <arg>-XDstringConcat=inline</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

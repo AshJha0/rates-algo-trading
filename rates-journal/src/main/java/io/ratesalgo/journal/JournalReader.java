@@ -30,7 +30,7 @@ import org.agrona.concurrent.UnsafeBuffer;
  * the end. It never allocates after construction. Every departure from the format throws {@link
  * JournalCorruptionException} naming the sequence it expected.
  */
-public final class JournalReader implements AutoCloseable {
+public final class JournalReader implements FrameSource {
 
   private final DirectBuffer buffer;
   private final MappedByteBuffer mapped;
@@ -42,24 +42,42 @@ public final class JournalReader implements AutoCloseable {
 
   /** Reads from a buffer that already holds a journal (a mapped file or an in-memory copy). */
   public JournalReader(final DirectBuffer buffer) {
-    this(buffer, null);
+    this(buffer, null, 1L, GENESIS_HASH);
   }
 
-  private JournalReader(final DirectBuffer buffer, final MappedByteBuffer mapped) {
+  /**
+   * Reads a buffer whose first frame continues an earlier chain: a later segment of a {@link
+   * SegmentedJournal} starts at the sequence and hash where the previous segment ended.
+   */
+  JournalReader(
+      final DirectBuffer buffer,
+      final MappedByteBuffer mapped,
+      final long firstSequence,
+      final long previousHash) {
     this.buffer = buffer;
     this.mapped = mapped;
     this.capacity = buffer.capacity();
     verifyFileHeader();
     this.position = FILE_HEADER_LENGTH;
-    this.expectedSequence = 1L;
-    this.chainHash = GENESIS_HASH;
+    this.expectedSequence = firstSequence;
+    this.chainHash = previousHash;
   }
 
   /** Maps an existing journal file read-only and positions the cursor at the first frame. */
   public static JournalReader open(final Path path) {
+    return open(path, 1L, GENESIS_HASH);
+  }
+
+  /** Maps a journal segment whose chain continues from {@code previousHash}. */
+  static JournalReader open(final Path path, final long firstSequence, final long previousHash) {
     final MappedByteBuffer mapped = IoUtil.mapExistingFile(path.toFile(), "journal");
     mapped.order(JournalFormat.BYTE_ORDER);
-    return new JournalReader(new UnsafeBuffer(mapped), mapped);
+    try {
+      return new JournalReader(new UnsafeBuffer(mapped), mapped, firstSequence, previousHash);
+    } catch (final JournalCorruptionException e) {
+      IoUtil.unmap(mapped);
+      throw e;
+    }
   }
 
   private void verifyFileHeader() {
@@ -91,6 +109,7 @@ public final class JournalReader implements AutoCloseable {
    * @return true if a frame was delivered, false at the end of the journal
    * @throws JournalCorruptionException on any format or chain error
    */
+  @Override
   public boolean next(final FrameHandler handler) {
     if (position + Integer.BYTES > capacity) {
       return false;
@@ -137,11 +156,13 @@ public final class JournalReader implements AutoCloseable {
   }
 
   /** The sequence the next frame must carry. */
+  @Override
   public long expectedSequence() {
     return expectedSequence;
   }
 
   /** The chain hash after the last frame read. */
+  @Override
   public long chainHash() {
     return chainHash;
   }

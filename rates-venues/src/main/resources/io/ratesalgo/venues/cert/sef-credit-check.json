@@ -1,0 +1,16 @@
+{
+  "venue": "sef",
+  "flow": "credit",
+  "description": "Pre-execution credit check against the FCM limit hub: an order above the limit is rejected; an RFQ acceptance that would breach our FCM limit is rejected for lack of clearing certainty.",
+  "steps": [
+    {"send": {"35": "D", "11": "1", "55": "USD-SOFR-10Y", "48": "USD-SOFR-10Y", "22": "8", "54": "1", "60": "@now+0", "38": "600000000", "40": "2", "44": "3.7"}},
+    {"expect": {"35": "8", "11": "1", "150": "8", "9510": "6"}},
+    {"venue": {"action": "sefRfq", "instrument": "USD-SOFR-10Y", "side": "1", "qty": "300000000", "dealers": 1, "client": 2001}},
+    {"expect": {"35": "R", "9507": "Y"}},
+    {"send": {"35": "S", "131": "$131", "117": "1", "55": "USD-SOFR-10Y", "48": "USD-SOFR-10Y", "22": "8", "133": "3.701", "135": "300000000"}},
+    {"expect": {"35": "AI", "117": "1", "297": "0"}},
+    {"venue": {"action": "decide"}},
+    {"expect": {"35": "AI", "117": "1", "297": "5", "9510": "7"}},
+    {"expectNone": true}
+  ]
+}

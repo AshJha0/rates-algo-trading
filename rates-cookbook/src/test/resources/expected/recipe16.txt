@@ -1,0 +1,11 @@
+buy 100m: 0
+  RiskLimitBreach BucketDv01 scope=5 limit=100000.0 observed=-123000.0 seq=42
+buy 150m: 2
+  RiskLimitBreach PriceCollar scope=103 limit=5.0 observed=6.0 seq=43
+buy 1m 6bp through fair: 9
+listener: pull quotes, cancel orders (Manual)
+  KillSwitch Manual requestedBy=7
+state KILLED, buy 1m: -1
+same person approves: false, state RESET_PENDING
+second person approves: true, state ACTIVE
+buy 1m: 0

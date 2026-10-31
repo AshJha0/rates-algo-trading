@@ -1,0 +1,4 @@
+ex-dividend date 2025-01-13
+settle 2025-01-10  accrued +1.927989  clean at 4.36% 99.546230
+settle 2025-01-13  accrued -0.100883  clean at 4.36% 99.550463
+settle 2025-01-22  accrued +0.000000  clean at 4.36% 99.554539

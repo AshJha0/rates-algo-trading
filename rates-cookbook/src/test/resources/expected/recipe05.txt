@@ -1,0 +1,14 @@
+par rate 3.990000%
+pv -82325.52 USD
+annuity 8.232552
+  ON            0.02
+  M1            0.05
+  M2            0.08
+  M3            0.08
+  SR3U5         0.38
+  2Y            2.89
+  5Y           14.72
+  10Y       82349.03
+  30Y           0.00
+parallel DV01 82367.26 USD per bp
+bumped parallel DV01 82367.28 USD per bp

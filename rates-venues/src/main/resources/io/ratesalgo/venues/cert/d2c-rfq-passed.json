@@ -1,0 +1,14 @@
+{
+  "venue": "d2c",
+  "flow": "rfq",
+  "description": "Client passes on every quote.",
+  "steps": [
+    {"venue": {"action": "rfq", "instrument": "US91282CZF12", "side": "1", "qty": "5000000", "dealers": 3, "competitors": ["98.78", "98.79"], "decision": "PASS"}},
+    {"expect": {"35": "R", "54": "1"}},
+    {"send": {"35": "S", "131": "$131", "117": "3", "55": "US91282CZF12", "48": "US91282CZF12", "22": "4", "133": "98.7734375", "135": "5000000"}},
+    {"expect": {"35": "AI", "117": "3", "297": "0"}},
+    {"venue": {"action": "decide"}},
+    {"expect": {"35": "AJ", "117": "3", "694": "6"}},
+    {"expectNone": true}
+  ]
+}

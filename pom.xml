@@ -25,6 +25,20 @@
     <module>rates-common</module>
     <module>rates-messages</module>
     <module>rates-journal</module>
+    <module>rates-analytics</module>
+    <module>rates-router</module>
+    <module>rates-backtest</module>
+    <module>rates-posttrade</module>
+    <module>rates-ops</module>
+    <module>rates-core</module>
+    <module>rates-bench</module>
+    <module>rates-refdata</module>
+    <module>rates-fix</module>
+    <module>rates-venues</module>
+    <module>rates-api</module>
+    <module>rates-risk</module>
+    <module>rates-hedge</module>
+    <module>rates-quoting</module>
     <module>rates-cookbook</module>
   </modules>
 

@@ -1,0 +1,14 @@
+{
+  "venue": "sef",
+  "flow": "orders",
+  "description": "Order book execution of a swap after the credit check: our bid rests and is filled by a dealer's offer.",
+  "steps": [
+    {"send": {"35": "D", "11": "1", "55": "USD-SOFR-10Y", "48": "USD-SOFR-10Y", "22": "8", "54": "1", "60": "@now+0", "38": "10000000", "40": "2", "44": "3.7"}},
+    {"expect": {"35": "8", "11": "1", "150": "0"}},
+    {"venue": {"action": "internal", "owner": "DLR-A", "instrument": "USD-SOFR-10Y", "side": "2", "price": "3.7", "qty": "10000000"}},
+    {"expect": {"35": "8", "11": "1", "150": "F", "39": "2", "31": "3.7"}},
+    {"send": {"35": "AF", "584": "1", "585": "7"}},
+    {"expect": {"35": "8", "911": "0"}},
+    {"expectNone": true}
+  ]
+}

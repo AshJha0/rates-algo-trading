@@ -17,4 +17,107 @@
     <Class name="io.ratesalgo.common.time.TimerWheel" />
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
   </Match>
+  <!-- rates-analytics (P1, DR-P1-03): the bootstrap writes pillar values into the curve object
+       that pricers read; CurveBuilder.curve() and CurveContext hand out that one mutable,
+       single-writer curve on purpose. Copying would break incremental rebuilds. -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.analytics.curve.CurveBuilder" />
+      <Class name="io.ratesalgo.analytics.curve.CurveContext" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
+  <!-- rates-router (P4): the router, its child order book and its codecs share collaborators
+       with their caller by design (the journal sink, the book view, the decoded table handed to a
+       frame handler, the child book exposed for inspection); everything runs on one thread and
+       copying would allocate on the per-order path. -->
+  <Match>
+    <Package name="~io\.ratesalgo\.router(\..*)?" />
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
+  <!-- BacktestConfig is a record of immutable model objects (final classes with final
+       primitive fields) and an unmodifiable list; returning them is sharing, not exposure. -->
+  <Match>
+    <Class name="io.ratesalgo.backtest.BacktestConfig" />
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
+  <!-- P6 post-trade: the restart procedure, the break explainer and the daily reconciliation
+       inputs work on the caller's PositionKeeper on purpose; copying it would defeat them. -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.posttrade.recovery.RestartProcedure" />
+      <Class name="io.ratesalgo.posttrade.recon.KeeperFacts" />
+      <Class name="io.ratesalgo.posttrade.recon.DailyReconciliation$Inputs" />
+      <!-- P6 ops: the quoter and the started-process handle share the process's one journal
+           writer; the schema wraps a map parsed from file and never mutated. -->
+      <Class name="io.ratesalgo.ops.process.SimulatedQuoter" />
+      <Class name="io.ratesalgo.ops.process.OpsProcessMain$Started" />
+      <Class name="io.ratesalgo.ops.config.JsonSchema" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
+  <!-- rates-core: the loop builder, the inbound publisher and the runner hold the rings,
+       journal sinks and failure their caller created and shares with them; holding the
+       caller's object is the design (API_SPEC.md Section 9). -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.core.EventLoop$Builder" />
+      <Class name="io.ratesalgo.core.InboundPublisher" />
+      <Class name="io.ratesalgo.core.LoopRunner" />
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2" />
+  </Match>
+  <!-- JMH writes its harness classes into rates-bench's target/classes; not ours to lint. -->
+  <Match>
+    <Package name="~.*\.jmh_generated" />
+  </Match>
+  <!-- rates-bench is a measurement tool, not product code: the harness hands its histograms and
+       the generator's schedule array to the caller on purpose, MachineInfo reads Linux /proc and
+       /sys paths by design, and JMH state classes are initialised in @Setup, not constructors. -->
+  <Match>
+    <Package name="io.ratesalgo.bench" />
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2,DMI_HARDCODED_ABSOLUTE_FILENAME" />
+  </Match>
+  <Match>
+    <Package name="io.ratesalgo.bench.jmh" />
+    <Bug pattern="UWF_FIELD_NOT_INITIALIZED_IN_CONSTRUCTOR" />
+  </Match>
+  <!-- P2 venues (DR-P2V-07): components in these packages are wired together by reference at
+       start-up and owned by one thread; returning or storing a collaborator (a master, a session,
+       a clock, a sink) is the wiring, not a leaked internal. Arrays and buffers that are internal
+       state are still copied or kept private, and every other pattern stays enabled. -->
+  <Match>
+    <Or>
+      <Package name="io.ratesalgo.refdata" />
+      <Package name="~io\.ratesalgo\.fix(\..*)?" />
+      <Package name="~io\.ratesalgo\.venues(\..*)?" />
+    </Or>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2" />
+  </Match>
+  <!-- P3 (DR-P3-09): the hedger, quoting engine and their helpers are wired once at start-up
+       to collaborators they share by design on the single writer thread (the risk engine, the
+       kill switch, sinks). Holding those references is the architecture, not a leak, as for the
+       Replayer above. Arrays and value objects are still copied where they cross the boundary. -->
+  <Match>
+    <Or>
+      <Package name="io.ratesalgo.hedge" />
+      <Package name="io.ratesalgo.quoting" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>

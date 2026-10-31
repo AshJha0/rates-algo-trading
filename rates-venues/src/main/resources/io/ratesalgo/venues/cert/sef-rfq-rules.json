@@ -1,0 +1,21 @@
+{
+  "venue": "sef",
+  "flow": "rfq",
+  "description": "A Required Transaction sent to two dealers is refused before any dealer sees it; a Permitted Transaction may go to one dealer; a block in a MAT tenor may go to one dealer.",
+  "steps": [
+    {"venue": {"action": "sefRfq", "instrument": "USD-SOFR-10Y", "side": "1", "qty": "50000000", "dealers": 2}},
+    {"expectNone": true},
+    {"venue": {"action": "sefRfq", "instrument": "USD-SOFR-12Y", "side": "2", "qty": "50000000", "dealers": 1}},
+    {"expect": {"35": "R", "55": "USD-SOFR-12Y", "9506": "P", "9507": "N", "9501": "1"}},
+    {"send": {"35": "S", "131": "$131", "117": "1", "55": "USD-SOFR-12Y", "48": "USD-SOFR-12Y", "22": "8", "132": "3.79", "134": "50000000"}},
+    {"expect": {"35": "AI", "117": "1", "297": "0"}},
+    {"venue": {"action": "decide"}},
+    {"expect": {"35": "AJ", "117": "1", "694": "1", "44": "3.79", "9502": null}},
+    {"expect": {"35": "8", "150": "F"}},
+    {"venue": {"action": "sefRfq", "instrument": "USD-SOFR-10Y", "side": "1", "qty": "200000000", "dealers": 1, "client": 2005}},
+    {"expect": {"35": "R", "9506": "Q", "9507": "Y", "9501": "1"}},
+    {"advance": 5000},
+    {"expect": {"35": "AJ", "694": "3"}},
+    {"expectNone": true}
+  ]
+}

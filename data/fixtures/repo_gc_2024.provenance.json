@@ -1,0 +1,33 @@
+{
+  "fixture": "repo_gc_2024.csv",
+  "created_utc": "2026-10-31T06:39:40+00:00",
+  "sha256": "14f9c9b0d569f7cd81589e1cb3734d22260158d5db7cf9c996fd48fd3195df31",
+  "size": 12245,
+  "rows": 582,
+  "columns": [
+    "date",
+    "type",
+    "rate_percent"
+  ],
+  "date_range": [
+    "2023-12-01",
+    "2025-01-31"
+  ],
+  "source": {
+    "key": "nyfed_gc",
+    "name": "NY Fed TGCR and BGCR",
+    "licence": "NY Fed Terms of Use (last updated 6/9/2023): non-exclusive licence to use, copy, distribute and make derivative works of website Content, keeping copyright notices and citing the source as '(c) [year] Federal Reserve Bank of New York'. Read 2026-10-31.",
+    "terms_url": "https://www.newyorkfed.org/privacy/termsofuse"
+  },
+  "raw_files": [
+    {
+      "name": "nyfed_secured_all.csv",
+      "url": "https://markets.newyorkfed.org/api/rates/secured/all/search.csv?startDate=2023-12-01&endDate=2025-01-31",
+      "downloaded_utc": "2026-10-31T01:24:46+00:00",
+      "sha256": "a14004812dddcb2a880c08be20dd5a395c401ed730edad9212be1e60c6f244ae",
+      "size": 68731
+    }
+  ],
+  "transformation": "Kept Rate Type in (TGCR, BGCR) with Effective Date and Rate (%), converted dates to ISO, kept 2023-12-01 to 2025-01-31, sorted by date then type.",
+  "produced_by": "ratesresearch.data.fixtures"
+}

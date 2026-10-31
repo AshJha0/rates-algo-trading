@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.ratesalgo</groupId>
+    <artifactId>rates-algo-trading</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>rates-fix</artifactId>
+  <name>rates-fix</name>
+  <description>Engine-side FIX 4.4: allocation-free flyweight codec over Agrona buffers, session layer, TCP initiator, translation to and from the SBE messages, order state with duplicate and bust handling. No QuickFIX/J on this side (DR-P2V-01).</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-messages</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.agrona</groupId>
+      <artifactId>agrona</artifactId>
+    </dependency>
+  </dependencies>
+</project>

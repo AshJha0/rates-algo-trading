@@ -1,0 +1,33 @@
+# Trading process, blue colour. Schema: schema/process-config.schema.json (API_SPEC.md Section 17.11).
+# A change to this file is a change to a production control: it goes through a pull request
+# with an approving review (docs/AI_USE_POLICY.md, RTS 6 Article 11).
+schemaVersion: 1
+process:
+  name: trading-blue
+  role: trading
+  colour: blue
+http:
+  bindAddress: 0.0.0.0
+  port: 8081
+  controlTokenEnv: RATES_CONTROL_TOKEN
+journal:
+  directory: /var/lib/rates/journal
+  capacityBytes: 67108864
+quoting:
+  enabledAtStart: true
+  instruments:
+    - instrumentId: 2001
+      venueId: 2
+      maxQuoteSizeMinor: 10000000000
+    - instrumentId: 1001
+      venueId: 1
+      maxQuoteSizeMinor: 5000000000
+limits:
+  maxOrderNotionalMinor: 25000000000
+  maxNetDv01Minor: 5000000
+  maxMessagesPerSecond: 200
+recon:
+  cutTimeUtc: "17:00"
+  timingToleranceMillis: 1000
+retention:
+  years: 5

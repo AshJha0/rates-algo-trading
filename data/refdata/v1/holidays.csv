@@ -1,0 +1,31 @@
+# Holiday fixture for 2026 (and 1 January 2027) for the calendars the venues use. Replaced by rates-analytics calendars once merged.
+calendar,date,name
+US-GS,2026-01-01,New Year
+US-GS,2026-01-19,Martin Luther King Jr Day
+US-GS,2026-02-16,Presidents Day
+US-GS,2026-04-03,Good Friday
+US-GS,2026-05-25,Memorial Day
+US-GS,2026-06-19,Juneteenth
+US-GS,2026-07-03,Independence Day observed
+US-GS,2026-09-07,Labor Day
+US-GS,2026-10-12,Columbus Day
+US-GS,2026-11-11,Veterans Day
+US-GS,2026-11-26,Thanksgiving
+US-GS,2026-12-25,Christmas
+US-GS,2027-01-01,New Year
+UK,2026-01-01,New Year
+UK,2026-04-03,Good Friday
+UK,2026-04-06,Easter Monday
+UK,2026-05-04,Early May bank holiday
+UK,2026-05-25,Spring bank holiday
+UK,2026-08-31,Summer bank holiday
+UK,2026-12-25,Christmas
+UK,2026-12-28,Boxing Day observed
+UK,2027-01-01,New Year
+TARGET,2026-01-01,New Year
+TARGET,2026-04-03,Good Friday
+TARGET,2026-04-06,Easter Monday
+TARGET,2026-05-01,Labour Day
+TARGET,2026-12-25,Christmas
+TARGET,2026-12-26,St Stephen
+TARGET,2027-01-01,New Year
