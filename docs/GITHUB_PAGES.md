@@ -24,4 +24,6 @@ mkdocs serve
 
 `docs/site/hooks.py` maps each site page (for example `learn.md`) to a root file (`LEARN.md`) and registers it as a generated file in MkDocs's `on_files` hook. The root files stay where GitHub shows them, and the site reads them in place, so there is one copy of each document. Diagrams are embedded from `docs/diagrams/*.mmd` with the `pymdownx.snippets` extension inside Mermaid fences (`docs/site/pages/diagrams.md`).
 
+The compliance control inventory (`docs/compliance/RTS6_INVENTORY.md`) and the runbook index (`docs/runbooks/README.md`) are published the same way, as the pages Compliance inventory and Runbooks; the individual runbooks and templates they link to open on GitHub.
+
 Relative links inside the root documents (for example `docs/ARCHITECTURE.md` from the README) are rewritten by the hook to their site equivalents where a mapping exists; links to files that are not on the site point at the GitHub tree.

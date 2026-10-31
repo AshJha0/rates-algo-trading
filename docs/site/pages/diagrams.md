@@ -33,3 +33,19 @@ The 32-byte file header, the 32-byte frame header and the chain hash definition,
 ```mermaid
 --8<-- "docs/diagrams/journal_frame.mmd"
 ```
+
+## Trade lifecycle
+
+From an RFQ or an order, through the journal and the position keeper, into the order records, the clearing or settlement state machines, official P&L and the daily reconciliation (API_SPEC.md Section 17).
+
+```mermaid
+--8<-- "docs/diagrams/trade_lifecycle.mmd"
+```
+
+## Deployment topology
+
+The simulated environment: blue and green trading processes on a shared journal volume, the venue simulator, Prometheus, Grafana and the end-of-day report job. The dashed link from blue to green is the warm-standby replication designed in `docs/runbooks/warm-standby-design.md`.
+
+```mermaid
+--8<-- "docs/diagrams/deployment_topology.mmd"
+```

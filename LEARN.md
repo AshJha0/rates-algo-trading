@@ -151,7 +151,70 @@ Two boundaries are measured. Core decode-to-encode is the time from the first by
 
 ## 12. Regulation: UK RTS 6 (FCA MAR 7A), PRA SS5/18, MiFIR transparency, Dodd-Frank SEF rules
 
-Planned for P6 (documentation and compliance). It will cover the organisational requirements for algorithmic trading under UK RTS 6 as applied by FCA MAR 7A (testing, kill functionality, change management, annual self-assessment), PRA SS5/18 expectations on governance and risk controls, MiFIR pre- and post-trade transparency for bonds and derivatives, and the Dodd-Frank SEF execution and reporting rules, each mapped to a control in this repository.
+### Plain idea
+
+A firm that lets software decide when to send orders and quotes must be able to show that the software is controlled: tested before it runs, limited while it runs, stoppable at once, watched, and recorded well enough that anyone can reconstruct what it did. Separately, the trades a dealer does in bonds and swaps must be made public, with delays for trades large enough that immediate publication would hurt the dealer's ability to hedge. In the US, swaps that are standardised enough must trade on a regulated platform and clear, and a clearing member must check credit before the trade, not after. This section says what each rule asks for and what it means for this platform. The control-by-control mapping, with a link per row, is [docs/compliance/RTS6_INVENTORY.md](docs/compliance/RTS6_INVENTORY.md).
+
+### UK RTS 6 and FCA MAR 7A
+
+Formal statement. MiFID II Article 17 requires an investment firm engaged in algorithmic trading to have effective systems and risk controls. Commission Delegated Regulation (EU) 2017/589, known as RTS 6 and retained in UK law, sets them out in 29 articles and two annexes; the FCA applies them through MAR 7A of its Handbook. legislation.gov.uk now marks UK RTS 6 as revoked by the Financial Services and Markets Act 2023 from a date set by commencement regulations, as the FCA restates retained EU law in its own rules; until then it applies, and the controls are expected to carry over.
+
+The articles fall into groups:
+
+- **Governance and people (Articles 1 to 4).** Clear responsibility for each algorithm, a compliance function that understands them and can use the kill switch, enough competent staff, and responsibility kept for anything outsourced.
+- **Testing and deployment (Articles 5 to 8).** A documented testing method, conformance testing with each venue, a testing environment separate from production, and limits on what a newly deployed algorithm may do.
+- **After deployment (Articles 9 to 11).** An annual self-assessment against the Annex I criteria with a validation report approved by senior management; stress tests at twice the highest message and trade volume of the previous six months; control of material changes.
+- **Means of resilience (Articles 12 to 18).** A kill function that cancels every unexecuted order and quote at once, for all or part of the business; automated surveillance for market manipulation; business continuity; pre-trade controls (price collars, maximum order value and volume, maximum message rate); real-time monitoring with alerts; post-trade controls including reconciliation of trading records with venues, brokers and clearing; security and access limits.
+- **DEA and clearing members (Articles 19 to 27).** Obligations on firms giving clients direct electronic access, or acting as general clearing members.
+- **Records (Article 28 and Annex II).** The content and format of order records: Table 2 for initial decisions and incoming client orders, Table 3 for outgoing and executed orders, with fields such as the buy-sell indicator, trading capacity, the person or algorithm responsible, prices, quantities, timestamps, the venue's order and transaction ids, the event type and the validity period.
+
+What it means here. The kill switch is a message (`KillSwitch`), an endpoint (`POST /control/kill`) that journals who pressed it, and a CI rehearsal that checks every quote is pulled. Stress testing is a harness that replays a journal with its busiest second at twice its rate and records acceptance and latency, corrected for coordinated omission. Post-trade control is the position keeper plus a daily reconciliation against venue drop copies, the clearing house and our own records, in which every break is either explained by a journaled event or goes to operations. Order records are kept in the Annex II layout, one directory per trading date, for five years, and can be found by venue order id. Testing is CI on every change; change control is the pull request; the separate testing environment is the simulated one. DEA and clearing-member articles do not apply to a principal that offers neither.
+
+MAR 7A adds a notification to the FCA before algorithmic trading starts, record keeping the FCA can call on, and market-making obligations where a strategy meets the definition. The platform is not a regulated firm and notifies no one; the inventory says so row by row.
+
+### PRA SS5/18
+
+PRA Supervisory Statement SS5/18 (June 2018) sets the PRA's expectations of banks and designated investment firms that trade algorithmically. It overlaps RTS 6 and goes further on governance: a complete algorithm inventory with a risk tier per algorithm, a named owner and approver, testing proportionate to risk, approval before deployment, risk controls owned by the risk function, and a framework for change. Here the inventory template is [docs/compliance/ALGORITHM_INVENTORY_TEMPLATE.md](docs/compliance/ALGORITHM_INVENTORY_TEMPLATE.md), and its id is written into every order record's execution-within-firm field, so each order traces to an inventory row.
+
+### MiFIR transparency and deferrals
+
+Formal statement. MiFIR (as onshored) requires trading venues and investment firms to publish trades in bonds and derivatives: pre-trade quotes in some cases, and post-trade price, volume and time as close to real time as possible (Articles 10 and 21), through an approved publication arrangement for OTC trades. Article 11 allows publication to be deferred for trades that are large in scale or in instruments without a liquid market, so that a dealer who has taken on a large position can hedge before the market learns of it. The UK regime for bonds and derivatives was rewritten by the FCA (policy statement PS24/14, November 2024), with deferral periods set by instrument class and trade size; the details belong in the FCA's current text, not in this document.
+
+What it means here. EUR and GBP trades in this platform would be published by the venue when executed on a venue, and by us through an APA when executed OTC. The order record already carries the fields publication needs (identifier, price, notation, quantity, time to the nanosecond). Deferral needs the size thresholds per instrument class from the securities master, read from configuration rather than coded. Neither the APA message nor the deferral rule is built; both are listed in the inventory for integration.
+
+Worked example. A dealer buys a 30-year gilt from a client in a size far above the large-in-scale threshold. Published at once, the trade would tell every other dealer that someone is now long and needs to sell; prices would move against the hedge. Under a deferral the publication waits (for the largest sizes in illiquid classes, weeks rather than minutes), and the dealer hedges in the meantime. The record of the trade is kept from the first minute; only the public print waits.
+
+### Dodd-Frank: SEFs, CFTC Rule 1.73, Part 43
+
+Formal statement. Title VII of the Dodd-Frank Act moved standardised US swaps onto regulated platforms and into clearing.
+
+- **Part 37, swap execution facilities.** A swap that has been made available to trade must be executed on a SEF or a designated contract market, by order book or by a request for quote sent to at least three participants. The SEF must offer impartial access.
+- **Clearing and void ab initio.** A swap subject to the clearing mandate is submitted to a derivatives clearing organisation promptly after execution. If the clearing house rejects it, a SEF trade intended to be cleared is void from the start.
+- **Rule 1.73, pre-execution credit checks.** A futures commission merchant that clears for a client must have automated means to screen the client's orders against risk-based limits before they reach the SEF, so that a trade is not executed only to be rejected for clearing.
+- **Part 43, real-time public reporting.** Swap transaction and pricing data are disseminated publicly as soon as technologically practicable, with time delays for block trades and caps on the notional disclosed. On a SEF, the SEF reports. Part 45 adds regulatory (non-public) reporting to a swap data repository.
+
+What it means here. The RFQ message carries the number of dealers in competition, which the P2 simulator uses to enforce request-to-three. The clearing lifecycle has REJECTED as a terminal state; a rejection becomes a `PostTradeBust` with reason ClearingRejected, and the reconciliation explains the resulting break. The pre-execution credit check belongs with the pre-trade controls (P3); the clearing simulator's limit is the backstop that catches what the check misses. Part 43 dissemination is the SEF's job for on-SEF trades and is listed, not built.
+
+### Worked example: one USD swap from request to books
+
+A client asks four dealers, through a SEF, for a price to receive fixed on USD 100mm of a 10-year SOFR swap.
+
+1. Before our quote can execute, the client's clearing member has screened the order against the client's limit (Rule 1.73). Our own pre-trade controls check our quote against the price collar, the maximum size and our DV01 limits (RTS 6 Article 15).
+2. We quote; the client trades with us at 4.25 percent. The trade is executed on the SEF by RFQ to at least three (Part 37) and the SEF disseminates it publicly, with a block delay if the size qualifies (Part 43).
+3. The trade is submitted to the clearing house: SUBMITTED, then ACCEPTED by both clearing members, then CLEARED by novation. Had it been rejected, it would be void and we would journal a bust.
+4. Our journal holds the QuoteRequest, our Quote and the QuoteResponse; the keeper books a pay-fixed trade (the client received fixed); the order records hold the Table 2 request and the Table 3 quote and fill with the algorithm's inventory id (RTS 6 Article 28).
+5. At the cut, the trade is reconciled against the SEF's drop copy and the clearing house's report (Article 17); at end of day it is marked at the official close and its P&L reconciles to the back-tester's attribution to the cent.
+
+### Sources
+
+- UK RTS 6: Commission Delegated Regulation (EU) 2017/589, legislation.gov.uk/eur/2017/589 (article list and Annex II layout read on 2026-10-31).
+- FCA Handbook, MAR 7A Algorithmic trading.
+- PRA Supervisory Statement SS5/18, Algorithmic trading, June 2018.
+- UK MiFIR (Regulation (EU) No 600/2014 as onshored), Articles 10, 11, 21 and 26; FCA PS24/14, Improving transparency for bond and derivatives markets, November 2024.
+- CFTC regulations: 17 CFR 1.73 (clearing member risk management), Part 37 (swap execution facilities), Part 43 (real-time public reporting), Part 45 (swap data recordkeeping and reporting).
+- RTS 25 (Commission Delegated Regulation (EU) 2017/574) on clock synchronisation.
+
+Each control named above is in [docs/compliance/RTS6_INVENTORY.md](docs/compliance/RTS6_INVENTORY.md) with its status and a link to the test, file or runbook that evidences it.
 
 ## 13. Pitfalls and numerical issues
 
@@ -159,7 +222,34 @@ Planned for P6. It will collect the mistakes found while building: day-count and
 
 ## 14. How a desk would use this and how real desks differ
 
-Planned for P6. It will describe a day in the life of a rates desk using the platform, and state plainly where the project is simplified: no live connectivity, no counterparty credit, no funding valuation adjustments, declared rather than fitted win probabilities, public data only.
+### Plain idea
+
+A rates e-trading desk is a small team of traders, quants, developers and operations staff, surrounded by risk, compliance, credit, clearing and settlement functions it depends on. This platform is a model of the desk's own stack, run against simulated venues and public data. It is useful to read the day as a desk would live it, and then to be plain about everything a real desk has that this project does not.
+
+### A day on the desk with this platform
+
+- **Before the open.** Operations runs the start-of-day procedure ([docs/runbooks/start-of-day.md](docs/runbooks/start-of-day.md)): yesterday closed and reconciled, configuration validated, opening positions loaded at yesterday's official marks and checked against the clearing house, clocks synchronised. The trading process starts, replays its journal, reconciles order and quote status with every venue and only then enables quoting.
+- **During the day.** RFQs arrive from D2C venues; the quoting engine prices them off the curve, skews for inventory and quotes within its limits. The hedger keeps residual DV01 inside its band with futures and benchmarks through the router. The trader watches the dashboard (live quotes, limit utilisation, stage latency) and changes parameters only through reviewed configuration. Alerts link to runbooks; the kill switch is one call away and is tested weekly.
+- **When something breaks.** A feed gap kills quoting for the group automatically; a venue disconnect does the same for the venue; a limit breach is refused before the order leaves. The runbook says what to check in the journal, who to tell, and what record to write.
+- **After the cut.** The report generator books the day's journal, produces official P&L from official closes, archives the order records and writes the surveillance alerts. The daily reconciliation compares our trades and positions with the venues, the clearing house and our own records; every break is explained or goes to operations. Official P&L reconciles to the back-tester's attribution to the cent.
+
+### How real desks differ
+
+**Real flow.** A real desk sees real clients with relationships, history and information; this platform sees simulated arrivals whose rates and sizes are fitted to public data (DR-004) and a win probability that is a declared band, not a fit (DR-008). Real flow carries information that a simulator cannot: who is asking, what they did last week, what the rest of the street is doing. Markouts on a real desk are the first measure of whether a quote was a good idea; here they measure the simulator.
+
+**Credit and clearing.** A real desk trades against counterparties with credit lines, collateral agreements and netting sets, and its clearing members set limits it must respect before execution. Uncleared trades carry counterparty risk, and their price includes credit, funding and capital valuation adjustments (CVA, FVA, KVA) that this project does not compute. Here, clearing is a state machine and a limit per account in a simulator.
+
+**Booking.** On a real desk, trades flow into a trade capture system of record, then to middle office, finance and regulatory reporting, each with its own identifiers and reconciliation. Here the position keeper is both the books and the records, and the order record is a CSV per day. A real desk books to legal entities, handles allocations of block trades to client accounts, novations and compressions, and amends with dual control.
+
+**Surveillance.** A real desk runs a surveillance platform across all its trading, with lexicon search of chat and voice, cross-product patterns and a team that reviews alerts. Here there are two example detectors over one journal, as hooks for that platform.
+
+**Operations.** A real desk has settlement against custodians and central securities depositories with real fails, buy-ins and claims; regulatory transaction reporting to the FCA and swap data repositories; disaster recovery sites; change boards; and audit. Here settlement is a state machine with a cost of fail, reporting is listed but not built, and the warm standby is a design.
+
+**People.** The roles in the runbooks (head of desk, risk manager, compliance officer, development lead, operations) are distinct people on a real desk, and the separation between them is itself a control: the person who writes an algorithm does not approve it, the person who trades does not set the limits. Here one person holds every role, and the procedures keep the separation on paper so that they read as they would on a desk.
+
+### What carries over
+
+The parts of this project that a desk could use as they are: the discipline of journaling every input and replaying it to reproduce a decision; positions recomputed from the trade history so that late fills and busts land where they belong; reconciliations that explain breaks from evidence rather than suppress them; official P&L that refuses to run without official marks; order records laid out to the regulation; a kill switch exercised in CI. What does not carry over is any number produced from the simulated flow, which is a statement about the simulator, not about a market.
 
 ## 15. Knowledge check
 

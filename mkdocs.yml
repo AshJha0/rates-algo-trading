@@ -23,6 +23,8 @@ nav:
   - Decisions: decisions.md
   - Status: status.md
   - Diagrams: diagrams.md
+  - Compliance inventory: compliance.md
+  - Runbooks: runbooks.md
   - AI use policy: ai-use-policy.md
   - Changelog: changelog.md
   - Publishing: publishing.md

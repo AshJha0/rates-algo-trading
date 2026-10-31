@@ -19,7 +19,8 @@ This document describes the system as designed and marks, component by component
 | Analytics (research) | Python: provenance, calibration of simulator parameters, result analysis | partly exists in P0 (`research/ratesresearch`: provenance and chain hash); calibration planned P1, P5 |
 | Control plane | Start, stop, parameter changes with approval, limit changes, kill switch operation; all changes journaled | planned P3 |
 | AI assistants | Draft, review and summarise under `docs/AI_USE_POLICY.md`; never change production parameters without a human-approved PR | policy exists in P0; tooling planned P6 |
-| Post-trade, books and records | Positions, fills, P&L by attribution, end-of-day marks, regulatory reporting fields | planned P5 |
+| Post-trade, books and records | Positions, fills, P&L by attribution, end-of-day marks, order records, clearing and settlement state, reconciliations, restart procedure, surveillance hooks | exists, P6 (`rates-posttrade`); bound to P1 to P5 at integration |
+| Operations | Health, readiness, metrics and control endpoints, configuration validation, stress harness, images, rehearsal, runbooks | exists, P6 (`rates-ops`, `deploy/`, `docs/runbooks/`) |
 
 ## Event loop design
 
@@ -39,6 +40,8 @@ Rules that follow from this:
 rates-common      io.ratesalgo.common.time     Clock, SystemClock, ManualClock, TimerWheel
 rates-messages    io.ratesalgo.messages.sbe    generated from rates-schema-v1.xml by sbe-tool
 rates-journal     io.ratesalgo.journal         JournalWriter, JournalReader, Replayer, exceptions
+rates-posttrade   io.ratesalgo.posttrade       position keeper, records, marks, clearing, settlement, recon (P6)
+rates-ops         io.ratesalgo.ops             health and control endpoints, metrics, config, stress harness (P6)
 ```
 
 Dependencies: `rates-journal` depends on `rates-common` (for `Clock`) and on Agrona for buffers. `rates-messages` depends on the SBE runtime and Agrona. `rates-common` depends on nothing outside the JDK. `rates-journal` does not depend on `rates-messages`: the journal stores payload bytes and a template id, and interpretation belongs to the handler. The Mermaid source is `docs/diagrams/module_deps.mmd`.
@@ -96,3 +99,38 @@ The workflow files live under `.github/workflows/`.
 3. State the module's contract in API_SPEC.md if other modules or the Python side depend on it.
 4. Add a row to the component table above, the module map, and `docs/diagrams/module_deps.mmd`.
 5. Add tests of each kind in the table that apply, and a CHANGELOG entry.
+
+## Post-trade, books and records (P6)
+
+`rates-posttrade` reads journals and never writes to the event loop's state. Its packages:
+
+```
+io.ratesalgo.posttrade.trade         TradeKey, Trade, PositionKey, BookAssignment, BookMapper
+io.ratesalgo.posttrade.position      PositionKeeper, PositionCalculator, InstrumentCatalogue, audit trail
+io.ratesalgo.posttrade.records       OrderRecord (RTS 6 Annex II layout), RecordArchive (retention layout)
+io.ratesalgo.posttrade.marks         MarkSource, CarrySource, EndOfDayPnl, AttributionLine, PnlReconciler
+io.ratesalgo.posttrade.clearing      ClearingLifecycle, ClearingHouseSimulator
+io.ratesalgo.posttrade.settlement    SettlementObligation, FailCost, BusinessCalendar
+io.ratesalgo.posttrade.recon         Reconciler, KeeperFacts, DailyReconciliation, BreakReport
+io.ratesalgo.posttrade.recovery      RestartProcedure, VenueStatusPort, QuotingControl
+io.ratesalgo.posttrade.surveillance  SurveillanceDetector, QuoteStuffingDetector, SelfTradeDetector
+io.ratesalgo.posttrade.chaos         SyntheticDay, JournalScript
+io.ratesalgo.posttrade.report        EodReportMain (the report-generator process)
+```
+
+The position keeper is a `FrameHandler`, so the same code books a live journal tail, a replay and a batch job, and its state is a function of the frames. Positions are recomputed from live trades in transaction-time order whenever a trade in the position changes (DR-P6-02), which makes late fills, busts and amendments land where they belong. Official P&L follows the marking policy in API_SPEC.md Section 17.3 (DR-P6-03) and reconciles to the back-tester's attribution with zero tolerance. The daily reconciliation classifies every break and explains it from the journal or sends it to operations (DR-P6-04). The trade lifecycle, from RFQ or order through clearing or settlement into the books, is in `docs/diagrams/trade_lifecycle.mmd`.
+
+The module is off the hot path: it allocates, uses `BigDecimal` for money and sorts collections. The interfaces the coordinator binds to other phases are listed in API_SPEC.md Section 17.14.
+
+## Operations (P6)
+
+`rates-ops` holds what a process needs to be run by people: the health, readiness, metrics and control endpoints on the JDK HTTP server (one thread, no framework), a Prometheus text-format exporter, configuration as versioned YAML validated against a JSON Schema at start, the stress-test harness for RTS 6 Article 10, and `OpsProcessMain`, the entry point of the trading and venue-simulator images (DR-P6-05).
+
+Deployment (`deploy/`, topology in `docs/diagrams/deployment_topology.mmd`):
+
+- one image per process on `eclipse-temurin:25-jre`, running as a non-root user, with the Agrona `--add-opens` flags on the launch line: trading, venue simulator, end-of-day report generator;
+- a compose file for the simulated environment with Prometheus, the alert rules and a Grafana dashboard, all versioned in the repository;
+- a blue/green switch that checks the target is ready, kills quoting on the active colour and confirms its quotes are gone before recording the switch;
+- a deployment rehearsal that starts the processes (as containers, or as local JVMs in CI), checks readiness, exercises the kill switch through the control endpoint and checks every quote is pulled and the kill journaled (`.github/workflows/ops.yml`).
+
+Recovery: the restart procedure replays the journal, reconciles with every venue's order and quote status, and enables quoting only when nothing blocks (API_SPEC.md Section 17.9). The warm standby over Aeron is designed in `docs/runbooks/warm-standby-design.md` (DR-P6-06) and built at integration. Runbooks per incident class are under `docs/runbooks/`; the compliance control inventory is `docs/compliance/RTS6_INVENTORY.md`.

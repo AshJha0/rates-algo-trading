@@ -12,7 +12,8 @@ graph TD
   risk["rates-risk<br/>risk engine, hedger<br/>(planned P3)"]
   router["rates-router<br/>(planned P4)"]
   backtest["rates-backtest<br/>(planned P5)"]
-  posttrade["rates-posttrade<br/>(planned P5)"]
+  posttrade["rates-posttrade<br/>positions, records, recon<br/>(P6)"]
+  ops["rates-ops<br/>health, metrics, config, stress<br/>(P6)"]
 
   journal --> common
   journal --> agrona
@@ -34,8 +35,11 @@ graph TD
   router -.-> venues
   backtest -.-> journal
   backtest -.-> core
-  posttrade -.-> journal
+  posttrade --> journal
+  posttrade --> messages
   posttrade -.-> analytics
+  ops --> posttrade
+  ops --> journal
 
   classDef planned stroke-dasharray: 5 5
-  class analytics,core,venues,quoting,risk,router,backtest,posttrade planned
+  class analytics,core,venues,quoting,risk,router,backtest planned

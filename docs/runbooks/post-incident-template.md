@@ -9,7 +9,7 @@ Copy this file to the incident log (outside the repository for a real desk; `doc
 - Detected by: alert name, person, or reconciliation
 - Trading impact: quotes pulled (from, to), orders cancelled, trades affected (trade keys)
 - Client impact: RFQs not answered, quotes withdrawn, trades busted or amended
-- P&amp;L impact: amount and how it was measured (official P&amp;L line, not the intraday estimate)
+- P&L impact: amount and how it was measured (official P&L line, not the intraday estimate)
 
 ## Timeline
 
