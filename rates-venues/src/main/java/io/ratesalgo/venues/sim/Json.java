@@ -57,11 +57,11 @@ public final class Json {
     }
     if (text.startsWith("true", pos)) {
       pos += 4;
-      return Boolean.TRUE;
+      return true;
     }
     if (text.startsWith("false", pos)) {
       pos += 5;
-      return Boolean.FALSE;
+      return false;
     }
     if (text.startsWith("null", pos)) {
       pos += 4;

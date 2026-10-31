@@ -75,7 +75,7 @@ public final class D2cRfqSimulator extends VenueSimulator {
     }
   }
 
-  private final class Rfq {
+  private static final class Rfq {
     final long id;
     final Instrument instrument;
     final boolean buy;
@@ -245,9 +245,9 @@ public final class D2cRfqSimulator extends VenueSimulator {
           rfq.simulatedResponses++;
           continue;
         }
-        final long half = round(rng.lognormal(halfSpreadMedian(inst), config.halfSpreadSigma()), inst.tick());
+        final long half = round(rng.lognormal((double) halfSpreadMedian(inst), config.halfSpreadSigma()), inst.tick());
         final long price = buy ? mid + Math.max(half, inst.tick()) : mid - Math.max(half, inst.tick());
-        final long delay = (long) rng.lognormal(config.dealerDelayMedianNanos(), config.dealerDelaySigma());
+        final long delay = (long) rng.lognormal((double) config.dealerDelayMedianNanos(), config.dealerDelaySigma());
         if (delay >= config.responseWindowNanos()) {
           rfq.simulatedResponses++;
           continue;
