@@ -9,7 +9,7 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 | Phase | Scope | Planned plan-days | Planned wall-clock days | Actual wall-clock days | Started | Gate status |
 |---|---|---|---|---|---|---|
 | P0 | Foundations: clock and timers, SBE schema v1, journal and replayer, Python package, docs, CI | 10 | 1 | in progress | 2026-10-31 | in progress |
-| P1 | Analytics: conventions, curves, swaps, bonds, futures, QuantLib goldens | to be set at P0 gate | | | | not started |
+| P1 | Analytics: conventions, curves, swaps, bonds, futures, QuantLib goldens | 16 | 1 to 1.5 | 0.3 (about 7 hours elapsed on 2026-10-31, including two pauses) | 2026-10-31 | gate open |
 | P2 | Venues: FIX 4.4, SBE book feed, D2C RFQ, D2D CLOB with workup, SEF rules, event loop | to be set at P0 gate | | | | not started |
 | P3 | Quoting engine, risk engine, hedger | to be set at P0 gate | | | | not started |
 | P4 | Smart order router | to be set at P0 gate | | | | not started |
@@ -23,6 +23,20 @@ Filled at each gate. Each entry records the planned and actual figures, the revi
 ### P0 gate
 
 Not yet reached. Planned: 10 plan-days, 1 wall-clock day, started 2026-10-31.
+
+### P1 gate (workstream W1, analytics)
+
+Planned: 16 plan-days, 1 to 1.5 wall-clock days. Actual: started and finished on 2026-10-31, about 7 hours elapsed from the first commit of the session to the push, including two pauses for a model change. Branch `claude/p1-analytics-df37ab`. Acceptance (P1 gate), measured locally on 2026-10-31 with JDK 25.0.5 on Windows 11 (`mvn -B -ntp verify`); CI on Linux and Windows pending:
+
+- 224-instrument QuantLib 1.44 golden passes (`AnalyticsGoldenTest`): swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16, conversion factors exact; API_SPEC.md Section 7.2 lists every figure.
+- Treasury worked examples: all 84 note and bond and 332 bill auctions of 2024 reproduce to the published digits (`PublishedExamplesTest`). No DMO worked example: the DMO site refused scripted downloads.
+- Curve round trip within 1e-10 for all three interpolations (worst 9.3e-14); incremental rebuild equals full rebuild within 1e-10 (worst 7.5e-14) (`CurveBuilderTest`).
+- Key-rate sum equals parallel within 1e-9 relative; AD versus 1bp bump within 1e-4 (worst 1.2e-8).
+- Compounded legs reproduce the 2024 SOFR, EUR STR and SONIA published indices to the last digit (`CompoundedIndexHoldoutTest`).
+- jqwik properties for dates, day counts, conventions and schedules (`DatePropertiesTest`, nine properties, about 11,500 tries per run).
+- `rates-analytics` line coverage 96.1 percent (floor 85); SpotBugs clean; ruff, mypy strict, pytest (63 passed) and `mkdocs build --strict` clean.
+
+The difference from plan is attributed to reusing QuantLib's published conventions line by line for calendars, schedules and yields, which removed most of the debugging a fresh implementation needs.
 
 ## Open items
 

@@ -1,0 +1,28 @@
+flowchart LR
+  quotes["Market quotes<br/>ON estimate, meeting OIS,<br/>SOFR futures, par OIS"]
+  fixings["Published fixings<br/>SOFR, EUR STR, SONIA"]
+  inst["CurveInstrument<br/>one per pillar"]
+  builder{"CurveBuilder<br/>Method.AUTO"}
+  seq["Sequential<br/>Brent per pillar"]
+  glob["Global<br/>Levenberg-Marquardt"]
+  curve["DiscountCurve<br/>ln P at pillars,<br/>interpolation, turns"]
+  proj["Projection curve<br/>EUR 6M, OIS discounting fixed"]
+  pricers["Pricers<br/>OIS swaps, bonds, futures"]
+  grad["Gradient dV / d ln P<br/>(AD)"]
+  jac["Jacobian J<br/>solve J^T x = g"]
+  ladder["Dv01Ladder<br/>key-rate and parallel"]
+
+  quotes --> inst
+  fixings --> inst
+  inst --> builder
+  builder -- "local interpolation,<br/>no overlap" --> seq
+  builder -- "overlap or<br/>non-local" --> glob
+  seq --> curve
+  glob --> curve
+  curve -- "discounting" --> proj
+  curve --> pricers
+  proj --> pricers
+  pricers --> grad
+  grad --> jac
+  builder -. "J at the solution" .-> jac
+  jac --> ladder

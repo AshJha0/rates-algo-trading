@@ -1,0 +1,6 @@
+settlement 2025-01-16
+clean 96.790759  accrued 0.727901  dirty 97.518659
+modified duration 7.860048  convexity 74.0594
+DV01 per 1mm face 766.50 USD
+street yield 4.66000000%  true yield 4.65971296%
+auction price 100.114150 (published 100.114150)

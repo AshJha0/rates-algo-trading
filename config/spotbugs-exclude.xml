@@ -17,4 +17,17 @@
     <Class name="io.ratesalgo.common.time.TimerWheel" />
     <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION" />
   </Match>
+  <!-- rates-analytics (P1, DR-P1-03): the bootstrap writes pillar values into the curve object
+       that pricers read; CurveBuilder.curve() and CurveContext hand out that one mutable,
+       single-writer curve on purpose. Copying would break incremental rebuilds. -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.analytics.curve.CurveBuilder" />
+      <Class name="io.ratesalgo.analytics.curve.CurveContext" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
 </FindBugsFilter>

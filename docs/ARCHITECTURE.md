@@ -9,7 +9,7 @@ This document describes the system as designed and marks, component by component
 | Venue gateways | Speak FIX 4.4 (RFQ, orders) and the SBE book feed to venues and simulators; translate to internal SBE messages; own session state and sequence numbers | planned P2 |
 | Event core | One thread per instrument group draining a ring buffer, applying events to owned state, emitting outputs, appending inputs to the journal | planned P2 (clock, timers, journal and messages exist in P0) |
 | Market state | Books, last trades, curve inputs per instrument group, updated incrementally | planned P2 |
-| Pricing | Curves, swap and bond pricers, futures analytics, incremental revaluation on input change, validated against QuantLib | planned P1 |
+| Pricing | Curves, swap and bond pricers, futures analytics, incremental revaluation on input change, validated against QuantLib | exists in P1 (`rates-analytics`) |
 | Quoting engine | Turn an RFQ or book state plus inventory and risk into a two-way quote with skew; manage quote lifetimes with timers | planned P3 |
 | Smart order router | Choose venue and size for hedge and client orders; record decision inputs for markout analysis | planned P4 |
 | Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | planned P3 |
@@ -39,7 +39,10 @@ Rules that follow from this:
 rates-common      io.ratesalgo.common.time     Clock, SystemClock, ManualClock, TimerWheel
 rates-messages    io.ratesalgo.messages.sbe    generated from rates-schema-v1.xml by sbe-tool
 rates-journal     io.ratesalgo.journal         JournalWriter, JournalReader, Replayer, exceptions
+rates-analytics   io.ratesalgo.analytics       (P1) date, curve, swap, bond, futures, funding, risk, math
 ```
+
+`rates-analytics` depends on nothing outside the JDK. Its packages: `date` (epoch-day dates, versioned calendars, day counts, conventions, schedules, IMM dates), `curve` (discount curves, interpolators, bootstrap instruments, `CurveBuilder`, Hull-White convexity), `swap` (OIS conventions, swaps, pricer, fixings), `bond` (bonds, pricer, bills, carry, fitted curves), `futures` (conversion factors, basis, CTD), `funding` (repo curve), `risk` (`Dv01Ladder`, `KeyRateRisk`), `math` (Brent, LU, Levenberg-Marquardt). Pricing calls on built objects do not allocate; builders and schedule generation do. The curve build is drawn in `docs/diagrams/curve_build.mmd`.
 
 Dependencies: `rates-journal` depends on `rates-common` (for `Clock`) and on Agrona for buffers. `rates-messages` depends on the SBE runtime and Agrona. `rates-common` depends on nothing outside the JDK. `rates-journal` does not depend on `rates-messages`: the journal stores payload bytes and a template id, and interpretation belongs to the handler. The Mermaid source is `docs/diagrams/module_deps.mmd`.
 
@@ -72,7 +75,7 @@ Errors that indicate corruption or a contract break (journal hash mismatch, sche
 |---|---|---|---|
 | Unit | Each class against its contract | JUnit 5 | P0 for the three modules |
 | Property-based | Wide input spaces: timer ordering, journal round trips, codec round trips | jqwik (Java), hypothesis (Python) | P0 |
-| Golden against QuantLib | Pricing within stated tolerances | fixtures generated on Linux | planned P1 |
+| Golden against QuantLib | Pricing within stated tolerances | `data/golden/analytics_golden.json`, regeneration checked in CI (DR-P1-06) | P1 (`AnalyticsGoldenTest`) |
 | Conformance | Gateway behaviour against FIX 4.4 and SBE book feed specifications | venue simulators | planned P2 |
 | Replay-hash determinism | Same journal, same output hash, across runs and platforms | `Replayer` plus output journal hash | P0 for the chain check; end-to-end planned P2 |
 | Latency and allocation | Fixed-rate load, coordinated-omission correction, zero-allocation delta | HdrHistogram, ThreadMXBean | planned P2 (allocation), P5 (latency job) |

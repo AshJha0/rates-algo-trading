@@ -1,0 +1,40 @@
+{
+  "fixture": "estr_2024.csv",
+  "created_utc": "2026-10-31T06:39:40+00:00",
+  "sha256": "3446e49fe013d1870e8dc0cd6aa83d8132ab4f3dae43d76a8f622b3659e2640d",
+  "size": 8873,
+  "rows": 297,
+  "columns": [
+    "date",
+    "rate_percent",
+    "index"
+  ],
+  "date_range": [
+    "2023-12-01",
+    "2025-01-31"
+  ],
+  "source": {
+    "key": "ecb_estr",
+    "name": "ECB euro short-term rate and compounded index",
+    "licence": "ECB Disclaimer & copyright: free use of information obtained from the website provided it appears accurately, the ECB is cited as the source and any modification by the user is stated explicitly. Read 2026-10-31.",
+    "terms_url": "https://www.ecb.europa.eu/services/disclaimer/html/index.en.html"
+  },
+  "raw_files": [
+    {
+      "name": "ecb_estr_rate.csv",
+      "url": "https://data-api.ecb.europa.eu/service/data/EST/B.EU000A2X2A25.WT?format=csvdata&startPeriod=2023-12-01&endPeriod=2025-01-31",
+      "downloaded_utc": "2026-10-31T01:24:47+00:00",
+      "sha256": "b59feaa5a0851ce98487af387ceb7d422231507dc5deaf46bf7e5224d7ad6135",
+      "size": 92378
+    },
+    {
+      "name": "ecb_estr_index.csv",
+      "url": "https://data-api.ecb.europa.eu/service/data/EST/B.EU000A2QQF08.CI?format=csvdata&startPeriod=2023-12-01&endPeriod=2025-01-31",
+      "downloaded_utc": "2026-10-31T01:24:48+00:00",
+      "sha256": "06ec5e5c509b41d06d61d68b0655a4700b5fabf3fd4a970205a4499eda02b669",
+      "size": 86718
+    }
+  ],
+  "transformation": "Took TIME_PERIOD and OBS_VALUE from EST.B.EU000A2X2A25.WT (rate) and EST.B.EU000A2QQF08.CI (compounded index), joined on date, kept 2023-12-01 to 2025-01-31; values copied as published.",
+  "produced_by": "ratesresearch.data.fixtures"
+}
