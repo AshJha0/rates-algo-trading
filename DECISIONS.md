@@ -1030,6 +1030,12 @@ Consequences. A refused Logon no longer leaves a session down for good. The retr
 
 The policy is set in code (`TradingProcess` uses the default); exposing it in the deployment config is an open item.
 
+Amended 2026-11-01, `VenueSessionReconnectTest`. On pull request 5 the test failed on windows-latest only. In `retriesAreBoundedAndBackOff` the venue had seen 0 connections when the session gave up, where 3 were expected. In `aLogonRefusedByTheVenueIsRetriedAndTheSecondIsAccepted` the session ended DISCONNECTED with statuses [2,3,2,3,2,3,2,3,2,3,2]: six attempts, every one ended by the logon timeout. It did not fail in 20 runs on the 12-core laptop with 4 cores busy.
+
+- **Cause.** The session's logon timeout (the 30 s heartbeat interval) and its backoff run on the session clock, which in the test is a `ManualClock` that `drive` advanced 10 ms per turn. The fake venue answers on its own thread in real time. A probe of the same loop against a venue that never answers (`LogonTimeoutProbe`, a scratch program, 2026-11-01) measured the first logon timeout after 17 to 29 ms of wall-clock time and the whole DEFAULT retry budget, six attempts, spent in 48 to 83 ms. A venue thread not scheduled within about 20 ms therefore lost every attempt. On a 2-vCPU hosted runner, with the test thread spinning, that happens, and it produces exactly the two failures seen. In production the clock is real time and the timeout really is 30 s, so `VenueSession` is not at fault.
+- **Fix.** `drive` advances the session clock by the wall-clock time each turn took, so the socket and the session timers share one time base. The 10 s wall-clock ceiling and every assertion are unchanged, and the failure messages now give the state, the statuses, the venue's connection count, attempts, disconnects, logons and give-ups.
+- **After.** 20 fresh JVMs with 4 cores busy ran all three tests and passed.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31
