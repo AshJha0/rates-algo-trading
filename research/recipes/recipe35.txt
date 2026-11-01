@@ -1,0 +1,12 @@
+vector previous=0x0 payload='': 0xa8c7f832281a39c5 ok
+vector previous=0x0 payload='hello': 0x8fe9535b8a55c92b ok
+vector previous=0x8fe9535b8a55c92b payload='world': 0xb71f85c4c4115848 ok
+journal RAJ1 version 1 header 32 bytes capacity 256
+  seq=1 ts=1000 template=1 value=100 hash=2cdc2273d758f7c1
+  seq=2 ts=2000 template=1 value=200 hash=c88bd5b4bd2668cd
+  seq=3 ts=3000 template=1 value=300 hash=c6d0336109f10ed2
+frames=3 finalHash=c6d0336109f10ed2 java finalHash=c6d0336109f10ed2 match=True
+after flipping one byte of frame 2:
+  seq=1 ts=1000 template=1 value=100 hash=2cdc2273d758f7c1
+  chain broken at sequence 2: stored 0xc88bd5b4bd2668cd, computed 0xa9910eabb2371eac
+frames verified before the break: 1

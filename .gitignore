@@ -24,6 +24,8 @@ venv/
 # Journals (never commit raw journals)
 journals/*.raj
 *.raj
+# except the 256-byte recipe 35 fixture, which JournalFixtureTest pins (DR-V1G-01)
+!data/fixtures/journal/*.raj
 
 # Executed notebook renderings (tools/run_notebooks.py; published by the docs build)
 research/notebooks/_build/

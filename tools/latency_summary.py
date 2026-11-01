@@ -20,15 +20,21 @@ def table(report: dict) -> str:
     machine = report.get("machine", {})
     config = report.get("config", {})
     counts = report.get("counts", {})
-    lines = [
-        f"### Latency report `{report.get('label', '')}` at commit `{report.get('commit', '')}`",
-        "",
+    host = (
         f"Started {report.get('started', '')}; {machine.get('cpu', '?')}, {machine.get('logicalCpus', '?')} "
-        f"logical CPUs, {machine.get('os', '?')}; JVM {report.get('jvm', {}).get('version', '?')}.",
+        f"logical CPUs, {machine.get('os', '?')}; JVM {report.get('jvm', {}).get('version', '?')}."
+    )
+    run = (
         f"Rate {config.get('rate', '?')}/s, warm-up {config.get('warmupSeconds', '?')} s, measured "
         f"{config.get('measureSeconds', '?')} s, idle {config.get('idle', '?')}, journal {config.get('journal', '?')}; "
         f"GC collections {counts.get('gcCollections', '?')}, allocation delta "
-        f"{report.get('allocationDeltaBytes', '?')} bytes.",
+        f"{report.get('allocationDeltaBytes', '?')} bytes."
+    )
+    lines = [
+        f"### Latency report `{report.get('label', '')}` at commit `{report.get('commit', '')}`",
+        "",
+        host,
+        run,
         "",
         "| Interval | Samples | p50 (us) | p99 (us) | p99.9 (us) | p99.99 (us) | max (us) |",
         "|---|---|---|---|---|---|---|",

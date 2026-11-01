@@ -40,8 +40,8 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 32. How do I fit the hit-rate model and read its calibration across the assumption band? (round 2, written below; a Python recipe)
 33. How do I compute markout curves by client tier from a back-test run? (round 2, written below; a Python recipe)
 34. How do I validate a deployment config against its schema and read the error? (round 2, written below)
-35. How do I verify a Java journal's hash chain from Python? (P5, not yet written; was 23)
-36. How do I check that a hot-path package allocates nothing? (P2, not yet written; was 22; `WiredLoopAllocationTest` in rates-app is a worked example until then)
+35. How do I verify a Java journal's hash chain from Python? (written below; a Python recipe; was 23)
+36. How do I check that a hot-path package allocates nothing? (written below; was 22)
 
 The recipes were renumbered when the phase branches were combined, so that they run contiguously by phase (DECISIONS.md DR-P4-05 and DR-P2C-10, amended).
 
@@ -3027,3 +3027,192 @@ RATES_HTTP_PORT=70000 refused: [$.http.port: 70000 is above the maximum 65535]
 
 The shipped file has no errors and loads to its typed view. The edited document reports all four mistakes at once, each with the path to the offending value and what the schema expected, so an operator fixes them in one pass; a missing section is reported at `$`, the root. The override is checked like the file, so a process started with `RATES_HTTP_PORT=70000` refuses to start instead of binding an unexpected port. `ConfigValidationTest.brokenConfigurationsReportEveryViolation` and `environmentOverridesApplyBeforeValidation` assert this, and the ops workflow runs the validator on every committed configuration.
 
+## 35. How do I verify a Java journal's hash chain from Python?
+
+Every journal frame stores a chain hash: FNV-1a 64 over the previous frame's hash, as eight little-endian bytes, followed by this frame's payload (API_SPEC.md Section 1). `ratesresearch.fnv.fnv1a64` is the same function in Python, so a research script can check that a journal written by Java's `JournalWriter` is complete and untouched without starting a JVM. The program first checks the shared known answers in `data/golden/chain_hash_vectors.json`, which `rates-journal` `ChainHashTest` also checks, then walks `data/fixtures/journal/recipe02.raj`: the three frames of recipe 2, written by `JournalWriter` into a 256-byte file. `JournalFixtureTest` in `rates-cookbook` rewrites that file with the current `JournalWriter` on every build and fails if a byte differs, so the fixture cannot fall behind the Java format. Java stores the hash in a signed `long`; `to_java_long` reinterprets the Python value before comparing.
+
+```python
+"""COOKBOOK.md recipe 35: verify a journal written by Java's JournalWriter from Python."""
+
+import json
+import struct
+from pathlib import Path
+
+from ratesresearch.fnv import fnv1a64, to_java_long
+
+root = Path(__file__).resolve().parents[2]
+
+# 1. the shared known answers that rates-journal ChainHashTest also checks
+vectors = json.loads((root / "data/golden/chain_hash_vectors.json").read_text(encoding="utf-8"))
+for v in vectors["vectors"]:
+    got = fnv1a64(v["payload_ascii"].encode("ascii"), int(v["previous"], 16))
+    verdict = "ok" if got == int(v["hash"], 16) else "MISMATCH"
+    print(f"vector previous={v['previous']} payload={v['payload_ascii']!r}: {got:#018x} {verdict}")
+
+
+# 2. walk the frames of a file JournalWriter wrote (pinned by rates-cookbook JournalFixtureTest)
+def walk(data: bytes) -> tuple[int, int]:
+    """Return (frames verified, final hash); stop at the first broken link."""
+    pos, prev, count = 32, 0, 0
+    while pos + 4 <= len(data):
+        (length,) = struct.unpack_from("<i", data, pos)
+        if length == 0:
+            break
+        seq, ts, template, _version, stored = struct.unpack_from("<qqHHq", data, pos + 4)
+        payload = data[pos + 32 : pos + length]
+        h = fnv1a64(payload, prev)
+        if to_java_long(h) != stored:
+            stored_hex = f"{stored & (2**64 - 1):#018x}"
+            print(f"  chain broken at sequence {seq}: stored {stored_hex}, computed {h:#018x}")
+            return count, prev
+        (value,) = struct.unpack_from("<q", payload)
+        print(f"  seq={seq} ts={ts} template={template} value={value} hash={h:016x}")
+        prev, count = h, count + 1
+        pos += (length + 7) & ~7
+    return count, prev
+
+
+data = (root / "data/fixtures/journal/recipe02.raj").read_bytes()
+magic, version, header, capacity = struct.unpack_from("<4sHHi", data, 0)
+print(f"journal {magic.decode()} version {version} header {header} bytes capacity {capacity}")
+frames, final = walk(data)
+
+# 3. the final hash Java printed in recipe 2's recorded output
+java_out = root / "rates-cookbook/src/test/resources/expected/recipe02.txt"
+words = java_out.read_text(encoding="utf-8").split()
+java_final = next(w for w in words if w.startswith("finalHash=")).split("=")[1]
+match = f"{final:x}" == java_final
+print(f"frames={frames} finalHash={final:x} java finalHash={java_final} match={match}")
+
+# 4. flip one payload byte of the second frame, as recipe 2 does
+tampered = bytearray(data)
+tampered[32 + 40 + 32] ^= 0x01
+print("after flipping one byte of frame 2:")
+frames, _ = walk(bytes(tampered))
+print(f"frames verified before the break: {frames}")
+```
+
+Expected output:
+
+```
+vector previous=0x0 payload='': 0xa8c7f832281a39c5 ok
+vector previous=0x0 payload='hello': 0x8fe9535b8a55c92b ok
+vector previous=0x8fe9535b8a55c92b payload='world': 0xb71f85c4c4115848 ok
+journal RAJ1 version 1 header 32 bytes capacity 256
+  seq=1 ts=1000 template=1 value=100 hash=2cdc2273d758f7c1
+  seq=2 ts=2000 template=1 value=200 hash=c88bd5b4bd2668cd
+  seq=3 ts=3000 template=1 value=300 hash=c6d0336109f10ed2
+frames=3 finalHash=c6d0336109f10ed2 java finalHash=c6d0336109f10ed2 match=True
+after flipping one byte of frame 2:
+  seq=1 ts=1000 template=1 value=100 hash=2cdc2273d758f7c1
+  chain broken at sequence 2: stored 0xc88bd5b4bd2668cd, computed 0xa9910eabb2371eac
+frames verified before the break: 1
+```
+
+The three vectors agree with the values computed independently on 2026-10-31. The final hash Python computes, `c6d0336109f10ed2`, is the one Java printed in recipe 2's recorded output, read from `rates-cookbook/src/test/resources/expected/recipe02.txt` rather than copied in, so the two languages are compared on every run of `tools/check_cookbook.py`. Flipping one bit of frame 2's payload breaks the link at sequence 2, the same sequence Java's `Replayer` reports in recipe 2. `tools/journal_query.py` uses the same walk to answer incident questions from the command line.
+
+## 36. How do I check that a hot-path package allocates nothing?
+
+The hot path must not allocate per message, because allocation is what eventually causes a garbage collection pause. `com.sun.management.ThreadMXBean.getThreadAllocatedBytes` counts the bytes the current thread has allocated, so a check is: warm the path up until the JIT has compiled it, read the counter, run a window of messages, read it again. The checks in this repository use windows (DR-INT-02): after one million warm-up calls, three windows of one million are measured; the last must allocate exactly zero bytes and no window after the first more than 1,024, because a JIT recompilation just after warm-up can allocate a few hundred bytes once. The first call to the bean stays outside the windows because some JDKs allocate on first use. The program measures an SBE `Quote` encoded into a reused buffer and decoded back with flyweights, then the same quote formatted as a `String`, the convenient way that allocates.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
+import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
+import io.ratesalgo.messages.sbe.QuoteDecoder;
+import io.ratesalgo.messages.sbe.QuoteEncoder;
+import java.lang.management.ManagementFactory;
+import org.agrona.concurrent.UnsafeBuffer;
+
+/** COOKBOOK.md recipe 36: check that a hot path allocates nothing, with the thread's byte counter. */
+public final class Recipe36AllocationCheck {
+
+  private static final int WINDOW = 1_000_000;
+  private static final int WINDOWS = 3;
+  private static final long LATER_WINDOW_BOUND = 1024L;
+
+  private static final UnsafeBuffer BUFFER = new UnsafeBuffer(new byte[128]);
+  private static final MessageHeaderEncoder HEADER_OUT = new MessageHeaderEncoder();
+  private static final MessageHeaderDecoder HEADER_IN = new MessageHeaderDecoder();
+  private static final QuoteEncoder ENCODER = new QuoteEncoder();
+  private static final QuoteDecoder DECODER = new QuoteDecoder();
+  private static long checksum;
+  private static String lastLine = "";
+
+  private Recipe36AllocationCheck() {}
+
+  /** The hot path: encode a Quote into a reused buffer and decode it back, flyweights only. */
+  static void flyweightQuote(final long i) {
+    ENCODER.wrapAndApplyHeader(BUFFER, 0, HEADER_OUT).venueId(101).instrumentId(1008)
+        .bidQuantity(1_000_000_000L).askQuantity(1_000_000_000L).validUntilNanos(i).sentNanos(i);
+    ENCODER.bidPrice().mantissa(99_500_000_000L + i);
+    ENCODER.askPrice().mantissa(99_515_625_000L + i);
+    HEADER_IN.wrap(BUFFER, 0);
+    DECODER.wrapAndApplyHeader(BUFFER, 0, HEADER_IN);
+    checksum += DECODER.askPrice().mantissa() - DECODER.bidPrice().mantissa();
+  }
+
+  /** The same quote logged the convenient way: a String per message. */
+  static void stringQuote(final long i) {
+    final String line = "quote venue=101 instrument=1008 bid=" + (99_500_000_000L + i) + " ask=" + (99_515_625_000L + i);
+    lastLine = line; // escapes, so the JIT cannot remove the allocation
+  }
+
+  interface Path {
+    void run(long i);
+  }
+
+  /** Warm up, then measure consecutive windows; returns the bytes this thread allocated in each. */
+  static long[] measure(final Path path) {
+    final com.sun.management.ThreadMXBean mx = (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
+    final long thread = Thread.currentThread().threadId();
+    mx.getThreadAllocatedBytes(thread); // the first call may allocate; keep it outside the windows
+    long i = 0;
+    for (; i < WINDOW; i++) {
+      path.run(i);
+    }
+    final long[] bytes = new long[WINDOWS];
+    for (int w = 0; w < WINDOWS; w++) {
+      final long before = mx.getThreadAllocatedBytes(thread);
+      for (final long end = i + WINDOW; i < end; i++) {
+        path.run(i);
+      }
+      bytes[w] = mx.getThreadAllocatedBytes(thread) - before;
+    }
+    return bytes;
+  }
+
+  public static void main(final String[] args) {
+    final long[] hot = measure(Recipe36AllocationCheck::flyweightQuote);
+    System.out.println("flyweight encode and decode, " + WINDOWS + " windows of " + WINDOW + " quotes after "
+        + WINDOW + " warm-up");
+    System.out.println("  last window allocated " + hot[WINDOWS - 1] + " bytes");
+    boolean bounded = true;
+    for (int w = 1; w < WINDOWS; w++) {
+      bounded &= hot[w] <= LATER_WINDOW_BOUND;
+    }
+    System.out.println("  every window after the first within " + LATER_WINDOW_BOUND + " bytes: " + bounded);
+    System.out.println("  quoted spread checksum " + (checksum == (long) (WINDOWS + 1) * WINDOW * 15_625_000L));
+
+    final long[] cold = measure(Recipe36AllocationCheck::stringQuote);
+    System.out.println("String per quote, same windows");
+    System.out.println("  last window allocated more than one byte per quote: " + (cold[WINDOWS - 1] > WINDOW));
+    System.out.println("  last line: " + lastLine);
+  }
+}
+```
+
+Expected output:
+
+```
+flyweight encode and decode, 3 windows of 1000000 quotes after 1000000 warm-up
+  last window allocated 0 bytes
+  every window after the first within 1024 bytes: true
+  quoted spread checksum true
+String per quote, same windows
+  last window allocated more than one byte per quote: true
+  last line: quote venue=101 instrument=1008 bid=99503999999 ask=99519624999
+```
+
+The flyweight path allocates nothing in the last window and the spread checksum confirms every quote was encoded and decoded. The `String` path allocates more than a byte per quote; the program prints a comparison, not the exact count, because the count depends on the JDK's string layout. The `String` is kept in a static field so it escapes: a value that does not escape can be removed by the JIT's escape analysis, which would make a wasteful path look free. The gating checks follow this pattern on the real loops: `LoopAllocationTest` in `rates-core`, `WiredLoopAllocationTest` in `rates-app`, `AllocationTest` in `rates-fix`, `QuotingAllocationTest`, `RouterAllocationTest` and `DeskQuoterAllocationTest`.

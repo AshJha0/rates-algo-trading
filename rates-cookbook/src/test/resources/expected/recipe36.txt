@@ -1,0 +1,7 @@
+flyweight encode and decode, 3 windows of 1000000 quotes after 1000000 warm-up
+  last window allocated 0 bytes
+  every window after the first within 1024 bytes: true
+  quoted spread checksum true
+String per quote, same windows
+  last window allocated more than one byte per quote: true
+  last line: quote venue=101 instrument=1008 bid=99503999999 ask=99519624999
