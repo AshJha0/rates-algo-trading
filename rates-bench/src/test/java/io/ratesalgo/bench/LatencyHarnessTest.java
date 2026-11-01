@@ -47,15 +47,18 @@ class LatencyHarnessTest {
     assertTrue(r.scheduledToEncode().getTotalCount() >= measured - r.generatorDropped());
     assertTrue(r.decodeToEncode().getTotalCount() >= r.scheduledToEncode().getTotalCount());
     final String json = Files.readString(r.jsonFile(), StandardCharsets.UTF_8);
-    // Exact accounting on every path a message can leave by (DR-INT-06). Under machine load the
-    // gateway thread can fall behind, and the loop then drops Quotes on a full outbound ring
-    // (backpressure, counted), so the gateway sees fewer than the loop processed.
+    // Exact accounting on every path a message can leave by (DR-INT-06). The loop's outbound
+    // counter counts every Quote it produced, delivered or not (LoopCounters.OUTBOUND). Under
+    // machine load the gateway thread can fall behind, and the loop then drops Quotes on a full
+    // outbound ring (backpressure, counted), so the gateway sees the produced less the dropped.
     final long inbound = count(json, "inbound");
     final long outbound = count(json, "outbound");
     final long outboundDropped = count(json, "outboundDropped");
+    final long backpressureEvents = count(json, "backpressureEvents");
     assertEquals(r.generated() - r.generatorDropped(), inbound, json);
-    assertEquals(inbound, outbound + outboundDropped, json);
-    assertEquals(outbound, seen.get(), json);
+    assertEquals(inbound, outbound, json);
+    assertEquals(outbound - outboundDropped, seen.get(), json);
+    assertTrue(backpressureEvents <= outboundDropped, json);
     assertTrue(json.contains("\"schema\": \"rates-bench-latency/1\""));
     assertTrue(json.contains("\"tickToWire\": null"));
     assertTrue(json.contains("\"journalMode\": \"" + mode + "\""), json);
