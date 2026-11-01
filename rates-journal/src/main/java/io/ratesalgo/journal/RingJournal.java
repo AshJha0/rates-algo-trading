@@ -55,6 +55,9 @@ public final class RingJournal implements AutoCloseable {
   /** Frames drained per read of the ring. */
   private static final int DRAIN_LIMIT = 1024;
 
+  /** How long {@link #close()} waits with no progress before it gives up (DR-INT-10). */
+  static final long CLOSE_STALL_NANOS = SegmentedJournal.STALL_NANOS;
+
   private final SegmentedJournal journal;
   private final Clock clock;
   private final OneToOneRingBuffer ring;
@@ -189,23 +192,63 @@ public final class RingJournal implements AutoCloseable {
     checkFailure();
   }
 
-  /** Drains the ring, stops the journal thread and closes the segmented journal. */
+  /**
+   * Drains the ring, stops the journal thread and closes the segmented journal. Waits as long as
+   * there is progress: the journal thread's consumed position advances, or the segmented journal's
+   * background thread works on the segment a waiting roll needs (pages touched, segments created).
+   * Gives up only after {@link #CLOSE_STALL_NANOS} with neither (DR-INT-10).
+   *
+   * @throws IllegalStateException if the journal thread failed, made no progress for the stall
+   *     limit (the message gives the backlog, both ring positions, roll waits and preparer
+   *     progress), or the closing thread was
+   *     interrupted before the journal thread stopped
+   */
   @Override
   public void close() {
+    closeWithin(CLOSE_STALL_NANOS);
+  }
+
+  /** {@link #close()} with a given stall limit; package-private for tests. */
+  void closeWithin(final long stallNanos) {
     if (closed) {
       return;
     }
     closed = true;
     stopping = true;
+    final ShutdownProgress progress = new ShutdownProgress(stallNanos);
+    boolean interrupted = false;
     try {
-      drainer.join(TimeUnit.MINUTES.toMillis(1));
-    } catch (final InterruptedException e) {
-      Thread.currentThread().interrupt();
+      while (drainer.isAlive()) {
+        try {
+          drainer.join(SegmentedJournal.JOIN_STEP_MILLIS);
+        } catch (final InterruptedException e) {
+          interrupted = true;
+          break;
+        }
+        // both counts only rise, so their sum moves exactly when either does
+        final long count = ring.consumerPosition() + journal.preparerProgress();
+        if (drainer.isAlive() && progress.stalled(count, System.nanoTime())) {
+          throw new IllegalStateException(
+              "journal thread " + drainer.getName() + " made no progress for "
+                  + TimeUnit.NANOSECONDS.toMillis(stallNanos) + " ms while closing: backlog " + ring.size()
+                  + " bytes, consumer position " + ring.consumerPosition() + ", producer position "
+                  + ring.producerPosition() + ", roll waits " + journal.rollWaits() + ", preparer progress "
+                  + journal.preparerProgress() + ", " + progress.advances() + " advances seen");
+        }
+      }
+      if (interrupted && drainer.isAlive()) {
+        throw new IllegalStateException(
+            "interrupted while closing journal thread " + drainer.getName() + ": backlog " + ring.size() + " bytes");
+      }
+    } finally {
+      // the segmented journal is closed only once its single writer, the journal thread, has stopped
+      if (!drainer.isAlive()) {
+        journal.close();
+      }
+      if (interrupted) {
+        Thread.currentThread().interrupt();
+      }
     }
-    if (drainer.isAlive()) {
-      throw new IllegalStateException("journal thread did not stop within one minute");
-    }
-    journal.close();
     checkFailure();
   }
 

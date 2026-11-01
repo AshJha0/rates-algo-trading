@@ -94,6 +94,30 @@ public final class JournalWriter implements AutoCloseable {
       final Clock clock,
       final long firstSequence,
       final long previousHash) {
+    return create(path, capacityBytes, clock, firstSequence, previousHash, chunks -> true);
+  }
+
+  /**
+   * {@link #create(Path, int, Clock)} that calls {@code keepGoing} after each zero-fill chunk of
+   * {@link #ZERO_FILL_CHUNK} bytes with the chunks written so far. When it returns false the file is
+   * removed and null is returned: the segment preparer uses it to report progress and to abandon a
+   * segment nobody will use (DR-INT-10).
+   */
+  static JournalWriter create(
+      final Path path,
+      final int capacityBytes,
+      final Clock clock,
+      final java.util.function.IntPredicate keepGoing) {
+    return create(path, capacityBytes, clock, 1L, GENESIS_HASH, keepGoing);
+  }
+
+  private static JournalWriter create(
+      final Path path,
+      final int capacityBytes,
+      final Clock clock,
+      final long firstSequence,
+      final long previousHash,
+      final java.util.function.IntPredicate keepGoing) {
     if (capacityBytes < FILE_HEADER_LENGTH + FRAME_HEADER_LENGTH) {
       throw new IllegalArgumentException("capacity too small: " + capacityBytes);
     }
@@ -101,7 +125,10 @@ public final class JournalWriter implements AutoCloseable {
     if (file.exists()) {
       throw new IllegalArgumentException("journal already exists: " + path);
     }
-    final MappedByteBuffer mapped = mapNewZeroFilled(path, capacityBytes);
+    final MappedByteBuffer mapped = mapNewZeroFilled(path, capacityBytes, keepGoing);
+    if (mapped == null) {
+      return null;
+    }
     mapped.order(JournalFormat.BYTE_ORDER);
     final UnsafeBuffer header = new UnsafeBuffer(mapped);
     header.putInt(MAGIC_OFFSET, MAGIC);
@@ -119,22 +146,37 @@ public final class JournalWriter implements AutoCloseable {
    * every other thread of the process at the next safepoint until it ends (DECISIONS.md DR-R2J-01).
    * A channel write runs in native code, where the thread does not delay a safepoint.
    */
-  private static MappedByteBuffer mapNewZeroFilled(final Path path, final int capacityBytes) {
+  private static MappedByteBuffer mapNewZeroFilled(
+      final Path path, final int capacityBytes, final java.util.function.IntPredicate keepGoing) {
+    boolean abandoned = false;
     try (FileChannel channel =
         FileChannel.open(
             path, StandardOpenOption.CREATE_NEW, StandardOpenOption.READ, StandardOpenOption.WRITE)) {
       final ByteBuffer zeros = ByteBuffer.allocateDirect(Math.min(ZERO_FILL_CHUNK, capacityBytes));
       long written = 0;
+      int chunks = 0;
       while (written < capacityBytes) {
         zeros.clear().limit((int) Math.min(zeros.capacity(), capacityBytes - written));
         while (zeros.hasRemaining()) {
           written += channel.write(zeros, written);
         }
+        if (!keepGoing.test(++chunks)) {
+          abandoned = true;
+          break;
+        }
       }
-      return channel.map(FileChannel.MapMode.READ_WRITE, 0, capacityBytes);
+      if (!abandoned) {
+        return channel.map(FileChannel.MapMode.READ_WRITE, 0, capacityBytes);
+      }
     } catch (final IOException e) {
       throw new UncheckedIOException("cannot create journal " + path, e);
     }
+    try {
+      java.nio.file.Files.deleteIfExists(path);
+    } catch (final IOException e) {
+      // a removed-later .pending file is ignored by readers
+    }
+    return null;
   }
 
   /** Opens an existing journal and positions the writer after its last frame. */
@@ -254,15 +296,41 @@ public final class JournalWriter implements AutoCloseable {
   // The yield is for its safepoint check on the return from native code, not for scheduling.
   @SuppressWarnings("ThreadPriorityCheck")
   int pretouch() {
+    return pretouch(pagesSoFar -> true);
+  }
+
+  /**
+   * {@link #pretouch()} that calls {@code keepGoing} every {@link #PRETOUCH_PAGES_PER_CHECK} pages
+   * with the pages touched so far, and stops early when it returns false. The caller uses it to
+   * report progress and to abandon a segment nobody will use. Stopping early leaves the file
+   * correct: the untouched pages are zero and fault in on first use (DR-INT-10).
+   */
+  // The yield is for its safepoint check on the return from native code, not for scheduling.
+  @SuppressWarnings("ThreadPriorityCheck")
+  int pretouch(final java.util.function.IntPredicate keepGoing) {
     ensureOpen();
     int pages = 0;
     for (long page = position & -PAGE_SIZE; page < capacity; page += PAGE_SIZE) {
       buffer.putByte((int) (Math.min(page + PAGE_SIZE, capacity) - 1), (byte) 0);
       if (++pages % PRETOUCH_PAGES_PER_CHECK == 0) {
+        if (!keepGoing.test(pages)) {
+          return pages;
+        }
         Thread.yield();
       }
     }
     return pages;
+  }
+
+  /**
+   * Unmaps without forcing, for a segment that is deleted next (an unused prepared segment): its
+   * only stores are pretouch zeros, so writing them back to disk is wasted (DR-INT-10).
+   */
+  void discard() {
+    if (!closed) {
+      closed = true;
+      IoUtil.unmap(mapped);
+    }
   }
 
   /** The sequence the next appended frame will get. */
