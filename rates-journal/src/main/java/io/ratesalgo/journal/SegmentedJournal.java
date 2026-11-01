@@ -277,6 +277,20 @@ public final class SegmentedJournal implements AutoCloseable {
     return preparer == null ? 0L : preparer.rollWaits.get();
   }
 
+  /**
+   * A count that rises while the background thread works (pages touched, segments created and
+   * closed); 0 without preallocation. For shutdown paths that wait on this journal (DR-INT-10).
+   */
+  public long preparerProgress() {
+    return preparer == null ? 0L : preparer.progress();
+  }
+
+  /** How long a shutdown wait tolerates no progress at all before it gives up (DR-INT-10). */
+  static final long STALL_NANOS = TimeUnit.SECONDS.toNanos(60);
+
+  /** How often a shutdown wait checks for progress. */
+  static final long JOIN_STEP_MILLIS = 100L;
+
   /** Forces the current segment to the file. Not called on the hot path. */
   public void sync() {
     ensureOpen();
@@ -337,6 +351,8 @@ public final class SegmentedJournal implements AutoCloseable {
     private volatile Throwable failure;
     /** Written by the appender only; read from any thread. */
     private final AtomicLong rollWaits = new AtomicLong();
+    /** Pages this thread has touched and segments it has created or closed; read from any thread. */
+    private final AtomicLong progress = new AtomicLong();
 
     Preparer(final int currentIndex) {
       this.currentIndex = currentIndex;
@@ -353,6 +369,7 @@ public final class SegmentedJournal implements AutoCloseable {
           if (full != null) {
             full.close();
             retiring = null;
+            progress.lazySet(progress.get() + 1);
           }
           final int index = currentIndex;
           if (ready == null && prepared == index && index < MAX_SEGMENTS) {
@@ -376,12 +393,36 @@ public final class SegmentedJournal implements AutoCloseable {
     private JournalWriter prepare(final int index) throws IOException {
       final Path target = segmentPath(dir, name, index);
       final Path temp = dir.resolve(target.getFileName() + ".pending");
-      try (JournalWriter w = JournalWriter.create(temp, segmentCapacity, clock)) {
+      // a segment being prepared when the journal closes is never used: stop writing it (DR-INT-10)
+      final JournalWriter created =
+          JournalWriter.create(
+              temp,
+              segmentCapacity,
+              clock,
+              chunks -> {
+                progress.lazySet(progress.get() + 1);
+                return !stopping;
+              });
+      if (created == null) {
+        return null;
+      }
+      try (JournalWriter w = created) {
+        if (stopping) {
+          w.discard();
+          Files.deleteIfExists(temp);
+          return null;
+        }
         w.sync();
       }
       Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
+      progress.lazySet(progress.get() + 1);
       final JournalWriter w = JournalWriter.open(target, clock);
-      w.pretouch();
+      // a segment being prepared when the journal closes is never used: stop touching it
+      w.pretouch(
+          pagesSoFar -> {
+            progress.lazySet(progress.get() + JournalWriter.PRETOUCH_PAGES_PER_CHECK);
+            return !stopping;
+          });
       return w;
     }
 
@@ -422,22 +463,37 @@ public final class SegmentedJournal implements AutoCloseable {
       }
     }
 
+    long progress() {
+      return progress.get();
+    }
+
     void stop() {
       stopping = true;
       LockSupport.unpark(thread);
-      try {
-        thread.join(TimeUnit.MINUTES.toMillis(1));
-      } catch (final InterruptedException e) {
-        Thread.currentThread().interrupt();
+      // wait while the thread makes progress; give up only after STALL_NANOS without any (DR-INT-10)
+      final ShutdownProgress watch = new ShutdownProgress(STALL_NANOS);
+      while (thread.isAlive()) {
+        try {
+          thread.join(JOIN_STEP_MILLIS);
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+          break;
+        }
+        if (thread.isAlive() && watch.stalled(progress.get(), System.nanoTime())) {
+          break;
+        }
       }
       if (thread.isAlive()) {
-        throw new IllegalStateException("journal " + name + ": background thread did not stop");
+        throw new IllegalStateException(
+            "journal " + name + ": background thread made no progress for "
+                + TimeUnit.NANOSECONDS.toSeconds(STALL_NANOS) + " s and did not stop (progress " + progress.get()
+                + ", roll waits " + rollWaits.get() + ")");
       }
       final JournalWriter unused = ready;
       if (unused != null) {
         ready = null;
         final Path path = segmentPath(dir, name, segmentIndex + 1);
-        unused.close();
+        unused.discard();
         try {
           Files.deleteIfExists(path);
         } catch (final IOException e) {

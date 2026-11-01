@@ -1036,6 +1036,40 @@ Amended 2026-11-01, `VenueSessionReconnectTest`. On pull request 5 the test fail
 - **Fix.** `drive` advances the session clock by the wall-clock time each turn took, so the socket and the session timers share one time base. The 10 s wall-clock ceiling and every assertion are unchanged, and the failure messages now give the state, the statuses, the venue's connection count, attempts, disconnects, logons and give-ups.
 - **After.** 20 fresh JVMs with 4 cores busy ran all three tests and passed.
 
+## DR-INT-10: Shutdown waits on a journal follow progress, and an unused prepared segment is abandoned, not flushed
+
+Date: 2026-11-01
+
+Context. Main CI on 75a7e48 (merge of pull request 5) failed in Java 25 on windows-latest, in `LoopAllocationTest`, RING case. The error was `IllegalStateException: journal thread did not stop within one minute` from `RingJournal.close`, reached through `LoopJournals.close` in the test's teardown; the class took 556 s on that runner. It was not an allocation failure: on a slow Windows runner the ring journal's drain exceeded the old fixed 60 s close limit although it was making progress. Two fixed one-minute joins were involved:
+
+- **`RingJournal.close`** joined its journal thread for a fixed 60 s, and left the segmented journal open if the join ran out.
+- **`SegmentedJournal.Preparer.stop`** joined the background preparer the same way.
+
+A probe with thread dumps, run by a separate session with 4 to 24 cores held busy, showed where the time went. The 64 MiB ring backlog drained in 0.6 to 1.3 s, yet `close()` took 15 to 56 s. Most of that was `SegmentedJournal.close` → `Preparer.stop` joining the preparer while it pretouched the next 256 MiB segment, which would never be used. That segment was then `force()`d to disk before being deleted. On a starved runner the journal thread can also wait in a roll for that same slow preparation, and while it waits the ring's consumed position does not move. So a deadline on the consumed position alone could still give up wrongly.
+
+Measurements on the development laptop (12 cores, Windows 11, JDK 25.0.5, 4 cores held busy, a fresh JVM per run), closing a full 64 MiB ring that drains into 64 KiB segments:
+- the original code closed in 9.3 s, 24.6 s and 24.1 s, under its fixed 60 s, so the full CI failure did not reproduce here;
+- with a progress rule and a 5 s stall limit, the close finished after 54.9 s, 9.3 s and 11.2 s;
+- the old fixed rule at 5 s would have failed all three while work was still being done.
+- with the full change, five more runs under the same load all passed. Closing a journal with 256 MiB segments right after creating it took 0.3 to 3.0 s, against 0.4 to 19.8 s when only pretouching stopped early and the preparer still finished creating and syncing the unused file. The full 64 MiB ring over 64 KiB segments took 11 to 25 s, because that is a real drain through about 1,000 rolls; the close now waits for it instead of failing at a fixed limit.
+
+Decision.
+- **One progress rule.** `ShutdownProgress` drives both waits. They poll every 100 ms and keep waiting while a monotonic count moves, giving up only after `SegmentedJournal.STALL_NANOS` (60 s) with no movement.
+  - For `RingJournal.close` the count is the ring's consumed position plus `SegmentedJournal.preparerProgress()`. That counter rises by the pages touched and by each segment created or closed, so a journal thread waiting in a roll for a slow preparation still counts as progress.
+  - For `Preparer.stop` the count is the preparer's own progress.
+- **Diagnosable give-up.** If a wait gives up, the exception gives the backlog in bytes, both ring positions, roll waits, preparer progress and the advances seen. An interrupt is reported the same way and the flag is restored.
+- **No close under a writer.** `RingJournal` closes the segmented journal only once its journal thread has stopped.
+- **Abandon the unused segment.** Once the journal is closing, the preparer stops working on the segment it is preparing. File creation checks after each 1 MiB zero-fill chunk (`JournalWriter.create(..., keepGoing)`); if abandoned, the half-made `.pending` file is deleted without a sync. Pretouching checks every 16 pages (`JournalWriter.pretouch(keepGoing)`). Both checks count as preparer progress. The unused segment is unmapped without `force()` (`JournalWriter.discard`) and deleted. A segment a waiting roll needs is finished, because stopping is set only after the journal thread has stopped.
+- **One path.** The test's teardown and the trading process's shutdown both reach this through `LoopJournals.close`.
+- **Test volume kept.** The test still leaves a full ring backlog, because the ring capacity (64 MiB per journal) bounds it and a production loop could hold the same at shutdown. Its warm-up windows and zero-byte assertions are unchanged.
+
+Consequences. A close takes as long as the drain needs and no longer pays to touch and flush a segment nobody will use. A truly stuck thread is still reported after 60 s with no progress, with the numbers needed to tell why. One limit remains: a single `force()` of a new segment is one blocking call with no progress inside it, so a sync that takes longer than 60 s would still be reported as a stall. Tests:
+- `RingJournalTest.theCloseGivesUpOnlyAfterTheStallLimitWithNoProgress` checks the rule;
+- `RingJournalTest.aBacklogThatTakesManyPollCyclesToDrainStillCloses` closes a full 4 MiB ring over 64 KiB segments with a 10 s stall limit and finds every frame (a 1 s limit failed once under load, during a single segment create and sync);
+- `SegmentedJournalTest.pretouchStopsAtTheFirstCheckOnceAbandonedAndReportsProgress` and `closeDuringAPreparationAbandonsItAndRemovesTheUnusedSegment` check the abandonment and the clean-up.
+
+`awaitDrained` keeps its explicit timeout, because its callers pass one.
+
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
 Date: 2026-10-31

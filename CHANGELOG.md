@@ -131,6 +131,7 @@ Round 2 fixes from the P&L audit, package D (branch `claude/fix-d-backtest-cdd6a
 
 ### Fixed
 
+- Journal shutdown: `RingJournal.close()` and `SegmentedJournal.close()` wait while their background threads make progress (consumed position, or preparer pages touched and segments created) and give up only after 60 s with none, reporting the backlog, positions, roll waits and preparer progress. Once closing, the preparer stops pretouching the unused next segment, which is unmapped without `force()` and deleted. Before, two fixed one-minute joins failed `LoopAllocationTest` on a slow windows-latest runner although the drain was making progress (DR-INT-10).
 - Review fixes (branch `claude/r2-review-6e9f43`, DR-R2R-01 to DR-R2R-14):
   - coupons for carry and basis selected by record date;
   - a kill completes when a listener throws;

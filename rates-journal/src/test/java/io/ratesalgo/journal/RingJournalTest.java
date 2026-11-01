@@ -2,7 +2,9 @@ package io.ratesalgo.journal;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.common.time.ManualClock;
 import java.nio.file.Files;
@@ -142,5 +144,50 @@ class RingJournalTest {
       assertThrows(IllegalArgumentException.class, () -> RingJournal.start("d", d, clock, 100_000));
       assertThrows(IllegalArgumentException.class, () -> RingJournal.start("d", d, clock, 1 << 15));
     }
+  }
+
+  /**
+   * A full ring that drains slowly into 64 KiB segments (one prepared and synced file per roll)
+   * closes, and every frame is in the file, even though the drain takes many close poll cycles.
+   * The stall limit is 10 s: above a single segment create and sync on a loaded machine, below the drain (DR-INT-10).
+   */
+  @Test
+  void aBacklogThatTakesManyPollCyclesToDrainStillCloses() {
+    final ManualClock clock = new ManualClock();
+    final RingJournal ring =
+        RingJournal.start("slow", SegmentedJournal.create(dir, "slow", 64 << 10, clock, true), clock, 4 << 20);
+    final UnsafeBuffer p = payload(5, 200);
+    long appended = 0;
+    while (ring.producerWaits() == 0 && appended < 1_000_000) {
+      ring.append(10, 0, p, 0, p.capacity());
+      appended++;
+    }
+    final int backlog = ring.backlog();
+    ring.closeWithin(TimeUnit.SECONDS.toNanos(10));
+    assertTrue(backlog > 0, "the ring held a backlog at close");
+    final List<Object[]> written = frames(dir, "slow");
+    assertEquals(appended, written.size());
+    assertEquals(appended, ((long[]) written.get(written.size() - 1)[0])[0]);
+  }
+
+  @Test
+  void theCloseGivesUpOnlyAfterTheStallLimitWithNoProgress() {
+    final ShutdownProgress progress = new ShutdownProgress(1_000L);
+    // a position that keeps moving never stalls, however long the close takes
+    for (long t = 0; t < 1_000_000L; t += 999L) {
+      assertFalse(progress.stalled(t, t));
+    }
+    final long last = 999_999L; // the last position and time recorded above (999 * 1001)
+    final long seen = progress.advances();
+    // a position that stops: not stalled before the limit, stalled at it
+    assertFalse(progress.stalled(last, last + 1L));
+    assertFalse(progress.stalled(last, last + 999L));
+    assertTrue(progress.stalled(last, last + 1_000L));
+    assertEquals(seen, progress.advances());
+    // moving again resets the stall
+    assertFalse(progress.stalled(last + 5L, last + 5_000L));
+    assertFalse(progress.stalled(last + 5L, last + 5_999L));
+    assertEquals(seen + 1, progress.advances());
+    assertThrows(IllegalArgumentException.class, () -> new ShutdownProgress(0L));
   }
 }

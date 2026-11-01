@@ -414,7 +414,7 @@ Both modes write the same frames: the same `JournalWriter` code assigns the sequ
 - a frame too large for an empty segment is refused on the loop thread (`JournalFullException`), as in direct mode;
 - if the journal thread fails, the next append on the loop thread throws `IllegalStateException` with the cause; the runner stops the loop as for any other failure (Section 4), and its attempt to journal a LoopError through the failed journal fails too and is attached to the failure as suppressed;
 - a process crash loses the frames still in the ring (normally microseconds of traffic); in direct mode every appended frame is already in the mapping and survives a process crash. Neither mode forces to disk on the loop thread; durability across an operating-system crash is the background force at each roll plus the operating system's write-back.
-- `LoopJournals.close()` drains each ring before closing its journal; call it after the loop thread has stopped.
+- `LoopJournals.close()` drains each ring before closing its journal; call it after the loop thread has stopped. `RingJournal.close()` and `SegmentedJournal.close()` wait for their background threads as long as they make progress: the ring's consumed position, or the preparer's pages touched and segments created. They give up with an `IllegalStateException` only after 60 s with none; the message gives the backlog, ring positions, roll waits and preparer progress. Once closing, an unused prepared segment is no longer touched; it is unmapped without being forced and deleted (DR-INT-10).
 
 `LoopReplay.run(inbound, recordedOutbound, factory)` replays the inbound journal through a fresh loop built by the same `LoopFactory` that built the live one:
 

@@ -449,4 +449,30 @@ class SegmentedJournalTest {
       assertEquals(2, n);
     }
   }
+  @Test
+  void pretouchStopsAtTheFirstCheckOnceAbandonedAndReportsProgress() throws IOException {
+    final Path single = dir.resolve("touch.raj");
+    try (JournalWriter w = JournalWriter.create(single, 1 << 20, new ManualClock())) {
+      final List<Integer> checks = new ArrayList<>();
+      assertEquals(JournalWriter.PRETOUCH_PAGES_PER_CHECK, w.pretouch(p -> { checks.add(p); return false; }));
+      assertEquals(List.of(JournalWriter.PRETOUCH_PAGES_PER_CHECK), checks);
+      checks.clear();
+      final int all = w.pretouch(p -> { checks.add(p); return true; });
+      assertEquals((1 << 20) / JournalWriter.PAGE_SIZE, all, "every page when not abandoned");
+      assertEquals(all / JournalWriter.PRETOUCH_PAGES_PER_CHECK, checks.size(), "one check per 16 pages");
+    }
+  }
+
+  @Test
+  void closeDuringAPreparationAbandonsItAndRemovesTheUnusedSegment() throws IOException {
+    // 64 MiB segments: the background thread is still preparing the second when close is called
+    final SegmentedJournal j = SegmentedJournal.create(dir, "big", 64 << 20, new ManualClock(), true);
+    j.append(1, 1, new UnsafeBuffer(new byte[8]), 0, 8);
+    j.close();
+    assertTrue(Files.exists(SegmentedJournal.segmentPath(dir, "big", 1)));
+    assertFalse(Files.exists(SegmentedJournal.segmentPath(dir, "big", 2)), "the unused prepared segment is deleted");
+    try (var files = Files.list(dir)) {
+      assertFalse(files.anyMatch(f -> f.getFileName().toString().endsWith(".pending")), "no pending file left");
+    }
+  }
 }
