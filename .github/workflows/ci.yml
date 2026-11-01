@@ -79,6 +79,9 @@ jobs:
           mvn -B -ntp -pl rates-bench exec:exec@latency
           -Dlatency.warmup=10 -Dlatency.measure=20 -Dlatency.idle=yield
           -Dlatency.label=github-hosted-ubuntu
+      - name: Percentiles to the job summary
+        if: always()
+        run: python3 tools/latency_summary.py rates-bench/target/latency/latency-*.json | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload latency report
         if: always()
         uses: actions/upload-artifact@v4
