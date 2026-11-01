@@ -101,6 +101,7 @@ public final class BacktestRunner {
     final long priceMantissa;
     final boolean hedge;
     ClobFillModel.Resting resting;
+    boolean cancelRequested;
 
     Order(
         final long clOrdId,
@@ -171,6 +172,7 @@ public final class BacktestRunner {
     private final List<RfqRecord> rfqs = new ArrayList<>();
     private final List<FillRecord> fills = new ArrayList<>();
     private final Map<Long, Order> resting = new LinkedHashMap<>();
+    private final Map<Long, Order> inFlight = new HashMap<>();
     private final Map<Integer, Top> tops = new TreeMap<>();
     private final Map<Integer, MidSeries> mids = new TreeMap<>();
     private final Map<Integer, Long> maxAbsPosition = new TreeMap<>();
@@ -508,11 +510,32 @@ public final class BacktestRunner {
           .sentNanos(sent);
       orderEncoder.price().mantissa(priceMantissa);
       emit(out, NewOrderEncoder.TEMPLATE_ID, orderEncoder.limit());
+      inFlight.put(clOrdId, order);
       schedule(sent + config.orderLatencyNanos(), Kind.ORDER_ARRIVAL, order);
       return clOrdId;
     }
 
+    @Override
+    public boolean cancelOrder(final long clOrdId) {
+      final Order r = resting.remove(clOrdId);
+      if (r != null) {
+        report(r, OrdStatus.Cancelled, 0, 0);
+        return true;
+      }
+      final Order f = inFlight.get(clOrdId);
+      if (f != null && f.type != OrdType.Market && !f.cancelRequested) {
+        f.cancelRequested = true; // reported as cancelled when it arrives
+        return true;
+      }
+      return false;
+    }
+
     private void arrive(final Order order) {
+      inFlight.remove(order.clOrdId);
+      if (order.cancelRequested) {
+        report(order, OrdStatus.Cancelled, 0, 0);
+        return;
+      }
       final Instrument instrument = config.instruments().get(order.instrumentId);
       if (!book.hasMid(order.instrumentId)) {
         report(order, OrdStatus.Rejected, 0, 0);
@@ -677,6 +700,18 @@ public final class BacktestRunner {
     public double bookHalfSpread(final int instrumentId) {
       final Top top = tops.get(instrumentId);
       return top != null && top.twoSided() ? Prices.toDouble(top.ask - top.bid) / 2.0 : 0.0;
+    }
+
+    @Override
+    public long touchPrice(final int instrumentId, final boolean bidSide) {
+      final Top top = tops.get(instrumentId);
+      return top == null ? 0L : bidSide ? top.bid : top.ask;
+    }
+
+    @Override
+    public long touchQuantity(final int instrumentId, final boolean bidSide) {
+      final Top top = tops.get(instrumentId);
+      return top == null ? 0L : bidSide ? top.bidQty : top.askQty;
     }
 
     @Override

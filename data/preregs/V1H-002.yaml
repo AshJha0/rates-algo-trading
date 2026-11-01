@@ -1,0 +1,57 @@
+# Pre-registration V1H-002 (audit item 10). Written and hashed before the evaluation period was run.
+# Format: API_SPEC.md Section 16.8. Run together with V1H-001 by HedgeExperimentCli, sharing
+# journals and one Holm family of 6 tests (2 treatments x 3 band points). DECISIONS.md DR-V1H-02.
+prereg_version: 1
+id: V1H-002
+title: A cost-aware hedge trigger against the fixed 100,000 DV01 trigger
+hypothesis: >
+  Hedging all net DV01 into the 10-year note future in one market order when the variance charge
+  of holding it for the next 2,700 s (gamma / 2 times sigma squared times net DV01 squared times
+  2,700, gamma 1e-6 per USD, sigma 0.35 / sqrt(60) bp per sqrt(second)) exceeds the cost of
+  hedging it now under the depth-walk rule (live half-spread and fee per DV01, plus one tick per
+  DV01 beyond the displayed touch quantity, up to the preset's one tick beyond the touch), or when
+  its absolute value exceeds 500,000 USD per bp, gives a better risk-adjusted hedge cost than
+  hedging all of it whenever it exceeds 100,000 USD per bp.
+metric: >
+  Risk-adjusted hedge shortfall per synthetic session in USD: hedge implementation shortfall (the
+  sum over hedge fills of quantity times (mid of the future when the order was decided minus fill
+  price), signed so that a cost is negative, minus hedge fees) minus gamma / 2 times sigma squared
+  times the integral of net DV01 squared over the session, with the gamma and sigma above; larger
+  is better. Market hedges fill by the depth walk of audit fix package D. Reported beside it:
+  hedge shortfall, risk charge, hedge orders, mean and largest absolute net DV01, P&L.
+baseline: baseline
+treatments: [adaptive_trigger]
+period: {start: 2026-05-04, end: 2026-05-29}
+fitting_period: {start: 2026-04-13, end: 2026-04-24}
+holdout: [2026-06-08, 2026-06-09, 2026-06-10, 2026-06-11, 2026-06-12]
+success_threshold: >
+  At each band point (low, central, high), with d_i the session difference of the metric
+  (treatment minus baseline): a paired t-test of mean(d) against zero, two-sided, Holm-adjusted
+  over the 6 tests of V1H-001 and V1H-002, below 0.05, and the 95 percent moving-block bootstrap
+  interval of mean(d) (blocks of 2 sessions, 2000 resamples, seed 11) entirely above zero.
+  Supported only if this holds at all three points. Adopted as the desk default only if supported
+  and, at every point, (a) no limit breach (absolute net DV01 above 1,000,000 USD per bp or a
+  position above 2,000 million) on a session where the baseline did not breach, (b) the bootstrap
+  interval of the paired difference in risk-adjusted shortfall (the residual-risk guard) is not
+  entirely below zero, and (c) the bootstrap interval of the paired session P&L difference is not
+  entirely below zero. (V1H-002 has no residual-risk guard: its metric is already risk-adjusted;
+  conditions (a) and (c) apply.) The verdict is recorded in data/ledger/ledger.jsonl whatever it is.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+  # with dealers_min, dealers_max and informed_share_multiplier at the same point (config band)
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-01
+config: data/experiments/V1H.config.yaml
+config_sha256: 94d2df23c07c4469a118461ae86a331d1681ac852320798367b88b75e770ffee
+limitations: >
+  Synthetic sessions only: competitors, the win-probability slope and informed-flow share are
+  declared assumptions reported across a band (DR-008), so the result is a simulator consistency
+  check, never evidence of edge. The rule and the metric use the same gamma, so the test asks
+  whether the rule meets its own objective better than a fixed trigger, not whether gamma is the
+  desk's risk appetite. The synthetic market has constant volatility and a constant spread, so the
+  rule's threshold moves only with displayed depth; it is close to a fixed threshold here. The
+  rule is myopic (one interval, no expected netting). One hedge instrument. The horizon was chosen
+  on the fitting period (2026-04-13 to 2026-04-24) from 900, 1800, 2700, 3600 and 7200 s; no value
+  was better than the fixed trigger at every band point there.

@@ -74,12 +74,14 @@ public final class DeskQuoter implements Strategy {
 
   private static final int SLOTS = 8192;
   private static final long RECHECK = Long.MAX_VALUE;
+  private static final long ESCALATE = Long.MAX_VALUE - 1;
   private static final long NONE = -1L;
 
   private final String name;
   private final Features f;
   private final RiskLadder ladder;
   private final int hedgeIndex;
+  private final HedgeSlicing slicing;
 
   // live RFQs: rfqId -> slot
   private final Long2LongHashMap rfqSlot = new Long2LongHashMap(SLOTS * 2, 0.5f, NONE);
@@ -101,6 +103,18 @@ public final class DeskQuoter implements Strategy {
   private long lastClientFillNanos;
   private long recheckAt = Long.MAX_VALUE;
 
+  // the hedge order in flight: its decision mid for the shortfall, and the passive child's state
+  private long hedgeOrderId = NONE;
+  private double hedgeDecisionMid;
+  private boolean hedgePassive;
+  private boolean hedgeEscalating;
+  private boolean hedgeBuy;
+  private long hedgeQuantity;
+  private long escalateTimerId = NONE;
+  // with slicing: the net DV01 the current parent hedge aims for, NaN when no parent is working
+  private double parentTarget = Double.NaN;
+  private double parentSign;
+
   // counters
   private long quotes;
   private long sizeDeclines;
@@ -109,10 +123,22 @@ public final class DeskQuoter implements Strategy {
   private long waits;
   private long stagedSlices;
   private long markoutsRecorded;
+  private long passiveFills;
+  private long escalations;
+  private double hedgeShortfall;
 
   public DeskQuoter(final String name, final Features features) {
+    this(name, features, null);
+  }
+
+  /**
+   * @param slicing how to execute hedges ({@link HedgeSlicing}); null for one market order per
+   *     hedge, today's behaviour
+   */
+  public DeskQuoter(final String name, final Features features, final HedgeSlicing slicing) {
     this.name = name;
     this.f = features;
+    this.slicing = slicing;
     this.ladder = features.ladder();
     this.hedgeIndex = ladder.indexOf(InstrumentSet.TY_FUTURE);
     if (hedgeIndex < 0) {
@@ -205,8 +231,30 @@ public final class DeskQuoter implements Strategy {
   @Override
   public void onExecutionReport(final ExecutionReportDecoder report, final StrategyContext ctx) {
     final OrdStatus s = report.ordStatus();
+    final boolean ours = report.clOrdId() == hedgeOrderId;
+    if (ours && s == OrdStatus.Cancelled && hedgeEscalating) {
+      // the passive child did not fill in time: send it again as a market order
+      hedgeEscalating = false;
+      hedgePassive = false;
+      escalations++;
+      hedgeOrderId =
+          ctx.sendOrder(
+              InstrumentSet.TY_FUTURE, hedgeBuy ? Side.Buy : Side.Sell, OrdType.Market, hedgeQuantity, 0L, true);
+      return;
+    }
+    if (ours && s == OrdStatus.Filled) {
+      final Instrument future = ladder.instrument(hedgeIndex);
+      final double signed = report.side() == Side.Buy ? report.lastQuantity() : -report.lastQuantity();
+      hedgeShortfall +=
+          signed * (hedgeDecisionMid - Prices.toDouble(report.lastPrice().mantissa())) * future.valuePerUnit();
+      if (hedgePassive) {
+        passiveFills++;
+      }
+    }
     if (s == OrdStatus.Filled || s == OrdStatus.Rejected || s == OrdStatus.Cancelled) {
       hedgeInFlight = false;
+      hedgePassive = false;
+      hedgeEscalating = false;
       if (s == OrdStatus.Filled) {
         maybeHedge(ctx);
       }
@@ -216,7 +264,14 @@ public final class DeskQuoter implements Strategy {
   @Override
   public void onTimer(final long timerId, final long nowEpochNanos, final StrategyContext ctx) {
     final long payload = timers.remove(timerId);
-    if (payload == RECHECK) {
+    if (payload == ESCALATE) {
+      if (timerId == escalateTimerId && hedgeInFlight && hedgePassive && !hedgeEscalating) {
+        hedgeEscalating = true;
+        if (!ctx.cancelOrder(hedgeOrderId)) {
+          hedgeEscalating = false; // it filled, or the venue no longer knows it
+        }
+      }
+    } else if (payload == RECHECK) {
       if (nowEpochNanos >= recheckAt) {
         recheckAt = Long.MAX_VALUE;
       }
@@ -248,7 +303,11 @@ public final class DeskQuoter implements Strategy {
     }
     refresh(ctx);
     final long now = ctx.nowEpochNanos();
-    final double excess = f.budget().excessDv01(ladder, now - lastClientFillNanos);
+    observeMarket(ctx);
+    double excess = f.budget().excessDv01(ladder, now - lastClientFillNanos);
+    if (slicing != null) {
+      excess = withParent(excess);
+    }
     if (!(Math.abs(excess) > 0)) {
       f.timing().reset();
       final long hold = f.budget().holdNanos();
@@ -275,10 +334,47 @@ public final class DeskQuoter implements Strategy {
     }
   }
 
-  /** Sends a market order removing {@code dv01}; false when it rounds to zero contracts. */
+  /**
+   * The excess to hedge with slicing: what is left of the working parent (net DV01 minus the
+   * parent's target, so client flow that nets in the meantime reduces it) when that is larger than
+   * what the budget asks for now; a larger budget excess starts a new parent.
+   */
+  private double withParent(final double budgetExcess) {
+    final double net = ladder.net();
+    if (!Double.isNaN(parentTarget)) {
+      final double left = net - parentTarget;
+      if (left * parentSign > 0 && Math.abs(left) > Math.abs(budgetExcess)) {
+        return left;
+      }
+      parentTarget = Double.NaN;
+    }
+    if (Math.abs(budgetExcess) > 0) {
+      parentTarget = net - budgetExcess;
+      parentSign = Math.signum(budgetExcess);
+    }
+    return budgetExcess;
+  }
+
+  /** Tells the budget the hedge future's spread, tick and displayed depth on the side a hedge would take. */
+  private void observeMarket(final StrategyContext ctx) {
+    final Instrument future = ladder.instrument(hedgeIndex);
+    final double perBp = Math.abs(future.priceChangePerBp());
+    final boolean buy = -ladder.net() / future.dv01PerUnit() > 0;
+    f.budget()
+        .observeMarket(
+            ctx.bookHalfSpread(InstrumentSet.TY_FUTURE) / perBp,
+            future.tickMantissa() / 1e9 / perBp,
+            ctx.touchQuantity(InstrumentSet.TY_FUTURE, !buy) * Math.abs(future.dv01PerUnit()));
+  }
+
+  /**
+   * Sends a hedge removing {@code dv01}: one market order, or with {@link HedgeSlicing} the next
+   * child, passive first. False when it rounds to zero contracts.
+   */
   private boolean send(final StrategyContext ctx, final double dv01) {
     final Instrument future = ladder.instrument(hedgeIndex);
-    final double perContract = future.dv01PerUnit() * future.lotSize();
+    final long lot = future.lotSize();
+    final double perContract = future.dv01PerUnit() * lot;
     final long contracts = Math.round(-dv01 / perContract);
     if (contracts == 0) {
       return false;
@@ -286,13 +382,28 @@ public final class DeskQuoter implements Strategy {
     hedgeInFlight = true;
     hedgesSent++;
     f.timing().reset();
-    ctx.sendOrder(
-        InstrumentSet.TY_FUTURE,
-        contracts > 0 ? Side.Buy : Side.Sell,
-        OrdType.Market,
-        Math.abs(contracts) * future.lotSize(),
-        0L,
-        true);
+    hedgeBuy = contracts > 0;
+    hedgeDecisionMid = ctx.mid(InstrumentSet.TY_FUTURE);
+    hedgePassive = false;
+    hedgeEscalating = false;
+    final Side side = hedgeBuy ? Side.Buy : Side.Sell;
+    if (slicing == null) {
+      hedgeQuantity = Math.abs(contracts) * lot;
+      hedgeOrderId = ctx.sendOrder(InstrumentSet.TY_FUTURE, side, OrdType.Market, hedgeQuantity, 0L, true);
+      return true;
+    }
+    final long touchLots = ctx.touchQuantity(InstrumentSet.TY_FUTURE, !hedgeBuy) / lot;
+    hedgeQuantity = slicing.childLots(Math.abs(contracts), touchLots) * lot;
+    final long passivePrice = ctx.touchPrice(InstrumentSet.TY_FUTURE, hedgeBuy);
+    if (slicing.passiveWaitNanos() > 0 && passivePrice != 0 && Math.abs(ladder.net()) <= slicing.urgentDv01()) {
+      hedgePassive = true;
+      hedgeOrderId =
+          ctx.sendOrder(InstrumentSet.TY_FUTURE, side, OrdType.Limit, hedgeQuantity, passivePrice, true);
+      escalateTimerId = ctx.scheduleTimer(ctx.nowEpochNanos() + slicing.passiveWaitNanos());
+      timers.put(escalateTimerId, ESCALATE);
+    } else {
+      hedgeOrderId = ctx.sendOrder(InstrumentSet.TY_FUTURE, side, OrdType.Market, hedgeQuantity, 0L, true);
+    }
     return true;
   }
 
@@ -324,6 +435,29 @@ public final class DeskQuoter implements Strategy {
 
   public long markoutsRecorded() {
     return markoutsRecorded;
+  }
+
+  /** Hedge children filled passively. */
+  public long passiveFills() {
+    return passiveFills;
+  }
+
+  /** Passive children cancelled and sent again as market orders. */
+  public long escalations() {
+    return escalations;
+  }
+
+  /**
+   * Implementation shortfall of the hedges before fees, currency: the sum over hedge fills of
+   * quantity times (mid when the order was decided minus fill price), signed so that a cost is
+   * negative. An escalated child keeps the mid of its passive decision.
+   */
+  public double hedgeShortfall() {
+    return hedgeShortfall;
+  }
+
+  public HedgeSlicing slicing() {
+    return slicing;
   }
 
   public Features features() {
