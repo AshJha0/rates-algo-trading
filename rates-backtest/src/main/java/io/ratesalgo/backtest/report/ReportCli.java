@@ -6,6 +6,7 @@ import io.ratesalgo.backtest.BacktestRunner;
 import io.ratesalgo.backtest.ResultsWriter;
 import io.ratesalgo.backtest.model.BandPoint;
 import io.ratesalgo.backtest.prereg.Experiment;
+import io.ratesalgo.backtest.util.Prices;
 import io.ratesalgo.backtest.util.Yaml;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,7 +29,9 @@ import java.util.Map;
  * <p>The config names the experiment config whose strategies to use, the strategy, the band
  * points, the outcome seed, the limits and the optional latency JSON. For each band point the
  * runner writes {@code results.raj}, the CSV and JSON tables and {@code report.md} and {@code
- * report.json} under {@code out/<band point>/}. Exit code 0 on success, 1 on any error.
+ * report.json} under {@code out/<band point>/}, and {@code band_risk.json} and {@code band_risk.md}
+ * (daily-P&amp;L volatility, Sharpe ratio and maximum drawdown per band point, one day per journal;
+ * a simulator consistency check, {@link BandRisk}) under {@code out/}. Exit code 0 on success, 1 on any error.
  */
 public final class ReportCli {
 
@@ -66,20 +70,46 @@ public final class ReportCli {
     final String strategy = Yaml.string(cfg, "strategy", "report");
     final long seed = Yaml.integer(cfg, "outcome_seed", "report");
     final Path outDir = Path.of(opts.get("out"));
+    final List<BandPoint> points = new ArrayList<>();
     for (final Object p : Yaml.asList(Yaml.require(cfg, "band_points", "report"), "band_points")) {
-      final BandPoint point = BandPoint.parse(p.toString());
+      points.add(BandPoint.parse(p.toString()));
+    }
+    final Map<String, Map<String, double[]>> daily = new LinkedHashMap<>();
+    final List<DailyReport> reports = new ArrayList<>();
+    for (final BandPoint point : points) {
       final Path dir = outDir.resolve(point.label());
       final BacktestConfig config = BacktestConfig.fromPresets(experiment.presets(), journals, seed, point, dir);
       final BacktestResult result = new BacktestRunner(config).run(experiment.strategy(strategy));
       ResultsWriter.write(result, config.instruments(), dir);
-      final DailyReport report = new DailyReport(result, config.instruments(), settings, DailyReport.RouterFillQuality.NONE);
-      try {
+      reports.add(new DailyReport(result, config.instruments(), settings, DailyReport.RouterFillQuality.NONE));
+      // one run per journal gives the daily P&L series the band risk table is computed from
+      final double[] x = new double[journals.size()];
+      for (int d = 0; d < x.length; d++) {
+        x[d] =
+            journals.size() == 1
+                ? Prices.cents(result.total().positionPnl())
+                : Prices.cents(
+                    new BacktestRunner(BacktestConfig.fromPresets(experiment.presets(), List.of(journals.get(d)), seed, point, null))
+                        .run(experiment.strategy(strategy))
+                        .total()
+                        .positionPnl());
+      }
+      daily.put(point.label(), Map.of(strategy, x));
+      out.println(point.label() + ": " + result.rfqs().size() + " rfqs, P&L " + String.format(java.util.Locale.ROOT, "%.2f", result.total().positionPnl()) + " USD");
+    }
+    final List<Map<String, Object>> risk = BandRisk.rows(daily);
+    try {
+      Files.createDirectories(outDir);
+      for (int i = 0; i < points.size(); i++) {
+        final Path dir = outDir.resolve(points.get(i).label());
+        final DailyReport report = reports.get(i).withBandRisk(risk);
         Files.writeString(dir.resolve("report.md"), report.toMarkdown(), StandardCharsets.UTF_8);
         Files.writeString(dir.resolve("report.json"), report.toJson(), StandardCharsets.UTF_8);
-      } catch (final IOException e) {
-        throw new UncheckedIOException(e);
       }
-      out.println(point.label() + ": " + result.rfqs().size() + " rfqs, P&L " + String.format(java.util.Locale.ROOT, "%.2f", result.total().positionPnl()) + " USD");
+      Files.writeString(outDir.resolve("band_risk.json"), BandRisk.toJson(risk), StandardCharsets.UTF_8);
+      Files.writeString(outDir.resolve("band_risk.md"), BandRisk.toMarkdown(risk), StandardCharsets.UTF_8);
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
     }
     return 0;
   }

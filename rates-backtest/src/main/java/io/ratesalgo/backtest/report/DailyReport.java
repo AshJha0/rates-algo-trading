@@ -29,7 +29,8 @@ import java.util.TreeMap;
  * decisions); latency percentiles (from the latency harness JSON when the configured file exists);
  * limit utilisation; client analytics (hits and misses per client, money left on the table
  * against the cover, near misses that would have won at the cover, response time against win
- * rate, decline rates). Every number is computed from the run's records; nothing is typed in.
+ * rate, decline rates); daily-P&amp;L volatility, Sharpe ratio and maximum drawdown across the
+ * assumption band ({@link BandRisk}, a simulator consistency check). Every number is computed from the run's records; nothing is typed in.
  */
 public final class DailyReport {
 
@@ -48,16 +49,32 @@ public final class DailyReport {
   private final InstrumentSet instruments;
   private final Settings settings;
   private final RouterFillQuality router;
+  private final List<Map<String, Object>> bandRisk;
 
   public DailyReport(
       final BacktestResult result,
       final InstrumentSet instruments,
       final Settings settings,
       final RouterFillQuality router) {
+    this(result, instruments, settings, router, List.of());
+  }
+
+  private DailyReport(
+      final BacktestResult result,
+      final InstrumentSet instruments,
+      final Settings settings,
+      final RouterFillQuality router,
+      final List<Map<String, Object>> bandRisk) {
     this.r = result;
     this.instruments = instruments;
     this.settings = settings;
     this.router = router;
+    this.bandRisk = bandRisk;
+  }
+
+  /** The same report with the {@link BandRisk} rows of the run's band points. */
+  public DailyReport withBandRisk(final List<Map<String, Object>> rows) {
+    return new DailyReport(r, instruments, settings, router, List.copyOf(rows));
   }
 
   /** The report as a JSON-ready map. */
@@ -80,6 +97,10 @@ public final class DailyReport {
     m.put("limit_utilisation", limits());
     m.put("client_analytics", clients());
     m.put("response_time_vs_win_rate", responseBuckets());
+    final Map<String, Object> risk = new LinkedHashMap<>();
+    risk.put("label", BandRisk.LABEL);
+    risk.put("rows", bandRisk);
+    m.put("pnl_risk_across_band", risk);
     return m;
   }
 
@@ -329,6 +350,7 @@ public final class DailyReport {
     table(sb, positions);
     section(sb, "Client analytics", (List<Map<String, Object>>) m.get("client_analytics"));
     section(sb, "Response time against win rate", (List<Map<String, Object>>) m.get("response_time_vs_win_rate"));
+    sb.append(BandRisk.toMarkdown(bandRisk));
     return sb.toString();
   }
 

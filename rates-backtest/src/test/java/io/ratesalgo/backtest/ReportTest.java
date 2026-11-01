@@ -12,6 +12,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class ReportTest {
     final Path repo = TestSupport.repoRoot();
     final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     final Path journal = dir.resolve("day.raj");
+    final Path journal2 = dir.resolve("day2.raj");
     final Path latency = dir.resolve("latency.json");
     Files.writeString(latency, "{\"machine\":\"test\",\"percentiles_ns\":{\"p50\":1200,\"p99\":4800}}");
     final Path config = dir.resolve("report.yaml");
@@ -43,8 +45,13 @@ class ReportTest {
               out));
       assertEquals(
           0,
+          SyntheticDayCli.run(
+              new String[] {"--date", "2026-02-03", "--out", journal2.toString(), "--truth", dir.resolve("truth2.csv").toString(), "--repo", repo.toString()},
+              out));
+      assertEquals(
+          0,
           ReportCli.run(
-              new String[] {"--config", config.toString(), "--journal", journal.toString(), "--out", dir.resolve("out").toString(), "--repo", repo.toString()},
+              new String[] {"--config", config.toString(), "--journal", journal + "," + journal2, "--out", dir.resolve("out").toString(), "--repo", repo.toString()},
               out));
       assertEquals(1, ReportCli.run(new String[] {"--config", "x"}, out));
       assertEquals(1, SyntheticDayCli.run(new String[] {}, out));
@@ -55,7 +62,8 @@ class ReportTest {
       for (final String heading :
           new String[] {
             "P&L by product", "Hit rate by client tier", "Markouts by client tier", "Hedge slippage", "Router fill quality",
-            "Latency percentiles", "Limit utilisation", "Client analytics", "Response time"
+            "Latency percentiles", "Limit utilisation", "Client analytics", "Response time",
+            "P&L risk across the assumption band"
           }) {
         assertTrue(md.contains("## " + heading), point + " missing " + heading);
       }
@@ -65,6 +73,16 @@ class ReportTest {
       assertTrue(Files.size(d.resolve("results.raj")) > 0);
       assertTrue(Files.readString(d.resolve("fills.csv")).lines().count() > 10);
     }
+    final Map<String, Object> risk = Yaml.loadMap(dir.resolve("out").resolve("band_risk.json"));
+    assertTrue(String.valueOf(risk.get("label")).contains("Simulator consistency check"));
+    final List<Object> rows = Yaml.asList(risk.get("rows"), "rows");
+    assertEquals(3, rows.size());
+    for (final Object o : rows) {
+      final Map<String, Object> row = Yaml.asMap(o, "row");
+      assertEquals(2L, ((Number) row.get("days")).longValue());
+      assertTrue(row.containsKey("sharpe_daily") && row.containsKey("max_drawdown_usd") && row.containsKey("pnl_volatility_usd"));
+    }
+    assertTrue(Files.readString(dir.resolve("out").resolve("central").resolve("report.md")).contains("| central |"));
     assertTrue(bytes.toString(StandardCharsets.UTF_8).contains("rfqs"));
     assertTrue(Files.readString(dir.resolve("truth.csv")).startsWith("rfq_id,"));
   }

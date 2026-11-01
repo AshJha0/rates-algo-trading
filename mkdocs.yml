@@ -38,6 +38,7 @@ nav:
       - E5 swap spread: notebooks/edge_e5_swapspread.md
       - E6 carry tilt: notebooks/edge_e6_carry.md
   - Desk features: desk-features.md
+  - P&L audit: pnl-audit.md
   - Compliance inventory: compliance.md
   - Runbooks: runbooks.md
   - AI use policy: ai-use-policy.md

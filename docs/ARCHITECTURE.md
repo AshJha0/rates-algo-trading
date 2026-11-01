@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the system as designed and marks, component by component, what exists in Phase 0 and what is planned. Where a row says "planned", nothing in the repository implements it yet.
+This document describes the system as built at v1.0.0 (2026-10-31): the phase modules P0 to P6, wired by round 2 into one trading process (`rates-app`), with the desk features of `rates-strategy` beside the quoting engine. The status column says, component by component, what exists and how it is wired. Where a row says "planned", nothing in the repository implements it yet.
 
 ## Components
 
@@ -16,11 +16,14 @@ This document describes the system as designed and marks, component by component
 | Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | P3 (`rates-hedge`); wired (round 2): on the loop's housekeeping timer every 250 ms, Treasuries on the CLOB only (no futures venue yet) |
 | Journal and replay | Append-only hash-chained record of inputs; replayer that drives the same handlers and verifies the chain | exists in P0 (`rates-journal`); segment rolling and the loop's outbound replay comparison from P2 |
 | Back-tester | Replay journals or simulated days through the live code path with pre-registered hypotheses and holdouts; attribution | P5 (`rates-backtest`); wired (round 2): `LoopReplay` with the desk's factory reproduces a recorded day's outbound hash, and `DeskStrategy` runs the same desk under the back-tester for the daily report (Section 18.7) |
-| Analytics (research) | Python: provenance, calibration of simulator parameters, result analysis | partly exists in P0 (`research/ratesresearch`: provenance and chain hash); calibration planned P1, P5 |
+| Analytics (research) | Python: provenance, calibration of simulator parameters, result analysis | exists (`research/ratesresearch`): provenance and chain hash (P0), QuantLib goldens (P1), statistics, hit-rate, flow and markout research and notebooks (P5), edge studies (round 2, docs/research/EDGE_STUDIES.md) |
+| Desk features | Hedge budgets with internalisation and netting, axes, quote sizing, client tiering, hedge timing, funding penalty, coupon carry; desk P&L view and waterfall; desk experiments | round 2 (`rates-strategy`, API_SPEC.md Section 19, docs/research/DESK_FEATURES.md): `DeskQuoter` reproduces `ModelSpreadStrategy` byte for byte at its defaults; runs under the back-tester, not on the wired loop |
 | Control plane | Start, stop, parameter changes with approval, limit changes, kill switch operation; all changes journaled | partly wired (round 2): the kill switch, journaled as an input; parameter and limit changes with approval are planned |
-| AI assistants | Draft, review and summarise under `docs/AI_USE_POLICY.md`; never change production parameters without a human-approved PR | policy exists in P0; tooling planned P6 |
+| AI assistants | Draft, review and summarise under `docs/AI_USE_POLICY.md`; never change production parameters without a human-approved PR | policy and change log (`docs/ai_change_log.md`); no in-process tooling |
 | Post-trade, books and records | Positions, fills, P&L by attribution, end-of-day marks, order records, clearing and settlement state, reconciliations, restart procedure, surveillance hooks | P6 (`rates-posttrade`); wired (round 2): `JournalFeed` feeds the loop's journals to the position keeper, `VenueReconciliation` checks it against both venues' trade registers; marks, carry, calendars and the venue status port stay on fixtures |
 | Operations | Health, readiness, metrics and control endpoints, configuration validation, stress harness, images, rehearsal, runbooks | P6 (`rates-ops`, `deploy/`, `docs/runbooks/`); the images and the rehearsal start `rates-app`'s `TradingProcessMain` (DR-R2W-14) |
+
+Controls added by the round 2 P&L audit fixes ship off by default and are turned on in code or config, not by the wired process: the learned hit-rate slope and intercept and the cover-spread averaging of package A1 change engine output only once the engine feeds them outcomes and cover gaps; the router's filled-adverse and message costs of package C are off in `RouterParams` defaults and on only in `RouterPresets.globalWithControls`; the CLOB quoter's inventory skew (package B) is off until called. The kill switch reaches the quoting engine, the CLOB quoter, the package quoter and every hedger (`Desk`).
 
 ## Event loop design
 

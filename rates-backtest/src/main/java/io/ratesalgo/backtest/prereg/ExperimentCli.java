@@ -1,11 +1,14 @@
 package io.ratesalgo.backtest.prereg;
 
+import io.ratesalgo.backtest.report.BandRisk;
 import io.ratesalgo.backtest.util.Hashing;
 import io.ratesalgo.common.time.SystemClock;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -26,7 +29,10 @@ import java.util.Map;
  * invalid, when a holdout date overlaps the fitting period or the evaluation period, when the
  * config hash does not match, or when the holdout has already been opened once. Otherwise runs
  * the experiment on the evaluation period's business days (or on the holdout dates), appends one
- * record to the ledger whatever the verdict, and exits 0.
+ * record to the ledger whatever the verdict, writes {@code <id>-<scope>-band_risk.json} and {@code
+ * .md} (daily-P&amp;L volatility, Sharpe ratio and maximum drawdown per strategy and band point, a
+ * simulator consistency check derived from the recorded daily P&amp;L) to the work directory, and
+ * exits 0.
  */
 public final class ExperimentCli {
 
@@ -97,6 +103,14 @@ public final class ExperimentCli {
     record.put("results", outcome.results());
     record.put("verdict", outcome.verdict());
     ledger.append(record);
+    final List<Map<String, Object>> risk = BandRisk.fromExperimentResults(outcome.results());
+    try {
+      Files.createDirectories(work);
+      Files.writeString(work.resolve(prereg.id() + "-" + scope + "-band_risk.json"), BandRisk.toJson(risk), StandardCharsets.UTF_8);
+      Files.writeString(work.resolve(prereg.id() + "-" + scope + "-band_risk.md"), BandRisk.toMarkdown(risk), StandardCharsets.UTF_8);
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
+    }
     out.println(
         prereg.id() + " " + scope + " look " + (previous + 1) + ": " + outcome.verdict() + " (" + days.size() + " days)");
     out.println("recorded in " + repo.relativize(ledgerFile).toString().replace('\\', '/'));

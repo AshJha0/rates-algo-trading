@@ -806,6 +806,8 @@ Also, `WiredLoopAllocationTest` (rates-app) failed once under full-build load in
 
 Consequences. The test still fails if a message is lost without being counted on any path, which is what the old check guarded, and it now also checks the loop's own counters against the generator. A run where the loop drops Quotes on backpressure passes, as it should. The harness itself is unchanged.
 
+
+Amended 2026-11-01 (v1.0.0 release pass). Main CI on ecfc591 failed once in Java 25 on ubuntu-latest: `VenueBindingTest.aLostSessionIsPulledOnTheLoopCancelledAtTheVenueAndQuotingResumesAfterLogon` checked that both FIX sessions were active after a fixed 500 ms of simulated time. Our gateways run on the test thread, but the venues answer from QuickFIX/J threads over sockets in wall-clock time, so a loaded runner can leave the logon behind any fixed simulated step. 75d5ea5 had fixed the same race for the cancel-on-disconnect log entry. Every read in the test that depends on a venue now goes through one helper, `await`, which steps 10 ms of simulated time at a time until the condition holds, for up to 10 s of wall-clock time. That covers the venue's replies, its event log, its CLOB orders, a session logon, health after a logon or snapshot, and the desk's decision on an injected RFQ. The assertions are unchanged; each must still become true, and a condition that never does still fails after 10 s. Reads of state written only on the test thread stay direct: the loop's own counters after a synchronous input, the sessions' counters, and the injected-fault test. Stability: 20 runs of the test class, each in a fresh JVM, all passed (STATUS.md, "P6 remainder and release").
 ## DR-FIX-A1-01: The hit-rate intercept and slope are learned by a forgetting Newton step within wide bounds
 
 Date: 2026-10-31
@@ -924,7 +926,7 @@ Context. Item 12 (code reading of PackageQuoter): package RFQs skipped the kill 
 
 Decision. `PackageQuoter` applies the single-RFQ gates in the same order and reserves every leg for the time to live. It books Dones to risk, including late ones. It charges the PV01-weighted mean of the legs' optimal half spreads on the net ladder's risk-equivalent PV01, plus hedge cost less the netting saving plus the inventory term, floored at the minimum half spread on the largest leg.
 
-Consequences. A DV01-neutral curve or fly is charged for its curve risk only, which recipe 27 now shows. The desk does not yet register the package quoter with the kill switch; until it does, the quoter reads the switch on every quote.
+Consequences. A DV01-neutral curve or fly is charged for its curve risk only, which recipe 27 now shows. The desk does not yet register the package quoter with the kill switch; until it does, the quoter reads the switch on every quote. Amended for v1.0.0 (2026-10-31): `Desk` now registers the package quoter, so a kill withdraws every live package at once (`AuditFixesTest.packagesPassTheSameControlsAsSingleRfqs`, `PackageQuoter.livePackages`).
 
 ## DR-FIX-A2-06: A late single-RFQ Done reaches the recorder and the hedger
 
@@ -1439,3 +1441,13 @@ Context. EI_EXPOSE_REP and EI_EXPOSE_REP2 were excluded for whole packages in ra
 Decision. Each match now names the classes SpotBugs flags with the match removed (router: ChildOrderBook, DecisionCodec, SmartOrderRouter, AggressiveBaseline; refdata: RefData; FIX codec: FixParser; hedge: Hedger, HedgePlanner; quoting: ClobQuoter, Desk, FairValueEngine, PackageQuoter, QuotingEngine). The FIX gateway and net packages and rates-venues keep their package matches because other sessions own and are changing them.
 
 Consequences. A new class in these modules that stores or returns a mutable collaborator needs its own entry and a reason.
+
+## DR-REL-01: Daily-P&L risk across the band is derived, never recorded in the ledger
+
+Date: 2026-10-31
+
+Context. The release needed daily-P&L Sharpe ratio, maximum drawdown and P&L volatility across the assumption band in the daily report and the back-test outputs. The ledger's `results` are compared byte for byte with a re-run (`FirstExperimentTest`), so adding fields to them would change every future record's shape and break that comparison for P5-001.
+
+Decision. `Stats.pnlRisk` computes the figures from a daily P&L series; `BandRisk` renders them with a fixed label that calls them a simulator consistency check (DR-008). `ReportCli` and `ExperimentCli` write them as separate files and as a report section. The ledger record is unchanged; the table can be recomputed from any recorded `daily_pnl` at any time. Sharpe uses a zero risk-free rate and annualises by the square root of 252; drawdown is measured from zero.
+
+Consequences. Old ledger rows get the table for free (README.md quotes P5-001 and AUDIT-11). The daily report runs each journal once more on its own to get a daily series, which roughly doubles its run time with two or more journals. A session shorter than a day (AUDIT-11 to 14) still gives a per-session ratio, which must not be annualised; the README says so.

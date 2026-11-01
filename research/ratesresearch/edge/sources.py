@@ -24,7 +24,7 @@ from typing import Any
 from ratesresearch.data import dtcc
 from ratesresearch.provenance import MANIFEST_VERSION, sha256_of
 
-USER_AGENT = "ratesresearch/0.0.1 (+https://github.com/AshJha0/rates-algo-trading)"
+USER_AGENT = "ratesresearch/1.0.0 (+https://github.com/AshJha0/rates-algo-trading)"
 RAW = Path("data/raw/edge")
 MANIFESTS = Path("data/manifests")
 

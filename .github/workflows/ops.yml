@@ -55,7 +55,7 @@ jobs:
         run: mvn -B -ntp -DskipTests package -pl rates-app,rates-ops,rates-posttrade -am
       - name: Validate configuration with the Java validator the processes use
         run: |
-          java -cp "rates-ops/target/rates-ops-0.1.0-SNAPSHOT.jar:rates-ops/target/lib/*" \
+          java -cp "rates-ops/target/rates-ops-1.0.0.jar:rates-ops/target/lib/*" \
             io.ratesalgo.ops.config.ConfigValidatorMain \
             deploy/config/schema/process-config.schema.json deploy/config/*.yaml
       - name: Rehearsal with the kill switch

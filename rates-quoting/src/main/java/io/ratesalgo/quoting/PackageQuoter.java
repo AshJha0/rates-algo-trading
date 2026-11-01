@@ -451,6 +451,17 @@ public final class PackageQuoter implements KillSwitchListener {
     }
   }
 
+  /** Packages quoted and live (not withdrawn, answered or expired). */
+  public int livePackages() {
+    int n = 0;
+    for (int s = 0; s < MAX_LIVE; s++) {
+      if (state[s] == LIVE) {
+        n++;
+      }
+    }
+    return n;
+  }
+
   /** Packages quoted and held (live or withdrawn, not yet answered or expired). */
   public int heldPackages() {
     int n = 0;

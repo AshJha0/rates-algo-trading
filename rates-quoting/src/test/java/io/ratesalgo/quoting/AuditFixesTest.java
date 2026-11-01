@@ -254,8 +254,10 @@ class AuditFixesTest {
     m.refreshAll(m.clock.epochNanos());
     final PackageQuoter.Result live = pq.quote(curve, 3, 4, new PackageQuoter.Result());
     assertTrue(live.quoted(), "" + live.reason());
+    assertEquals(1, pq.livePackages());
+    // the desk registers the package quoter with the kill switch: the trigger alone withdraws it
     assertTrue(m.desk.killSwitch().trigger(KillReason.Manual, 0, 11));
-    pq.onKill(KillReason.Manual, m.clock.epochNanos());
+    assertEquals(0, pq.livePackages(), "withdrawn by the kill switch");
     assertEquals(1, pq.heldPackages(), "withdrawn, reservation held until answered");
     assertFalse(pq.quote(curve, 1, 4, r).quoted());
     assertEquals(PassReason.KILLED, r.reason());

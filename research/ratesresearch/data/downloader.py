@@ -27,7 +27,7 @@ from typing import Any
 from ratesresearch.provenance import MANIFEST_VERSION, sha256_of
 
 DEFAULT_MANIFEST = Path("data/manifests/downloads.json")
-USER_AGENT = "ratesresearch/0.0.1 (+https://github.com/AshJha0/rates-algo-trading)"
+USER_AGENT = "ratesresearch/1.0.0 (+https://github.com/AshJha0/rates-algo-trading)"
 ATTEMPTS = 2
 TIMEOUT_SECONDS = 120
 
