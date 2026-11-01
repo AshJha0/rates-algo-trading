@@ -57,6 +57,12 @@ Version 1, hedge execution after internalisation (branch `claude/v1-hedge-f17740
 - Experiments: pre-registrations V1H-001 and V1H-002, config `data/experiments/V1H.config.yaml`, ledger seq 23 and 24. Slicing was supported and adopted as the desk default (`DeskFactory.deskDefault`, `ADOPTED_SLICING`; `nettingOnly()` is the old default). The cost-aware trigger was not supported and stays opt-in. Simulator consistency checks only (DR-008).
 - Docs: PNL_AUDIT.md items 1 and 10, DESK_FEATURES.md, API_SPEC.md Section 19.11, DR-V1H-01 to DR-V1H-03.
 
+Version 1, remaining gaps (branch `claude/v1-gaps-ea4320`).
+
+- COOKBOOK.md recipe 35 (verify a committed Java journal's hash chain from Python; the fixture is pinned by a Java test, DR-V1G-01) and recipe 36 (check that a hot-path package allocates nothing). Every listed recipe is now written, and `tools/check_cookbook.py` checks 35 of the 36.
+- CI builds every image in `deploy/` and runs the deployment rehearsal inside the trading image (DR-V1G-03). The informational latency job writes its percentiles to the job summary (`tools/latency_summary.py`, DR-V1G-04), and docs/BENCHMARKS.md has a GitHub-hosted ubuntu-latest row.
+- No UK DMO golden test: the DMO formulae paper has no conventional worked example (DR-V1G-02).
+
 Round 2, journal write path off the loop's latency path (branch `claude/r2-journal-latency-ee2034`).
 
 - `rates-journal`: `RingJournal`, a journal written by its own thread from an off-heap Agrona ring, with the same frames as a direct append (DR-R2J-03); `JournalWriter.append` and `SegmentedJournal.append` overloads that take the frame stamp; `SegmentedJournal.rollWaits()`.
