@@ -74,6 +74,26 @@ class VenueBindingTest {
     return await(p, () -> logged(p, text));
   }
 
+  private static boolean clobLogged(final TradingProcess p, final String text) {
+    return p.venues().clob().eventLog().stream().anyMatch(l -> l.contains(text));
+  }
+
+  /**
+   * Everything needed to tell a timing failure from a gateway defect: each engine-side session's
+   * state, reconnect attempts, give-ups and pending retry (DR-INT-09), and the last 20 lines of each
+   * venue's log.
+   */
+  private static String diagnostics(final TradingProcess p) {
+    final List<String> d2c = p.venues().d2c().eventLog();
+    final List<String> clob = p.venues().clob().eventLog();
+    return "d2c session " + p.d2cSession().state() + ", reconnect attempts " + p.d2cSession().reconnectAttempts()
+        + ", give-ups " + p.d2cSession().reconnectGiveUps() + ", retry pending " + p.d2cSession().reconnectPending()
+        + "; clob session " + p.clobSession().state() + ", reconnect attempts " + p.clobSession().reconnectAttempts()
+        + ", give-ups " + p.clobSession().reconnectGiveUps() + ", retry pending " + p.clobSession().reconnectPending()
+        + "; d2c log " + d2c.subList(Math.max(0, d2c.size() - 20), d2c.size())
+        + "; clob log " + clob.subList(Math.max(0, clob.size() - 20), clob.size());
+  }
+
   @Test
   void aBookFeedGapPullsQuotesThroughTheLoopAndTheSnapshotRestoresQuoting() {
     try (TradingProcess p = TradingProcess.start(new TradingProcess.Options(dir, 3L, DeskSettings.defaults()))) {
@@ -119,11 +139,18 @@ class VenueBindingTest {
       assertTrue(await(p, () -> p.venues().clob().liveOrders(AppIds.COMP_ID).isEmpty()), "nothing resting at the CLOB");
       assertEquals(1, p.d2cSession().disconnects());
 
+      // Both venues should have torn the old session down before we log on again. An acceptor that
+      // still holds the session refuses the new Logon; the session then retries under its
+      // ReconnectPolicy (DR-INT-09), and this wait keeps the test from depending on that alone.
+      assertTrue(
+          await(p, () -> logged(p, "logout " + AppIds.COMP_ID) && clobLogged(p, "logout " + AppIds.COMP_ID)),
+          "both venues logged the old session out: " + diagnostics(p));
+
       final long sent = desk.desk().quoting().quotesSent();
       p.d2cSession().connect();
       p.clobSession().connect();
       p.step(500_000_000L, STEP);
-      assertTrue(await(p, () -> p.d2cSession().isActive() && p.clobSession().isActive()), "both sessions logged on again");
+      assertTrue(await(p, () -> p.d2cSession().isActive() && p.clobSession().isActive()), "both sessions logged on again: " + diagnostics(p));
       assertTrue(await(p, () -> desk.desk().health().healthy(p.clock().epochNanos())), "both sessions up again");
       rfqWithLiveQuote(p);
       assertEquals(sent + 1, desk.desk().quoting().quotesSent(), "quoting resumed after logon");

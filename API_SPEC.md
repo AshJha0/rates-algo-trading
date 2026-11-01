@@ -393,7 +393,7 @@ Schema id 100, version 0, little-endian, standard 8-byte SBE header. Fixed-lengt
 |---|---|---|---|
 | 65001 | LoopError | the loop, into its inbound journal, when a duty cycle or hook throws | 0 `timestampNanos` int64, 8 `inboundCount` int64, 16 `textLength` uint16, 18 `text` char[238] ASCII (exception class and message, cut to 238); block length 256 |
 | 65002 | Backpressure | the loop, into its inbound journal (9.5) | 0 `timestampNanos` int64, 8 `droppedCount` int64, 16 `gatewayId` int32, 20 `firstTemplateId` uint16, 22 two zero bytes; block length 24 |
-| 65003 | GatewayStatus | a gateway, on the inbound ring, when its venue session connects (status 1) or disconnects (status 2) | 0 `timestampNanos` int64, 8 `gatewayId` int32, 12 `status` uint8, 13 three zero bytes; block length 16 |
+| 65003 | GatewayStatus | a gateway, on the inbound ring, when its venue session connects (status 1), disconnects (status 2) or retries a Logon that was not accepted (status 3, DR-INT-09) | 0 `timestampNanos` int64, 8 `gatewayId` int32, 12 `status` uint8, 13 `attempt` uint8 (status 3 only, else 0), 14 two zero bytes; block length 16. A consumer treats every status other than 1 as down |
 
 Template ids start at 65001 so that a journal frame's template id never collides with schema 1, whose ids are below 100. The loop refuses LoopError and Backpressure from a ring.
 
@@ -1476,7 +1476,7 @@ The first dispatched message of any template starts the desk: it requires the cu
 
 ### 18.5 Venue binding and instrument-group partitioning
 
-`VenueSession` owns a `TcpInitiator`, a `FixSession` (heartbeat 30 s, reset on logon) and P2's `VenueGateway`, whose inbound sink is an `InboundRouter`. Its duty cycle reads the socket, runs the session timers and drains this venue's outbound ring in every group into `VenueGateway.offer`. Logon and disconnect publish GatewayStatus with the session's id.
+`VenueSession` owns a `TcpInitiator`, a `FixSession` (heartbeat 30 s, reset on logon) and P2's `VenueGateway`, whose inbound sink is an `InboundRouter`. Its duty cycle reads the socket, runs the session timers and drains this venue's outbound ring in every group into `VenueGateway.offer`. Logon and disconnect publish GatewayStatus with the session's id. A connection that ends, or whose TCP connect is refused, before the venue accepts our Logon is retried under the session's `ReconnectPolicy` (default 5 retries from 100 ms, doubling, capped at 2 s; `NONE` disables it). Each retry publishes GatewayStatus RECONNECTING with its attempt number. An active session that drops, and any session after `disconnect()`, is not retried (DR-INT-09).
 
 `InboundRouter` (one per publishing thread) sends a message naming an instrument (BookUpdate, CurveInput, QuoteRequest, ExecutionReport, TradeBust) to that instrument's group; a QuoteResponse to the group that received the QuoteRequest with the same venue and RFQ id, forgotten at the first final response that is not Rejected; everything else (Heartbeat, GatewayStatus, KillSwitch) to every group. A full ring drops and counts BookUpdate, CurveInput and Heartbeat and retries every other message until the loop takes it (Section 9.3). An instrument group is a currency (DR-R2W-03).
 

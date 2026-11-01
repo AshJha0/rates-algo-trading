@@ -194,3 +194,4 @@ The difference from plan is attributed to LEARN's knowledge check and pitfalls h
 - Audit-fix controls ship off by default and are not turned on by the wired process: package A1 (hit-rate learning and cover averaging take effect only once the engine is fed outcomes and cover gaps), package C (router filled-adverse and message costs, on only in `RouterPresets.globalWithControls`), package B (CLOB inventory skew, off until called). Turning them on is a pre-registered experiment, not a config edit.
 - AUDIT-11 to AUDIT-14 ran at 04edc03, before DR-INT-05; re-run them under new ids before planning on their sizes. AUDIT-02 to 04 and AUDIT-12 to 14 carry `code_dirty: true` (docs/research/PNL_AUDIT.md).
 - COOKBOOK recipes 35 and 36 are listed but not written.
+- `VenueSession`'s logon retry (DR-INT-09) is configured in code; it is not yet in the deployment config schema. A session that was active and then dropped by the venue is not reconnected automatically.

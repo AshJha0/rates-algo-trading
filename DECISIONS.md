@@ -807,9 +807,16 @@ Also, `WiredLoopAllocationTest` (rates-app) failed once under full-build load in
 Consequences. The test still fails if a message is lost without being counted on any path, which is what the old check guarded, and it now also checks the loop's own counters against the generator. A run where the loop drops Quotes on backpressure passes, as it should. The harness itself is unchanged.
 
 
+Amended 2026-11-01, `LoopAllocationTest`. On pull request 4 the DIRECT case failed once on windows-latest: window 2 allocated 1,288 bytes, one roll waited and the test took 183 s on a 2-CPU runner. The bound was not changed. To find the source, the test now reports roll waits per window, and three experiments ran on the development laptop (12 cores, Windows 11, JDK 25.0.5):
+
+- Ten fresh JVMs ran the test with 4 cores held busy. Every window allocated 0 bytes in DIRECT mode, where no roll waited. In RING mode, 17 waited rolls fell inside measured windows, and each of those windows allocated 0 bytes.
+- A new `SegmentedJournalTest.aWaitedRollAllocatesNothingOnTheAppendingThreadAfterWarmUp` makes the appending thread wait in `Preparer.take`. In five fresh JVMs, 40 measured waited rolls allocated 0 bytes each time, and so did the first waited roll before any warm-up.
+
+The waited roll is therefore not the source. That leaves JIT compilation and deoptimisation on a starved runner, as for `WiredLoopAllocationTest` above. The test now keeps warming up while the JIT compiles, 250,000 messages at a time, until one such window passes with no new compilation time, for at most four windows; the report gives the count. The measured windows, the 1,024-byte bound and the zero-byte last window are unchanged. If the failure recurs with the JIT quiet, the cause is a real allocation to find with the flight recording described in the test.
+
 Amended 2026-11-01, latency harness accounting. The second of the three equalities above was wrong. `LoopCounters.OUTBOUND` counts every Quote the loop produced, delivered or not, so a run with drops failed on `inbound == outbound + outboundDropped` (windows-latest on pull request 4: inbound 58,025, outbound 58,025, outboundDropped 457). The equalities are now: processed equals generated less generator drops; produced equals processed (`inbound == outbound`, one Quote per request); and the gateway sees the produced less the dropped (`outbound - outboundDropped == seen`). Backpressure events are at most the drops, since one event covers a run of drops on a gateway. A Quote lost without being counted still fails the test.
 
-Amended 2026-11-01 (v1.0.0 release pass). Main CI on ecfc591 failed once in Java 25 on ubuntu-latest: `VenueBindingTest.aLostSessionIsPulledOnTheLoopCancelledAtTheVenueAndQuotingResumesAfterLogon` checked that both FIX sessions were active after a fixed 500 ms of simulated time. Our gateways run on the test thread, but the venues answer from QuickFIX/J threads over sockets in wall-clock time, so a loaded runner can leave the logon behind any fixed simulated step. 75d5ea5 had fixed the same race for the cancel-on-disconnect log entry. Every read in the test that depends on a venue now goes through one helper, `await`, which steps 10 ms of simulated time at a time until the condition holds, for up to 10 s of wall-clock time. That covers the venue's replies, its event log, its CLOB orders, a session logon, health after a logon or snapshot, and the desk's decision on an injected RFQ. The assertions are unchanged; each must still become true, and a condition that never does still fails after 10 s. Reads of state written only on the test thread stay direct: the loop's own counters after a synchronous input, the sessions' counters, and the injected-fault test. Stability: 20 runs of the test class, each in a fresh JVM, all passed (STATUS.md, "P6 remainder and release").
+Amended 2026-11-01 (v1.0.0 release pass). Main CI on ecfc591 failed once in Java 25 on ubuntu-latest: `VenueBindingTest.aLostSessionIsPulledOnTheLoopCancelledAtTheVenueAndQuotingResumesAfterLogon` checked that both FIX sessions were active after a fixed 500 ms of simulated time. Our gateways run on the test thread, but the venues answer from QuickFIX/J threads over sockets in wall-clock time, so a loaded runner can leave the logon behind any fixed simulated step. 75d5ea5 had fixed the same race for the cancel-on-disconnect log entry. Every read in the test that depends on a venue now goes through one helper, `await`, which steps 10 ms of simulated time at a time until the condition holds, for up to 10 s of wall-clock time. That covers the venue's replies, its event log, its CLOB orders, a session logon, health after a logon or snapshot, and the desk's decision on an injected RFQ. The assertions are unchanged; each must still become true, and a condition that never does still fails after 10 s. Reads of state written only on the test thread stay direct: the loop's own counters after a synchronous input, the sessions' counters, and the injected-fault test. Stability: 20 runs of the test class, each in a fresh JVM, all passed (STATUS.md, "P6 remainder and release"). On pull request 4 the same test then failed once on ubuntu-latest: the sessions did not log on again within the whole 10 s wait, so this was not a short timing window. The test had waited only for the D2C venue to see the old session go. A QuickFIX/J acceptor that still holds a session refuses a new Logon for it, and our initiator does not retry. The test now waits until both venues have logged the old session out (`logout RALGO` in each event log) before it reconnects. If the logon still does not come, the failure message gives both sessions' states and the venues' last log lines. A reconnect that retries a refused Logon was then added to `VenueSession` (DR-INT-09).
 ## DR-FIX-A1-01: The hit-rate intercept and slope are learned by a forgetting Newton step within wide bounds
 
 Date: 2026-10-31
@@ -993,6 +1000,32 @@ Second, on windows, `RouterAllocationTest.perOrderPathIsAllocationFreeAfterWarmU
 Decision. In the strategy test the count assertion becomes `quiet >= 20`, the condition the loop guarantees; the zero-byte rule on each of those windows is unchanged. In the router test the measurement moves into the warmed-up loop and call site: after at least 50 windows of 20 parents, the loop must end with 5 quiet warm-up windows followed by 3 measured windows (60 parents, as before), each allocating exactly zero bytes. The zero rule is not loosened.
 
 Consequences. Both tests still fail on any allocation in the measured windows. They no longer fail when a runner reaches steady state early, or because of the compilation of the measuring loop.
+
+## DR-INT-09: The venue session retries a Logon that the venue did not accept, bounded and journaled
+
+Date: 2026-11-01
+
+Context. `VenueBindingTest` failed on CI at three different assertions across pull requests 3 and 4, the last on ubuntu-latest: after an explicit disconnect and reconnect, the sessions were not active again within 10 s of wall-clock time. The engine-side reconnect path had no retry. `TcpInitiator.connect` either connects or throws. A venue that closes the connection before answering our Logon moves `FixSession` to DISCONNECTED; so does a Logon that times out after one heartbeat interval. `VenueSession` then stayed down until someone called `connect()` again. A QuickFIX/J acceptor that still holds the previous session refuses the new Logon in exactly this way, so a gateway could stay down after a routine reconnect. For a trading gateway that is a defect, not a test-timing problem.
+
+Decision. `VenueSession` takes a `ReconnectPolicy(maxAttempts, initialBackoffNanos, maxBackoffNanos)`.
+
+- **Default.** 5 retries, waiting 100 ms and doubling up to a 2 s cap, about 3.1 s in all.
+- **Opt out.** `ReconnectPolicy.NONE` keeps the old behaviour.
+- **Retried.** A connection is retried when it ends, or its TCP connect is refused, before the venue has accepted our Logon on it.
+- **Not retried.** A session that was active and then dropped, because the loop has pulled its quotes and bringing a live session back is an operator decision. Also not after `disconnect()`, which stops retrying.
+- **Journaling.** Each attempt publishes GatewayStatus RECONNECTING (status 3, attempt number in byte 13, `ControlMessages.encodeGatewayReconnecting`) on the inbound ring, so the loop journals every attempt. Consumers treat any status other than CONNECTED as down, so the desk needs no change.
+- **Give-up.** After the last retry the session stays down and counts the give-up (`reconnectGiveUps`). The DISCONNECTED status of the failed attempt has already been journaled.
+- **Allocation.** The retry path allocates nothing except when a TCP connect is refused, which already left the hot path.
+
+`VenueBindingTest` keeps its wait for both venues to log the old session out (DR-INT-06), as an extra. On timeout it now reports, for each session, the engine-side state, reconnect attempts, give-ups and whether a retry is pending, plus the last 20 lines of each venue's log.
+
+Consequences. A refused Logon no longer leaves a session down for good. The retry is bounded, so a venue that refuses for good is not hammered. Each attempt is in the journal with its number. `VenueSessionReconnectTest` checks four things against a venue on a real socket:
+- a first Logon closed unanswered, a second accepted, and the journaled order DISCONNECTED, RECONNECTING (attempt 1), CONNECTED;
+- bounded retries with doubling capped backoff and no attempt after giving up;
+- no retry after an explicit disconnect;
+- the old throwing behaviour under `NONE`.
+
+The policy is set in code (`TradingProcess` uses the default); exposing it in the deployment config is an open item.
 
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
