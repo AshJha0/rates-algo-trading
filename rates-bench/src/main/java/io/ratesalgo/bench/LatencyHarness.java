@@ -92,6 +92,10 @@ public final class LatencyHarness {
     final AnchoredClock live = new AnchoredClock(SystemClock.INSTANCE);
     final EventClock clock = new EventClock(live);
     final Path journalDir = cfg.journal() ? Files.createTempDirectory("rates-bench-journal") : null;
+    if (journalDir != null) {
+      // DR-INT-06: the journals' wait paths, run before the loop so the first real wait does not deoptimise it
+      io.ratesalgo.journal.JournalWarmUp.exerciseWaitPaths(journalDir.resolve("journal-warmup"), clock);
+    }
     final LoopJournals journals =
         cfg.journal()
             ? LoopJournals.create(
