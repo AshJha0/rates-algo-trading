@@ -50,6 +50,7 @@ RECIPES = {
     29: ("Recipe29RouterReplay.java", "recipe29.txt"),
     30: ("Recipe30ClobWorkup.java", "recipe30.txt"),
     34: ("Recipe34ConfigSchema.java", "recipe34.txt"),
+    36: ("Recipe36AllocationCheck.java", "recipe36.txt"),
 }
 
 PYTHON_RECIPES = {
@@ -57,6 +58,7 @@ PYTHON_RECIPES = {
     31: ("recipe31_pca_hedge.py", "recipe31.txt"),
     32: ("recipe32_hitrate.py", "recipe32.txt"),
     33: ("recipe33_markouts.py", "recipe33.txt"),
+    35: ("recipe35_journal_chain.py", "recipe35.txt"),
 }
 
 

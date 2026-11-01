@@ -1519,3 +1519,43 @@ Decision. Slicing was supported at every band point: shortfall +446k at L, +300k
 
 Consequences. Later experiments compare against the sliced default. The passive leg added nothing measurable on the fitting period, and the queue model is optimistic for it, so the attributable gain is from depth-sized children. Only the back-tested desk changes.
 
+## DR-V1G-01: Recipe 35 verifies a committed Java journal; the fixture is pinned by a Java test
+
+Date: 2026-11-01
+
+Context. Recipe 35 shows Python checking a journal written by Java. Python recipes run in tools/check_cookbook.py without a JVM, so the journal has to be a committed file, and a committed binary can fall behind the writer.
+
+Decision. data/fixtures/journal/recipe02.raj holds recipe 2's three frames in a 256-byte file. JournalFixtureTest in rates-cookbook rewrites it with the current JournalWriter on every build and fails on any byte difference (regenerate with -Dfixture.regenerate=true). The recipe compares its final hash with the value Java printed in recipe02.txt, read from that file. Recipe 36 prints comparisons, not byte counts, for the allocating path, because the count depends on the JDK's string layout.
+
+Consequences. A change to the frame layout or chain hash fails JournalFixtureTest first, then the cookbook check until the fixture and recorded output are regenerated.
+
+## DR-V1G-02: No UK DMO golden test; the formulae paper has no conventional worked example
+
+Date: 2026-11-01
+
+Context. A golden test reproducing a DMO worked example was planned. On 2026-11-01 the paper "Formulae for Calculating Gilt Prices from Yields" was fetched from https://www.dmo.gov.uk/media/1sljygul/yldeqns.pdf (37 pages, PDF created 2011-09-06). It gives the conventional gilt price, yield and accrued interest formulae without a numerical example. Its only worked number is the three-month-lag reference RPI for 20 July 2001 (173.77419 from the April and May 2001 RPI), which applies to index-linked gilts. The platform has no index-linked gilt code.
+
+Decision. No golden test is added and no numbers are invented. The conventional gilt formulae stay checked by recipe 7 and the existing analytics tests. If index-linked gilts are added, the reference RPI example is the first golden test for them.
+
+Consequences. The UK DMO worked example stays an open gap. It needs a published DMO price and yield pair (for example a reference price with its yield on a stated date), downloaded by hand because the /data/ pages are behind bot protection (data/SOURCES.md).
+
+## DR-V1G-03: CI builds every image in deploy/ and runs the rehearsal inside the trading image
+
+Date: 2026-11-01
+
+Context. The ops rehearsal job built the three images when Docker was present but never started one, so a missing jar or a broken entrypoint would only show up on a real host.
+
+Decision. A separate Ops job, "Container images and in-image rehearsal", builds every deploy/*/Dockerfile, resolves compose.yaml, starts the report image to check its argument handling (exit 2, "missing --journal"), and runs deploy/rehearsal.py in process mode inside a throwaway layer over the trading image that adds python3. The rehearsal runs as the image's non-root user with --classpath /opt/rates/lib/*, so it uses the jars the image ships.
+
+Consequences. The images are exercised on every push to main and every pull request. The throwaway layer is not published; the production image stays without Python.
+
+## DR-V1G-04: The CI latency run writes its percentiles to the job summary
+
+Date: 2026-11-01
+
+Context. The informational latency job only uploaded a JSON artifact, so reading a Linux number meant downloading it.
+
+Decision. tools/latency_summary.py prints each report's percentiles as a Markdown table, and the job appends it to $GITHUB_STEP_SUMMARY. docs/BENCHMARKS.md cites one such run by URL, labelled as a shared GitHub-hosted runner, not a tuned host. It never gates (DR-005).
+
+Consequences. A Linux reference number is one click from each CI run. It is not comparable with a pinned, isolated host.
+
