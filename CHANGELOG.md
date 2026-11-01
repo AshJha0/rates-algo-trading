@@ -50,6 +50,19 @@ Round 2, LEARN (branch `claude/r2-learn-b5137b`).
 
 - LEARN.md chapters harmonised and finished for the wired system, including the knowledge check and the pitfalls.
 
+Version 1, hedge execution after internalisation (branch `claude/v1-hedge-f17740`, PNL_AUDIT.md items 1 and 10).
+
+- `rates-backtest`: `StrategyContext.cancelOrder`, `touchPrice` and `touchQuantity` (default methods), implemented by `BacktestRunner`; test `OrderCancelTest`.
+- `rates-strategy`: `HedgeSlicing` and the slicing path of `DeskQuoter` (depth-sized children, passive first with escalation, implementation shortfall); `CostAwareHedgeBudget` and `HedgeBudget.observeMarket`; `HedgeExperiment`, `HedgeExperimentCli` and `research/hedge/run_hedge_experiment.sh`; test `HedgeExperimentTest`.
+- Experiments: pre-registrations V1H-001 and V1H-002, config `data/experiments/V1H.config.yaml`, ledger seq 23 and 24. Slicing was supported and adopted as the desk default (`DeskFactory.deskDefault`, `ADOPTED_SLICING`; `nettingOnly()` is the old default). The cost-aware trigger was not supported and stays opt-in. Simulator consistency checks only (DR-008).
+- Docs: PNL_AUDIT.md items 1 and 10, DESK_FEATURES.md, API_SPEC.md Section 19.11, DR-V1H-01 to DR-V1H-03.
+
+Version 1, remaining gaps (branch `claude/v1-gaps-ea4320`).
+
+- COOKBOOK.md recipe 35 (verify a committed Java journal's hash chain from Python; the fixture is pinned by a Java test, DR-V1G-01) and recipe 36 (check that a hot-path package allocates nothing). Every listed recipe is now written, and `tools/check_cookbook.py` checks 35 of the 36.
+- CI builds every image in `deploy/` and runs the deployment rehearsal inside the trading image (DR-V1G-03). The informational latency job writes its percentiles to the job summary (`tools/latency_summary.py`, DR-V1G-04), and docs/BENCHMARKS.md has a GitHub-hosted ubuntu-latest row.
+- No UK DMO golden test: the DMO formulae paper has no conventional worked example (DR-V1G-02).
+
 Round 2, journal write path off the loop's latency path (branch `claude/r2-journal-latency-ee2034`).
 
 - `rates-journal`: `RingJournal`, a journal written by its own thread from an off-heap Agrona ring, with the same frames as a direct append (DR-R2J-03); `JournalWriter.append` and `SegmentedJournal.append` overloads that take the frame stamp; `SegmentedJournal.rollWaits()`.
@@ -136,7 +149,7 @@ Round 2 fixes from the P&L audit, package D (branch `claude/fix-d-backtest-cdd6a
 - `VenueSession` retries a connection whose Logon the venue did not accept (connect refused, closed before the venue's Logon, or Logon timed out) under a `ReconnectPolicy` (default 5 retries from 100 ms, doubling, capped at 2 s). Each attempt is journaled as GatewayStatus RECONNECTING (status 3, attempt number in byte 13). Before, such a session stayed down until `connect()` was called again (DR-INT-09; `VenueSessionReconnectTest`; v1.0.0 release pass).
 - `VenueBindingTest` waits up to 10 s of wall-clock time for both FIX sessions to log on again after a reconnect, as it already did for the venue log, instead of checking after a fixed 500 ms of simulated time. The fixed wait failed on main CI for ecfc591 (Java 25, ubuntu-latest), because the logon runs on the sessions' socket threads (v1.0.0 release pass).
 - `LatencyHarnessTest` accounting: the loop's outbound counter includes dropped Quotes, so the test now checks `inbound == outbound` and `outbound - outboundDropped == seen`; the earlier equation failed on any run with backpressure drops (DR-INT-06 amendment; v1.0.0 release pass).
-- `LoopAllocationTest` warms up while the JIT is still compiling, up to four extra windows of 250,000 messages, and reports roll waits per window; `SegmentedJournalTest` checks that a waited roll allocates nothing on the appending thread. The measured windows and bounds are unchanged (DR-INT-06 amendment; v1.0.0 release pass).
+- The first waited segment roll on a loop thread deoptimised compiled code and allocated 176 bytes, once, while trading (confirmed with `-Xlog:deoptimization`). `JournalWarmUp.exerciseWaitPaths` now runs the waited-roll and full-ring paths on scratch journals before `TradingProcess`, `LatencyHarness` and `LoopAllocationTest` start their loops. `LoopAllocationTest` failed 3 of 10 busy-core runs before and 0 of 10 after, with bounds unchanged; it reports roll waits per window (DR-INT-06 amendment).
 - `Desk` registers the package quoter with the kill switch, so a kill withdraws every live package at once (v1.0.0 release pass; DR-FIX-A2 amendment in DECISIONS.md).
 - docs/research/PNL_AUDIT.md said AUDIT-01 to AUDIT-04 ran on a clean tree. The ledger records `code_dirty: true` for AUDIT-02 to AUDIT-04, and the document now says so and why (v1.0.0 release pass).
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).

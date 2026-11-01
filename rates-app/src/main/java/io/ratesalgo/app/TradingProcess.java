@@ -21,6 +21,7 @@ import io.ratesalgo.core.IdleStrategies;
 import io.ratesalgo.core.LoopJournals;
 import io.ratesalgo.core.LoopRunner;
 import io.ratesalgo.core.RingBufferContract;
+import io.ratesalgo.journal.JournalWarmUp;
 import io.ratesalgo.journal.SegmentedJournal;
 import io.ratesalgo.messages.sbe.KillReason;
 import io.ratesalgo.messages.sbe.KillSwitchEncoder;
@@ -209,6 +210,10 @@ public final class TradingProcess implements AutoCloseable {
     final RingBuffer[] clobRings = new RingBuffer[names.length];
     final Int2IntHashMap groupOf = new Int2IntHashMap(-1);
     try {
+      // DR-INT-06: run the journals' wait paths (a roll that waits for its segment, an append to a
+      // full ring) on scratch journals before any loop starts, so that the first real wait does not
+      // deoptimise compiled code on a loop thread while it quotes.
+      JournalWarmUp.exerciseWaitPaths(options.journalDir().resolve("journal-warmup"), clock);
       for (int g = 0; g < names.length; g++) {
         final Path dir = options.journalDir().resolve(names[g]);
         Files.createDirectories(dir);

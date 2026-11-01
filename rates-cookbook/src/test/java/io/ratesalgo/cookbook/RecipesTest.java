@@ -54,7 +54,8 @@ class RecipesTest {
         Arguments.of("recipe28.txt", (Main) Recipe28QuotePulls::main),
         Arguments.of("recipe29.txt", (Main) Recipe29RouterReplay::main),
         Arguments.of("recipe30.txt", (Main) Recipe30ClobWorkup::main),
-        Arguments.of("recipe34.txt", (Main) Recipe34ConfigSchema::main));
+        Arguments.of("recipe34.txt", (Main) Recipe34ConfigSchema::main),
+        Arguments.of("recipe36.txt", (Main) Recipe36AllocationCheck::main));
   }
 
   @ParameterizedTest(name = "{0}")

@@ -47,6 +47,26 @@ public interface StrategyContext {
    */
   long sendOrder(int instrumentId, Side side, OrdType type, long quantity, long priceMantissa, boolean hedge);
 
+  /**
+   * Cancels a limit order that has not filled. A resting order is reported {@code Cancelled} at
+   * once; one still on its way to the venue is reported {@code Cancelled} when it arrives.
+   *
+   * @return false when the order has filled, was already cancelled, is a market order, or is unknown
+   */
+  default boolean cancelOrder(final long clOrdId) {
+    return false;
+  }
+
+  /** Best price (mantissa) of the CLOB book on one side, 0 if that side is empty or there is no book. */
+  default long touchPrice(final int instrumentId, final boolean bidSide) {
+    return 0L;
+  }
+
+  /** Displayed quantity (minor units) at the best price on one side, 0 if none. */
+  default long touchQuantity(final int instrumentId, final boolean bidSide) {
+    return 0L;
+  }
+
   /** Schedules {@link Strategy#onTimer} at an epoch time no earlier than now; returns the timer id. */
   long scheduleTimer(long epochNanos);
 }

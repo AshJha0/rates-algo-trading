@@ -124,18 +124,35 @@ class VenueSessionReconnectTest {
         policy);
   }
 
-  /** Runs the session's duty cycle, advancing the clock 10 ms a turn, until the condition holds or 10 s pass. */
+  /**
+   * Runs the session's duty cycle until the condition holds or 10 s of wall-clock time pass,
+   * advancing the session's clock by the wall-clock time each turn took. The venue runs on its own
+   * thread in real time, so the session's logon timeout (30 s) and backoff must run on the same
+   * time base: advancing a fixed 10 ms a turn made 30 simulated seconds pass in about 20 ms, and a
+   * venue thread not scheduled within that lost every attempt on the 2-vCPU Windows runner
+   * (DR-INT-09).
+   */
   private boolean drive(final VenueSession s, final BooleanSupplier condition) {
-    final long deadline = System.nanoTime() + 10_000_000_000L;
+    final long start = System.nanoTime();
+    final long deadline = start + 10_000_000_000L;
+    long last = start;
     while (!condition.getAsBoolean()) {
-      if (System.nanoTime() > deadline) {
+      final long now = System.nanoTime();
+      if (now > deadline) {
         return false;
       }
-      clock.advance(10_000_000L);
+      clock.advance(now - last);
+      last = now;
       s.doWork();
       Thread.onSpinWait();
     }
     return true;
+  }
+
+  private String diagnostics(final VenueSession s, final FakeVenue venue) {
+    return "state " + s.state() + ", statuses " + statusCodes() + ", venue connections "
+        + (venue == null ? "n/a" : String.valueOf(venue.connections())) + ", attempts " + s.reconnectAttempts()
+        + ", disconnects " + s.disconnects() + ", logons " + s.logons() + ", give-ups " + s.reconnectGiveUps();
   }
 
   private List<Integer> statusCodes() {
@@ -153,10 +170,10 @@ class VenueSessionReconnectTest {
     try (FakeVenue venue = new FakeVenue(1)) {
       final VenueSession s = session(venue.port(), ReconnectPolicy.DEFAULT);
       s.connect();
-      assertTrue(drive(s, s::isActive), "logged on after a retry: state " + s.state() + ", " + statusCodes());
+      assertTrue(drive(s, s::isActive), "logged on after a retry: " + diagnostics(s, venue));
       assertEquals(SessionState.ACTIVE, s.state());
-      assertEquals(2, venue.connections());
-      assertEquals(1, s.reconnectAttempts());
+      assertEquals(2, venue.connections(), diagnostics(s, venue));
+      assertEquals(1, s.reconnectAttempts(), diagnostics(s, venue));
       assertEquals(1, s.logons());
       assertEquals(0, s.reconnectGiveUps());
       assertFalse(s.reconnectPending());
@@ -180,8 +197,8 @@ class VenueSessionReconnectTest {
     try (FakeVenue venue = new FakeVenue(Integer.MAX_VALUE)) {
       final VenueSession s = session(venue.port(), policy);
       s.connect();
-      assertTrue(drive(s, () -> s.reconnectGiveUps() == 1), "gave up: " + statusCodes());
-      assertEquals(3, venue.connections(), "the first attempt and two retries");
+      assertTrue(drive(s, () -> s.reconnectGiveUps() == 1), "gave up: " + diagnostics(s, venue));
+      assertEquals(3, venue.connections(), "the first attempt and two retries: " + diagnostics(s, venue));
       assertEquals(2, s.reconnectAttempts());
       assertFalse(s.isActive());
       assertFalse(s.reconnectPending());

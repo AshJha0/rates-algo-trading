@@ -25,7 +25,7 @@ One process, `rates-app` (`TradingProcessMain`, API_SPEC.md Section 18), runs a 
 Next to the process:
 
 - **Back-testing with pre-registration.** The back-tester runs only pre-registered experiments. Holdouts may be opened once. Every run is appended, whatever its result, to `data/ledger/ledger.jsonl`, a hash-chained ledger with 22 rows at v1.0.0.
-- **Desk features.** `rates-strategy` holds internalisation and netting, axes, quote sizing, client tiering, hedge timing, a funding penalty and coupon carry, together with a desk P&L waterfall. Each feature sits behind an interface whose default is today's engine.
+- **Desk features.** `rates-strategy` holds internalisation and netting, hedge slicing (depth-sized children, passive first with escalation; the back-tested desk default since V1H-001), axes, quote sizing, client tiering, hedge timing, a funding penalty and coupon carry, together with a desk P&L waterfall. Each feature sits behind an interface whose default is today's engine.
 - **Python research package** (`research/ratesresearch`). It covers statistics mirrored line for line with the Java ones, hit-rate, flow and markout models, the QuantLib golden generator, eleven executed notebooks and six edge studies on public data.
 
 ## Measured results
@@ -34,6 +34,7 @@ Each figure names its source and the date it was measured. Java figures come fro
 
 | What | Result | Source, date |
 |---|---|---|
+| Test suite | 620 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 106 Python tests, 11 executed notebooks, 35 of the 36 cookbook recipes checked against their recorded output | local run on v1-integration, 2026-11-01 |
 | Analytics against QuantLib 1.44, 224 instruments | swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16 | `AnalyticsGoldenTest`, API_SPEC.md 7.2, 2026-10-31 |
 | Published Treasury auctions of 2024 reproduced | all 84 notes and bonds and 332 bills, to the published digits | `PublishedExamplesTest`, 2026-10-31 |
 | Event loop latency, core decode to encode, journaling on, 50,000 msg/s | p50 0.1 to 0.2 us, p99.9 1.6 us, 0 bytes allocated on the loop thread (target: p50 under 20 us, p99.9 under 100 us); laptop, unpinned threads | docs/BENCHMARKS.md, runs at 04d12a503a6b, 2026-10-31 |
@@ -43,6 +44,8 @@ Each figure names its source and the date it was measured. Java figures come fro
 | First pre-registered experiment, P5-001 | not supported; recorded as such | ledger seq 1, 2026-10-31 |
 | Desk features, R2B-001 to R2B-007 | internalisation supported at every band point and adopted as the desk default; the other six not supported | ledger seq 12 to 18, docs/research/DESK_FEATURES.md, 2026-10-31 |
 | Edge studies on public data, E1 to E6 | two supported after their holdouts (E3 release volatility and intensity, E4 trade size and clustering); three not supported; one inconclusive because its data could not be downloaded | ledger seq 2 to 7, docs/research/EDGE_STUDIES.md, 2026-10-31 |
+| Hedge slicing against one market order, V1H-001 (simulated, depth-walk fills) | supported at every band point: implementation shortfall better by +446k, +300k and +71k USD per session at low, central and high (Holm p at most 0.0022); adopted as the back-tested desk default. The cost-aware trigger, V1H-002, was not supported and stays opt-in | ledger seq 23 and 24, DR-V1H-01 to 03, docs/research/DESK_FEATURES.md, 2026-11-01 |
+| Event loop latency on a GitHub-hosted ubuntu-latest runner (shared 2 vCPU VM, informational) | core decode to encode, journaling on, 50,000 msg/s: p50 0.160 us, p99 5.939 us, p99.9 9.511 us | docs/BENCHMARKS.md, CI run 41290006100 at 8bfe1b8af42f, 2026-11-01 |
 | Production desk at default settings, 20 fifteen-minute sessions (simulated) | loses money at every band point: -82k, -72k and -105k USD per session at low, central and high | AUDIT-11, ledger seq 19, docs/research/PNL_AUDIT.md, 2026-10-31 |
 
 ### Daily-P&L risk across the assumption band
@@ -78,10 +81,10 @@ Read these before reading any number above.
   - package B: the CLOB inventory skew is off until called.
 - **One currency, one loop.** The routers and the hedger trade Treasuries on the CLOB only, because there is no futures simulator (DR-R2W-08). The CLOB quoter is built but not enabled in the process. The SEF simulator is not connected.
 - **Post-trade reads the journals after the run** rather than tailing them live. Marks, carry, calendars and the venue status port run on fixtures (API_SPEC.md 17.14).
-- **Latency figures are for the core loop on a laptop with unpinned threads.** They are not for the wired process. Gating numbers belong on a pinned Linux host (DR-005), which has not been run.
-- **Some data was unavailable.** No DMO worked example (scripted downloads refused); no FINRA Treasury data (needs an account); E5's fitting data could not be downloaded.
+- **Latency figures are for the core loop**, on a laptop with unpinned threads and, informationally, on a shared GitHub-hosted Linux runner. They are not for the wired process. Gating numbers belong on a pinned Linux host (DR-005), which has not been run.
+- **Some data was unavailable or had no example to reproduce.** No UK DMO golden test: the DMO formulae paper gives the conventional gilt formulae without a numerical worked example (DR-V1G-02). No FINRA Treasury data (needs an account). E5's fitting data could not be downloaded.
 - **Not built:** Aeron replication and the quoting lease (DR-P6-06), APA publication, the Part 43 message and the pre-execution credit check (docs/compliance/RTS6_INVENTORY.md).
-- **Cookbook gaps.** Recipes 35 and 36 are listed but not written. Recipes 9 and 20 are checked as a test and as a Python recipe, so `tools/check_cookbook.py` checks 33 of the 36 listed recipes.
+- **Cookbook.** All 36 recipes are written. Recipe 9 is a comparison method checked by the golden tests, so `tools/check_cookbook.py` checks 35 of the 36.
 - **Ledger flags.** Four audit rows (AUDIT-02 to 04 and AUDIT-12 to 14 carry `code_dirty: true`) were recorded while the ledger file itself was uncommitted; docs/research/PNL_AUDIT.md explains.
 
 ## Quick start

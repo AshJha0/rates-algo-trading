@@ -18,6 +18,7 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 | P6 | Documentation, regulation mapping, knowledge check, release | 16 | 1 | 0.3 for the branch share (11 plan-days); about 0.1 for the final documentation pass and release (5 plan-days) | 2026-10-31 | closed with v1.0.0 (see "P6 remainder and release") |
 | Round 1 integration | P0 to P6 merged into one branch, fixes found at integration | not planned | not planned | about 0.1 (pull requests 1 and 2, merged 08:26 and 11:15 UTC) | 2026-10-31 | closed |
 | Round 2 | Wiring (`rates-app`), journal write path, LEARN, recipes 23 to 34 and diagrams, desk features (`rates-strategy`), edge research, P&L audit, review, audit fix packages A1, A2, B, C, D, integration | not planned in plan-days; each workstream briefed as one session | 1 | 0.4 (first commit 12:11 UTC, merge ecfc591 at 21:33 UTC on 2026-10-31) | 2026-10-31 | closed: pull request 3 merged; per workstream below |
+| Version 1 integration | Hedge slicing (V1H-001, V1H-002), recipes 35 and 36, Docker image build and rehearsal in CI, hosted-runner latency row, DMO finding, documentation pass | not planned | not planned | in progress | 2026-11-01 | in progress (pull request to main) |
 
 ## Estimate versus actual
 
@@ -32,7 +33,7 @@ Planned: 10 plan-days, 1 wall-clock day. Actual: built on 2026-10-31 alongside P
 Planned: 16 plan-days, 1 to 1.5 wall-clock days. Actual: started and finished on 2026-10-31, about 7 hours elapsed from the first commit of the session to the push, including two pauses for a model change. Branch `claude/p1-analytics-df37ab`. Acceptance (P1 gate), measured locally on 2026-10-31 with JDK 25.0.5 on Windows 11 (`mvn -B -ntp verify`); CI on Linux and Windows pending:
 
 - 224-instrument QuantLib 1.44 golden passes (`AnalyticsGoldenTest`): swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16, conversion factors exact; API_SPEC.md Section 7.2 lists every figure.
-- Treasury worked examples: all 84 note and bond and 332 bill auctions of 2024 reproduce to the published digits (`PublishedExamplesTest`). No DMO worked example: the DMO site refused scripted downloads.
+- Treasury worked examples: all 84 note and bond and 332 bill auctions of 2024 reproduce to the published digits (`PublishedExamplesTest`). No UK DMO golden test: the DMO formulae paper, fetched on 2026-11-01, gives the conventional gilt formulae without a numerical worked example (DR-V1G-02).
 - Curve round trip within 1e-10 for all three interpolations (worst 9.3e-14); incremental rebuild equals full rebuild within 1e-10 (worst 7.5e-14) (`CurveBuilderTest`).
 - Key-rate sum equals parallel within 1e-9 relative; AD versus 1bp bump within 1e-4 (worst 1.2e-8).
 - Compounded legs reproduce the 2024 SOFR, EUR STR and SONIA published indices to the last digit (`CompoundedIndexHoldoutTest`).
@@ -185,6 +186,10 @@ Done in this pass:
 
 The difference from plan is attributed to LEARN's knowledge check and pitfalls having come with round 2.
 
+### Version 1 integration (branch `v1-integration`)
+
+Started 2026-11-01 on main d89bfb1. Merged `claude/v1-hedge-f17740` (hedge slicing adopted as the back-tested desk default, V1H-001 supported at every band point; the cost-aware trigger V1H-002 not supported and opt-in; PNL_AUDIT items 1 and 10; ledger seq 23 and 24, no renumbering) and `claude/v1-gaps-ea4320` (COOKBOOK recipes 35 and 36, so every listed recipe is written; CI builds every image in `deploy/` and runs the rehearsal inside the trading image, DR-V1G-03; the CI latency job writes its percentiles to the job summary and BENCHMARKS has a GitHub-hosted Linux row, DR-V1G-04; the DMO finding, DR-V1G-02). The documentation pass in the same branch brought README, CHANGELOG, the diagrams and this file up to date.
+
 ## Open items
 
 - Owner: the repository is private until the owner is satisfied (DR-001 amendment). The site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md). Branch protection on `main` should be turned on then, requiring the CI jobs.
@@ -193,5 +198,6 @@ The difference from plan is attributed to LEARN's knowledge check and pitfalls h
 - R2 (findings outside its scope): `Venues.T0` is documented as 13:30Z, 08:30 New York, but is 14:30Z, 09:30 New York; the D2C arrival peak is at 08:30, so tests starting at `T0` see the base rate only.
 - Audit-fix controls ship off by default and are not turned on by the wired process: package A1 (hit-rate learning and cover averaging take effect only once the engine is fed outcomes and cover gaps), package C (router filled-adverse and message costs, on only in `RouterPresets.globalWithControls`), package B (CLOB inventory skew, off until called). Turning them on is a pre-registered experiment, not a config edit.
 - AUDIT-11 to AUDIT-14 ran at 04edc03, before DR-INT-05; re-run them under new ids before planning on their sizes. AUDIT-02 to 04 and AUDIT-12 to 14 carry `code_dirty: true` (docs/research/PNL_AUDIT.md).
-- COOKBOOK recipes 35 and 36 are listed but not written.
+- PNL_AUDIT item 10 stays open: the cost-aware hedge trigger (V1H-002, ledger seq 24) was not supported and is opt-in only (DR-V1H-02).
+- Hedge slicing is the default of the back-tested desk (`DeskFactory.deskDefault()`, DR-V1H-03); the wired process's hedger and routers are unchanged.
 - `VenueSession`'s logon retry (DR-INT-09) is configured in code; it is not yet in the deployment config schema. A session that was active and then dropped by the venue is not reconnected automatically.

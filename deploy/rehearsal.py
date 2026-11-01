@@ -13,7 +13,10 @@ The trading process is rates-app's TradingProcessMain (API_SPEC.md Section 18.1)
 CLOB simulators run inside it on simulated time from 08:25 New York, paced at ten times real
 time, so RFQs arrive within seconds of readiness.
 
-Usage: python deploy/rehearsal.py --mode process [--java PATH] [--timeout SECONDS]
+Inside the trading image (ops.yml "images" job) the jars are already in /opt/rates/lib, so pass
+--classpath "/opt/rates/lib/*" instead of packaging them again.
+
+Usage: python deploy/rehearsal.py --mode process [--java PATH] [--classpath CP] [--timeout SECONDS]
 Exit status 0 when every check passes.
 """
 
@@ -140,13 +143,13 @@ def checks(r: Rehearsal, trading: str, venue: str, token: str, journal_dir: Path
         r.check("kill switch journaled", KILL_SWITCH_TEMPLATE in templates, f"templates {templates}")
 
 
-def run_process_mode(java: str, timeout: float) -> int:
+def run_process_mode(java: str, timeout: float, cp: str | None = None) -> int:
     r = Rehearsal()
     work = Path(tempfile.mkdtemp(prefix="rates-rehearsal-"))
     token = secrets.token_hex(16)
     procs: list[subprocess.Popen[bytes]] = []
     try:
-        cp = classpath("rates-app")
+        cp = cp or classpath("rates-app")
         main = "io.ratesalgo.app.TradingProcessMain"
 
         bad = work / "bad.yaml"
@@ -216,11 +219,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mode", choices=["process", "docker"], default="process")
     parser.add_argument("--java", default=shutil.which("java") or "java")
+    parser.add_argument("--classpath", help="use this class path instead of rates-app/target")
     parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args()
     if args.mode == "docker":
         return run_docker_mode(args.timeout)
-    return run_process_mode(args.java, args.timeout)
+    return run_process_mode(args.java, args.timeout, args.classpath)
 
 
 if __name__ == "__main__":

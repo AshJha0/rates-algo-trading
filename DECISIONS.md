@@ -775,6 +775,8 @@ Decision. Rows already on `round2-integration` are kept unchanged, and each late
 | R2B-005 | 6 | 16 | `a0ca41a043fd...` | `c2af0c8facb2...` |
 | R2B-006 | 7 | 17 | `968558726727...` | `9d5d645bbf1a...` |
 | R2B-007 | 8 | 18 | `62a00dc6e056...` | `ccbaf1e16ff3...` |
+| AUDIT-11 to AUDIT-14 | 19 to 22 | 19 to 22 (no collision, unchanged) | - | - |
+| V1H-001, V1H-002 | 23, 24 | 23, 24 (v1-integration; appended after main's 22 rows, no collision, unchanged) | - | - |
 
 Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
 
@@ -807,12 +809,13 @@ Also, `WiredLoopAllocationTest` (rates-app) failed once under full-build load in
 Consequences. The test still fails if a message is lost without being counted on any path, which is what the old check guarded, and it now also checks the loop's own counters against the generator. A run where the loop drops Quotes on backpressure passes, as it should. The harness itself is unchanged.
 
 
-Amended 2026-11-01, `LoopAllocationTest`. On pull request 4 the DIRECT case failed once on windows-latest: window 2 allocated 1,288 bytes, one roll waited and the test took 183 s on a 2-CPU runner. The bound was not changed. To find the source, the test now reports roll waits per window, and three experiments ran on the development laptop (12 cores, Windows 11, JDK 25.0.5):
+Amended 2026-11-01, `LoopAllocationTest` and the journals' wait paths. On pull request 4 the DIRECT case failed once on windows-latest: window 2 allocated 1,288 bytes, one roll waited and the test took 183 s on a 2-CPU runner. The bound was not changed. The test now reports roll waits per window. The investigation ran on the development laptop (12 cores, Windows 11, JDK 25.0.5) with 4 cores held busy, each run in a fresh JVM.
 
-- Ten fresh JVMs ran the test with 4 cores held busy. Every window allocated 0 bytes in DIRECT mode, where no roll waited. In RING mode, 17 waited rolls fell inside measured windows, and each of those windows allocated 0 bytes.
-- A new `SegmentedJournalTest.aWaitedRollAllocatesNothingOnTheAppendingThreadAfterWarmUp` makes the appending thread wait in `Preparer.take`. In five fresh JVMs, 40 measured waited rolls allocated 0 bytes each time, and so did the first waited roll before any warm-up.
-
-The waited roll is therefore not the source. That leaves JIT compilation and deoptimisation on a starved runner, as for `WiredLoopAllocationTest` above. The test now keeps warming up while the JIT compiles, 250,000 messages at a time, until one such window passes with no new compilation time, for at most four windows; the report gives the count. The measured windows, the 1,024-byte bound and the zero-byte last window are unchanged. If the failure recurs with the JIT quiet, the cause is a real allocation to find with the flight recording described in the test.
+- **Before.** 3 of 10 runs failed, each with exactly 176 bytes in the DIRECT window that held the run's first waited roll. All 27 DIRECT windows without a waited roll allocated 0 bytes. RING never failed, because there the journal thread waits, not the loop. A journal-only test, which waits from its first roll, allocated nothing; that misled the first reading of this amendment.
+- **Cause.** With `-Xlog:deoptimization=debug` on the failing run (run 10 of a second batch), the loop thread's only trap in the measured part was `SegmentedJournal$Preparer.take()`, an OSR `unstable_if` trap at the exit of the wait loop. The loop's warm-up never waits, so C2 compiles the wait as never taken. The first real wait then deoptimises compiled frames on the loop thread and re-creates objects that escape analysis had removed. The 176 bytes are that one-off; they are not per message. A production loop would take the same deoptimisation, at its first waited roll, while quoting.
+- **Fix.** `JournalWarmUp.exerciseWaitPaths` runs both wait paths before any loop starts: the roll that waits for its segment, and the append to a full ring (`RingJournal.append`). It uses scratch journals with 64 KiB segments and a 64 KiB ring, appended in a tight loop until each path has waited 200 times, then deletes them. Branch profiles belong to the method, so the production journals are never written. `TradingProcess` calls it before it builds the loops, as do `LatencyHarness` and the test. The JIT-settled extra warm-up stays.
+- **After.** 10 of 10 runs passed on the same setup. Seven of them had a waited roll inside a measured window, and each such window allocated 0 bytes. The deoptimisation logs of all ten show no trap in `Preparer.take` on any thread. `SegmentedJournalTest.aWaitedRollAllocatesNothingOnTheAppendingThreadAfterWarmUp` checks the journal on its own.
+- **Window exclusion.** Excluding windows that contain a roll was not needed, so the measured windows, the 1,024-byte bound and the zero-byte last window are unchanged.
 
 Amended 2026-11-01, latency harness accounting. The second of the three equalities above was wrong. `LoopCounters.OUTBOUND` counts every Quote the loop produced, delivered or not, so a run with drops failed on `inbound == outbound + outboundDropped` (windows-latest on pull request 4: inbound 58,025, outbound 58,025, outboundDropped 457). The equalities are now: processed equals generated less generator drops; produced equals processed (`inbound == outbound`, one Quote per request); and the gateway sees the produced less the dropped (`outbound - outboundDropped == seen`). Backpressure events are at most the drops, since one event covers a run of drops on a gateway. A Quote lost without being counted still fails the test.
 
@@ -1026,6 +1029,12 @@ Consequences. A refused Logon no longer leaves a session down for good. The retr
 - the old throwing behaviour under `NONE`.
 
 The policy is set in code (`TradingProcess` uses the default); exposing it in the deployment config is an open item.
+
+Amended 2026-11-01, `VenueSessionReconnectTest`. On pull request 5 the test failed on windows-latest only. In `retriesAreBoundedAndBackOff` the venue had seen 0 connections when the session gave up, where 3 were expected. In `aLogonRefusedByTheVenueIsRetriedAndTheSecondIsAccepted` the session ended DISCONNECTED with statuses [2,3,2,3,2,3,2,3,2,3,2]: six attempts, every one ended by the logon timeout. It did not fail in 20 runs on the 12-core laptop with 4 cores busy.
+
+- **Cause.** The session's logon timeout (the 30 s heartbeat interval) and its backoff run on the session clock, which in the test is a `ManualClock` that `drive` advanced 10 ms per turn. The fake venue answers on its own thread in real time. A probe of the same loop against a venue that never answers (`LogonTimeoutProbe`, a scratch program, 2026-11-01) measured the first logon timeout after 17 to 29 ms of wall-clock time and the whole DEFAULT retry budget, six attempts, spent in 48 to 83 ms. A venue thread not scheduled within about 20 ms therefore lost every attempt. On a 2-vCPU hosted runner, with the test thread spinning, that happens, and it produces exactly the two failures seen. In production the clock is real time and the timeout really is 30 s, so `VenueSession` is not at fault.
+- **Fix.** `drive` advances the session clock by the wall-clock time each turn took, so the socket and the session timers share one time base. The 10 s wall-clock ceiling and every assertion are unchanged, and the failure messages now give the state, the statuses, the venue's connection count, attempts, disconnects, logons and give-ups.
+- **After.** 20 fresh JVMs with 4 cores busy ran all three tests and passed.
 
 ## DR-R2J-01: Cause of the journaling-on tail: time to safepoint from a page-touching zero-fill, made frequent by the harness's own garbage
 
@@ -1486,3 +1495,74 @@ Context. The release needed daily-P&L Sharpe ratio, maximum drawdown and P&L vol
 Decision. `Stats.pnlRisk` computes the figures from a daily P&L series; `BandRisk` renders them with a fixed label that calls them a simulator consistency check (DR-008). `ReportCli` and `ExperimentCli` write them as separate files and as a report section. The ledger record is unchanged; the table can be recomputed from any recorded `daily_pnl` at any time. Sharpe uses a zero risk-free rate and annualises by the square root of 252; drawdown is measured from zero.
 
 Consequences. Old ledger rows get the table for free (README.md quotes P5-001 and AUDIT-11). The daily report runs each journal once more on its own to get a daily series, which roughly doubles its run time with two or more journals. A session shorter than a day (AUDIT-11 to 14) still gives a per-session ratio, which must not be annualised; the README says so.
+
+## DR-V1H-01: The back-tested desk can slice hedges, passive first with escalation
+
+Date: 2026-11-01
+
+Context. PNL_AUDIT.md item 1: the back-tested desk sends the internalisation budget's whole excess as one market order, which walks the book. The back-tester had no cancel and no view of displayed quantity, so a passive-then-market policy could not be expressed.
+
+Decision. `StrategyContext` gains `cancelOrder`, `touchPrice` and `touchQuantity`, as default methods so other implementations are unchanged. `DeskQuoter` takes an optional `HedgeSlicing(depthFraction, minChildLots, passiveWaitNanos, urgentDv01)`. Children are sized from the opposite touch. Each is sent first as a limit order at our touch, then cancelled and sent as a market order after the wait. Children continue until the parent's excess is done (net DV01 reaches the parent's target). The strategy also records the implementation shortfall against the mid at each decision. Without slicing the messages sent are unchanged (DeskQuoterBaselineTest).
+
+Consequences. The policy runs inside the strategy because the back-tester has no router; production keeps `Hedger` through `SmartOrderRouter`. A first version asked the budget again after each child. On the fitting period that left the residual at the hard budget and failed the residual-risk guard, so the parent target was added before pre-registration.
+
+## DR-V1H-02: A cost-aware hedge trigger, tested and kept opt-in
+
+Date: 2026-11-01
+
+Context. PNL_AUDIT.md item 10: no fixed DV01 trigger is right across the band. R2B-005 (OptimalStoppingTiming) was not supported.
+
+Decision. `CostAwareHedgeBudget` hedges all net DV01 in two cases: when the variance charge of holding it over a horizon exceeds the depth-walk cost of hedging it now, or when net DV01 is above a cap. `HedgeBudget.observeMarket` passes it the live spread, tick and touch depth. It was pre-registered as V1H-002 against the fixed 100,000 trigger (horizon 2,700 s, cap 500,000). Result, ledger seq 24: improved at central only, so not supported. It is not adopted, and `DeskFactory.baseline()` keeps the 100,000 trigger.
+
+Consequences. Item 10 stays open. In the synthetic market volatility and spread are constant, so the rule is close to a fixed threshold (about 98,000 DV01 at median depth). A better test needs varying volatility and expected netting flow.
+
+## DR-V1H-03: Hedge slicing is the desk default
+
+Date: 2026-11-01
+
+Context. V1H-001 (ledger seq 23, code c9d911e) tested slicing against the netting desk default sending one market order. It used depth-walk fills on 20 sessions, with Holm over 6 tests.
+
+Decision. Slicing was supported at every band point: shortfall +446k at L, +300k at C and +71k at H per session, Holm p at most 0.0022. The residual-risk, P&L and limit guards all passed. `DeskFactory.ADOPTED_SLICING` (children of the full touch quantity, at least 10 lots, 5 s passive, market above 400,000) is used by `deskDefault()`. `nettingOnly()` keeps the previous default for comparison.
+
+Consequences. Later experiments compare against the sliced default. The passive leg added nothing measurable on the fitting period, and the queue model is optimistic for it, so the attributable gain is from depth-sized children. Only the back-tested desk changes.
+
+## DR-V1G-01: Recipe 35 verifies a committed Java journal; the fixture is pinned by a Java test
+
+Date: 2026-11-01
+
+Context. Recipe 35 shows Python checking a journal written by Java. Python recipes run in tools/check_cookbook.py without a JVM, so the journal has to be a committed file, and a committed binary can fall behind the writer.
+
+Decision. data/fixtures/journal/recipe02.raj holds recipe 2's three frames in a 256-byte file. JournalFixtureTest in rates-cookbook rewrites it with the current JournalWriter on every build and fails on any byte difference (regenerate with -Dfixture.regenerate=true). The recipe compares its final hash with the value Java printed in recipe02.txt, read from that file. Recipe 36 prints comparisons, not byte counts, for the allocating path, because the count depends on the JDK's string layout.
+
+Consequences. A change to the frame layout or chain hash fails JournalFixtureTest first, then the cookbook check until the fixture and recorded output are regenerated.
+
+## DR-V1G-02: No UK DMO golden test; the formulae paper has no conventional worked example
+
+Date: 2026-11-01
+
+Context. A golden test reproducing a DMO worked example was planned. On 2026-11-01 the paper "Formulae for Calculating Gilt Prices from Yields" was fetched from https://www.dmo.gov.uk/media/1sljygul/yldeqns.pdf (37 pages, PDF created 2011-09-06). It gives the conventional gilt price, yield and accrued interest formulae without a numerical example. Its only worked number is the three-month-lag reference RPI for 20 July 2001 (173.77419 from the April and May 2001 RPI), which applies to index-linked gilts. The platform has no index-linked gilt code.
+
+Decision. No golden test is added and no numbers are invented. The conventional gilt formulae stay checked by recipe 7 and the existing analytics tests. If index-linked gilts are added, the reference RPI example is the first golden test for them.
+
+Consequences. The UK DMO worked example stays an open gap. It needs a published DMO price and yield pair (for example a reference price with its yield on a stated date), downloaded by hand because the /data/ pages are behind bot protection (data/SOURCES.md).
+
+## DR-V1G-03: CI builds every image in deploy/ and runs the rehearsal inside the trading image
+
+Date: 2026-11-01
+
+Context. The ops rehearsal job built the three images when Docker was present but never started one, so a missing jar or a broken entrypoint would only show up on a real host.
+
+Decision. A separate Ops job, "Container images and in-image rehearsal", builds every deploy/*/Dockerfile, resolves compose.yaml, starts the report image to check its argument handling (exit 2, "missing --journal"), and runs deploy/rehearsal.py in process mode inside a throwaway layer over the trading image that adds python3. The rehearsal runs as the image's non-root user with --classpath /opt/rates/lib/*, so it uses the jars the image ships.
+
+Consequences. The images are exercised on every push to main and every pull request. The throwaway layer is not published; the production image stays without Python.
+
+## DR-V1G-04: The CI latency run writes its percentiles to the job summary
+
+Date: 2026-11-01
+
+Context. The informational latency job only uploaded a JSON artifact, so reading a Linux number meant downloading it.
+
+Decision. tools/latency_summary.py prints each report's percentiles as a Markdown table, and the job appends it to $GITHUB_STEP_SUMMARY. docs/BENCHMARKS.md cites one such run by URL, labelled as a shared GitHub-hosted runner, not a tuned host. It never gates (DR-005).
+
+Consequences. A Linux reference number is one click from each CI run. It is not comparable with a pinned, isolated host.
+

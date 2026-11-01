@@ -120,6 +120,29 @@ The baseline breaches its own limits on some sessions (at least 12 of 20 at the 
 
 **Design.** `DeskMetrics` and `DeskReport` (`desk_report.json`, `desk_report.md`, `DeskReportCli`) give, per session: P&L per DV01 traded; the waterfall spread captured, adverse selection (mid move over 60 s after each client fill), other inventory P&L, hedge cost, carry, funding and fees, which sums to position P&L less the attribution residual (`DeskReportTest`, to the cent, session 2026-02-19); hit rate by tier, product and tenor bucket; median inventory half-life; hedge ratio (hedged DV01 over client DV01); and the balance-sheet charge beside funding. The existing `DailyReport` has no section extension point, so the desk section is written next to it (DR-R2B-09). Diagrams: "Internalisation flow" and "Desk P&L waterfall" on the diagrams page.
 
+## Hedge execution after internalisation (V1H-001, V1H-002)
+
+Added 2026-11-01 (DR-V1H-01 to DR-V1H-03). Records V1H-001 and V1H-002 are ledger seq 23 and 24, from code c9d911e, with copies in `research/hedge/results/`. The config is `data/experiments/V1H.config.yaml`: the R2B config with day seed base 9,000,000 and two new sections. Market hedges fill by the depth walk of audit fix package D and resting hedges by the queue model. Holm runs over 6 tests. The DR-008 caveat applies: these are simulator consistency checks, not edge.
+
+| Pre-registration | Treatment against | Metric, USD per session | Low | Central | High | Verdict |
+|---|---|---|---|---|---|---|
+| V1H-001 | sliced, against netting with one market order | hedge shortfall | +446,304 (350,454 to 560,595) | +300,077 (200,750 to 402,994) | +70,935 (39,865 to 109,365) | supported, adopted |
+| V1H-002 | cost-aware trigger, against fixed 100,000 | risk-adjusted shortfall | -6,517 (-38,223 to 26,037) | +33,677 (18,323 to 57,939) | +26,796 (7,924 to 50,805) | not supported |
+
+**Slicing (V1H-001).** `DeskQuoter(name, features, HedgeSlicing)` hedges the budget's excess in children. Each child is `depth_fraction` (1.0) times the touch quantity on the side a market order would take, and at least 10 lots. It is placed first as a limit order at our own touch, then cancelled and sent as a market order after 5 s. While net DV01 is above 400,000 it goes as a market order at once. Children continue until net DV01 reaches the parent's target, so client flow that nets meanwhile reduces what is left.
+
+At central, the sliced desk sends 49 hedge orders a session against 6, with 9.5 passive fills and 20.4 escalations. Mean absolute net DV01 is 62,581 against 59,805. The residual-risk guard reads +280,920 (182,582 to 385,517). Slicing is adopted: `DeskFactory.deskDefault()` uses `ADOPTED_SLICING`, and `nettingOnly()` is the old default.
+
+On the fitting period market-only children did as well, so the measured gain comes from depth-sized children. Two features of the queue model favour the passive leg: it has no adverse selection beyond the price path, and it fills at once an order that arrives behind a best that has moved.
+
+**Cost-aware trigger (V1H-002).** `CostAwareHedgeBudget` hedges all net DV01 `X` when `gamma / 2 * sigma^2 * X^2 * horizon` exceeds `(h + fee) |X| + t * sum_k k * min(D, |X| - k D)+`, or when `|X|` exceeds the cap. The live half-spread `h`, tick `t` and touch DV01 `D` come from `HedgeBudget.observeMarket`. Parameters: gamma 1e-6, sigma 0.35 / sqrt(60) bp per sqrt(s), horizon 2,700 s (chosen on the fitting period from 900 to 7,200 s), cap 500,000. It is better only at central, so it stays opt-in. With constant volatility and spread its threshold is about 98,000 DV01 at median depth, close to the fixed trigger.
+
+Reproduce:
+
+```bash
+research/hedge/run_hedge_experiment.sh --preregs data/preregs/V1H-001.yaml,data/preregs/V1H-002.yaml --commit "$(git rev-parse HEAD)"
+```
+
 ## Reproduce
 
 ```bash

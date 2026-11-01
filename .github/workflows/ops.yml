@@ -60,15 +60,51 @@ jobs:
             deploy/config/schema/process-config.schema.json deploy/config/*.yaml
       - name: Rehearsal with the kill switch
         run: python deploy/rehearsal.py --mode process --timeout 90
-      - name: Build the images when Docker is available
+
+  images:
+    name: Container images and in-image rehearsal
+    # GitHub's ubuntu runners have Docker. Builds every image in deploy/, then runs the
+    # process-mode rehearsal inside the trading image against the jars the image ships
+    # (DR-V1G-03), so a missing jar, a wrong entrypoint or a JRE gap fails here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Package the process jars
+        run: mvn -B -ntp -DskipTests package -pl rates-app,rates-ops,rates-posttrade -am
+      - name: Build every image in deploy/
         run: |
-          if ! command -v docker >/dev/null 2>&1; then
-            echo "::notice::Docker not available on this runner; images not built"
-            exit 0
-          fi
-          docker build -f deploy/trading/Dockerfile -t rates-trading:ci .
-          docker build -f deploy/venue-sim/Dockerfile -t rates-venue-sim:ci .
-          docker build -f deploy/report/Dockerfile -t rates-report:ci .
-          docker compose -f deploy/compose.yaml config --quiet
+          for dockerfile in deploy/*/Dockerfile; do
+            name="rates-$(basename "$(dirname "$dockerfile")")"
+            echo "::group::$name"
+            docker build -f "$dockerfile" -t "$name:ci" .
+            echo "::endgroup::"
+          done
+          docker image ls 'rates-*'
+      - name: Compose file resolves
+        run: docker compose -f deploy/compose.yaml config --quiet
         env:
           RATES_CONTROL_TOKEN: ci-only-not-a-secret
+      - name: Report image starts and checks its arguments
+        # With no arguments EodReportMain prints "missing --journal" and exits 2, which proves
+        # the JRE, the class path and the main class inside the image.
+        run: |
+          status=0
+          docker run --rm rates-report:ci 2>err.txt || status=$?
+          cat err.txt
+          test "$status" -eq 2 && grep -q "missing --journal" err.txt
+      - name: Rehearsal inside the trading image
+        # The JRE image has no Python, so a throwaway layer adds python3 and the rehearsal
+        # runs as the image's own non-root user with the image's /opt/rates/lib class path.
+        run: |
+          docker build -t rates-trading-smoke:ci - <<'DOCKERFILE'
+          FROM rates-trading:ci
+          USER root
+          RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+          USER rates
+          DOCKERFILE
+          docker run --rm -v "$PWD:/repo:ro" --entrypoint python3 rates-trading-smoke:ci /repo/deploy/rehearsal.py --mode process --java java --classpath '/opt/rates/lib/*' --timeout 120

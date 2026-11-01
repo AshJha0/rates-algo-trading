@@ -1,0 +1,61 @@
+# Pre-registration V1H-001 (audit item 1). Written and hashed before the evaluation period was run.
+# Format: API_SPEC.md Section 16.8. Run together with V1H-002 by HedgeExperimentCli, sharing
+# journals and one Holm family of 6 tests (2 treatments x 3 band points). DECISIONS.md DR-V1H-01.
+prereg_version: 1
+id: V1H-001
+title: Hedge the residual after internalisation in depth-sized children, passive first with escalation
+hypothesis: >
+  With the adopted internalisation budget (soft 150,000, hard 400,000, retain 50,000 USD per bp,
+  hold 120 s), hedging the residual into the 10-year note future in children of at most half the
+  displayed touch quantity on the side a market order would take (at least 10 lots), each placed
+  first as a limit order at our own touch and sent as a market order if unfilled after 5 s
+  (market at once while absolute net DV01 exceeds 400,000), children continuing until net DV01
+  reaches the parent's target (client flow that nets meanwhile reduces what is left), costs less in hedge implementation shortfall than sending the budget's whole
+  excess as one market order.
+metric: >
+  Hedge implementation shortfall per synthetic session in USD: the sum over hedge fills of
+  quantity times (mid of the future when that order, or the passive child it escalates, was
+  decided minus fill price), signed so that a cost is negative, minus hedge fees; larger is
+  better. Market hedges fill by the depth walk of audit fix package D, resting hedges by the
+  queue model. Reported beside it: risk-adjusted shortfall (shortfall minus gamma / 2 times sigma
+  squared times the integral of net DV01 squared, gamma 1e-6 per USD, sigma 0.35 / sqrt(60) bp per
+  sqrt(second)), hedge slippage against mid at fill, hedge orders, passive fills, escalations,
+  mean and largest absolute net DV01, P&L.
+baseline: desk_default
+treatments: [sliced]
+period: {start: 2026-05-04, end: 2026-05-29}
+fitting_period: {start: 2026-04-13, end: 2026-04-24}
+holdout: [2026-06-08, 2026-06-09, 2026-06-10, 2026-06-11, 2026-06-12]
+success_threshold: >
+  At each band point (low, central, high), with d_i the session difference of the metric
+  (treatment minus baseline): a paired t-test of mean(d) against zero, two-sided, Holm-adjusted
+  over the 6 tests of V1H-001 and V1H-002, below 0.05, and the 95 percent moving-block bootstrap
+  interval of mean(d) (blocks of 2 sessions, 2000 resamples, seed 11) entirely above zero.
+  Supported only if this holds at all three points. Adopted as the desk default only if supported
+  and, at every point, (a) no limit breach (absolute net DV01 above 1,000,000 USD per bp or a
+  position above 2,000 million) on a session where the baseline did not breach, (b) the bootstrap
+  interval of the paired difference in risk-adjusted shortfall (the residual-risk guard) is not
+  entirely below zero, and (c) the bootstrap interval of the paired session P&L difference is not
+  entirely below zero. The verdict is recorded in data/ledger/ledger.jsonl whatever it is.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+  # with dealers_min, dealers_max and informed_share_multiplier at the same point (config band)
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-01
+config: data/experiments/V1H.config.yaml
+config_sha256: 94d2df23c07c4469a118461ae86a331d1681ac852320798367b88b75e770ffee
+limitations: >
+  Synthetic sessions only: competitors, the win-probability slope and informed-flow share are
+  declared assumptions reported across a band (DR-008), so the result is a simulator consistency
+  check, never evidence of edge. The back-tester's books carry one level; deeper levels are
+  assumed to show the touch quantity. The queue model fills a resting order in one execution once
+  the queue ahead is gone and has no adverse selection beyond the price path itself, which is
+  optimistic for passive hedges (PNL_AUDIT.md item 15). The back-tester has no router, so the
+  passive-then-market policy is executed by the strategy; the production path through
+  SmartOrderRouter is not what is measured. One hedge instrument. Parameters were chosen on the
+  fitting period (2026-04-13 to 2026-04-24) before this file was hashed; on it, market-only
+  children of the same size did as well as passive-first children (the passive leg added nothing
+  measurable), and asking the budget again after each child without a parent target raised
+  residual risk enough to fail the residual-risk guard at the high point.
