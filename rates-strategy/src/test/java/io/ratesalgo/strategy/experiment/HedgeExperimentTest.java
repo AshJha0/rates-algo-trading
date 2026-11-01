@@ -58,6 +58,7 @@ class HedgeExperimentTest {
   void twoDays() {
     final HedgeExperiment e = new HedgeExperiment(Support.repoRoot(), Support.repoRoot().resolve(CONFIG));
     final List<LocalDate> days = List.of(LocalDate.of(2026, 4, 13), LocalDate.of(2026, 4, 14));
+    assertEquals(DeskFactory.ADOPTED_SLICING, e.slicing(), "the adopted slicing is the pre-registered one");
     final HedgeExperiment.Outcome o = e.run(days, dir.resolve("work"));
     assertEquals(List.of(HedgeExperiment.SLICED, HedgeExperiment.ADAPTIVE_TRIGGER), List.copyOf(o.resultsByTreatment().keySet()));
     assertEquals(6, o.journals().size());

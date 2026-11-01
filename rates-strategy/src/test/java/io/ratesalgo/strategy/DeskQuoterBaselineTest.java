@@ -71,8 +71,9 @@ class DeskQuoterBaselineTest {
     }
     final DeskQuoter desk = f.deskDefault();
     assertEquals(DeskFactory.DESK_DEFAULT, desk.name());
+    assertEquals(DeskFactory.ADOPTED_SLICING, desk.slicing(), "V1H-001 slicing is adopted (DR-V1H-03)");
     assertEquals(
         new BacktestRunner(cfg).run(f.treatment(DeskFactory.INTERNALISATION, null)).outputChainHash(),
-        new BacktestRunner(cfg).run(desk).outputChainHash());
+        new BacktestRunner(cfg).run(f.nettingOnly()).outputChainHash());
   }
 }

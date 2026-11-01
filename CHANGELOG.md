@@ -6,6 +6,13 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Added
 
+Version 1, hedge execution after internalisation (branch `claude/v1-hedge-f17740`, PNL_AUDIT.md items 1 and 10).
+
+- `rates-backtest`: `StrategyContext.cancelOrder`, `touchPrice` and `touchQuantity` (default methods), implemented by `BacktestRunner`; test `OrderCancelTest`.
+- `rates-strategy`: `HedgeSlicing` and the slicing path of `DeskQuoter` (depth-sized children, passive first with escalation, implementation shortfall); `CostAwareHedgeBudget` and `HedgeBudget.observeMarket`; `HedgeExperiment`, `HedgeExperimentCli` and `research/hedge/run_hedge_experiment.sh`; test `HedgeExperimentTest`.
+- Experiments: pre-registrations V1H-001 and V1H-002, config `data/experiments/V1H.config.yaml`, ledger seq 23 and 24. Slicing was supported and adopted as the desk default (`DeskFactory.deskDefault`, `ADOPTED_SLICING`; `nettingOnly()` is the old default). The cost-aware trigger was not supported and stays opt-in. Simulator consistency checks only (DR-008).
+- Docs: PNL_AUDIT.md items 1 and 10, DESK_FEATURES.md, API_SPEC.md Section 19.11, DR-V1H-01 to DR-V1H-03.
+
 Round 2, journal write path off the loop's latency path (branch `claude/r2-journal-latency-ee2034`).
 
 - `rates-journal`: `RingJournal`, a journal written by its own thread from an off-heap Agrona ring, with the same frames as a direct append (DR-R2J-03); `JournalWriter.append` and `SegmentedJournal.append` overloads that take the frame stamp; `SegmentedJournal.rollWaits()`.

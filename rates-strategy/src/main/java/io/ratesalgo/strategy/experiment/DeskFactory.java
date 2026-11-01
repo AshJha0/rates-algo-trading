@@ -17,6 +17,7 @@ import io.ratesalgo.strategy.DeskQuoter;
 import io.ratesalgo.strategy.EnvelopeSizer;
 import io.ratesalgo.strategy.FlowRateEstimator;
 import io.ratesalgo.strategy.FundingPenalty;
+import io.ratesalgo.strategy.HedgeSlicing;
 import io.ratesalgo.strategy.HedgeBudget;
 import io.ratesalgo.strategy.HedgeTiming;
 import io.ratesalgo.strategy.InventoryPenalty;
@@ -211,8 +212,25 @@ public final class DeskFactory {
             ladder, spread(), num("baseline", "hedge_threshold_dv01"), clientsPerTier, markoutHorizonNanos()));
   }
 
-  /** The desk default: the baseline with the {@link #ADOPTED} features switched on. */
+  /**
+   * Hedge slicing adopted by V1H-001 (DR-V1H-03: ledger seq 23, 2026-11-01): children of the
+   * displayed touch quantity, at least 10 lots, passive for 5 s, market at once above 400,000 DV01.
+   */
+  public static final HedgeSlicing ADOPTED_SLICING = new HedgeSlicing(1.0, 10, 5_000_000_000L, 400_000);
+
+  /**
+   * The desk default: the baseline with the {@link #ADOPTED} features switched on and hedges
+   * executed with {@link #ADOPTED_SLICING}.
+   */
   public DeskQuoter deskDefault() {
+    return new DeskQuoter(DESK_DEFAULT, nettingOnly().features(), ADOPTED_SLICING);
+  }
+
+  /**
+   * The desk default before V1H-001: the {@link #ADOPTED} features with one market order per
+   * hedge, the comparison strategy of V1H-001.
+   */
+  public DeskQuoter nettingOnly() {
     final DeskQuoter q = treatment(ADOPTED.get(0), null);
     return new DeskQuoter(DESK_DEFAULT, q.features());
   }

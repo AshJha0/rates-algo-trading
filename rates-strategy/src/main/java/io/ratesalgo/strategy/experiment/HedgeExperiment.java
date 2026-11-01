@@ -157,8 +157,8 @@ public final class HedgeExperiment {
   public DeskQuoter strategy(final String name, final Presets presets, final DeskFactory factory) {
     return switch (name) {
       case BASELINE -> factory.baseline();
-      case DESK_DEFAULT -> factory.deskDefault();
-      case SLICED -> new DeskQuoter(SLICED, factory.deskDefault().features(), slicing());
+      case DESK_DEFAULT -> factory.nettingOnly();
+      case SLICED -> new DeskQuoter(SLICED, factory.nettingOnly().features(), slicing());
       case ADAPTIVE_TRIGGER -> {
         final DeskQuoter.Features b = factory.baseline().features();
         yield new DeskQuoter(
