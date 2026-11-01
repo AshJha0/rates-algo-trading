@@ -29,6 +29,12 @@ public interface HedgeBudget {
     return 0L;
   }
 
+  /**
+   * The hedge future's market before the budget is asked: half-spread and tick in bp, and the DV01
+   * displayed at the touch on the side a hedge would take (zero when unknown). Ignored by default.
+   */
+  default void observeMarket(final double halfSpreadBp, final double tickBp, final double touchDepthDv01) {}
+
   /** Today's rule: hedge all of the net DV01 once its absolute value exceeds {@code thresholdDv01}. */
   static HedgeBudget threshold(final double thresholdDv01) {
     return new ThresholdHedgeBudget(thresholdDv01);

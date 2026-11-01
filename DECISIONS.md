@@ -775,6 +775,8 @@ Decision. Rows already on `round2-integration` are kept unchanged, and each late
 | R2B-005 | 6 | 16 | `a0ca41a043fd...` | `c2af0c8facb2...` |
 | R2B-006 | 7 | 17 | `968558726727...` | `9d5d645bbf1a...` |
 | R2B-007 | 8 | 18 | `62a00dc6e056...` | `ccbaf1e16ff3...` |
+| AUDIT-11 to AUDIT-14 | 19 to 22 | 19 to 22 (no collision, unchanged) | - | - |
+| V1H-001, V1H-002 | 23, 24 | 23, 24 (v1-integration; appended after main's 22 rows, no collision, unchanged) | - | - |
 
 Consequences. A ledger row's seq says where the row sits in the combined chain, not when or on which branch it was run. Its `recorded_utc` and `code_commit` say that, and both are unchanged. The audit branch's own commits still show the old numbers. Later branches that append experiments (the fix packages) follow the same rule, and each move is listed here or in a later DR-INT record.
 
@@ -1486,3 +1488,34 @@ Context. The release needed daily-P&L Sharpe ratio, maximum drawdown and P&L vol
 Decision. `Stats.pnlRisk` computes the figures from a daily P&L series; `BandRisk` renders them with a fixed label that calls them a simulator consistency check (DR-008). `ReportCli` and `ExperimentCli` write them as separate files and as a report section. The ledger record is unchanged; the table can be recomputed from any recorded `daily_pnl` at any time. Sharpe uses a zero risk-free rate and annualises by the square root of 252; drawdown is measured from zero.
 
 Consequences. Old ledger rows get the table for free (README.md quotes P5-001 and AUDIT-11). The daily report runs each journal once more on its own to get a daily series, which roughly doubles its run time with two or more journals. A session shorter than a day (AUDIT-11 to 14) still gives a per-session ratio, which must not be annualised; the README says so.
+
+## DR-V1H-01: The back-tested desk can slice hedges, passive first with escalation
+
+Date: 2026-11-01
+
+Context. PNL_AUDIT.md item 1: the back-tested desk sends the internalisation budget's whole excess as one market order, which walks the book. The back-tester had no cancel and no view of displayed quantity, so a passive-then-market policy could not be expressed.
+
+Decision. `StrategyContext` gains `cancelOrder`, `touchPrice` and `touchQuantity`, as default methods so other implementations are unchanged. `DeskQuoter` takes an optional `HedgeSlicing(depthFraction, minChildLots, passiveWaitNanos, urgentDv01)`. Children are sized from the opposite touch. Each is sent first as a limit order at our touch, then cancelled and sent as a market order after the wait. Children continue until the parent's excess is done (net DV01 reaches the parent's target). The strategy also records the implementation shortfall against the mid at each decision. Without slicing the messages sent are unchanged (DeskQuoterBaselineTest).
+
+Consequences. The policy runs inside the strategy because the back-tester has no router; production keeps `Hedger` through `SmartOrderRouter`. A first version asked the budget again after each child. On the fitting period that left the residual at the hard budget and failed the residual-risk guard, so the parent target was added before pre-registration.
+
+## DR-V1H-02: A cost-aware hedge trigger, tested and kept opt-in
+
+Date: 2026-11-01
+
+Context. PNL_AUDIT.md item 10: no fixed DV01 trigger is right across the band. R2B-005 (OptimalStoppingTiming) was not supported.
+
+Decision. `CostAwareHedgeBudget` hedges all net DV01 in two cases: when the variance charge of holding it over a horizon exceeds the depth-walk cost of hedging it now, or when net DV01 is above a cap. `HedgeBudget.observeMarket` passes it the live spread, tick and touch depth. It was pre-registered as V1H-002 against the fixed 100,000 trigger (horizon 2,700 s, cap 500,000). Result, ledger seq 24: improved at central only, so not supported. It is not adopted, and `DeskFactory.baseline()` keeps the 100,000 trigger.
+
+Consequences. Item 10 stays open. In the synthetic market volatility and spread are constant, so the rule is close to a fixed threshold (about 98,000 DV01 at median depth). A better test needs varying volatility and expected netting flow.
+
+## DR-V1H-03: Hedge slicing is the desk default
+
+Date: 2026-11-01
+
+Context. V1H-001 (ledger seq 23, code c9d911e) tested slicing against the netting desk default sending one market order. It used depth-walk fills on 20 sessions, with Holm over 6 tests.
+
+Decision. Slicing was supported at every band point: shortfall +446k at L, +300k at C and +71k at H per session, Holm p at most 0.0022. The residual-risk, P&L and limit guards all passed. `DeskFactory.ADOPTED_SLICING` (children of the full touch quantity, at least 10 lots, 5 s passive, market above 400,000) is used by `deskDefault()`. `nettingOnly()` keeps the previous default for comparison.
+
+Consequences. Later experiments compare against the sliced default. The passive leg added nothing measurable on the fitting period, and the queue model is optimistic for it, so the attributable gain is from depth-sized children. Only the back-tested desk changes.
+
