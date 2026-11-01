@@ -386,6 +386,46 @@ class SegmentedJournalTest {
     }
   }
 
+  /**
+   * The roll that waits for the preparer (DR-R2J-02): the appending thread spins in
+   * {@code Preparer.take} until the next segment is ready. With 64 KiB segments and a tight append
+   * loop most rolls wait. After a warm-up that includes waited rolls, waited rolls allocate nothing
+   * on the appending thread. The bytes of the first rolls, before the wait path is compiled, are
+   * printed for the record (DR-INT-06) and not bounded.
+   */
+  @Test
+  void aWaitedRollAllocatesNothingOnTheAppendingThreadAfterWarmUp() {
+    final ManualClock clock = new ManualClock();
+    final com.sun.management.ThreadMXBean threads =
+        (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
+    final long self = Thread.currentThread().threadId();
+    threads.getThreadAllocatedBytes(self);
+    final UnsafeBuffer p = payload(5, 57);
+    try (SegmentedJournal j = SegmentedJournal.create(dir, "waited", 64 << 10, clock, true)) {
+      final long firstBefore = threads.getThreadAllocatedBytes(self);
+      for (int i = 0; i < 2 * 680; i++) {
+        j.append(10, 0, p, 0, 57);
+      }
+      final long first = threads.getThreadAllocatedBytes(self) - firstBefore;
+      final long firstWaits = j.rollWaits();
+      for (int i = 0; i < 40 * 680; i++) {
+        j.append(10, 0, p, 0, 57);
+      }
+      final long waitsBefore = j.rollWaits();
+      final long before = threads.getThreadAllocatedBytes(self);
+      for (int i = 0; i < 40 * 680; i++) {
+        j.append(10, 0, p, 0, 57);
+      }
+      final long allocated = threads.getThreadAllocatedBytes(self) - before;
+      final long waited = j.rollWaits() - waitsBefore;
+      System.out.println(
+          "waited rolls: first 2 segments " + first + " bytes, " + firstWaits + " waits; measured 40 segments "
+              + allocated + " bytes, " + waited + " waits");
+      assertTrue(waited > 0, "no roll waited in the measured part, so the wait path was not exercised");
+      assertEquals(0L, allocated, "bytes allocated over " + waited + " waited rolls");
+    }
+  }
+
   @Test
   void pretouchLeavesTheFileReadingTheSame() throws IOException {
     final ManualClock clock = new ManualClock();

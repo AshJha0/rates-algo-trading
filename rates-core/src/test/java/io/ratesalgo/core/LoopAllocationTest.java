@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.common.time.SystemClock;
+import io.ratesalgo.journal.JournalWarmUp;
 import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.QuoteEncoder;
@@ -29,7 +30,8 @@ import org.junit.jupiter.api.io.TempDir;
  * once per {@link JournalMode}, and each journal rolls to a new segment inside the measured
  * windows (DR-R2J-02).
  *
- * <p>The check is windowed (DR-INT-02). Warm-up is one million messages; then three consecutive
+ * <p>The check is windowed (DR-INT-02). Warm-up is one million messages, extended 250,000 at a time
+ * while the JIT is still compiling, up to four times (DR-INT-06); then three consecutive
  * windows of one million messages are measured. The last window must allocate exactly nothing and
  * no window after the first may allocate more than {@link #LATER_WINDOW_BOUND} bytes. The first
  * window is reported but not bounded: a one-off allocation of a few hundred bytes just after
@@ -50,6 +52,8 @@ class LoopAllocationTest {
   private static final int WARM_UP = 1_000_000;
   private static final int WINDOW = 1_000_000;
   private static final int WINDOWS = 3;
+  private static final int EXTRA_WARM_UP = 4;
+  private static final int EXTRA_WARM_UP_WINDOW = 250_000;
   private static final long LATER_WINDOW_BOUND = 1024L;
   private static final int SEGMENT = 256 << 20;
 
@@ -94,6 +98,9 @@ class LoopAllocationTest {
     // 2-CPU runner where the drainer falls behind, a 64-byte Backpressure frame per dropped Quote.
     // That is 0.4 to 0.6 GB per journal, so 256 MiB segments roll at least once in each journal
     // during the measured windows: the roll is inside the gate (DR-R2J-02).
+    // the journals' wait paths, run before the loop as the trading process does (DR-INT-06)
+    final JournalWarmUp.Result warmUp = JournalWarmUp.exerciseWaitPaths(dir.resolve("journal-warmup"), clock);
+    assertTrue(warmUp.rollWaits() > 0 && warmUp.producerWaits() > 0, "the warm-up exercised both wait paths: " + warmUp);
     try (LoopJournals journals = LoopJournals.create(dir, "in", "out", SEGMENT, clock, mode)) {
       final EventLoop loop =
           EventLoop.builder(clock)
@@ -134,14 +141,38 @@ class LoopAllocationTest {
       final InboundPublisher publisher = new InboundPublisher(inbound);
       publish(publisher, 1, WARM_UP);
       awaitInbound(loop, WARM_UP);
+      int sent = WARM_UP;
+      // Under machine load (a 2-CPU runner) the JIT's compiler threads fall behind, so
+      // compilations and deoptimisations can land in the measured windows instead of the fixed
+      // warm-up. Keep warming up, 250,000 messages at a time, until a whole extra window passes with
+      // no new JIT compilation time, up to EXTRA_WARM_UP windows, as WiredLoopAllocationTest does
+      // (DR-INT-06). The journals' wait paths are warmed separately, above. The measured windows and
+      // their bounds are unchanged.
+      final java.lang.management.CompilationMXBean jit = ManagementFactory.getCompilationMXBean();
+      int extraWarmUp = 0;
+      if (jit != null && jit.isCompilationTimeMonitoringSupported()) {
+        long compiled = jit.getTotalCompilationTime();
+        while (extraWarmUp < EXTRA_WARM_UP) {
+          publish(publisher, sent + 1, sent + EXTRA_WARM_UP_WINDOW);
+          sent += EXTRA_WARM_UP_WINDOW;
+          awaitInbound(loop, sent);
+          extraWarmUp++;
+          final long now = jit.getTotalCompilationTime();
+          if (now == compiled) {
+            break;
+          }
+          compiled = now;
+        }
+      }
 
       final long[] bytes = new long[WINDOWS];
       final long[] dropped = new long[WINDOWS];
       final long[] backpressure = new long[WINDOWS];
-      int sent = WARM_UP;
+      final long[] rollWaits = new long[WINDOWS];
       for (int w = 0; w < WINDOWS; w++) {
         final long droppedBefore = loop.counters().get(LoopCounters.OUTBOUND_DROPPED);
         final long backpressureBefore = loop.counters().get(LoopCounters.BACKPRESSURE_EVENTS);
+        final long rollWaitsBefore = journals.rollWaits();
         final long before = threads.getThreadAllocatedBytes(loopThread);
         publish(publisher, sent + 1, sent + WINDOW);
         sent += WINDOW;
@@ -149,6 +180,7 @@ class LoopAllocationTest {
         bytes[w] = threads.getThreadAllocatedBytes(loopThread) - before;
         dropped[w] = loop.counters().get(LoopCounters.OUTBOUND_DROPPED) - droppedBefore;
         backpressure[w] = loop.counters().get(LoopCounters.BACKPRESSURE_EVENTS) - backpressureBefore;
+        rollWaits[w] = journals.rollWaits() - rollWaitsBefore;
       }
 
       runner.close();
@@ -158,8 +190,9 @@ class LoopAllocationTest {
       assertEquals(sent, loop.counters().get(LoopCounters.OUTBOUND));
 
       final String report =
-          mode + " journals, " + journals.rollWaits() + " rolls waited, " + journals.producerWaits()
-              + " ring waits; " + report(bytes, dropped, backpressure);
+          mode + " journals, " + extraWarmUp + " extra warm-up windows, " + journals.rollWaits() + " rolls waited, " + journals.producerWaits()
+              + " ring waits; " + report(bytes, dropped, backpressure, rollWaits);
+      System.out.println("LoopAllocationTest " + report);
       for (int w = 1; w < WINDOWS; w++) {
         assertTrue(bytes[w] <= LATER_WINDOW_BOUND, "a window after the first exceeded " + LATER_WINDOW_BOUND + " bytes: " + report);
       }
@@ -167,12 +200,14 @@ class LoopAllocationTest {
     }
   }
 
-  private static String report(final long[] bytes, final long[] dropped, final long[] backpressure) {
+  private static String report(
+      final long[] bytes, final long[] dropped, final long[] backpressure, final long[] rollWaits) {
     final StringBuilder sb = new StringBuilder("bytes allocated on the loop thread per window of ").append(WINDOW).append(" messages:");
     for (int w = 0; w < bytes.length; w++) {
       sb.append(" window ").append(w + 1).append('=').append(bytes[w])
           .append(" (outbound dropped ").append(dropped[w])
-          .append(", backpressure events ").append(backpressure[w]).append(')');
+          .append(", backpressure events ").append(backpressure[w])
+          .append(", rolls waited ").append(rollWaits[w]).append(')');
     }
     return sb.toString();
   }
