@@ -14,6 +14,7 @@ import io.ratesalgo.venues.d2c.ClientDecision;
 import io.ratesalgo.venues.d2c.RfqSpec;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -29,12 +30,22 @@ class VenueBindingTest {
 
   @TempDir Path dir;
 
+  /**
+   * Injects an RFQ at the D2C venue and steps until the desk has decided on it (a quote sent or a
+   * pass). The venue sends the request from its own FIX thread over a socket, so the decision can
+   * trail any fixed simulated step; see {@link #await}.
+   */
   private static long rfqWithLiveQuote(final TradingProcess p) {
+    final DeskGroup desk = p.group(0).desk();
+    final long decided = desk.desk().quoting().quotesSent() + desk.desk().quoting().passes();
     final UsdUniverse.SwapSpec swap = p.universe().swaps().get(2);
     final long rfq =
         p.venues().d2c().injectRfq(new RfqSpec(swap.securityId(), true, 25_000_000L, 3, List.of(), 2001,
             ClientDecision.NONE, false));
     p.step(50_000_000L, STEP);
+    assertTrue(
+        await(p, () -> desk.desk().quoting().quotesSent() + desk.desk().quoting().passes() > decided),
+        "the desk decided on the RFQ");
     return rfq;
   }
 
@@ -43,13 +54,14 @@ class VenueBindingTest {
   }
 
   /**
-   * The venue sees a dropped session on its own FIX thread, in real time, so its log entry can
-   * trail the simulated step; waits up to 10 s of wall-clock time, stepping 10 ms at a time
-   * (DR-INT-05).
+   * Steps 10 ms of simulated time at a time until {@code condition} holds, for up to 10 s of
+   * wall-clock time. Every condition that depends on a venue (its FIX threads, its sockets, its
+   * event log and books) or on a session logon is read through this, never after a fixed simulated
+   * step, because those threads run in wall-clock time (DR-INT-05, DR-INT-06).
    */
-  private static boolean awaitLogged(final TradingProcess p, final String text) {
+  private static boolean await(final TradingProcess p, final BooleanSupplier condition) {
     final long deadline = System.nanoTime() + 10_000_000_000L;
-    while (!logged(p, text)) {
+    while (!condition.getAsBoolean()) {
       if (System.nanoTime() > deadline) {
         return false;
       }
@@ -58,23 +70,49 @@ class VenueBindingTest {
     return true;
   }
 
+  private static boolean awaitLogged(final TradingProcess p, final String text) {
+    return await(p, () -> logged(p, text));
+  }
+
+  private static boolean clobLogged(final TradingProcess p, final String text) {
+    return p.venues().clob().eventLog().stream().anyMatch(l -> l.contains(text));
+  }
+
+  /**
+   * Everything needed to tell a timing failure from a gateway defect: each engine-side session's
+   * state, reconnect attempts, give-ups and pending retry (DR-INT-09), and the last 20 lines of each
+   * venue's log.
+   */
+  private static String diagnostics(final TradingProcess p) {
+    final List<String> d2c = p.venues().d2c().eventLog();
+    final List<String> clob = p.venues().clob().eventLog();
+    return "d2c session " + p.d2cSession().state() + ", reconnect attempts " + p.d2cSession().reconnectAttempts()
+        + ", give-ups " + p.d2cSession().reconnectGiveUps() + ", retry pending " + p.d2cSession().reconnectPending()
+        + "; clob session " + p.clobSession().state() + ", reconnect attempts " + p.clobSession().reconnectAttempts()
+        + ", give-ups " + p.clobSession().reconnectGiveUps() + ", retry pending " + p.clobSession().reconnectPending()
+        + "; d2c log " + d2c.subList(Math.max(0, d2c.size() - 20), d2c.size())
+        + "; clob log " + clob.subList(Math.max(0, clob.size() - 20), clob.size());
+  }
+
   @Test
   void aBookFeedGapPullsQuotesThroughTheLoopAndTheSnapshotRestoresQuoting() {
     try (TradingProcess p = TradingProcess.start(new TradingProcess.Options(dir, 3L, DeskSettings.defaults()))) {
       p.step(2_000_000_000L, STEP);
       final DeskGroup desk = p.group(0).desk();
       rfqWithLiveQuote(p);
-      assertEquals(1, desk.desk().quoting().liveQuotes(), "a quote is live at the venue");
+      assertTrue(await(p, () -> desk.desk().quoting().liveQuotes() == 1), "a quote is live at the venue");
       final long pullsBefore = desk.desk().quoting().pulls();
 
       p.venues().feed().dropNext(2);
       p.step(1_100_000_000L, STEP);
 
-      assertEquals(1, p.feed().gaps(), "the binding saw the gap and rebuilt from a snapshot");
+      assertTrue(await(p, () -> p.feed().gaps() >= 1), "the binding saw the gap");
+      assertEquals(1, p.feed().gaps(), "the binding saw one gap and rebuilt from a snapshot");
       assertTrue(desk.desk().quoting().pulls() > pullsBefore, "the loop pulled its quotes on the gap");
-      assertEquals(0, desk.desk().quoting().liveQuotes());
-      assertTrue(logged(p, "quote cancelled " + AppIds.COMP_ID), "the withdrawal reached the venue");
-      assertTrue(desk.desk().health().healthy(p.clock().epochNanos()), "healthy again after the snapshot");
+      assertTrue(await(p, () -> desk.desk().quoting().liveQuotes() == 0), "no quote live after the pull");
+      assertTrue(awaitLogged(p, "quote cancelled " + AppIds.COMP_ID), "the withdrawal reached the venue");
+      assertTrue(
+          await(p, () -> desk.desk().health().healthy(p.clock().epochNanos())), "healthy again after the snapshot");
 
       final long sent = desk.desk().quoting().quotesSent();
       rfqWithLiveQuote(p);
@@ -89,23 +127,31 @@ class VenueBindingTest {
       p.step(2_000_000_000L, STEP);
       final DeskGroup desk = p.group(0).desk();
       rfqWithLiveQuote(p);
-      assertEquals(1, desk.desk().quoting().liveQuotes());
+      assertTrue(await(p, () -> desk.desk().quoting().liveQuotes() == 1), "a quote is live at the venue");
 
       p.d2cSession().disconnect();
       p.clobSession().disconnect();
       p.step(200_000_000L, STEP);
-      assertEquals(0, desk.desk().quoting().liveQuotes(), "pulled on the loop when the session went down");
+      assertTrue(
+          await(p, () -> desk.desk().quoting().liveQuotes() == 0), "pulled on the loop when the session went down");
       assertFalse(desk.desk().health().healthy(p.clock().epochNanos()));
       assertTrue(awaitLogged(p, "cancel-on-disconnect " + AppIds.COMP_ID), "the venue cancelled our quote");
-      assertTrue(p.venues().clob().liveOrders(AppIds.COMP_ID).isEmpty(), "nothing resting at the CLOB");
+      assertTrue(await(p, () -> p.venues().clob().liveOrders(AppIds.COMP_ID).isEmpty()), "nothing resting at the CLOB");
       assertEquals(1, p.d2cSession().disconnects());
+
+      // Both venues should have torn the old session down before we log on again. An acceptor that
+      // still holds the session refuses the new Logon; the session then retries under its
+      // ReconnectPolicy (DR-INT-09), and this wait keeps the test from depending on that alone.
+      assertTrue(
+          await(p, () -> logged(p, "logout " + AppIds.COMP_ID) && clobLogged(p, "logout " + AppIds.COMP_ID)),
+          "both venues logged the old session out: " + diagnostics(p));
 
       final long sent = desk.desk().quoting().quotesSent();
       p.d2cSession().connect();
       p.clobSession().connect();
       p.step(500_000_000L, STEP);
-      assertTrue(p.d2cSession().isActive() && p.clobSession().isActive());
-      assertTrue(desk.desk().health().healthy(p.clock().epochNanos()), "both sessions up again");
+      assertTrue(await(p, () -> p.d2cSession().isActive() && p.clobSession().isActive()), "both sessions logged on again: " + diagnostics(p));
+      assertTrue(await(p, () -> desk.desk().health().healthy(p.clock().epochNanos())), "both sessions up again");
       rfqWithLiveQuote(p);
       assertEquals(sent + 1, desk.desk().quoting().quotesSent(), "quoting resumed after logon");
       assertEquals(2, p.d2cSession().logons());

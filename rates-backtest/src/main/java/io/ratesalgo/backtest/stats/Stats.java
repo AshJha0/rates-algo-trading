@@ -17,6 +17,7 @@ import java.util.Arrays;
  *   <li>{@link #welch}: Welch's unequal-variance t-test, two-sided, with the Welch-Satterthwaite
  *       degrees of freedom and the exact Student-t tail through the regularised incomplete beta.
  *   <li>{@link #holm}: Holm's step-down adjustment of a family of p-values.
+ *   <li>{@link #pnlRisk}: volatility, Sharpe ratio and maximum drawdown of a daily P&amp;L series.
  * </ul>
  */
 public final class Stats {
@@ -25,6 +26,19 @@ public final class Stats {
 
   /** A two-sided confidence interval and the point estimate. */
   public record Interval(double estimate, double lower, double upper, double level) {}
+
+  /**
+   * Risk figures of a daily P&amp;L series: sample volatility (denominator n - 1), the daily Sharpe
+   * ratio mean over volatility with a zero risk-free rate, the same ratio times the square root of
+   * {@link #TRADING_DAYS_PER_YEAR}, and the largest peak-to-trough fall of cumulative P&amp;L starting
+   * from zero (a non-negative number, in the series' unit). Sharpe ratios are NaN when the
+   * volatility is zero.
+   */
+  public record PnlRisk(
+      int days, double mean, double volatility, double sharpe, double annualisedSharpe, double maxDrawdown) {}
+
+  /** Trading days per year used to annualise a daily Sharpe ratio. */
+  public static final int TRADING_DAYS_PER_YEAR = 252;
 
   /** Result of a Welch test. */
   public record Welch(double meanA, double meanB, double difference, double t, double df, double p) {}
@@ -49,6 +63,22 @@ public final class Stats {
       s += (v - m) * (v - m);
     }
     return s / (x.length - 1);
+  }
+
+  /** Volatility, Sharpe ratio and maximum drawdown of {@code daily}; needs at least two days. */
+  public static PnlRisk pnlRisk(final double[] daily) {
+    final double m = mean(daily);
+    final double vol = Math.sqrt(variance(daily));
+    final double sharpe = vol > 0 ? m / vol : Double.NaN;
+    double cumulative = 0;
+    double peak = 0;
+    double drawdown = 0;
+    for (final double v : daily) {
+      cumulative += v;
+      peak = Math.max(peak, cumulative);
+      drawdown = Math.max(drawdown, peak - cumulative);
+    }
+    return new PnlRisk(daily.length, m, vol, sharpe, sharpe * Math.sqrt(TRADING_DAYS_PER_YEAR), drawdown);
   }
 
   /** Quantile by linear interpolation of order statistics (type 7). {@code sorted} must be sorted. */

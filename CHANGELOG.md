@@ -4,7 +4,51 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.0.0] - 2026-10-31
+
+The first release. It includes every phase module (P0 to P6, round 1, pull requests 1 and 2) and round 2 (pull request 3, merge ecfc591): the modules are wired into one trading process (`rates-app`), the journal write path is off the loop's latency path, LEARN is finished, recipes 23 to 34 and the diagrams are added, the desk features are in `rates-strategy`, and the edge research, the P&L audit, the review fixes and audit fix packages A1, A2, B, C and D are merged. From this version on, a change to a pinned contract (API_SPEC.md) needs a major version.
+
+Every P&L, Sharpe ratio or drawdown in this release comes from the simulators under declared assumptions. Each one is a consistency check, not evidence of edge (DECISIONS.md DR-008).
+
 ### Added
+
+v1.0.0 release pass (branch `release/v1.0.0`).
+
+- Daily-P&L volatility, Sharpe ratio (daily, and annualised by the square root of 252, zero risk-free rate) and maximum drawdown across the assumption band:
+  - `rates-backtest`: `Stats.pnlRisk` and `Stats.PnlRisk`, and `report.BandRisk` (rows, JSON and Markdown, labelled as a simulator consistency check);
+  - `ReportCli` writes `band_risk.json` and `band_risk.md` and adds the section "P&L risk across the assumption band" to each `report.md` and `report.json` (one day per journal);
+  - `ExperimentCli` writes `<id>-<scope>-band_risk.json` and `.md` to its work directory, derived from the recorded daily P&L; ledger records are unchanged;
+  - `ratesresearch.stats.pnl_risk` mirrors the Java figures.
+  - Tests: `BandRiskTest`, `ReportTest` (two journals, three band points), `research/tests/test_pnl_risk.py`.
+- `PackageQuoter.livePackages()`.
+- Site page "P&L audit" (docs/research/PNL_AUDIT.md).
+
+Round 2, edge research on public data (branch `claude/r2-edge-research-6aba2e`).
+
+- `research/ratesresearch/edge`: six pre-registered studies with a shared method (`common.py`: block bootstrap, Holm across the family of eleven tests, verdict rules), source downloads with licence and SHA-256 manifests (`sources.py`), and a runner and report (`run.py`, `report.py`, `build.py`):
+  - E1 Treasury auction concession;
+  - E2 month-end index extension;
+  - E3 swap-print volatility and intensity around releases and fixings;
+  - E4 trade size by tenor and clustering;
+  - E5 swap spread and futures positioning;
+  - E6 carry tilt.
+- Pre-registrations `research/prereg/E1.yaml` to `E6.yaml` with configs and `edge_programme.yaml`, committed before the evaluation data was read. Ledger rows seq 2 to 7.
+- Results:
+  - E3 and E4 supported after their holdouts and promoted to presets;
+  - E1 not supported (reversed), E2 and E6 not supported;
+  - E5 inconclusive because its fitting data could not be downloaded.
+  - Negative results are kept.
+- Six notebooks `research/notebooks/edge_e1_auction.ipynb` to `edge_e6_carry.ipynb`, which recompute every number from committed fixtures and check them against the ledger rows; docs/research/EDGE_STUDIES.md and the site's "Edge studies" pages; `research/tests/test_edge.py`.
+
+Round 2, P&L audit (branch `claude/r2-pnl-audit-e32be7`).
+
+- docs/research/PNL_AUDIT.md: 19 ranked leaks and opportunities with evidence, sizes across the band and fix packages A to D. Pre-registrations `research/prereg/AUDIT-01.yaml` to `AUDIT-04.yaml`, the harness `research/audit/` (`PnlAudit.java`, `run_audit.sh`, `summarize.py`), ledger rows seq 8 to 11 with copies in `research/audit/results/`.
+
+Round 2, LEARN (branch `claude/r2-learn-b5137b`).
+
+- LEARN.md chapters harmonised and finished for the wired system, including the knowledge check and the pitfalls.
 
 Round 2, journal write path off the loop's latency path (branch `claude/r2-journal-latency-ee2034`).
 
@@ -74,10 +118,33 @@ Round 2 fixes from the P&L audit, package D (branch `claude/fix-d-backtest-cdd6a
 
 ### Fixed
 
+- Review fixes (branch `claude/r2-review-6e9f43`, DR-R2R-01 to DR-R2R-14):
+  - coupons for carry and basis selected by record date;
+  - a kill completes when a listener throws;
+  - a fill after a confirmed cancel no longer corrupts parent accounting;
+  - the router's cost model charges a venue's price offset;
+  - strict FIX integer, tag and timestamp parsing;
+  - holiday fixture covers 2026 and 2027 and refuses other years;
+  - fail days stop at the cancel date;
+  - no quote at negative edge and one hit-rate label per RFQ;
+  - the risk-reducing exemption counts working reservations;
+  - an instrument without a hedge cost is not traded;
+  - swap golden tolerances tightened;
+  - CLOB quotes rounded to the venue tick;
+  - late fills on expired quotes and killed hedge parents are booked;
+  - SpotBugs exclusions name classes.
+- `VenueSession` retries a connection whose Logon the venue did not accept (connect refused, closed before the venue's Logon, or Logon timed out) under a `ReconnectPolicy` (default 5 retries from 100 ms, doubling, capped at 2 s). Each attempt is journaled as GatewayStatus RECONNECTING (status 3, attempt number in byte 13). Before, such a session stayed down until `connect()` was called again (DR-INT-09; `VenueSessionReconnectTest`; v1.0.0 release pass).
+- `VenueBindingTest` waits up to 10 s of wall-clock time for both FIX sessions to log on again after a reconnect, as it already did for the venue log, instead of checking after a fixed 500 ms of simulated time. The fixed wait failed on main CI for ecfc591 (Java 25, ubuntu-latest), because the logon runs on the sessions' socket threads (v1.0.0 release pass).
+- `LatencyHarnessTest` accounting: the loop's outbound counter includes dropped Quotes, so the test now checks `inbound == outbound` and `outbound - outboundDropped == seen`; the earlier equation failed on any run with backpressure drops (DR-INT-06 amendment; v1.0.0 release pass).
+- `LoopAllocationTest` warms up while the JIT is still compiling, up to four extra windows of 250,000 messages, and reports roll waits per window; `SegmentedJournalTest` checks that a waited roll allocates nothing on the appending thread. The measured windows and bounds are unchanged (DR-INT-06 amendment; v1.0.0 release pass).
+- `Desk` registers the package quoter with the kill switch, so a kill withdraws every live package at once (v1.0.0 release pass; DR-FIX-A2 amendment in DECISIONS.md).
+- docs/research/PNL_AUDIT.md said AUDIT-01 to AUDIT-04 ran on a clean tree. The ledger records `code_dirty: true` for AUDIT-02 to AUDIT-04, and the document now says so and why (v1.0.0 release pass).
 - Journaling-on latency tail (p99.9 271 ms in the P2 run): new segment files are zero-filled with file-channel writes instead of page stores through the mapping, which under the Parallel collector held every thread at a safepoint for the whole fill; segments are prepared and every page touched off the loop thread, one ahead; a roll maps nothing and allocates nothing on the loop thread; the latency harness no longer creates an object per gateway poll (DR-R2J-01, DR-R2J-02).
 
 ### Changed
 
+- Version 1.0.0 in every Maven module, `research/pyproject.toml`, `ratesresearch.__version__` and the research user agent (v1.0.0 release pass).
+- README rewritten for the wired system, with measured results, their sources and a limits list. docs/ARCHITECTURE.md covers `rates-strategy` and the controls that ship off by default. STATUS.md records estimate against actual for every phase and round. `module_deps.mmd` gains `rates-strategy`.
 - `deploy/trading/Dockerfile`, `deploy/venue-sim/Dockerfile` and the process-mode rehearsal start `io.ratesalgo.app.TradingProcessMain`; the rehearsal polls for a live quote; `.github/workflows/ops.yml` packages `rates-app`.
 
 ### Added

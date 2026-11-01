@@ -34,7 +34,11 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  * </ul>
  *
  * <p>{@link #doWork} is one duty cycle on the gateway thread: read the socket, run the session's
- * timers, drain the outbound rings. Not thread-safe; one thread owns a session.
+ * timers, drain the outbound rings, and make a reconnect attempt when one is due. A connection
+ * whose Logon is not accepted (connect refused, closed by the venue before its Logon, or timed out)
+ * is retried under the session's {@link ReconnectPolicy}, with a GatewayStatus RECONNECTING per
+ * attempt so that every attempt is journaled by the loop (DR-INT-09). Not thread-safe; one thread
+ * owns a session.
  */
 @HotPath
 public final class VenueSession implements FixSessionHandler {
@@ -51,6 +55,17 @@ public final class VenueSession implements FixSessionHandler {
   private long outboundRecords;
   private long logons;
   private long disconnects;
+  private final ReconnectPolicy reconnect;
+  /** True between {@link #connect} and {@link #disconnect}: the session should be up. */
+  private boolean wanted;
+  /** True once the venue accepted our Logon on the current connection. */
+  private boolean loggedOnThisConnection;
+  /** Failed attempts since the last accepted Logon. */
+  private int failedAttempts;
+  /** {@code nanoTime} of the next attempt, or {@link Long#MAX_VALUE} when none is due. */
+  private long nextAttemptNanos = Long.MAX_VALUE;
+  private long reconnectAttempts;
+  private long reconnectGiveUps;
 
   /**
    * A session to {@code host:port}.
@@ -74,6 +89,22 @@ public final class VenueSession implements FixSessionHandler {
       final MessageSink inbound,
       final Clock clock,
       final RingBuffer[] outbound) {
+    this(venueId, statusId, compIds, host, port, instruments, inbound, clock, outbound, ReconnectPolicy.DEFAULT);
+  }
+
+  /** A session to {@code host:port} with the given reconnect policy (DR-INT-09). */
+  public VenueSession(
+      final int venueId,
+      final int statusId,
+      final String[] compIds,
+      final String host,
+      final int port,
+      final InstrumentMap instruments,
+      final MessageSink inbound,
+      final Clock clock,
+      final RingBuffer[] outbound,
+      final ReconnectPolicy reconnect) {
+    this.reconnect = reconnect;
     this.statusId = statusId;
     this.inbound = inbound;
     this.clock = clock;
@@ -85,14 +116,52 @@ public final class VenueSession implements FixSessionHandler {
     tcp.attach(session);
   }
 
-  /** Connects and sends the Logon; the GatewayStatus follows when the venue accepts it. */
+  /**
+   * Connects and sends the Logon; the GatewayStatus follows when the venue accepts it. If the
+   * Logon is not accepted the session retries under its {@link ReconnectPolicy}. With {@link
+   * ReconnectPolicy#NONE} a refused TCP connect throws, as before DR-INT-09.
+   */
   public void connect() {
-    tcp.connect();
+    wanted = true;
+    failedAttempts = 0;
+    nextAttemptNanos = Long.MAX_VALUE;
+    if (reconnect.maxAttempts() == 0) {
+      loggedOnThisConnection = false;
+      tcp.connect();
+      return;
+    }
+    attempt();
   }
 
-  /** Drops the connection (chaos and shutdown); the loop is told through GatewayStatus. */
+  /** Drops the connection (chaos and shutdown) and stops retrying; the loop is told through GatewayStatus. */
   public void disconnect() {
+    wanted = false;
+    nextAttemptNanos = Long.MAX_VALUE;
     tcp.disconnect();
+  }
+
+  private void attempt() {
+    loggedOnThisConnection = false;
+    try {
+      tcp.connect();
+    } catch (final java.io.UncheckedIOException refused) {
+      attemptFailed();
+    }
+  }
+
+  /** The current connection ended or was refused before the venue accepted our Logon. */
+  private void attemptFailed() {
+    if (!wanted) {
+      return;
+    }
+    if (failedAttempts >= reconnect.maxAttempts()) {
+      reconnectGiveUps++;
+      wanted = false;
+      nextAttemptNanos = Long.MAX_VALUE;
+      return;
+    }
+    failedAttempts++;
+    nextAttemptNanos = clock.nanoTime() + reconnect.backoffNanos(failedAttempts);
   }
 
   /** True once the venue has accepted our Logon. */
@@ -102,6 +171,14 @@ public final class VenueSession implements FixSessionHandler {
 
   /** One duty cycle: socket, session timers, outbound rings. Returns the work done. */
   public int doWork() {
+    if (nextAttemptNanos != Long.MAX_VALUE && clock.nanoTime() >= nextAttemptNanos) {
+      nextAttemptNanos = Long.MAX_VALUE;
+      reconnectAttempts++;
+      final int length =
+          ControlMessages.encodeGatewayReconnecting(status, 0, clock.epochNanos(), statusId, failedAttempts);
+      inbound.offer(status, 0, length);
+      attempt();
+    }
     int work = tcp.poll();
     for (final RingBuffer ring : outbound) {
       work += ring.read(drain, 256);
@@ -122,6 +199,8 @@ public final class VenueSession implements FixSessionHandler {
   @Override
   public void onLogon(final FixSession fixSession) {
     logons++;
+    loggedOnThisConnection = true;
+    failedAttempts = 0;
     gateway.onLogon(fixSession);
     publishStatus(true);
   }
@@ -131,6 +210,9 @@ public final class VenueSession implements FixSessionHandler {
     disconnects++;
     gateway.onDisconnect(fixSession);
     publishStatus(false);
+    if (!loggedOnThisConnection) {
+      attemptFailed();
+    }
   }
 
   @Override
@@ -166,6 +248,26 @@ public final class VenueSession implements FixSessionHandler {
 
   public long logons() {
     return logons;
+  }
+
+  /** Reconnect attempts made after a Logon was not accepted (DR-INT-09). */
+  public long reconnectAttempts() {
+    return reconnectAttempts;
+  }
+
+  /** Times the session gave up after {@link ReconnectPolicy#maxAttempts} failed retries. */
+  public long reconnectGiveUps() {
+    return reconnectGiveUps;
+  }
+
+  /** True while a reconnect attempt is scheduled. */
+  public boolean reconnectPending() {
+    return nextAttemptNanos != Long.MAX_VALUE;
+  }
+
+  /** The engine-side FIX session state, for diagnostics. */
+  public SessionState state() {
+    return session.state();
   }
 
   public long disconnects() {

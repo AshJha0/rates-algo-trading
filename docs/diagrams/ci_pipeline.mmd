@@ -19,7 +19,7 @@ flowchart LR
   gate{"Gating jobs pass<br/>and one approving review"}
   merge["Merge to main"]
   report["latency-report artifact<br/>compared by hand"]
-  release["Release v1.0.0<br/>after integration, STATUS.md P6"]
+  release["Release v1.0.0"]
 
   pr -->|triggers| ci
   pr -->|triggers| docs

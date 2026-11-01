@@ -4,7 +4,7 @@ Mermaid sources live in `docs/diagrams/` and are embedded here unchanged. Dashed
 
 ## Module dependencies
 
-Phase 0 modules in solid outline; planned modules dashed. `rates-journal` does not depend on `rates-messages`: the journal stores payload bytes and a template id, and interpretation belongs to the handler.
+Every module is built; the outline style marks the phase that introduced it. `rates-journal` does not depend on `rates-messages`: the journal stores payload bytes and a template id, and interpretation belongs to the handler.
 
 ```mermaid
 --8<-- "docs/diagrams/module_deps.mmd"

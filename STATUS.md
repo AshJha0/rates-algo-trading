@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-10-31.
+Updated 2026-10-31 for v1.0.0. Every phase gate and both rounds are closed. What is not done is under "Open items" and in README.md "Limits".
 
 ## Phase table
 
@@ -8,15 +8,16 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 
 | Phase | Scope | Planned plan-days | Planned wall-clock days | Actual wall-clock days | Started | Gate status |
 |---|---|---|---|---|---|---|
-| P0 | Foundations: clock and timers, SBE schema v1, journal and replayer, Python package, docs, CI | 10 | 1 | in progress | 2026-10-31 | in progress |
-| P1 | Analytics: conventions, curves, swaps, bonds, futures, QuantLib goldens | 16 | 1 to 1.5 | 0.3 (about 7 hours elapsed on 2026-10-31, including two pauses) | 2026-10-31 | gate open |
-| P2 | Venues: FIX 4.4, SBE book feed, D2C RFQ, D2D CLOB with workup, SEF rules, event loop | event core half (W2): 9; venue half: set by its session | event core half: 0.75 | event core half: 0.3 (7 h elapsed, about 2.5 h working) | 2026-10-31 | in progress (event core half: gate open) |
-| P2 (W3 venues) | Venue half: FIX 4.4 codec and session, three venue simulators, SBE book feed, reference data, market data quality, conformance suites | 9 | 0.75 | 0.3 | 2026-10-31 | gate open |
-| P3 | Quoting engine, risk engine, hedger | 18 | 1.5 | 0.3 | 2026-10-31 | gate open: all P3 gates pass locally on the branch; CI and merge pending |
-| P4 | Smart order router | 8 | 0.5 to 1 | 1 (one working session, on branch `claude/p4-router-43caad`) | 2026-10-31 | gate open |
-| P5 | Back-tester with pre-registration (W7), Python quant research (W10); latency jobs | 18 | 1.5 | 0.3 (branch work, 2026-10-31) | 2026-10-31 | gate open |
-| P6 | Documentation, regulation mapping, knowledge check, release | 16 (this branch: 11) | 1 | 0.3 for the branch share (see below) | 2026-10-31 | in progress: post-trade, compliance inventory, operations and regulation chapters done on the branch; knowledge check, final documentation pass and release after integration |
-| R2 | Wiring: one trading process from the phase modules (`rates-app`), smoke test, replay-hash and back-test bindings, deploy, docs | not planned in plan-days | 1 (as briefed) | about 0.1 (one session of about 2.5 hours on 2026-10-31) | 2026-10-31 | gate open: mvn verify, Python, docs and rehearsal green locally; CI pending |
+| P0 | Foundations: clock and timers, SBE schema v1, journal and replayer, Python package, docs, CI | 10 | 1 | 0.3 (merged with round 1, pull request 1, 2026-10-31) | 2026-10-31 | closed: CI green on main at 4facfef |
+| P1 | Analytics: conventions, curves, swaps, bonds, futures, QuantLib goldens | 16 | 1 to 1.5 | 0.3 (about 7 hours elapsed on 2026-10-31, including two pauses) | 2026-10-31 | closed (pull request 1) |
+| P2 (W2 event core) | Event loop, ring-buffer contract, replay, latency harness | 9 | 0.75 | 0.3 (7 h elapsed, about 2.5 h working) | 2026-10-31 | closed (pull request 1) |
+| P2 (W3 venues) | FIX 4.4 codec and session, three venue simulators, SBE book feed, reference data, market data quality, conformance suites | 9 | 0.75 | 0.3 | 2026-10-31 | closed (pull request 1) |
+| P3 | Quoting engine, risk engine, hedger | 18 | 1.5 | 0.3 | 2026-10-31 | closed (pull request 1) |
+| P4 | Smart order router | 8 | 0.5 to 1 | 0.3 (one working session of about 6.5 hours) | 2026-10-31 | closed (pull request 1) |
+| P5 | Back-tester with pre-registration (W7), Python quant research (W10); latency jobs | 18 | 1.5 | 0.3 | 2026-10-31 | closed (pull request 1) |
+| P6 | Documentation, regulation mapping, knowledge check, release | 16 | 1 | 0.3 for the branch share (11 plan-days); about 0.1 for the final documentation pass and release (5 plan-days) | 2026-10-31 | closed with v1.0.0 (see "P6 remainder and release") |
+| Round 1 integration | P0 to P6 merged into one branch, fixes found at integration | not planned | not planned | about 0.1 (pull requests 1 and 2, merged 08:26 and 11:15 UTC) | 2026-10-31 | closed |
+| Round 2 | Wiring (`rates-app`), journal write path, LEARN, recipes 23 to 34 and diagrams, desk features (`rates-strategy`), edge research, P&L audit, review, audit fix packages A1, A2, B, C, D, integration | not planned in plan-days; each workstream briefed as one session | 1 | 0.4 (first commit 12:11 UTC, merge ecfc591 at 21:33 UTC on 2026-10-31) | 2026-10-31 | closed: pull request 3 merged; per workstream below |
 
 ## Estimate versus actual
 
@@ -24,7 +25,7 @@ Filled at each gate. Each entry records the planned and actual figures, the revi
 
 ### P0 gate
 
-Not yet reached. Planned: 10 plan-days, 1 wall-clock day, started 2026-10-31.
+Planned: 10 plan-days, 1 wall-clock day. Actual: built on 2026-10-31 alongside P1 to P6 and merged with them in pull request 1 (08:26 UTC). Pull request 2 (4facfef, 11:15 UTC) fixed the loop allocation check for Linux CI (DR-INT-02), and the gate closed when CI went green on main at 4facfef on Linux and Windows. The difference from plan is attributed to the pinned contracts (SBE schema, journal, clock) being written first, so the other phases built against them in parallel.
 
 ### P1 gate (workstream W1, analytics)
 
@@ -147,10 +148,50 @@ Planned: one wall-clock day as briefed. Actual: about 2.5 hours in one session o
 | Process-mode rehearsal with rates-app | `python deploy/rehearsal.py --mode process` | 12 checks passed (2026-10-31, Windows 11) |
 | `LoopAllocationTest` and `HotPathRulesTest` in rates-core | `mvn -B -ntp verify` | unchanged, met |
 
+### Round 2 workstreams
+
+No plan-day estimate was written for round 2. Each workstream was briefed as one session, and the round as one wall-clock day. Actuals are the first and last commit times of each branch's own commits (`git log <branch> --not 4facfef`, excluding merges and commits taken from other round 2 branches), 2026-10-31, UTC. They are elapsed time, not working time, and exclude CI and review.
+
+| Workstream | Branch | Briefed | Actual elapsed | Commits | Gate evidence |
+|---|---|---|---|---|---|
+| Journal write path | `claude/r2-journal-latency-ee2034` | one session | 12:11 to 13:31, 1 h 20 min | 3 | section above; docs/BENCHMARKS.md |
+| Process wiring (`rates-app`) | `claude/r2-wiring-c31ae4` | one wall-clock day | 12:49 to 13:50 for the commits; about 2.5 h of session (see "Round 2 wiring gate") | 3 | section below |
+| LEARN | `claude/r2-learn-b5137b` | one session | 13:36 to 13:37 (written before the first commit) | 2 | `mkdocs build --strict` |
+| Cookbook recipes 23 to 34 and diagrams | `claude/r2-cookbook-diagrams-656067` | one session | 13:36 to 13:57 | 2 | `RecipesTest`, `tools/check_cookbook.py` |
+| Desk features (`rates-strategy`) | `claude/r2-business-6cda18` | one session | 13:37 to 14:31 | 4 | ledger seq 12 to 18; `DeskQuoterBaselineTest` |
+| Edge research E1 to E6 | `claude/r2-edge-research-6aba2e` | one session | 13:30 to 14:11 | 5 | ledger seq 2 to 7; `research/tests/test_edge.py`; notebooks |
+| P&L audit | `claude/r2-pnl-audit-e32be7` | one session | 14:18 to 14:36 | 3 | ledger seq 8 to 11; docs/research/PNL_AUDIT.md |
+| Review fixes | `claude/r2-review-6e9f43` | one session | 13:26 to 15:19 | 18 | DR-R2R-01 onward; P3 re-run above |
+| Fix package A1 (pricing models) | `claude/fix-a1-models-67fd05` | one session | 14:33 to 15:30 | 2 | `PricingModelsTest` |
+| Fix package A2 (engine) | `claude/fix-a2-engine-8168e0` | one session | 14:33 to 18:08 | 4 | `AuditFixesTest` |
+| Fix package B (CLOB) | `claude/fix-b-clob-68d6c2` | one session | 14:33 to 17:13 | 2 | CLOB tick and skew tests |
+| Fix package C (controls) | `claude/fix-c-controls-1e7782` | one session | 14:33 to 18:51 | 3 | `RiskControlsTest`, `HedgeControlsTest`, `RouterControlsTest`, `DeskWiringTest` |
+| Fix package D (back-tester) | `claude/fix-d-backtest-cdd6aa` | one session | 14:33 to 18:06 | 5 | `FixPackageDTest`; ledger seq 19 to 22 |
+| Integration | `round2-integration` | part of the round | merges 14:00 to 20:32; pull request 3 merged 21:33 (ecfc591) | merges only | CI on the pull request and on main |
+
+The round took about 9 h 20 min of elapsed time against the one wall-clock day briefed. The difference is attributed to two things. The phase modules had been built to pinned interfaces with stubs, so the wiring was adapters rather than redesigns. And the thirteen workstreams ran in parallel sessions; the fix packages waited on the audit, and the integration waited on the fix packages.
+
+### P6 remainder and release (v1.0.0)
+
+Planned: 5 of the 16 P6 plan-days (knowledge check, pitfalls and further reading, final documentation pass, release). Actual: one session on 2026-10-31, branch `release/v1.0.0`, from the round 2 merge at 21:33 UTC to the v1.0.0 merge. The knowledge check and the pitfalls had already come with LEARN in round 2.
+
+Done in this pass:
+
+- README rewritten, with measured results each tied to a source and a limits list. ARCHITECTURE covers the wired system and `rates-strategy`. CHANGELOG has a v1.0.0 section.
+- PNL_AUDIT.md now matches the ledger's `code_dirty` flags. Stale lines in the diagrams, the diagrams page and API_SPEC were fixed. The P&L audit was added to the site.
+- Daily-P&L volatility, Sharpe ratio and maximum drawdown across the assumption band (`Stats.pnlRisk`, `BandRisk`, `ratesresearch.stats.pnl_risk`). `ReportCli` and `ExperimentCli` write them, labelled as simulator consistency checks. Tests: `BandRiskTest`, `ReportTest`, `research/tests/test_pnl_risk.py`.
+- `Desk` registers the package quoter with the kill switch (DR-FIX-A2 amendment in DECISIONS.md, `AuditFixesTest`).
+- Versions 1.0.0 in every pom, `research/pyproject.toml` and `ratesresearch.__version__`.
+
+The difference from plan is attributed to LEARN's knowledge check and pitfalls having come with round 2.
+
 ## Open items
 
-- P0: local verification done on 2026-10-31 (mvn verify on JDK 25.0.5 and JDK 27: 50 Java tests at P0, 459 on main at 4facfef, coverage floor met, SpotBugs clean; ruff, mypy, pytest 16 passed; mkdocs build --strict clean; cookbook recipes recorded and checked by tools/check_cookbook.py). The gate closes when the same jobs are green in GitHub Actions on Linux and Windows.
-- P0: the repository is private until the owner is satisfied (DR-001 amendment); the site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md).
-- P6 (branch): bind the interfaces in API_SPEC.md Section 17.14 at integration; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as planned in docs/compliance/RTS6_INVENTORY.md.
+- Owner: the repository is private until the owner is satisfied (DR-001 amendment). The site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md). Branch protection on `main` should be turned on then, requiring the CI jobs.
+- P6: the Section 17.14 interfaces are bound by round 2 except those listed under R2 below; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as planned in docs/compliance/RTS6_INVENTORY.md.
 - R2 (deferred): bind `MarkSource`, `CarrySource`, `BusinessCalendar`, `VenueStatusPort` and `QuotingControl` (API_SPEC.md 17.14) beyond fixtures; tail the journals into the position keeper live instead of after the run; a futures simulator for the routers and the hedger (DR-R2W-08); a trade feed for the routers' queue model; a second currency and so a second loop; the CLOB quoter is built but not enabled; the SEF simulator is not connected; reconcile the router on reconnect (`SmartOrderRouter.reconcile` with an OrderMassStatusRequest); retire one of the two cancel message pairs (DR-R2W-04).
 - R2 (findings outside its scope): `Venues.T0` is documented as 13:30Z, 08:30 New York, but is 14:30Z, 09:30 New York; the D2C arrival peak is at 08:30, so tests starting at `T0` see the base rate only.
+- Audit-fix controls ship off by default and are not turned on by the wired process: package A1 (hit-rate learning and cover averaging take effect only once the engine is fed outcomes and cover gaps), package C (router filled-adverse and message costs, on only in `RouterPresets.globalWithControls`), package B (CLOB inventory skew, off until called). Turning them on is a pre-registered experiment, not a config edit.
+- AUDIT-11 to AUDIT-14 ran at 04edc03, before DR-INT-05; re-run them under new ids before planning on their sizes. AUDIT-02 to 04 and AUDIT-12 to 14 carry `code_dirty: true` (docs/research/PNL_AUDIT.md).
+- COOKBOOK recipes 35 and 36 are listed but not written.
+- `VenueSession`'s logon retry (DR-INT-09) is configured in code; it is not yet in the deployment config schema. A session that was active and then dropped by the venue is not reconnected automatically.

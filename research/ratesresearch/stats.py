@@ -80,6 +80,39 @@ def variance(x: Sequence[float]) -> float:
     return s / (len(x) - 1)
 
 
+TRADING_DAYS_PER_YEAR = 252
+
+
+@dataclass(frozen=True)
+class PnlRisk:
+    """Risk figures of a daily P&L series, as ``Stats.pnlRisk`` in Java.
+
+    Simulator consistency checks when the series comes from a back-test (DR-008).
+    """
+
+    days: int
+    mean: float
+    volatility: float
+    sharpe: float
+    annualised_sharpe: float
+    max_drawdown: float
+
+
+def pnl_risk(daily: Sequence[float]) -> PnlRisk:
+    """Sample volatility, Sharpe ratio (zero risk-free rate) and maximum drawdown from zero."""
+    m = mean(daily)
+    vol = math.sqrt(variance(daily))
+    sharpe = m / vol if vol > 0 else math.nan
+    cumulative = 0.0
+    peak = 0.0
+    drawdown = 0.0
+    for v in daily:
+        cumulative += v
+        peak = max(peak, cumulative)
+        drawdown = max(drawdown, peak - cumulative)
+    return PnlRisk(len(daily), m, vol, sharpe, sharpe * math.sqrt(TRADING_DAYS_PER_YEAR), drawdown)
+
+
 def quantile(sorted_x: Sequence[float], q: float) -> float:
     """Type 7 quantile of an already sorted sequence."""
     if not sorted_x:

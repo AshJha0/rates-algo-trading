@@ -22,6 +22,7 @@ graph TD
   posttrade["rates-posttrade<br/>positions, records, recon<br/>(P6)"]
   ops["rates-ops<br/>health, metrics, config, stress<br/>(P6)"]
   app["rates-app<br/>the trading process: bindings, assembly<br/>(round 2)"]
+  strategy["rates-strategy<br/>desk features, DeskQuoter, desk experiments<br/>(round 2)"]
   cookbook["rates-cookbook<br/>COOKBOOK.md recipes"]
 
   journal --> common
@@ -64,3 +65,7 @@ graph TD
   app --> ops
   app --> backtest
   cookbook --> app
+
+  strategy --> backtest
+  strategy --> quoting
+  strategy --> hedge

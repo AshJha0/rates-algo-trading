@@ -17,7 +17,8 @@ import org.agrona.MutableDirectBuffer;
  * Backpressure    65002  block 24   0 timestampNanos int64, 8 droppedCount int64,
  *                                   16 gatewayId int32, 20 firstTemplateId uint16, 22 pad
  * GatewayStatus   65003  block 16   0 timestampNanos int64, 8 gatewayId int32,
- *                                   12 status uint8 (1 connected, 2 disconnected), 13 pad
+ *                                   12 status uint8 (1 connected, 2 disconnected, 3 reconnecting),
+ *                                   13 attempt uint8 (reconnecting only, else 0), 14 pad
  * </pre>
  *
  * <p>LoopError and Backpressure are written by the loop into its inbound journal and are never
@@ -41,6 +42,12 @@ public final class ControlMessages {
 
   public static final byte STATUS_CONNECTED = 1;
   public static final byte STATUS_DISCONNECTED = 2;
+
+  /**
+   * A gateway is retrying a connection whose Logon was not accepted (DR-INT-09); the attempt
+   * number is in byte 13. The session is down: a consumer treats it as disconnected.
+   */
+  public static final byte STATUS_RECONNECTING = 3;
 
   private static final ByteOrder LE = ByteOrder.LITTLE_ENDIAN;
 
@@ -85,6 +92,18 @@ public final class ControlMessages {
     b.putByte(body + 12, status);
     b.setMemory(body + 13, 3, (byte) 0);
     return HEADER_LENGTH + GATEWAY_STATUS_BLOCK_LENGTH;
+  }
+
+  /** Encodes a GatewayStatus RECONNECTING with its attempt number (1 to 255, saturating). */
+  public static int encodeGatewayReconnecting(
+      final MutableDirectBuffer b,
+      final int offset,
+      final long timestampNanos,
+      final int gatewayId,
+      final int attempt) {
+    final int length = encodeGatewayStatus(b, offset, timestampNanos, gatewayId, STATUS_RECONNECTING);
+    b.putByte(offset + HEADER_LENGTH + 13, (byte) Math.min(255, Math.max(1, attempt)));
+    return length;
   }
 
   /**
@@ -136,6 +155,11 @@ public final class ControlMessages {
   /** GatewayStatus: status byte. */
   public static byte gatewayStatus(final DirectBuffer b, final int offset) {
     return b.getByte(offset + HEADER_LENGTH + 12);
+  }
+
+  /** GatewayStatus: reconnect attempt number, 0 unless the status is RECONNECTING. */
+  public static int gatewayStatusAttempt(final DirectBuffer b, final int offset) {
+    return b.getByte(offset + HEADER_LENGTH + 13) & 0xFF;
   }
 
   /** LoopError: inbound messages processed before the error. */

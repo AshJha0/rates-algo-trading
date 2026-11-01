@@ -119,6 +119,7 @@ public final class Desk {
     handler = new QuotingEventHandler(quoting, clob, health);
     killSwitch.register(quoting);
     killSwitch.register(clob);
+    killSwitch.register(packages);
     for (final Hedger h : hedgers) {
       killSwitch.register(h);
     }
