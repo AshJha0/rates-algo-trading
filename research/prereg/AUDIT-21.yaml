@@ -1,0 +1,58 @@
+# Pre-registration AUDIT-21, the production-engine re-run of the P&L audit (audit fix package D,
+# docs/research/PNL_AUDIT.md). Written, hashed and committed before the evaluation period was run.
+# Format: API_SPEC.md Section 16.8, validated by PreRegistration.requireValid and
+# ratesresearch.prereg.validate. Run with research/audit/run_desk_audit.sh, which records one
+# ledger row whatever the result.
+prereg_version: 1
+id: AUDIT-21
+title: "AUDIT-01's design on the production engine: spread setting against the cover"
+hypothesis: >
+  AUDIT-01 sized the spread-setting leaks on the back-tester's model_spread quoter. This re-run
+  replays the same kind of day through rates-app's DeskStrategy, the production QuotingEngine,
+  RiskEngine, Hedger and routers. The production desk clamps its half-spread to [0.02, 0.08] bp
+  (DeskSettings.quoting). Expected: (a) best_price_client, a client who trades only with the
+  best price (RfqOutcomeModel.ClientChoice.BEST_PRICE), earns less than the engine at every band
+  point, which sizes how much of the production desk's P&L rests on clients accepting quotes
+  behind the cover (PNL_AUDIT.md item 3); (b) cap_0p25 and unclamped, which let the hit-rate
+  optimiser choose wider spreads, earn more than the engine at the central and low points.
+metric: >
+  Total position P&L per recorded session in USD, rounded to cents (cash plus the final position
+  at the final mid; attribution reconciled to it on every run). Unit of analysis: one session of
+  15 simulated minutes from 08:25 New York. Each difference is also reported per 1,000,000 USD of
+  client DV01 traded, normalised by the engine's mean per session at that band point.
+baseline: engine
+treatments: [best_price_client, cap_0p25, unclamped]
+period: {start: 2026-03-02, end: 2026-03-27}
+fitting_period: {start: 2026-01-05, end: 2026-01-16}
+holdout: [2026-04-06, 2026-04-07, 2026-04-08, 2026-04-09, 2026-04-10]
+success_threshold: >
+  Per variant and band point (low, central, high): Welch's two-sided test of variant against
+  engine session P&L, Holm-adjusted over every (variant, band point) test of this
+  pre-registration, below 0.05, and the 95 percent moving-block bootstrap interval (blocks of 2
+  sessions, 2000 resamples, seed 11) of the paired session difference entirely above zero:
+  supported. Adjusted p below 0.05 and interval entirely below zero: reversed. Otherwise
+  inconclusive. The size is the paired mean difference with its interval, reported whatever the
+  verdict. The row is void if any run's attribution residual exceeds one cent.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-07
+config: research/prereg/AUDIT-21.config.yaml
+config_sha256: 3617de69cc5fddbfc0b4023f0d7ac022a5b3732c44da39973618b791e04319a0
+limitations: >
+  Re-run of AUDIT-11 at v1.0.0 under a new id, as PNL_AUDIT.md asks, because AUDIT-11 ran at
+  04edc03, before DR-INT-05 and the later desk defaults. Same design, sessions and seeds, so
+  this period has been seen and the row is a re-measurement, not a fresh test.
+  Simulated sessions only (DR-008): the D2C simulator's dealers, the back-tester's competitor
+  model and win-probability slope are declared assumptions, so every number is a simulator
+  consistency check, not edge. The sessions are recordings of the P2 venue simulators, not the
+  synthetic days of AUDIT-01 to AUDIT-04, so absolute sizes are not comparable with those rows;
+  the comparison is of signs and of sizes per 1mm USD of client DV01. Sessions are 15 simulated
+  minutes, not a full day, because a replay of the production desk costs about 3 s of CPU per
+  simulated minute. The back-tester has no resting-order cancel, so the desk's child orders are
+  filled as market orders (DR-R2W-11). Labels are session keys for the seed rule; every session
+  is the simulators' trading date 2026-11-02. A pilot on fitting-period labels with a scratch
+  ledger checked the harness before this file was committed; its numbers are not used. The
+  holdout is not opened.
