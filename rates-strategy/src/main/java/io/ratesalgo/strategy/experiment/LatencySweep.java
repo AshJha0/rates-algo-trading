@@ -67,7 +67,10 @@ public final class LatencySweep {
     result.put("prereg", prereg.id());
     final Path outFile = repo.resolve(opts.getOrDefault("out", "research/hedge/results/latency_sweep.json"));
     try {
-      Files.createDirectories(outFile.getParent());
+      final Path parent = outFile.getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
+      }
       Files.writeString(outFile, Json.write(result) + "\n");
     } catch (final IOException e) {
       throw new UncheckedIOException(e);

@@ -1600,3 +1600,23 @@ Decision. tools/latency_summary.py prints each report's percentiles as a Markdow
 
 Consequences. A Linux reference number is one click from each CI run. It is not comparable with a pinned, isolated host.
 
+## DR-V1C-01: Measure risk carry time; hedge latency is a minor term
+
+Date: 2026-11-07
+
+Context. A reader asked whether hedge latency is modelled. The back-tester has always delayed hedge orders by `order_latency_ms` (2 ms), but nothing reported how long the desk carries client risk.
+
+Decision. Add `RiskCarry` (time from each client fill to the next hedge fill) and an exploratory `LatencySweep` on the V1H-001 fitting period, with no ledger record. From 0 to 1,000 ms, latency barely moves P&L or carry, while median carry is 20 minutes to over an hour. The time goes into the hedge decision, not the order path.
+
+Consequences. Latency stays a declared 2 ms. A result that depended on it would need a fitted value and jitter.
+
+## DR-V1C-02: A carry-time limit, tested and kept opt-in
+
+Date: 2026-11-07
+
+Context. DR-V1C-01: exposure under the hedge trigger can stay on the book for hours.
+
+Decision. `CarryLimitHedgeBudget` hedges net DV01 to zero once it has stayed above 50,000 USD per bp for 900 s without the inner budget hedging it. `HedgeBudget` gains `excessDv01(ladder, sinceFill, now)` and `nextCheckNanos()`, with defaults, so existing budgets are unchanged. Pre-registered as V1C-001 against the desk default. Result, ledger seq 31: improved at central and high, inconclusive at low, so not supported, and not adopted.
+
+Consequences. The desk default is unchanged. A next test could make the limit depend on flow rate, or on the risk charge directly, since the low point is where netting already does the work.
+
