@@ -379,12 +379,24 @@ class SegmentedJournalTest {
       // loop outruns the preparer and the rolls wait instead, which is the path the next test
       // covers. So give the preparer time before each roll: park between segments (parkNanos does
       // not allocate) and measure only rolls that found their segment ready.
+      // start the measured part at the beginning of a fresh segment
+      java.util.concurrent.locks.LockSupport.parkNanos(50_000_000L);
+      final int aligned = j.segmentIndex();
+      while (j.segmentIndex() == aligned) {
+        j.append(10, 0, p, 0, 57);
+      }
       final int segmentBefore = j.segmentIndex();
       final long waitsBefore = j.rollWaits();
       final long before = threads.getThreadAllocatedBytes(self);
+      // A segment holds about 680 frames, not exactly, so park on the segment index itself: fill
+      // the current segment up to its last frame, park, then append the frame that rolls.
       for (int s = 0; s < 20; s++) {
+        final int segment = j.segmentIndex();
+        for (int i = 0; i < 670; i++) {
+          j.append(10, 0, p, 0, 57);
+        }
         java.util.concurrent.locks.LockSupport.parkNanos(50_000_000L);
-        for (int i = 0; i < 680; i++) {
+        while (j.segmentIndex() == segment) {
           j.append(10, 0, p, 0, 57);
         }
       }
