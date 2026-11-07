@@ -143,9 +143,9 @@ Reproduce:
 research/hedge/run_hedge_experiment.sh --preregs data/preregs/V1H-001.yaml,data/preregs/V1H-002.yaml --commit "$(git rev-parse HEAD)"
 ```
 
-## How long the desk carries risk, and a carry-time limit (V1C-001)
+## How long the desk carries risk, and a carry-time limit (V1C-001, V1C-002)
 
-Added 2026-11-07 (DR-V1C-01, DR-V1C-02). The question came from a reader: is hedge latency modelled, or is the hedge instant? It is modelled. A hedge order reaches the simulated venue `order_latency_ms` after it is sent (2 ms, a declared assumption in preset `usd_hedge_cost`, not fitted) and fills against the book at that moment. The more useful question turned out to be where the time between a client fill and its hedge actually goes.
+Added 2026-11-07 (DR-V1C-01 to DR-V1C-03). The question came from a reader: is hedge latency modelled, or is the hedge instant? It is modelled. A hedge order reaches the simulated venue `order_latency_ms` after it is sent (2 ms, a declared assumption in preset `usd_hedge_cost`, not fitted) and fills against the book at that moment. The more useful question turned out to be where the time between a client fill and its hedge actually goes.
 
 **Measure.** `RiskCarry` (`rates-backtest`) takes the fills of a run and, for each client fill, measures the time to the first hedge fill at or after it. A client fill with no later hedge in the session is counted as unhedged (netted by later flow or held to the close). It is the time to the next hedge, not proof that this hedge offset that fill: with netting, one hedge covers the net of many fills.
 
@@ -171,6 +171,18 @@ From 0 to 1 s the latency barely shows in P&L or carry; at 5 s it costs about 7 
 
 Improved at central and high and inconclusive at low, so not supported under its own rule (all three points), and not adopted. The guards passed: no new limit breach and no P&L interval entirely below zero. The rule cuts the risk charge by 36 to 78 percent and roughly halves median carry at central and high, for 17 to 41 percent more hedge orders. At the low point flow is heavy and netting already keeps carry short, so there is less for the limit to do. The holdout (2026-07-13 to 2026-07-17) is unopened. `DeskFactory.deskDefault()` is unchanged; the rule is opt-in through `CarryLimitExperiment.treatment`.
 
+**Flow-aware follow-up (V1C-002).** V1C-001 failed at the low point, where client flow is heaviest. The follow-up gives the limit a quiet gap: while client fills keep arriving within `quiet` of each other, opposing flow may still net the exposure, so the limit waits, and it hedges once the flow goes quiet. Floor, retain and limit are unchanged. A quiet gap of 600 s was chosen on the fitting period from 60, 120, 300 and 600 s. There, every gap moved the metric by less than 26,000 USD per session against the rule without one, and the pre-registration says a large change was not expected. It ran on new sessions (day seed base 9,200,000, config `data/experiments/V1C2.config.yaml`) over a new evaluation period, 2026-07-20 to 2026-08-14. Ledger seq 32, code 9aee3ec, copy in `research/hedge/results/V1C-002.json`.
+
+| Band point | Risk-adjusted shortfall, desk default | With flow-aware limit | Difference (95% interval) | Holm p | P&L difference (95% interval) | Median carry, s |
+|---|---|---|---|---|---|---|
+| Low | -598,651 | -585,781 | +12,870 (-13,609 to 40,292) | 0.39 | -127,975 (-315,662 to 58,960) | 1,867 to 1,476 |
+| Central | -388,033 | -347,062 | +40,971 (8,878 to 82,597) | 0.094 | -108,297 (-384,883 to 120,401) | 3,018 to 1,651 |
+| High | -172,110 | -107,792 | +64,318 (42,923 to 95,212) | 0.0055 | -155,413 (-376,151 to 17,006) | 18,941 to 7,064 |
+
+Improved at high only, so not supported and not adopted; the guards passed. The quiet gap did not rescue the low point, and on these sessions central lost significance too.
+
+**What the two tests show together.** In all six band-point results the limit shortened median carry (by 21 to 63 percent), cut the share of client fills never hedged, and lowered the risk charge (by 22 to 78 percent), for 14 to 70 percent more hedge orders. The risk-adjusted gain is clear when flow is sparse (high point, both tests) and within noise when flow is heavy (low point, both tests), where netting already keeps carry short. Mean P&L differences were negative at five of six points, but every interval included zero. The limit is a dial between hedge cost and risk carried, not a free improvement, and which side of it a desk should sit on is a risk-appetite choice that this simulator cannot make. Two sequential tests of the same idea are enough. More tuning against these sessions would be fitting to noise, so the rule stays opt-in and `DeskFactory.deskDefault()` is unchanged.
+
 These are simulated sessions under declared assumptions (DR-008): a consistency check of the rule against its own objective, not evidence of edge.
 
 Reproduce:
@@ -179,6 +191,7 @@ Reproduce:
 research/hedge/run_latency_sweep.sh
 research/hedge/run_carry_limit.sh --prereg data/preregs/V1C-001.yaml --scope fitting
 research/hedge/run_carry_limit.sh --prereg data/preregs/V1C-001.yaml --commit "$(git rev-parse HEAD)"
+research/hedge/run_carry_limit.sh --prereg data/preregs/V1C-002.yaml --work target/carry-limit2 --commit "$(git rev-parse HEAD)"
 ```
 
 ## Reproduce

@@ -6,7 +6,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ### Added
 
-- Risk carry time (`RiskCarry`): time from each client fill to the next hedge fill. An exploratory hedge latency sweep (`LatencySweep`, 0 to 5,000 ms): latency up to 1 s barely matters, and median carry is 20 minutes to over an hour. A carry-time limit (`CarryLimitHedgeBudget`, V1C-001, ledger seq 31): improved risk-adjusted hedge cost at central and high, inconclusive at low, so not supported and not adopted. docs/research/DESK_FEATURES.md, DR-V1C-01 and DR-V1C-02.
+- Risk carry time (`RiskCarry`): time from each client fill to the next hedge fill. An exploratory hedge latency sweep (`LatencySweep`, 0 to 5,000 ms): latency up to 1 s barely matters, and median carry is 20 minutes to over an hour. A carry-time limit (`CarryLimitHedgeBudget`, V1C-001, ledger seq 31): improved risk-adjusted hedge cost at central and high, inconclusive at low, so not supported and not adopted. A flow-aware version with a quiet gap (V1C-002, ledger seq 32) improved at high only, also not supported. docs/research/DESK_FEATURES.md, DR-V1C-01 to DR-V1C-03.
 - AUDIT-21 to AUDIT-24: the production-desk audit re-run at v1.0.0. AUDIT-25: six combined settings on the same sessions. AUDIT-26: one holdout look at the chosen setting, which failed its pass marks; `DeskSettings` is unchanged. Ledger seq 25 to 30; docs/research/PNL_AUDIT.md.
 
 ### Fixed

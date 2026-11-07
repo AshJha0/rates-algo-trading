@@ -1620,3 +1620,13 @@ Decision. `CarryLimitHedgeBudget` hedges net DV01 to zero once it has stayed abo
 
 Consequences. The desk default is unchanged. A next test could make the limit depend on flow rate, or on the risk charge directly, since the low point is where netting already does the work.
 
+## DR-V1C-03: A flow-aware carry limit, tested; the idea stops here
+
+Date: 2026-11-07
+
+Context. DR-V1C-02: the carry limit helped at central and high but not at low, where client flow is heaviest.
+
+Decision. `CarryLimitHedgeBudget` gains an optional quiet gap: the limit waits while client fills keep arriving within the gap. Pre-registered as V1C-002 (quiet 600 s, chosen on the fitting period) on new sessions and a new evaluation period. Result, ledger seq 32: improved at high only, so not supported, and not adopted.
+
+Consequences. Across both tests the limit always shortens carry and lowers the risk charge, gains clearly only when flow is sparse, and has a negative but not significant mean P&L effect. It is a risk-appetite dial, not a free improvement. No further tuning on these sessions; the rule stays opt-in.
+
