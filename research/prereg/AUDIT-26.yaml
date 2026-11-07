@@ -1,0 +1,55 @@
+# Pre-registration AUDIT-26: the one look at the setting chosen from AUDIT-25, on the five
+# sessions held out by AUDIT-11 to AUDIT-25, which no run has read.
+# for a later single holdout test. Format: API_SPEC.md Section 16.8, validated by requireValid and
+# ratesresearch.prereg.validate. Run with research/audit/run_desk_audit.sh, which records one
+# ledger row whatever the result.
+prereg_version: 1
+id: AUDIT-26
+title: "Holdout look: half-spread cap 0.50 bp with 4x skew against the production desk"
+hypothesis: >
+  The setting chosen by the owner from AUDIT-25 (cap 0.50 bp, kappa 8e-6, skew cap 0.20 bp) beats
+  the default desk on sessions not used to choose it. Pass marks, fixed before the run: paired
+  mean difference above zero at all three band points, and the paired interval above zero at the
+  central point. Reported whatever happens: net P&L against zero, wins and hit rate per band
+  point. A win that comes with fewer than half the engine's wins at central is called out as
+  partly trading less.
+metric: >
+  Total position P&L per recorded session in USD, rounded to cents (cash plus the final position
+  at the final mid; attribution reconciled to it on every run). Unit of analysis: one session of
+  15 simulated minutes from 08:25 New York. Each difference is also reported per 1,000,000 USD of
+  client DV01 traded, normalised by the engine's mean per session at that band point.
+baseline: engine
+treatments: [cap_0p50_skew]
+period: {start: 2026-04-06, end: 2026-04-10}
+fitting_period: {start: 2026-01-05, end: 2026-01-16}
+holdout: [2026-05-04, 2026-05-05]
+success_threshold: >
+  Per variant and band point (low, central, high): Welch's two-sided test of variant against
+  engine session P&L, Holm-adjusted over every (variant, band point) test of this
+  pre-registration, below 0.05, and the 95 percent moving-block bootstrap interval (blocks of 2
+  sessions, 2000 resamples, seed 11) of the paired session difference entirely above zero:
+  supported. Adjusted p below 0.05 and interval entirely below zero: reversed. Otherwise
+  inconclusive. The size is the paired mean difference with its interval, reported whatever the
+  verdict. The row is void if any run's attribution residual exceeds one cent.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-07
+config: research/prereg/AUDIT-26.config.yaml
+config_sha256: 61b94c088791910422dc9241043540c06b9304c7fe348414f427c2b6f3b71508
+limitations: >
+  Five sessions only, so low power. The April dates are this file's evaluation period because the
+  harness has no holdout mode; they are the holdout of AUDIT-11 to AUDIT-25. One look, no retest.
+  Simulated sessions only (DR-008): the D2C simulator's dealers, the back-tester's competitor
+  model and win-probability slope are declared assumptions, so every number is a simulator
+  consistency check, not edge. The sessions are recordings of the P2 venue simulators, not the
+  synthetic days of AUDIT-01 to AUDIT-04, so absolute sizes are not comparable with those rows;
+  the comparison is of signs and of sizes per 1mm USD of client DV01. Sessions are 15 simulated
+  minutes, not a full day, because a replay of the production desk costs about 3 s of CPU per
+  simulated minute. The back-tester has no resting-order cancel, so the desk's child orders are
+  filled as market orders (DR-R2W-11). Labels are session keys for the seed rule; every session
+  is the simulators' trading date 2026-11-02. A pilot on fitting-period labels with a scratch
+  ledger checked the harness before this file was committed; its numbers are not used. The
+  holdout is not opened.

@@ -14,3 +14,5 @@ research/audit/run_audit.sh research/prereg/AUDIT-01.yaml --ledger /tmp/ledger.j
 ```
 
 Note on merging: the ledger is a hash chain. Rows appended on two branches (this one and r2-edge-research both append after seq 1, P5-001) conflict on merge, and the later rows need `seq` and `prev_sha256` recomputed in merge order. Row content and the pre-registration hashes stay unchanged. At the round 2 integration the edge rows EDGE-E1 to EDGE-E6 kept seq 2 to 7 and AUDIT-01 to AUDIT-04 moved from seq 2 to 5 to seq 8 to 11 (DECISIONS.md DR-INT-04).
+
+AUDIT-21 to AUDIT-26 (2026-11-07) use `run_desk_audit.sh`; `results/AUDIT-2n.json` are copies of ledger seq 25 to 30.

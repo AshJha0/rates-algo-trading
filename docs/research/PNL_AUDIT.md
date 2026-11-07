@@ -246,7 +246,7 @@ Added 2026-10-31 on branch `claude/fix-d-backtest-cdd6aa`. The DR-008 caveat app
 - **Statistics.** As in AUDIT-01 to AUDIT-04: paired session differences with a 95 percent moving-block bootstrap interval (blocks of 2, 2,000 resamples, seed 11), and Holm-adjusted Welch p. Every registered verdict is "inconclusive" except one, `unclamped` at L. Where an interval excludes zero, the text says so.
 - **Determinism.** A pilot on fitting-period labels gave identical session P&L with 10 and 3 replay threads.
 - **Attribution.** The residual was below 1e-5 USD on every run.
-- **Code commit.** Every run used commit 04edc03, which comes before b4658da (DR-INT-05, `winnersCurseBp` 0.02 in `DeskSettings`). The production engine has changed since these runs. Re-run AUDIT-11 to AUDIT-14 under new ids before using these sizes for planning.
+- **Code commit.** Every run used commit 04edc03, which comes before b4658da (DR-INT-05, `winnersCurseBp` 0.02 in `DeskSettings`). The production engine has changed since these runs. AUDIT-21 to AUDIT-24 re-ran them at v1.0.0; see the last section.
 - **Ledger rows.** Seq 19 (AUDIT-11), 20 (AUDIT-12), 21 (AUDIT-13) and 22 (AUDIT-14). They were seq 12 to 15 when recorded and were re-chained after R2B-001 to R2B-007 when round2-integration was merged, with only `seq` and `prev_sha256` changed, as in DR-INT-04. The copies in `research/audit/results/AUDIT-1n.json` are the rows as recorded.
 - **The `code_dirty` flag.** The AUDIT-12 to AUDIT-14 rows record `code_dirty: true` only because the ledger file itself had been appended to by the previous row. AUDIT-02 to AUDIT-04 carry the same flag for the same reason.
 
@@ -286,4 +286,39 @@ All differences are paired means per session at C unless stated, with 95 percent
 - **Item 1 shrinks.** Most of its size was model_spread's block hedge priced by the linear rule. On the sliced production hedger with depth-walk fills it is 0.089 bp per DV01 hedged.
 - **Item 3's risk moves.** The production desk does not depend on loyal clients the way model_spread does. A best-price client costs it through extra hedging, not through lost volume.
 - **Item 7 is confirmed on production** with the existing covariance skew, and a stronger setting looks better.
-- **Re-run before planning.** These runs predate DR-INT-05 (b4658da). Re-run them under new ids before any size here is used for planning.
+- **Re-run done.** These runs predate DR-INT-05 (b4658da). AUDIT-21 to AUDIT-24 replace their sizes; see the last section.
+
+## Re-run at v1.0.0 and the holdout look (AUDIT-21 to AUDIT-26)
+
+Added 2026-11-07. The DR-008 caveat applies: simulator consistency checks, not edge. Ledger seq 25 to 30. AUDIT-21 to AUDIT-24 repeat AUDIT-11 to AUDIT-14 with the same sessions and seeds, so they re-measure seen sessions.
+
+The plain result: the desk's largest loss line is inventory marking, not hedging. At C a session earns +45k of spread, pays -29k of hedge cost (0.086 bp per DV01 hedged) and marks -124k of inventory, against -39k of 5-minute client markout.
+
+Paired differences against the engine, USD per session, L / C / H. Engine: -114k / -109k / -125k.
+
+| Variant | L | C | H |
+|---|---:|---:|---:|
+| Clamp opened to [0, 2] bp | +170k | +138k | +125k |
+| Cap 0.25 bp | +64k | +66k | +82k |
+| Skew 4x | +57k | +61k | +82k |
+| Widen 0.10 bp | +23k | +36k | +51k |
+| Widen 0.05 bp | +4k | +7k | 0 |
+| Hedge interval 5 s | +9k | -4k | +1k |
+| Skew off | -4k | -27k | -38k |
+| Best-price client | -66k | -70k | -54k |
+
+Lot limits change nothing. The release guard changes nothing, in AUDIT-24 and also with the cap open in AUDIT-25. The second is unexplained and has not been investigated.
+
+**Selection (AUDIT-25).** Six combinations on the same sessions. Cap 0.50 bp with 4x skew was the only one positive at every point: +62k / +37k / +8k, with 13.5 / 7.3 / 0.9 wins a session against about 18 for the engine. Part of that gain is trading less.
+
+**Holdout (AUDIT-26).** The chosen setting, one look at 2026-04-06 to 04-10, the five sessions no earlier run read. The harness has no holdout mode, so they are that file's evaluation period. Pass marks, fixed first: mean difference above zero at every point and the interval above zero at C.
+
+| | L | C | H |
+|---|---:|---:|---:|
+| Engine | +92k | +72k | +77k |
+| Chosen setting | +188k | +108k | +66k |
+| Difference | +96k | +36k | -10k |
+| 95% interval | +23k to +173k | -30k to +101k | -57k to +51k |
+| Wins a session, setting / engine | 13.2 / 14.4 | 6.0 / 14.8 | 0.6 / 15.0 |
+
+It failed both marks, so `DeskSettings` is unchanged. Five sessions is low power, so the setting is not disproved. The engine's own swing between the two sets (every April interval includes zero) shows session noise is large, so a firmer answer needs many more sessions. These five are spent.

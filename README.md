@@ -7,7 +7,7 @@ An open Java 25 principal e-trading platform for interest rate swaps and governm
 
 It is a dealer desk's stack in miniature, and it is a simulator: every venue is a simulator in the same process, and every P&L figure below comes from simulated client behaviour under declared assumptions. Those figures check that the parts agree with each other; they are not evidence that the strategy would make money in a real market (DECISIONS.md DR-008).
 
-Documentation site: <https://ashjha0.github.io/rates-algo-trading/> (published once the repository is public; until then build it locally, see Quick start).
+Documentation site: <https://ashjha0.github.io/rates-algo-trading/>.
 
 ## What it does
 
@@ -24,7 +24,7 @@ One process, `rates-app` (`TradingProcessMain`, API_SPEC.md Section 18), runs a 
 
 Next to the process:
 
-- **Back-testing with pre-registration.** The back-tester runs only pre-registered experiments. Holdouts may be opened once. Every run is appended, whatever its result, to `data/ledger/ledger.jsonl`, a hash-chained ledger with 22 rows at v1.0.0.
+- **Back-testing with pre-registration.** The back-tester runs only pre-registered experiments. Holdouts may be opened once. Every run is appended, whatever its result, to `data/ledger/ledger.jsonl`, a hash-chained ledger with 30 rows.
 - **Desk features.** `rates-strategy` holds internalisation and netting, hedge slicing (depth-sized children, passive first with escalation; the back-tested desk default since V1H-001), axes, quote sizing, client tiering, hedge timing, a funding penalty and coupon carry, together with a desk P&L waterfall. Each feature sits behind an interface whose default is today's engine.
 - **Python research package** (`research/ratesresearch`). It covers statistics mirrored line for line with the Java ones, hit-rate, flow and markout models, the QuantLib golden generator, eleven executed notebooks and six edge studies on public data.
 
@@ -46,7 +46,9 @@ Each figure names its source and the date it was measured. Java figures come fro
 | Edge studies on public data, E1 to E6 | two supported after their holdouts (E3 release volatility and intensity, E4 trade size and clustering); three not supported; one inconclusive because its data could not be downloaded | ledger seq 2 to 7, docs/research/EDGE_STUDIES.md, 2026-10-31 |
 | Hedge slicing against one market order, V1H-001 (simulated, depth-walk fills) | supported at every band point: implementation shortfall better by +446k, +300k and +71k USD per session at low, central and high (Holm p at most 0.0022); adopted as the back-tested desk default. The cost-aware trigger, V1H-002, was not supported and stays opt-in | ledger seq 23 and 24, DR-V1H-01 to 03, docs/research/DESK_FEATURES.md, 2026-11-01 |
 | Event loop latency on a GitHub-hosted ubuntu-latest runner (shared 2 vCPU VM, informational) | core decode to encode, journaling on, 50,000 msg/s: p50 0.160 us, p99 5.939 us, p99.9 9.511 us | docs/BENCHMARKS.md, CI run 41290006100 at 8bfe1b8af42f, 2026-11-01 |
-| Production desk at default settings, 20 fifteen-minute sessions (simulated) | loses money at every band point: -82k, -72k and -105k USD per session at low, central and high | AUDIT-11, ledger seq 19, docs/research/PNL_AUDIT.md, 2026-10-31 |
+| Production desk at default settings, 20 fifteen-minute sessions (simulated) | loses money on these sessions at every band point: -114k, -109k and -125k USD per session at low, central and high (central 95% interval -168k to -41k). Supersedes AUDIT-11 (-82k, -72k, -105k), which predates DR-INT-05 | AUDIT-21, ledger seq 25, docs/research/PNL_AUDIT.md, 2026-11-07 |
+| Same desk, 5 unopened sessions (simulated) | +92k, +72k and +77k USD per session; every interval includes zero, so session noise is large | AUDIT-26, ledger seq 30, 2026-11-07 |
+| Half-spread cap 0.50 bp with 4x skew, chosen on the 20 sessions (simulated) | failed its one look on the 5 unopened sessions: difference +96k, +36k (-30k to +101k) and -10k, with central wins down from 15 to 6 a session. Defaults unchanged | AUDIT-25, AUDIT-26, ledger seq 29 and 30, 2026-11-07 |
 
 ### Daily-P&L risk across the assumption band
 
@@ -74,7 +76,7 @@ The figures come from the same `Stats.pnlRisk` (API_SPEC.md 16.9).
 Read these before reading any number above.
 
 - **Simulator only.** Every venue is a simulator in the same process. Client behaviour comes from declared models: a hit-rate slope, competitor counts and the share of informed flow. Each result is reported at three points of that band (DR-008).
-- **The default desk loses money in the simulator.** At its default settings the production desk lost money at every band point in AUDIT-11. Those runs used commit 04edc03, before DR-INT-05 changed `winnersCurseBp`. Re-run them under new ids before planning on their sizes.
+- **The default desk lost money on average in the simulator, with large swings.** It lost at every band point over the 20 sessions of AUDIT-21 and made money on the 5 sessions of AUDIT-26, where every interval includes zero. Inventory marking is the largest loss line. A setting that widened the cap failed its holdout, and those 5 sessions are now spent.
 - **Audit-fix controls ship off by default.** None of these is on in the wired process:
   - package A1: the hit-rate learning and cover averaging change engine output only once the engine is fed outcomes and cover gaps;
   - package C: the router's adverse-fill and message costs are on only in `RouterPresets.globalWithControls`;
