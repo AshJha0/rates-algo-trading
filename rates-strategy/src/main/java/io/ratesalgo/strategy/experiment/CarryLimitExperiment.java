@@ -322,7 +322,7 @@ public final class CarryLimitExperiment {
     out.println(Json.write(results));
     out.println(prereg.id() + " " + TREATMENT + " " + scope + ": " + results.get("verdict")
         + (Boolean.TRUE.equals(results.get("adopted_as_default")) ? ", adopted" : ", not adopted"));
-    out.println("recorded in " + repo.relativize(ledgerFile).toString().replace('\\', '/'));
+    out.println("recorded in " + DeskExperimentCli.display(repo, ledgerFile));
     return 0;
   }
 

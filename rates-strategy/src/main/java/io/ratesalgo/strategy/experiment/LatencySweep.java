@@ -76,7 +76,7 @@ public final class LatencySweep {
       throw new UncheckedIOException(e);
     }
     print(result, out);
-    out.println("written " + repo.relativize(outFile).toString().replace('\\', '/'));
+    out.println("written " + DeskExperimentCli.display(repo, outFile));
     return result;
   }
 
