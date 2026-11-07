@@ -38,7 +38,7 @@ import java.util.Map;
  *
  * <pre>
  *   CarryLimitExperiment --prereg data/preregs/V1C-001.yaml [--scope fitting|evaluation|holdout]
- *                        [--grid FLOOR:MAXCARRY_S,...] [--repo .] [--work target/carry-limit]
+ *                        [--grid FLOOR:MAXCARRY_S[:QUIET_S],...] [--repo .] [--work target/carry-limit]
  *                        [--ledger data/ledger/ledger.jsonl] [--commit SHA] [--dirty true|false]
  * </pre>
  *
@@ -60,9 +60,15 @@ public final class CarryLimitExperiment {
   private static final String WHERE = "carry limit config";
 
   /** The rule's parameters. */
-  public record Params(double floorDv01, double retainDv01, long maxCarryNanos) {
+  public record Params(double floorDv01, double retainDv01, long maxCarryNanos, long quietNanos) {
+    /** The V1C-001 rule: no quiet gap. */
+    public Params(final double floorDv01, final double retainDv01, final long maxCarryNanos) {
+      this(floorDv01, retainDv01, maxCarryNanos, 0L);
+    }
+
     public String label() {
-      return "floor " + Math.round(floorDv01) + " max " + maxCarryNanos / 1_000_000_000L + "s";
+      return "floor " + Math.round(floorDv01) + " max " + maxCarryNanos / 1_000_000_000L + "s"
+          + (quietNanos > 0 ? " quiet " + quietNanos / 1_000_000_000L + "s" : "");
     }
   }
 
@@ -81,7 +87,8 @@ public final class CarryLimitExperiment {
     final Map<String, Object> c = Yaml.map(config, TREATMENT, WHERE);
     return new Params(
         Yaml.number(c, "floor_dv01", WHERE), Yaml.number(c, "retain_dv01", WHERE),
-        Math.round(Yaml.number(c, "max_carry_s", WHERE) * 1e9));
+        Math.round(Yaml.number(c, "max_carry_s", WHERE) * 1e9),
+        c.containsKey("quiet_s") ? Math.round(Yaml.number(c, "quiet_s", WHERE) * 1e9) : 0L);
   }
 
   /** The treatment: the desk default with its budget wrapped in the carry limit. */
@@ -90,7 +97,7 @@ public final class CarryLimitExperiment {
     return new DeskQuoter(
         TREATMENT,
         new DeskQuoter.Features(
-            b.ladder(), b.spread(), new CarryLimitHedgeBudget(b.budget(), p.floorDv01(), p.retainDv01(), p.maxCarryNanos()),
+            b.ladder(), b.spread(), new CarryLimitHedgeBudget(b.budget(), p.floorDv01(), p.retainDv01(), p.maxCarryNanos(), p.quietNanos()),
             b.timing(), b.axes(), b.sizer(), b.tiering(), b.penalty(), b.markoutHorizonNanos()),
         DeskFactory.ADOPTED_SLICING);
   }
@@ -210,7 +217,8 @@ public final class CarryLimitExperiment {
     res.put("treatment", TREATMENT);
     res.put("baseline", BASELINE);
     res.put("parameters", Map.of(
-        "floor_dv01", p.floorDv01(), "retain_dv01", p.retainDv01(), "max_carry_s", p.maxCarryNanos() / 1e9));
+        "floor_dv01", p.floorDv01(), "retain_dv01", p.retainDv01(), "max_carry_s", p.maxCarryNanos() / 1e9,
+        "quiet_s", p.quietNanos() / 1e9));
     res.put("metric", METRIC);
     res.put("metric_unit", "USD per synthetic session");
     res.put("orientation", "larger is better");
@@ -271,7 +279,8 @@ public final class CarryLimitExperiment {
       final Params base = exp.configured();
       for (final String g : opts.getOrDefault("grid", "50000:300,50000:900,50000:1800,100000:300,100000:900,100000:1800").split(",", -1)) {
         final String[] fs = g.trim().split(":", -1);
-        grid.add(new Params(Double.parseDouble(fs[0]), base.retainDv01(), Math.round(Double.parseDouble(fs[1]) * 1e9)));
+        grid.add(new Params(Double.parseDouble(fs[0]), base.retainDv01(), Math.round(Double.parseDouble(fs[1]) * 1e9),
+            fs.length > 2 ? Math.round(Double.parseDouble(fs[2]) * 1e9) : 0L));
       }
       final List<LocalDate> days = prereg.fittingPeriod().businessDays();
       final HedgeExperiment.Session[][][] m = exp.run(days, grid, work, journals);

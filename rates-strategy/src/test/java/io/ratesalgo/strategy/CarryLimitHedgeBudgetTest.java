@@ -45,9 +45,23 @@ class CarryLimitHedgeBudgetTest {
   }
 
   @Test
+  @DisplayName("with a quiet gap the limit waits while client fills keep arriving")
+  void quietGap() {
+    final CarryLimitHedgeBudget b =
+        new CarryLimitHedgeBudget(HedgeBudget.threshold(1e12), 10_000, 0, 900 * S, 300 * S);
+    assertEquals(300 * S, b.quietNanos());
+    final RiskLadder l = ladder(100 * InstrumentSet.MILLION);
+    b.excessDv01(l, 0, 0);
+    assertEquals(0.0, b.excessDv01(l, 100 * S, 1_000 * S), "a client fill 100 s ago: still busy");
+    assertEquals(1_200 * S, b.nextCheckNanos(), "ask again when the flow has been quiet for 300 s");
+    assertEquals(l.net(), b.excessDv01(l, 300 * S, 1_200 * S), 1e-9);
+  }
+
+  @Test
   @DisplayName("parameters are checked")
   void checks() {
     assertThrows(IllegalArgumentException.class, () -> new CarryLimitHedgeBudget(HedgeBudget.threshold(1), 10, 10, S));
     assertThrows(IllegalArgumentException.class, () -> new CarryLimitHedgeBudget(HedgeBudget.threshold(1), 10, 0, 0));
+    assertThrows(IllegalArgumentException.class, () -> new CarryLimitHedgeBudget(HedgeBudget.threshold(1), 10, 0, S, -1));
   }
 }
