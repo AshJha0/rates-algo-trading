@@ -375,14 +375,24 @@ class SegmentedJournalTest {
       for (int i = 0; i < 20 * 680; i++) {
         j.append(10, 0, p, 0, 57);
       }
+      // This test is about the prepared roll. On a slow machine (a shared 2-vCPU CI runner) a tight
+      // loop outruns the preparer and the rolls wait instead, which is the path the next test
+      // covers. So give the preparer time before each roll: park between segments (parkNanos does
+      // not allocate) and measure only rolls that found their segment ready.
       final int segmentBefore = j.segmentIndex();
+      final long waitsBefore = j.rollWaits();
       final long before = threads.getThreadAllocatedBytes(self);
-      for (int i = 0; i < 20 * 680; i++) {
-        j.append(10, 0, p, 0, 57);
+      for (int s = 0; s < 20; s++) {
+        java.util.concurrent.locks.LockSupport.parkNanos(50_000_000L);
+        for (int i = 0; i < 680; i++) {
+          j.append(10, 0, p, 0, 57);
+        }
       }
       final long allocated = threads.getThreadAllocatedBytes(self) - before;
+      final long waited = j.rollWaits() - waitsBefore;
       assertTrue(j.segmentIndex() >= segmentBefore + 19, "rolls in the measured part: " + (j.segmentIndex() - segmentBefore));
-      assertEquals(0L, allocated, "bytes allocated by 20 rolls; " + j.rollWaits() + " rolls waited");
+      assertEquals(0L, waited, "the preparer did not keep up even with 50 ms between segments");
+      assertEquals(0L, allocated, "bytes allocated by 20 prepared rolls");
     }
   }
 
