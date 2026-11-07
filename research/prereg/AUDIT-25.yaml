@@ -37,9 +37,8 @@ date: 2026-11-07
 config: research/prereg/AUDIT-25.config.yaml
 config_sha256: a40eaca9519c59e6a880d0f6c3690c239dcd8af183d7383867dd40b3f47107f7
 limitations: >
-  Re-run of AUDIT-11 at v1.0.0 under a new id, as PNL_AUDIT.md asks, because AUDIT-11 ran at
-  04edc03, before DR-INT-05 and the later desk defaults. Same design, sessions and seeds, so
-  this period has been seen and the row is a re-measurement, not a fresh test.
+  Selection on seen sessions, with six combinations counted here. Any chosen setting needs the
+  unopened holdout before a claim is made.
   Simulated sessions only (DR-008): the D2C simulator's dealers, the back-tester's competitor
   model and win-probability slope are declared assumptions, so every number is a simulator
   consistency check, not edge. The sessions are recordings of the P2 venue simulators, not the
