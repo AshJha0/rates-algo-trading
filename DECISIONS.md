@@ -1630,3 +1630,43 @@ Decision. `CarryLimitHedgeBudget` gains an optional quiet gap: the limit waits w
 
 Consequences. Across both tests the limit always shortens carry and lowers the risk charge, gains clearly only when flow is sparse, and has a negative but not significant mean P&L effect. It is a risk-appetite dial, not a free improvement. No further tuning on these sessions; the rule stays opt-in.
 
+
+## DR-FWD-01: Forward-log swap marks from DTCC prints, with a Treasury-plus-spread fallback
+
+Date: 2026-11-07
+
+Context. The desk quotes SOFR OIS swaps, and no free source publishes a SOFR swap curve that a script may fetch. CME settlements were checked on 2026-11-07: the site answered HTTP 403 with a notice that its Data Terms of Use forbid scripts. DTCC's end-of-day public dissemination file, already used by P5 and EDGE-E5, has real traded SOFR OIS rates.
+
+Decision. The owner chose option (a) of docs/research/PAPER_TRADING_PLAN.md Section 8.1. A swap mark is the median fixed rate of spot-starting, non-package USD SOFR OIS prints executed 14:30 to 16:00 New York time, if there are at least five (EDGE-E5's central window and rule). Otherwise it is the Treasury par yield plus the spread of the latest earlier DTCC mark of that tenor, or a declared spread before there is one. The source of each mark is written into the input file and the decision line. The Treasuries and the note future are model prices from the Treasury par curve; there is no free futures settlement feed.
+
+Consequences. On a fallback day the swap mark moves with Treasuries only, and switching between sources adds a mark change the market did not make; the ledger records the source so these days can be separated. In the ten-day dry run 38 of 40 tenor-days had a DTCC mark.
+
+## DR-FWD-02: The forward ledger lives on the forward-log branch
+
+Date: 2026-11-07
+
+Context. The scheduled job must commit every day. main is protected by a ruleset with nine required checks.
+
+Decision. Option (a) of Section 8.2: the job commits to a separate `forward-log` branch with the default `GITHUB_TOKEN`, and never writes main. main holds the code, the settings and the plan; the branch holds `forward/inputs/`, `forward/ledger.jsonl` and `forward/reports/`.
+
+Consequences. No ruleset bypass is needed. If a ruleset is ever added that covers every branch, the job's push will fail visibly. Readers have to switch branch to see the log; README links to it.
+
+## DR-FWD-03: No back-fill; parameters frozen
+
+Date: 2026-11-07
+
+Context. A forward log is only worth its name if every line was written before its outcome existed.
+
+Decision. Options 8.3 and 8.4: the first decision is written by the first scheduled run after the merge. The ten-day run on past data (PAPER_TRADING_PLAN.md Section 9) was a plumbing test in a temporary directory and is not committed to the log. The desk is `DeskFactory.deskDefault()` under `config/forward/desk.yaml`; a change to that file, the experiment config or the presets changes the hashes written into every decision line.
+
+Consequences. The log starts empty. Any later change of desk parameters is visible as a change of hash on a dated line.
+
+## DR-FWD-04: Each forward session starts flat on a flat intraday market
+
+Date: 2026-11-07
+
+Context. The back-tester runs one session from a flat book, and the synthetic generator makes up intraday rate paths. A forward log that kept the generator's paths would mix synthetic market moves into the P&L.
+
+Decision. Every curve input of a forward session carries the committed mid of the previous close (no level, idiosyncratic, event or basis moves). The session's end-of-day book is marked once at the real close and then counts as closed; there is no multi-day inventory. Carry and funding accrue inside the session: declared bond coupons, swap carry at the committed SOFR and bond funding at the committed SOFR. Weekend and overnight carry are not booked.
+
+Consequences. The only real outcome is the close mark. Informed clients carry no information on a flat market, so spread capture is an upper bound with no adverse selection, and it is much larger than the simulator audits found; README "Limits" says so. The flat market is a setting (`flat_intraday`), recorded by hash, if a later round wants to change it.

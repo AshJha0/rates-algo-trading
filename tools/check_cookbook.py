@@ -59,6 +59,7 @@ PYTHON_RECIPES = {
     32: ("recipe32_hitrate.py", "recipe32.txt"),
     33: ("recipe33_markouts.py", "recipe33.txt"),
     35: ("recipe35_journal_chain.py", "recipe35.txt"),
+    37: ("recipe37_forward_ledger.py", "recipe37.txt"),
 }
 
 

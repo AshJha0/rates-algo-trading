@@ -26,8 +26,13 @@ public final class BandScenario {
 
   /** The presets of {@code presetsFile} with the market parameters of {@code point} applied. */
   public static Presets presets(final Path presetsFile, final Map<String, Object> band, final BandPoint point) {
-    final Map<String, Object> root = Yaml.loadMap(presetsFile);
-    final List<Object> list = Yaml.asList(Yaml.require(root, "presets", presetsFile.toString()), "presets");
+    return presets(Yaml.loadMap(presetsFile), presetsFile.toString(), band, point);
+  }
+
+  /** As {@link #presets(Path, Map, BandPoint)}, on an already parsed (and possibly edited) file. */
+  public static Presets presets(
+      final Map<String, Object> root, final String where, final Map<String, Object> band, final BandPoint point) {
+    final List<Object> list = Yaml.asList(Yaml.require(root, "presets", where), "presets");
     for (final Object o : list) {
       final Map<String, Object> p = Yaml.asMap(o, "preset");
       if (!MARKET.equals(p.get("name"))) {
@@ -43,7 +48,7 @@ public final class BandScenario {
         set(params, key, Math.min(1.0, v * mult));
       }
     }
-    return Presets.parse(root, presetsFile + " at band point " + point.label());
+    return Presets.parse(root, where + " at band point " + point.label());
   }
 
   /** The value of band parameter {@code name} at {@code point}. */
