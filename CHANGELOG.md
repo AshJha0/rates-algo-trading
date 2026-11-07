@@ -8,6 +8,14 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 - AUDIT-21 to AUDIT-24: the production-desk audit re-run at v1.0.0. AUDIT-25: six combined settings on the same sessions. AUDIT-26: one holdout look at the chosen setting, which failed its pass marks; `DeskSettings` is unchanged. Ledger seq 25 to 30; docs/research/PNL_AUDIT.md.
 
+- Forward log (paper trading): `io.ratesalgo.strategy.forward` (`ForwardSession`, `ForwardCycle`, `ForwardReport`, `ForwardCli`), `config/forward/desk.yaml`, `ratesresearch.forward.fetch` and `ratesresearch.forward.check`, `research/forward/run_forward.sh`, and the scheduled workflow `.github/workflows/forward.yml`, which commits to the `forward-log` branch. Real rates (US Treasury par curve, NY Fed SOFR, DTCC SOFR OIS prints), synthetic client flow, a hash-chained decision ledger. docs/research/PAPER_TRADING_PLAN.md; DR-FWD-01 to DR-FWD-04.
+- COOKBOOK recipe 37: check a forward-log ledger from Python.
+- LEARN Section 14: paper trading and the forward log.
+
+### Changed
+
+- `BandScenario.presets` has an overload that takes an already parsed presets map, used by the forward session to pin the synthetic market to the real close.
+
 ### Fixed
 
 - README: the documentation site note, and the desk P&L figures and limit, now from AUDIT-21 and AUDIT-26.

@@ -26,6 +26,7 @@ Next to the process:
 
 - **Back-testing with pre-registration.** The back-tester runs only pre-registered experiments. Holdouts may be opened once. Every run is appended, whatever its result, to `data/ledger/ledger.jsonl`, a hash-chained ledger with 30 rows.
 - **Desk features.** `rates-strategy` holds internalisation and netting, hedge slicing (depth-sized children, passive first with escalation; the back-tested desk default since V1H-001), axes, quote sizing, client tiering, hedge timing, a funding penalty and coupon carry, together with a desk P&L waterfall. Each feature sits behind an interface whose default is today's engine.
+- **Forward log (paper trading).** Every Treasury business day a scheduled job fetches the real close (US Treasury par curve, NY Fed SOFR, SOFR OIS swap marks from DTCC public prints), runs the desk default for one session of synthetic client RFQs priced off the previous close, marks the resulting book at the real close, and commits the next day's decision to a hash-chained ledger on the `forward-log` branch before that day's rates exist. Rates and marks are real; clients and fills are synthetic and labelled so. docs/research/PAPER_TRADING_PLAN.md.
 - **Python research package** (`research/ratesresearch`). It covers statistics mirrored line for line with the Java ones, hit-rate, flow and markout models, the QuantLib golden generator, eleven executed notebooks and six edge studies on public data.
 
 ## Measured results
@@ -34,7 +35,7 @@ Each figure names its source and the date it was measured. Java figures come fro
 
 | What | Result | Source, date |
 |---|---|---|
-| Test suite | 620 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 106 Python tests, 11 executed notebooks, 35 of the 36 cookbook recipes checked against their recorded output | local run on v1-integration, 2026-11-01 |
+| Test suite | 630 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 114 Python tests, 11 executed notebooks, 36 of the 37 cookbook recipes checked against their recorded output | local run on paper-trading, 2026-11-07 |
 | Analytics against QuantLib 1.44, 224 instruments | swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16 | `AnalyticsGoldenTest`, API_SPEC.md 7.2, 2026-10-31 |
 | Published Treasury auctions of 2024 reproduced | all 84 notes and bonds and 332 bills, to the published digits | `PublishedExamplesTest`, 2026-10-31 |
 | Event loop latency, core decode to encode, journaling on, 50,000 msg/s | p50 0.1 to 0.2 us, p99.9 1.6 us, 0 bytes allocated on the loop thread (target: p50 under 20 us, p99.9 under 100 us); laptop, unpinned threads | docs/BENCHMARKS.md, runs at 04d12a503a6b, 2026-10-31 |
@@ -86,7 +87,8 @@ Read these before reading any number above.
 - **Latency figures are for the core loop**, on a laptop with unpinned threads and, informationally, on a shared GitHub-hosted Linux runner. They are not for the wired process. Gating numbers belong on a pinned Linux host (DR-005), which has not been run.
 - **Some data was unavailable or had no example to reproduce.** No UK DMO golden test: the DMO formulae paper gives the conventional gilt formulae without a numerical worked example (DR-V1G-02). No FINRA Treasury data (needs an account). E5's fitting data could not be downloaded.
 - **Not built:** Aeron replication and the quoting lease (DR-P6-06), APA publication, the Part 43 message and the pre-execution credit check (docs/compliance/RTS6_INVENTORY.md).
-- **Cookbook.** All 36 recipes are written. Recipe 9 is a comparison method checked by the golden tests, so `tools/check_cookbook.py` checks 35 of the 36.
+- **The forward log is not a track record.** Its client flow and fills are synthetic, and the intraday market is held flat at the previous close, so informed clients carry no information and the session's spread capture has no adverse selection in it. Only the close mark of the session's book is a real outcome. No ratio is printed before 60 marked sessions (docs/research/PAPER_TRADING_PLAN.md Section 6).
+- **Cookbook.** All 37 recipes are written. Recipe 9 is a comparison method checked by the golden tests, so `tools/check_cookbook.py` checks 36 of the 37.
 - **Ledger flags.** Four audit rows (AUDIT-02 to 04 and AUDIT-12 to 14 carry `code_dirty: true`) were recorded while the ledger file itself was uncommitted; docs/research/PNL_AUDIT.md explains.
 
 ## Quick start
@@ -140,7 +142,8 @@ rates-backtest/      Back-tester, pre-registration, daily report    (P5)
 rates-posttrade/     Positions, records, marks, reconciliation      (P6)
 rates-ops/           Health, metrics, config, stress harness        (P6)
 rates-app/           The trading process: bindings and assembly     (round 2)
-rates-strategy/      Desk features, DeskQuoter, desk experiments    (round 2)
+rates-strategy/      Desk features, DeskQuoter, desk experiments,   (round 2)
+                     forward log (paper trading)
 rates-cookbook/      Cookbook recipes as programs, output checked   (P0 onward)
 research/            Python package ratesresearch, notebooks, audit (P0 onward)
 deploy/              Images, compose file, rehearsal                (P6, round 2)
@@ -164,6 +167,7 @@ For a desk reviewer:
 - [docs/research/PNL_AUDIT.md](docs/research/PNL_AUDIT.md): where the engine loses money, ranked, and the fix packages.
 - [docs/research/DESK_FEATURES.md](docs/research/DESK_FEATURES.md): the desk-feature experiments.
 - [docs/research/EDGE_STUDIES.md](docs/research/EDGE_STUDIES.md): the edge studies on public data.
+- [docs/research/PAPER_TRADING_PLAN.md](docs/research/PAPER_TRADING_PLAN.md): the forward log (paper trading): data, cadence, ledger, what it can and cannot claim. The log itself is on the `forward-log` branch (`forward/reports/SUMMARY.md`).
 - [docs/compliance/RTS6_INVENTORY.md](docs/compliance/RTS6_INVENTORY.md): the RTS 6 control inventory.
 - [docs/runbooks/README.md](docs/runbooks/README.md): operations.
 - [DECISIONS.md](DECISIONS.md): decision records.

@@ -1,0 +1,84 @@
+name: Forward log
+
+# Paper trading (docs/research/PAPER_TRADING_PLAN.md). Each run fetches the latest Treasury
+# business day's real rates, closes the open decision of the hash-chained ledger and writes the
+# next one, then commits the ledger, the input file and the reports to the forward-log branch.
+# main is never written. Free: a public repository on GitHub-hosted runners.
+#
+# 01:30 UTC Tuesday to Saturday: after the Treasury par curve (late afternoon New York time) and
+# the DTCC end-of-day slice (about 00:15 UTC) of the Monday-to-Friday day before.
+
+on:
+  schedule:
+    - cron: "30 1 * * 2-6"
+  workflow_dispatch:
+
+concurrency:
+  group: forward-log
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: write
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: code
+      - name: Check out (or start) the forward-log branch
+        run: |
+          if git ls-remote --exit-code --heads "https://github.com/${GITHUB_REPOSITORY}.git" forward-log >/dev/null; then
+            git clone --depth 1 --branch forward-log \
+              "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" log
+          else
+            mkdir log && cd log && git init -b forward-log
+            git remote add origin "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git"
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: code/**/pom.xml
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e code/research
+      - name: Fetch the day's rates
+        id: fetch
+        working-directory: code
+        run: |
+          set +e
+          python -m ratesresearch.forward.fetch --inputs-dir ../log/forward/inputs
+          rc=$?
+          set -e
+          if [ "$rc" = "3" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          exit "$rc"
+      - name: Run the cycle
+        if: steps.fetch.outputs.skip != 'true'
+        working-directory: code
+        env:
+          FORWARD_MVN_FLAGS: -B -ntp
+        run: |
+          as_of=$(ls ../log/forward/inputs | sort | tail -1 | sed 's/\.json$//')
+          research/forward/run_forward.sh --forward-dir "$PWD/../log/forward" --as-of "$as_of" \
+            --commit "$(git rev-parse HEAD)"
+          python -m ratesresearch.forward.check ../log/forward/ledger.jsonl
+          cat ../log/forward/reports/SUMMARY.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit to forward-log
+        if: steps.fetch.outputs.skip != 'true'
+        working-directory: log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add forward
+          if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
+          git commit -m "forward log: $(ls forward/inputs | sort | tail -1 | sed 's/\.json$//')"
+          git push origin forward-log

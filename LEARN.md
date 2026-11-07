@@ -979,6 +979,18 @@ Of the desk's daily procedures, reconciliation is the one with a precise rule ([
 - **Warm standby**: a second instance that follows the primary's journal and can take over quoting after a fenced hand-over ([DECISIONS.md DR-P6-06](DECISIONS.md#dr-p6-06-warm-standby-by-journal-replication-with-a-fenced-quoting-lease)).
 - **Four-eyes control**: a change that needs a second person's approval, such as the kill-switch reset or a tier-table change.
 
+### Paper trading: the forward log
+
+Plain idea. A back-test can be rerun until it looks good; a forward log cannot. Each evening the desk writes down what it will do tomorrow, and the record is fixed before tomorrow's prices exist. Real desks run new strategies this way, on paper or with small size, before trusting them. Here the rates are real (US Treasury par curve, NY Fed SOFR, SOFR OIS swap prints from DTCC public dissemination), but there are no real clients, so the client RFQs and fills still come from the fitted simulator (docs/research/PAPER_TRADING_PLAN.md).
+
+Formal statement. On Treasury business day $D$ the cycle appends a decision for the next weekday $S$: the mids $m_i(D)$ of every instrument, SOFR, the code commit, the hashes of the settings and inputs, and a seed $s = \lfloor \mathrm{SHA256}(h_{\text{prev}} \,\|\, S) / 2^{196} \rfloor$ (the first 60 bits), where $h_{\text{prev}}$ is the hash of the previous ledger line, so the seed cannot be chosen. On the first business day $D' \ge S$ it runs session $S$ with seed $s$ on mids $m_i(D)$, leaving positions $q_i$, and appends the outcome with the close mark
+
+$$\text{close mark} = \sum_i q_i \, \bigl(m_i(D') - m_i(D)\bigr)\, v_i,$$
+
+where $v_i$ is the value per unit, and total P&L = session P&L + close mark. Every line carries the SHA-256 of the line before it.
+
+Worked example. [COOKBOOK.md recipe 37](COOKBOOK.md#37-how-do-i-check-a-forward-log-ledger-from-python): 10 million of the 10-year swap, $v = 8.11 \times 10^{-4}$ per cent of notional per percentage point, marked from 4.45 to 4.47 percent: $10^9 \times 0.02 \times 8.11 \times 10^{-4} = 16{,}220$ USD. A desk-sized example from the dry run on past days (PAPER_TRADING_PLAN.md Section 9): on 2026-10-29 the book's net DV01 was only 17,484 USD per bp, but it held swap risk one way and note futures the other; Treasuries rallied 7 bp and swaps 5.7 bp, and the mark lost 1.67 million. Net DV01 hides spread risk, and only real closes show it.
+
 ### Worked example: a chaos day and its break report
 
 [COOKBOOK.md recipe 21](COOKBOOK.md#21-how-do-i-run-the-chaos-test-and-read-the-break-report) (recorded 2026-10-31) builds a trading day of 336 journal frames and 105 fills, then injects the failures a real day brings: 5 duplicate messages, 2 late fills within the day and 3 after the cut, 3 busts of which 1 after the cut, and 2 duplicates in the drop copy. The drop-copy reconciliation reports 99 trades on our side and 101 on the venue's, 98 matched, 2 duplicates suppressed and 4 breaks. The counts check by hand: $99 - 98 = 1$ trade we have and the venue does not (we booked it, then it was busted after the cut), and $101 - 98 = 3$ venue records we do not have (the venue's count is after its 2 duplicates are suppressed), each a fill that reached us after the cut, so $1 + 3 = 4$ breaks. Every one of them is explained from the journal (one `BUSTED_AFTER_CUT`, three `LATE_ARRIVAL`) and the unexplained count is 0. After the late messages are applied, the next reconciliation has no breaks. This is the behaviour a desk would want from its own overnight process: the breaks are real, the explanation comes from evidence, and nothing is suppressed to make the numbers agree.
