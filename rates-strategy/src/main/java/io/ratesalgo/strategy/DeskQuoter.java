@@ -304,7 +304,7 @@ public final class DeskQuoter implements Strategy {
     refresh(ctx);
     final long now = ctx.nowEpochNanos();
     observeMarket(ctx);
-    double excess = f.budget().excessDv01(ladder, now - lastClientFillNanos);
+    double excess = f.budget().excessDv01(ladder, now - lastClientFillNanos, now);
     if (slicing != null) {
       excess = withParent(excess);
     }
@@ -313,6 +313,10 @@ public final class DeskQuoter implements Strategy {
       final long hold = f.budget().holdNanos();
       if (hold > 0 && now - lastClientFillNanos < hold) {
         scheduleRecheck(ctx, lastClientFillNanos + hold);
+      }
+      final long next = f.budget().nextCheckNanos();
+      if (next > now) {
+        scheduleRecheck(ctx, next);
       }
       return;
     }
