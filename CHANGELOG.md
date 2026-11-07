@@ -4,7 +4,13 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- AUDIT-21 to AUDIT-24: the production-desk audit re-run at v1.0.0. AUDIT-25: six combined settings on the same sessions. AUDIT-26: one holdout look at the chosen setting, which failed its pass marks; `DeskSettings` is unchanged. Ledger seq 25 to 30; docs/research/PNL_AUDIT.md.
+
+### Fixed
+
+- README: the documentation site note, and the desk P&L figures and limit, now from AUDIT-21 and AUDIT-26.
 
 ## [1.0.0] - 2026-10-31
 
