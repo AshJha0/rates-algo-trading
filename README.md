@@ -35,7 +35,7 @@ Each figure names its source and the date it was measured. Java figures come fro
 
 | What | Result | Source, date |
 |---|---|---|
-| Test suite | 630 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 114 Python tests, 11 executed notebooks, 36 of the 37 cookbook recipes checked against their recorded output | local run on paper-trading, 2026-11-07 |
+| Test suite | 639 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 114 Python tests, 11 executed notebooks, 36 of the 37 cookbook recipes checked against their recorded output | local run on paper-trading, 2026-11-07 |
 | Analytics against QuantLib 1.44, 224 instruments | swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16 | `AnalyticsGoldenTest`, API_SPEC.md 7.2, 2026-10-31 |
 | Published Treasury auctions of 2024 reproduced | all 84 notes and bonds and 332 bills, to the published digits | `PublishedExamplesTest`, 2026-10-31 |
 | Event loop latency, core decode to encode, journaling on, 50,000 msg/s | p50 0.1 to 0.2 us, p99.9 1.6 us, 0 bytes allocated on the loop thread (target: p50 under 20 us, p99.9 under 100 us); laptop, unpinned threads | docs/BENCHMARKS.md, runs at 04d12a503a6b, 2026-10-31 |
