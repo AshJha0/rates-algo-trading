@@ -140,6 +140,17 @@ public final class DeskExperimentCli {
     return problems;
   }
 
+  /**
+   * A path for printing: relative to the repository with forward slashes when it lies under it,
+   * otherwise absolute (on Windows a temp folder can be on another drive, where
+   * {@link Path#relativize} throws).
+   */
+  static String display(final Path repo, final Path file) {
+    final Path f = file.toAbsolutePath().normalize();
+    final Path r = repo.toAbsolutePath().normalize();
+    return (f.startsWith(r) ? r.relativize(f) : f).toString().replace('\\', '/');
+  }
+
   static Map<String, String> parse(final String[] args) {
     final Map<String, String> opts = new LinkedHashMap<>();
     for (int i = 0; i < args.length; i++) {

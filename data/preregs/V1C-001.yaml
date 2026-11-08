@@ -1,0 +1,46 @@
+# Pre-registration V1C-001. Written and hashed before the evaluation period was run.
+# Format: API_SPEC.md Section 16.8. Run by CarryLimitExperiment; one Holm family of 3 tests.
+prereg_version: 1
+id: V1C-001
+title: A carry-time limit on top of the desk default hedge budget
+hypothesis: >
+  Adding to the desk default (internalisation budget soft 150,000, hard 400,000, retain 50,000 USD
+  per bp, hold 120 s; hedges sliced as adopted by V1H-001) a rule that hedges net DV01 to zero once
+  its absolute value has stayed above 50,000 USD per bp for 900 s without the budget hedging it
+  gives a better risk-adjusted hedge cost than the desk default without the rule.
+metric: >
+  Risk-adjusted hedge shortfall per synthetic session in USD, as defined in V1H-002: hedge
+  implementation shortfall minus hedge fees minus gamma / 2 times sigma squared times the integral
+  of net DV01 squared over the session (gamma 1e-6 per USD, sigma 0.35 / sqrt(60) bp per
+  sqrt(second)); larger is better. Market hedges fill by the depth walk of audit fix package D.
+  Reported beside it: P&L, hedge shortfall, risk charge, hedge orders, mean and largest absolute
+  net DV01, and the median and 90th percentile time from a client fill to the next hedge fill.
+baseline: desk_default
+treatments: [carry_limit]
+period: {start: 2026-06-15, end: 2026-07-10}
+fitting_period: {start: 2026-04-13, end: 2026-04-24}
+holdout: [2026-07-13, 2026-07-14, 2026-07-15, 2026-07-16, 2026-07-17]
+success_threshold: >
+  At each band point (low, central, high), with d_i the session difference of the metric
+  (treatment minus baseline): a paired t-test of mean(d) against zero, two-sided, Holm-adjusted
+  over the 3 band points, below 0.05, and the 95 percent moving-block bootstrap interval of mean(d)
+  (blocks of 2 sessions, 2000 resamples, seed 11) entirely above zero. Supported only if this
+  holds at all three points. Adopted as the desk default only if supported and, at every point,
+  (a) no limit breach on a session where the baseline did not breach and (b) the bootstrap
+  interval of the paired session P&L difference is not entirely below zero. The verdict is
+  recorded in data/ledger/ledger.jsonl whatever it is.
+assumption_band:
+  preset: usd_rfq_hit_rate
+  parameter: spread_to_cover_bp
+  points: [low, central, high]
+  # with dealers_min, dealers_max and informed_share_multiplier at the same point (config band)
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-07
+config: data/experiments/V1C.config.yaml
+config_sha256: dfb147fb649b032f06428ef6d8d7bc48759643b3b5f032396e49888b3019e15a
+limitations: >
+  Synthetic sessions only, as every desk experiment here (DR-008): a simulator consistency check,
+  never evidence of edge. The metric's risk charge uses the same gamma for every strategy, so the
+  test asks whether a shorter carry pays for its extra hedging at that risk appetite. One hedge
+  instrument, constant volatility and spread. The floor and limit were chosen on the fitting
+  period (2026-04-13 to 2026-04-24) from floors 50,000 and 100,000 and limits 300, 900 and 1800 s.

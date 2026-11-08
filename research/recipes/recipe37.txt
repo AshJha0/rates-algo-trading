@@ -1,0 +1,4 @@
+close mark of 10mm 10Y on +2 bp: 16,220.00 USD
+sound ledger problems: []
+tampered: line 2: hash chain broken
+tampered: seq 2 103: committed mid differs from the decision

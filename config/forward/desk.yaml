@@ -1,0 +1,42 @@
+# Forward log (paper trading) settings. docs/research/PAPER_TRADING_PLAN.md.
+#
+# Frozen on 2026-11-07. The desk itself is the adopted desk default of the experiment config
+# below (DeskFactory.deskDefault: the R2B-001 netting hedge budget and the V1H-001 hedge slicing).
+# Any change to this file is a dated commit; its SHA-256 is written into every decision line of
+# the ledger, so a change is visible in the log.
+version: 1
+experiment_config: data/experiments/R2B.config.yaml
+presets: data/presets.yaml
+# The outcome models are settled at the central point of the declared assumption band.
+band_point: central
+
+# The desk quotes a whole session on the last close it knew, so the synthetic intraday market
+# is switched off: no level, idiosyncratic, event or basis moves inside the session. The only
+# rate move the book sees is the real one from one close to the next.
+flat_intraday: true
+
+# Swap marks. Primary: the median fixed rate of spot-starting, non-package USD SOFR OIS prints
+# in the DTCC end-of-day file executed 14:30 to 16:00 New York time, if there are at least
+# min_prints of them (the same window and rule as EDGE-E5's central band). Otherwise the
+# Treasury par yield plus a spread: the spread of the latest earlier input with a DTCC mark for
+# that tenor, or, before there is one, the declared spread below.
+swap_mark:
+  window_start_minute_et: 870
+  window_end_minute_et: 960
+  min_prints: 5
+  # Declared fallback SOFR OIS minus Treasury par spreads, bp. An assumption, used only until
+  # the first DTCC mark of a tenor exists; roughly the late-2025 levels of the EDGE-E5 fixture.
+  fallback_spread_bp:
+    2Y: -20.0
+    5Y: -30.0
+    10Y: -40.0
+    30Y: -80.0
+
+# The 10-year note future has no free settlement feed we may script (CME terms forbid it), so it
+# is a model price: future_price_0 of usd_synthetic_market plus the future's price change per bp
+# times the move of the 10-year Treasury par yield from future_ref_yield_pct. Basis is zero.
+future_ref_yield_pct: 3.95
+
+# A decision whose session went unmarked for more than this many calendar days is closed with
+# a skipped line instead of being marked (a long outage, not a holiday).
+max_mark_gap_days: 7

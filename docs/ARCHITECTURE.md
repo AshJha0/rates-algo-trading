@@ -228,6 +228,21 @@ Deployment (`deploy/`, topology in `docs/diagrams/deployment_topology.mmd`):
 
 Recovery: the restart procedure replays the journal, reconciles with every venue's order and quote status, and enables quoting only when nothing blocks (API_SPEC.md Section 17.9). The warm standby over Aeron is designed in `docs/runbooks/warm-standby-design.md` (DR-P6-06) and built at integration. Runbooks per incident class are under `docs/runbooks/`; the compliance control inventory is `docs/compliance/RTS6_INVENTORY.md`.
 
+## Forward log (paper trading)
+
+`io.ratesalgo.strategy.forward` in `rates-strategy` runs the back-tested desk default forward against real end-of-day rates (docs/research/PAPER_TRADING_PLAN.md). It adds no engine: `ForwardSession` pins `SyntheticDay`'s market to the committed mids with intraday moves switched off, runs `BacktestRunner` with `DeskFactory.deskDefault()`, and returns the end-of-session positions. `ForwardCycle` closes the open decision with the real close of the next Treasury business day and appends the next decision, through the experiment ledger's `Ledger` class, so the two ledgers share one hash-chain format. `ForwardReport` rebuilds the reports from ledger lines only.
+
+```
+GitHub Actions (forward.yml, 01:30 UTC Tue-Sat)
+  ratesresearch.forward.fetch  -> forward/inputs/<D>.json   (Treasury, NY Fed SOFR, DTCC medians)
+  ForwardCli --as-of D         -> forward/ledger.jsonl       (outcome of the open decision, then the next decision)
+                                  forward/reports/<S>.md, SUMMARY.md
+  ratesresearch.forward.check  -> chain, sessions, P&L arithmetic re-derived in Python
+  git push                     -> forward-log branch (main is never written)
+```
+
+The look-ahead rule is structural: `ForwardCycle.decision` reads only the input file of day $D$ and the ledger, and `ForwardCycleTest.decisionDoesNotDependOnLaterData` checks that the decision line is byte-identical when later input files exist.
+
 ## Venue layer (P2, workstream W3)
 
 Modules added by the venue half of Phase 2:

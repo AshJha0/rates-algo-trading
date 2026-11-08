@@ -1,0 +1,119 @@
+# Experiment config of the carry-limit pre-registration V1C-001 (data/preregs/V1C-001.yaml),
+# harness rates-strategy CarryLimitExperiment. Everything except the experiment name, the day seed
+# base (so the sessions are new draws) and the carry_limit section is V1H.config.yaml unchanged.
+# Its SHA-256 (text, LF line endings) is pinned in the pre-registration; any edit invalidates it.
+experiment: V1C
+presets: data/presets.yaml
+# day seed = day_seed_base + epoch day of the session date
+day_seed_base: 9100000
+outcome_seed: 7
+
+# Declared assumption band (DR-008, DR-R2B-03). The win-probability slope is the band of preset
+# usd_rfq_hit_rate at the same point (-1.25, -2.5, -5.0 per bp). Low is a benign market (loyal
+# clients, few dealers, little informed flow), high a harsh one.
+band:
+  dealers_min: {low: 2, central: 2, high: 3}
+  dealers_max: {low: 4, central: 5, high: 6}
+  informed_share_multiplier: {low: 0.5, central: 1.0, high: 1.5}
+
+# Limits of the daily report (data/experiments/daily_report.yaml).
+limits:
+  net_dv01_usd: 1000000
+  position_mm: 2000
+
+# Declared coupons of the synthetic Treasuries, percent, keyed by instrument id (UST 2Y, UST 10Y);
+# the position book charges repo at the instrument funding rate (4.25 percent).
+carry:
+  "201": 3.60
+  "202": 3.95
+
+# Baseline: the hit-rate-optimal quoter of P5-001 (model_spread) and its hedge rule.
+baseline:
+  adverse_bp_by_tier: [0.0241, 0.0667, 0.1300]
+  swap_hedge_cost_bp: 0.2459
+  bond_hedge_cost_bp: 0.2459
+  max_half_spread_bp: 2.0
+  grid_step_bp: 0.01
+  hedge_threshold_dv01: 100000
+  markout_horizon_s: 60
+
+# Feature 1 (R2B-001)
+internalisation:
+  soft_dv01: 150000
+  hard_dv01: 400000
+  retain_dv01: 50000
+  hold_s: 120
+
+# Feature 2 (R2B-002)
+axes:
+  max_bp: 0.10
+  budget_dv01: 150000
+  bucket_weight: 0.5
+
+# Feature 3 (R2B-003); the limit is limits.net_dv01_usd
+sizing:
+  soft_util: 0.10
+  hard_util: 0.50
+  risk_premium_bp: 0.20
+  block_quantile_z: 1.6449
+  block_premium_bp: 0.05
+
+# Feature 4 (R2B-004): tiers 1 to 3; markouts in bp of value from our side at markout_horizon_s
+tiering:
+  demote_below_bp: [-0.045, -0.098, -1.0e9]
+  promote_above_bp: [1.0e9, -0.035, -0.088]
+  min_sample: 30
+  alpha: 0.05
+  start_tier: 2
+  review_interval_s: 1800
+  proposer_id: 9001
+  approver_id: 9002
+
+# Feature 5 (R2B-005)
+timing:
+  gamma: 1.0e-6
+  flow_tau_s: 900
+  flow_prior_dv01_per_s: 50
+  wait_step_s: 30
+  max_wait_s: 300
+  slices: 3
+  slice_interval_s: 20
+
+# Feature 6 (R2B-006): balance-sheet charges per year, decimal; the metric uses the same charges
+funding:
+  bond_bs_per_year: 0.005
+  swap_bs_per_year: 0.0005
+  holding_days: 5
+
+statistics:
+  bootstrap_block_days: 2
+  bootstrap_resamples: 2000
+  bootstrap_seed: 11
+  level: 0.95
+  alpha: 0.05
+
+# V1H-001: the desk default (internalisation) with the residual hedged in children sized from
+# displayed depth, passive at our touch first and sent as a market order after passive_wait_s;
+# children finish the parent's excess (net DV01 minus the parent's target), so netting flow that
+# arrives meanwhile reduces what is left. Chosen on the fitting period 2026-04-13 to 2026-04-24.
+sliced:
+  depth_fraction: 1.0
+  min_child_lots: 10
+  passive_wait_s: 5
+  urgent_dv01: 400000
+
+# V1H-002: hedge all net DV01 when gamma / 2 * sigma^2 * X^2 * horizon_s exceeds the depth-walk
+# cost of hedging it now, or when |X| exceeds cap_dv01. gamma and sigma are timing.gamma and the
+# market preset's volatility, as in the risk-adjusted metric. horizon_s chosen on the fitting
+# period from 900, 1800, 2700, 3600 and 7200 s.
+adaptive_trigger:
+  horizon_s: 2700
+  cap_dv01: 500000
+
+# V1C-001: on top of the desk default, hedge net DV01 down to retain_dv01 once its absolute value
+# has stayed above floor_dv01 for max_carry_s without the netting budget hedging it. Chosen on the
+# fitting period 2026-04-13 to 2026-04-24 (CarryLimitExperiment --scope fitting).
+carry_limit:
+  floor_dv01: 50000
+  retain_dv01: 0
+  max_carry_s: 900

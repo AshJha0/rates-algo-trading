@@ -371,18 +371,65 @@ class SegmentedJournalTest {
     threads.getThreadAllocatedBytes(self);
     final UnsafeBuffer p = payload(5, 57);
     try (SegmentedJournal j = SegmentedJournal.create(dir, "alloc", 64 << 10, clock, true)) {
-      // 96-byte frames, about 680 per segment: warm up over 20 rolls, then measure 20 more
+      // This test is about the prepared roll: the next segment is ready when the current one
+      // fills. On a slow machine (a shared 2-vCPU CI runner) a tight loop outruns the preparer and
+      // the rolls wait instead, which is the path the next test covers. So before every roll here
+      // the test waits until the next segment is ready (pacedRolls), the warm-up runs that same paced path until it is
+      // compiled (DR-INT-06: the first rolls allocate before then), and only then is it measured.
       for (int i = 0; i < 20 * 680; i++) {
         j.append(10, 0, p, 0, 57);
       }
+      alignToFreshSegment(j, p);
+      pacedRolls(j, p, 30);
       final int segmentBefore = j.segmentIndex();
+      final long waitsBefore = j.rollWaits();
       final long before = threads.getThreadAllocatedBytes(self);
-      for (int i = 0; i < 20 * 680; i++) {
+      pacedRolls(j, p, 20);
+      final long allocated = threads.getThreadAllocatedBytes(self) - before;
+      final long waited = j.rollWaits() - waitsBefore;
+      assertTrue(j.segmentIndex() >= segmentBefore + 19, "rolls in the measured part: " + (j.segmentIndex() - segmentBefore));
+      assertEquals(0L, waited, "every measured roll found its segment ready");
+      assertEquals(0L, allocated, "bytes allocated by 20 prepared rolls");
+    }
+  }
+
+  /**
+   * Parks (parkNanos does not allocate) until the preparer has the next segment ready, so the
+   * roll that follows is a prepared one whatever the machine's speed. Gives up after 60 s.
+   */
+  private static void awaitPrepared(final SegmentedJournal j) {
+    final long deadline = System.nanoTime() + 60_000_000_000L;
+    while (!j.nextSegmentReady()) {
+      if (System.nanoTime() > deadline) {
+        throw new AssertionError("the preparer did not prepare the next segment within 60 s");
+      }
+      java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L);
+    }
+  }
+
+  /** Appends until the journal rolls, once the next segment is ready. */
+  private static void alignToFreshSegment(final SegmentedJournal j, final UnsafeBuffer p) {
+    awaitPrepared(j);
+    final int segment = j.segmentIndex();
+    while (j.segmentIndex() == segment) {
+      j.append(10, 0, p, 0, 57);
+    }
+  }
+
+  /**
+   * {@code n} rolls from the start of a segment, each one prepared: fill the segment to 670 of its
+   * about 680 frames, wait until the next segment is ready, then append until it rolls.
+   */
+  private static void pacedRolls(final SegmentedJournal j, final UnsafeBuffer p, final int n) {
+    for (int s = 0; s < n; s++) {
+      final int segment = j.segmentIndex();
+      for (int i = 0; i < 670; i++) {
         j.append(10, 0, p, 0, 57);
       }
-      final long allocated = threads.getThreadAllocatedBytes(self) - before;
-      assertTrue(j.segmentIndex() >= segmentBefore + 19, "rolls in the measured part: " + (j.segmentIndex() - segmentBefore));
-      assertEquals(0L, allocated, "bytes allocated by 20 rolls; " + j.rollWaits() + " rolls waited");
+      awaitPrepared(j);
+      while (j.segmentIndex() == segment) {
+        j.append(10, 0, p, 0, 57);
+      }
     }
   }
 

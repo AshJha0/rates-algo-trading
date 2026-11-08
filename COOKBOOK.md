@@ -42,6 +42,7 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 34. How do I validate a deployment config against its schema and read the error? (round 2, written below)
 35. How do I verify a Java journal's hash chain from Python? (written below; a Python recipe; was 23)
 36. How do I check that a hot-path package allocates nothing? (written below; was 22)
+37. How do I check a forward-log ledger from Python? (written below; a Python recipe)
 
 The recipes were renumbered when the phase branches were combined, so that they run contiguously by phase (DECISIONS.md DR-P4-05 and DR-P2C-10, amended).
 
@@ -3216,3 +3217,72 @@ String per quote, same windows
 ```
 
 The flyweight path allocates nothing in the last window and the spread checksum confirms every quote was encoded and decoded. The `String` path allocates more than a byte per quote; the program prints a comparison, not the exact count, because the count depends on the JDK's string layout. The `String` is kept in a static field so it escapes: a value that does not escape can be removed by the JIT's escape analysis, which would make a wasteful path look free. The gating checks follow this pattern on the real loops: `LoopAllocationTest` in `rates-core`, `WiredLoopAllocationTest` in `rates-app`, `AllocationTest` in `rates-fix`, `QuotingAllocationTest`, `RouterAllocationTest` and `DeskQuoterAllocationTest`.
+
+## 37. How do I check a forward-log ledger from Python?
+
+The forward log (docs/research/PAPER_TRADING_PLAN.md) appends one JSON line per decision and per outcome to `forward/ledger.jsonl` on the `forward-log` branch. Each line carries `seq` and `prev_sha256`, the SHA-256 of the previous line's text, as the experiment ledger does (API_SPEC.md Section 16.8). `ratesresearch.forward.check` re-derives everything a reader should not have to take on trust, without the Java code: the chain, that each outcome closes the decision just before it, that each book line's close mark is position times mark change times value per unit, and that the total is the session P&L plus the close mark. The program builds a two-line ledger with made-up numbers, checks it, then rewrites the committed mid in the decision line, the kind of edit the chain exists to catch.
+
+```python
+"""COOKBOOK.md recipe 37: check a forward-log ledger from Python, then tamper with it."""
+
+import hashlib
+import json
+import tempfile
+from pathlib import Path
+
+from ratesresearch.forward import check
+
+# A two-line ledger in the forward layout: a decision, then the outcome that closes it.
+# Made-up numbers: one 10-year swap position of 10 million (1e9 cents) marked 2 bp higher.
+vpu = check.VALUE_PER_UNIT["103"]
+mark = round(1_000_000_000 * (4.47 - 4.45) * vpu, 2)
+decision = {"kind": "decision", "session": "2026-11-09", "mids": {"103": 4.45}}
+outcome = {
+    "kind": "outcome",
+    "closes_seq": 1,
+    "session": "2026-11-09",
+    "book": {
+        "103": {
+            "position": 1_000_000_000,
+            "mid_committed": 4.45,
+            "mid_marked": 4.47,
+            "close_mark": mark,
+        }
+    },
+    "close_mark": mark,
+    "session_result": {"position_pnl": 1250.0},
+    "pnl_total": round(mark + 1250.0, 2),
+}
+lines, prev = [], check.GENESIS
+for seq, entry in enumerate((decision, outcome), start=1):
+    line = json.dumps(
+        {**entry, "seq": seq, "prev_sha256": prev}, sort_keys=True, separators=(",", ":")
+    )
+    prev = hashlib.sha256(line.encode()).hexdigest()
+    lines.append(line)
+print(f"close mark of 10mm 10Y on +2 bp: {mark:,.2f} USD")
+
+with tempfile.TemporaryDirectory() as tmp:
+    path = Path(tmp) / "ledger.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("sound ledger problems:", check.check(path))
+    # rewrite history: pretend the decision had committed a higher mid
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('"mids":{"103":4.45}', '"mids":{"103":4.46}'),
+        encoding="utf-8",
+    )
+    for problem in check.check(path):
+        print("tampered:", problem)
+```
+
+Expected output:
+
+```
+close mark of 10mm 10Y on +2 bp: 16,220.00 USD
+sound ledger problems: []
+tampered: line 2: hash chain broken
+tampered: seq 2 103: committed mid differs from the decision
+```
+
+A 10-year swap's value per unit is its annuity times 1e-4 (`InstrumentSet.usdDefault`, annuity 8.11), so 10 million of notional is worth 8,110 USD per bp and a 2 bp move is 16,220 USD, the first line. The edit to line 1 is caught twice: line 2's `prev_sha256` no longer matches, and the outcome's committed mid no longer agrees with the decision it claims to close. The scheduled job runs the same check on the real ledger after every cycle (`.github/workflows/forward.yml`).
+

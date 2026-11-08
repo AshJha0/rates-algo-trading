@@ -278,6 +278,14 @@ public final class SegmentedJournal implements AutoCloseable {
   }
 
   /**
+   * Whether the next segment is prepared and waiting, so the next roll will not wait; false
+   * without preallocation. Read-only, for tests that measure the prepared roll.
+   */
+  boolean nextSegmentReady() {
+    return preparer != null && preparer.hasReady();
+  }
+
+  /**
    * A count that rises while the background thread works (pages touched, segments created and
    * closed); 0 without preallocation. For shutdown paths that wait on this journal (DR-INT-10).
    */
@@ -427,6 +435,10 @@ public final class SegmentedJournal implements AutoCloseable {
     }
 
     /** Called by the appender at a roll; waits, counted, if the next segment is not ready. */
+    boolean hasReady() {
+      return ready != null;
+    }
+
     JournalWriter take() {
       JournalWriter next = ready;
       if (next == null) {

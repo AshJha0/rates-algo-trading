@@ -22,6 +22,22 @@ public interface HedgeBudget {
   double excessDv01(RiskLadder ladder, long nanosSinceClientFill);
 
   /**
+   * As {@link #excessDv01(RiskLadder, long)}, with the current time for budgets that track how
+   * long risk has been on the book. The desk calls this one; the default ignores the time.
+   */
+  default double excessDv01(final RiskLadder ladder, final long nanosSinceClientFill, final long nowNanos) {
+    return excessDv01(ladder, nanosSinceClientFill);
+  }
+
+  /**
+   * The absolute time at which the budget wants to be asked again even if nothing else happens;
+   * zero for none. Read after a call that returned no excess.
+   */
+  default long nextCheckNanos() {
+    return 0L;
+  }
+
+  /**
    * How long after a client fill the budget wants to be asked again even if nothing else
    * happens; zero for never (the default rule is only asked on fills).
    */
