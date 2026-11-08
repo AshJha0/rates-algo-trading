@@ -24,7 +24,7 @@ One process, `rates-app` (`TradingProcessMain`, API_SPEC.md Section 18), runs a 
 
 Next to the process:
 
-- **Back-testing with pre-registration.** The back-tester runs only pre-registered experiments. Holdouts may be opened once. Every run is appended, whatever its result, to `data/ledger/ledger.jsonl`, a hash-chained ledger with 30 rows.
+- **Back-testing with pre-registration.** The back-tester runs only pre-registered experiments. Holdouts may be opened once. Every run is appended, whatever its result, to `data/ledger/ledger.jsonl`, a hash-chained ledger with 32 rows.
 - **Desk features.** `rates-strategy` holds internalisation and netting, hedge slicing (depth-sized children, passive first with escalation; the back-tested desk default since V1H-001), axes, quote sizing, client tiering, hedge timing, a funding penalty and coupon carry, together with a desk P&L waterfall. Each feature sits behind an interface whose default is today's engine.
 - **Forward log (paper trading).** Every Treasury business day a scheduled job fetches the real close (US Treasury par curve, NY Fed SOFR, SOFR OIS swap marks from DTCC public prints), runs the desk default for one session of synthetic client RFQs priced off the previous close, marks the resulting book at the real close, and commits the next day's decision to a hash-chained ledger on the `forward-log` branch before that day's rates exist. Rates and marks are real; clients and fills are synthetic and labelled so. docs/research/PAPER_TRADING_PLAN.md.
 - **Python research package** (`research/ratesresearch`). It covers statistics mirrored line for line with the Java ones, hit-rate, flow and markout models, the QuantLib golden generator, eleven executed notebooks and six edge studies on public data.
