@@ -1,0 +1,68 @@
+{
+ "as_of": "2026-11-13",
+ "notice": "SOFR (c) 2026 Federal Reserve Bank of New York. Treasury par yields: US Treasury, public domain. Swap marks derived from DTCC public price dissemination (CFTC Part 43); raw DTCC data not redistributed.",
+ "schema": "forward_inputs/1",
+ "sofr": {
+  "effective_date": "2026-11-12",
+  "pct": 3.9,
+  "revision": ""
+ },
+ "sources": [
+  {
+   "bytes": 17768,
+   "fetched_utc": "2026-11-14T07:49:19Z",
+   "name": "treasury_par_curve",
+   "sha256": "7940584cb08f8aa016d786b71015d85e3226612c7a3756129c064b32fa9795da",
+   "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv"
+  },
+  {
+   "bytes": 2398,
+   "fetched_utc": "2026-11-14T07:49:19Z",
+   "name": "nyfed_sofr",
+   "sha256": "7140bb0c6a5826c07f6ef4a626e3ae9dad855b812310ef235547d45d2e855d2c",
+   "url": "https://markets.newyorkfed.org/api/rates/secured/sofr/last/10.json"
+  },
+  {
+   "bytes": 1289684,
+   "fetched_utc": "2026-11-14T07:49:20Z",
+   "name": "dtcc_sdr_rates_eod",
+   "sha256": "97ffddebedc971712fbc65574d9d59e1096d0d54f26984c6afaf6414c998c973",
+   "url": "https://kgc0418-tdw-data-0.s3.amazonaws.com/cftc/eod/CFTC_CUMULATIVE_RATES_2026_11_13.zip"
+  }
+ ],
+ "swaps_pct": {
+  "10Y": {
+   "prints": 9,
+   "rate": 4.7668,
+   "source": "dtcc_median"
+  },
+  "2Y": {
+   "prints": 8,
+   "rate": 4.73175,
+   "source": "dtcc_median"
+  },
+  "30Y": {
+   "prints": 10,
+   "rate": 4.845445,
+   "source": "dtcc_median"
+  },
+  "5Y": {
+   "prints": 15,
+   "rate": 4.686,
+   "source": "dtcc_median"
+  }
+ },
+ "ust_par_pct": {
+  "10Y": 5.15,
+  "1M": 4.1,
+  "1Y": 4.65,
+  "20Y": 5.52,
+  "2Y": 4.88,
+  "30Y": 5.47,
+  "3M": 4.32,
+  "3Y": 4.92,
+  "5Y": 4.98,
+  "6M": 4.42,
+  "7Y": 5.05
+ }
+}
