@@ -136,8 +136,19 @@ def validate(path: str | Path, repo_root: str | Path) -> list[str]:
     raw = yaml.safe_load(p.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         return [f"{p}: not a YAML mapping"]
-    if raw.get("prereg_version") == 2:
+    dated = [k for k in VERSION_1_KEYS if k in raw]
+    if raw.get("prereg_version") == 2 and not dated:
         return validate_v2(raw, Path(repo_root))
+    problems = _validate_dated(raw, repo_root)
+    if raw.get("prereg_version") == 2:
+        # a dated file is read by the version 1 rules, whatever version it claims
+        problems += [
+            f"version 1 date key '{k}' is not allowed in a session-seed design" for k in dated
+        ]
+    return problems
+
+
+def _validate_dated(raw: dict[str, Any], repo_root: str | Path) -> list[str]:
     problems = [f"missing or blank key '{k}'" for k in REQUIRED if raw.get(k) in (None, "")]
     if problems:
         return problems

@@ -74,9 +74,19 @@ public final class PreRegistration {
 
   /** Every problem with this pre-registration; empty when it is valid. */
   public List<String> validate(final Path repoRoot) {
-    if (Integer.valueOf(SessionDesignRules.VERSION).equals(raw.get("prereg_version"))) {
+    final boolean version2 = Integer.valueOf(SessionDesignRules.VERSION).equals(raw.get("prereg_version"));
+    if (version2 && !SessionDesignRules.hasDateKeys(raw)) {
       return SessionDesignRules.validate(raw, repoRoot);
     }
+    // a dated file is read by the version 1 rules, whatever version it claims
+    final List<String> problems = validateDated(repoRoot);
+    if (version2) {
+      problems.addAll(SessionDesignRules.dateKeyProblems(raw));
+    }
+    return problems;
+  }
+
+  private List<String> validateDated(final Path repoRoot) {
     final List<String> problems = new ArrayList<>();
     for (final String key : REQUIRED) {
       final Object v = raw.get(key);

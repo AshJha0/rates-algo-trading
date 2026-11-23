@@ -81,6 +81,22 @@ public final class SessionDesignRules {
 
   private SessionDesignRules() {}
 
+  /** True if the file has any version 1 date key. */
+  public static boolean hasDateKeys(final Map<String, Object> raw) {
+    return VERSION_1_KEYS.stream().anyMatch(raw::containsKey);
+  }
+
+  /** One problem per version 1 date key present. */
+  public static List<String> dateKeyProblems(final Map<String, Object> raw) {
+    final List<String> out = new ArrayList<>();
+    for (final String key : VERSION_1_KEYS) {
+      if (raw.containsKey(key)) {
+        out.add("version 1 date key '" + key + "' is not allowed in a session-seed design");
+      }
+    }
+    return out;
+  }
+
   /** Every problem with a version 2 pre-registration; empty when it is valid. */
   public static List<String> validate(final Map<String, Object> raw, final Path repoRoot) {
     final List<String> problems = new ArrayList<>();
@@ -90,11 +106,7 @@ public final class SessionDesignRules {
         problems.add("missing or blank key '" + key + "'");
       }
     }
-    for (final String key : VERSION_1_KEYS) {
-      if (raw.containsKey(key)) {
-        problems.add("version 1 date key '" + key + "' is not allowed in a session-seed design");
-      }
-    }
+    problems.addAll(dateKeyProblems(raw));
     if (!problems.isEmpty()) {
       return problems;
     }
