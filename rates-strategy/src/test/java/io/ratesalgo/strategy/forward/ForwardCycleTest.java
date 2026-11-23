@@ -86,7 +86,70 @@ class ForwardCycleTest {
     assertEquals(Yaml.toDouble(s.get("position_pnl"), "p") + Yaml.toDouble(o.get("close_mark"), "c"),
         Yaml.toDouble(o.get("pnl_total"), "t"), 0.02);
     assertTrue(Files.isRegularFile(dir.resolve("reports/2026-11-09.md")));
-    assertTrue(Files.readString(dir.resolve("reports/SUMMARY.md")).contains("No ratio is printed"));
+    final String summary = Files.readString(dir.resolve("reports/SUMMARY.md"));
+    assertTrue(summary.contains("Synthetic component"), summary);
+    assertTrue(summary.contains("Real component"), summary);
+    final String day = Files.readString(dir.resolve("reports/2026-11-09.md"));
+    assertTrue(day.contains("| total (synthetic session P&L + real close mark) |"), day);
+  }
+
+  private static Map<String, Object> outcome(final String session, final double sessionPnl, final double closeMark) {
+    return Map.of("kind", "outcome", "session", session, "marked_on", session,
+        "session_result", Map.of("position_pnl", sessionPnl), "close_mark", closeMark,
+        "pnl_total", sessionPnl + closeMark, "end_net_dv01", 0.0);
+  }
+
+  /**
+   * Near-constant synthetic income with a small real mark: the old report printed mean over
+   * standard deviation times root 252 of the sum after 60 sessions, a number in the hundreds.
+   */
+  @Test
+  void summaryReportsTheRealMarkAloneAndNoRatioAtAnySampleSize() {
+    final List<Map<String, Object>> entries = new java.util.ArrayList<>();
+    for (int i = 0; i < 100; i++) {
+      entries.add(Map.of("kind", "decision"));
+      entries.add(outcome("S" + i, 50_000.0 + (i % 2), i % 2 == 0 ? 300.0 : -100.0));
+    }
+    final String s = ForwardReport.summary(entries);
+    // close marks: 50 of +300 and 50 of -100: mean 100, sample sd 200 * sqrt(100 / 99), se 20.10
+    assertTrue(s.contains("Cumulative 10,000.00 USD over 100 sessions. Mean 100.00 USD a session, "
+        + "standard error 20.10 USD."), s);
+    assertTrue(s.contains("Cumulative 5,000,050.00 USD (synthetic) over 100 sessions."), s);
+    final String lower = s.toLowerCase(Locale.ROOT);
+    assertTrue(!lower.contains("annualised") && !lower.contains("sharpe"), s);
+    // the only "standard error" is the close mark's; nothing is computed on the total
+    assertEquals(s.indexOf("standard error"), s.lastIndexOf("standard error"), s);
+    assertTrue(!s.contains("5,010,050"), "no cumulative of synthetic plus real: " + s);
+    final String[] header = s.lines().filter(l -> l.startsWith("| Session |")).findFirst().orElseThrow().split("\\|", -1);
+    assertEquals(9, header.length);
+    for (final String h : header) {
+      assertTrue(h.isBlank() || !h.contains("P&L") || h.contains("(synthetic)"), h);
+    }
+  }
+
+  @Test
+  void summaryOfOneSessionPrintsNoMean() {
+    final String s = ForwardReport.summary(List.of(outcome("S0", 50_000.0, 300.0),
+        Map.of("kind", "skipped", "session", "S1", "reason", "no mark")));
+    assertTrue(s.contains("A mean and standard error need two marked sessions."), s);
+    assertTrue(s.contains("marked sessions 1, skipped 1."), s);
+  }
+
+  @Test
+  void summaryModeRebuildsTheSummaryFromTheLedgerWithoutRunningASession() throws IOException {
+    final LocalDate fri = LocalDate.of(2026, 11, 6);
+    input(fri, 0);
+    input(LocalDate.of(2026, 11, 9), 3);
+    cycle().run(fri, dir.resolve("work"));
+    cycle().run(LocalDate.of(2026, 11, 9), dir.resolve("work"));
+    final String written = Files.readString(dir.resolve("reports/SUMMARY.md"));
+    final long lines = Files.readAllLines(dir.resolve("ledger.jsonl")).size();
+    final ByteArrayOutputStream out = new ByteArrayOutputStream();
+    final int code = ForwardCli.run(new String[] {"--forward-dir", dir.toString(), "--summary", "--out",
+        dir.resolve("again").toString()}, new PrintStream(out, true, StandardCharsets.UTF_8));
+    assertEquals(0, code, out.toString(StandardCharsets.UTF_8));
+    assertEquals(written, Files.readString(dir.resolve("again/SUMMARY.md")));
+    assertEquals(lines, Files.readAllLines(dir.resolve("ledger.jsonl")).size());
   }
 
   @Test
