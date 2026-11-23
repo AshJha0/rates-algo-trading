@@ -70,7 +70,9 @@ def prints(
             x = half_spread_bp * np.exp(half_spread_log_sd * rng.standard_normal(n))
             informed = rng.uniform(size=n) >= at_mid_share
             x = np.where(informed, x, 0.0)
-            w = np.concatenate([[0.0], np.cumsum(np.sqrt(np.diff(t) / 60.0) * rng.standard_normal(max(n - 1, 0)))])
+            w = np.concatenate(
+                [[0.0], np.cumsum(np.sqrt(np.diff(t) / 60.0) * rng.standard_normal(max(n - 1, 0)))]
+            )
             mid = level_bp + sigma_bp * w
             # drift from earlier trades: sum over i < m of q_i a (1 - exp(-(t_m - t_i) / tau))
             for m in range(1, n):

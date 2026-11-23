@@ -42,9 +42,11 @@ def dealer_count_weights(
     for d in counts:
         others = d - engines
         for k in range(others + 1):
-            p = math.comb(others, k) * response_probability**k * (
-                1.0 - response_probability
-            ) ** (others - k)
+            p = (
+                math.comb(others, k)
+                * response_probability**k
+                * (1.0 - response_probability) ** (others - k)
+            )
             out[k] = out.get(k, 0.0) + p / len(counts)
     return out
 

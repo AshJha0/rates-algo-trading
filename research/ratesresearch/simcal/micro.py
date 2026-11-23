@@ -63,7 +63,11 @@ ROBUST_SLOPE_FROM_BIN = 5  # gaps of 120 s and more give the robust slope and in
 ABS_EDGES = np.concatenate([[0.0], np.logspace(-3.0, math.log10(30.0), 240)])
 NORMAL_MEDIAN_ABS = 0.6744897501960817  # median of |Z| for a standard normal Z
 EVENT_NAMES = ("release_0830", "auction_1300", "fomc_1400")
-EVENT_WINDOWS_S = ((8.5 * 3600, 8.5 * 3600 + 300), (13 * 3600, 13 * 3600 + 300), (14 * 3600, 14.5 * 3600))
+EVENT_WINDOWS_S = (
+    (8.5 * 3600, 8.5 * 3600 + 300),
+    (13 * 3600, 13 * 3600 + 300),
+    (14 * 3600, 14.5 * 3600),
+)
 
 
 def phi(x: FloatArray) -> FloatArray:
@@ -107,7 +111,9 @@ def make_sample(prints: pd.DataFrame, days: tuple[str, ...] | None = None) -> Sa
     )
 
 
-def pairs(s: Sample, max_lag: int = MAX_LAG, max_gap_s: float = MAX_GAP_S) -> tuple[IntArray, IntArray]:
+def pairs(
+    s: Sample, max_lag: int = MAX_LAG, max_gap_s: float = MAX_GAP_S
+) -> tuple[IntArray, IntArray]:
     """Index pairs (i, j), j = i + k for k up to ``max_lag``, same day and tenor, gap in range."""
     n = len(s.t)
     ii: list[IntArray] = []
@@ -131,7 +137,9 @@ def _overlap(a: FloatArray, b: FloatArray, lo: float, hi: float) -> FloatArray:
     return out
 
 
-def _accumulate(x: FloatArray, y: FloatArray, key: IntArray, n_keys: int) -> tuple[FloatArray, FloatArray]:
+def _accumulate(
+    x: FloatArray, y: FloatArray, key: IntArray, n_keys: int
+) -> tuple[FloatArray, FloatArray]:
     """Per-key X'X and X'y: shapes (n_keys, p, p) and (n_keys, p)."""
     p = x.shape[1]
     xtx = np.zeros((n_keys, p, p))
@@ -148,7 +156,9 @@ def _accumulate(x: FloatArray, y: FloatArray, key: IntArray, n_keys: int) -> tup
     return xtx, xty
 
 
-def event_flags(days: tuple[str, ...], calendar: pd.DataFrame, auctions: pd.DataFrame) -> FloatArray:
+def event_flags(
+    days: tuple[str, ...], calendar: pd.DataFrame, auctions: pd.DataFrame
+) -> FloatArray:
     """(n_days, 3) indicators: 08:30 release day, coupon auction day, FOMC statement day."""
     rel = set(calendar.loc[calendar["time_et"] == "08:30", "date"])
     fomc = set(calendar.loc[calendar["event"] == "fomc", "date"])
@@ -268,7 +278,9 @@ def classify(s: Sample) -> tuple[FloatArray, FloatArray, FloatArray]:
     return s_mid, dev, s_tick
 
 
-def reference(s: Sample, horizon_s: float, search_s: float) -> tuple[FloatArray, FloatArray, IntArray]:
+def reference(
+    s: Sample, horizon_s: float, search_s: float
+) -> tuple[FloatArray, FloatArray, IntArray]:
     """Per print: mean rate of the prints at the first later time in [t + h, t + h + search],
     the delay of that time after the print (NaN if none), and the index of its first print."""
     n = len(s.t)
@@ -392,7 +404,9 @@ def est_signature(total: Stats) -> dict[str, FloatArray]:
     sigma2[nt] = float(np.sum(sigma2[:nt] * long_n) / max(long_n.sum(), 1.0))
     ns = n[:, :SHORT_BINS]
     with np.errstate(invalid="ignore", divide="ignore"):
-        short = np.nansum(np.where(ns > 0, level[:, :SHORT_BINS] * ns, 0.0), axis=1) / ns.sum(axis=1)
+        short = np.nansum(np.where(ns > 0, level[:, :SHORT_BINS] * ns, 0.0), axis=1) / ns.sum(
+            axis=1
+        )
     h = _root(short / 2.0)
     npl = n[:, PLATEAU_BINS[0] : PLATEAU_BINS[1]]
     lpl = level[:, PLATEAU_BINS[0] : PLATEAU_BINS[1]]
@@ -458,7 +472,14 @@ def est_robust(total: Stats) -> dict[str, FloatArray]:
         short = hist[k, :SHORT_BINS].sum(axis=0)
         eta_short[k] = hist_median(short) / NORMAL_MEDIAN_ABS / math.sqrt(2.0)
     level = v - (sigma**2)[:, None] * gap
-    return {"sigma": sigma, "eta_long": eta_long, "eta_short": eta_short, "level": level, "v": v, "n": n}
+    return {
+        "sigma": sigma,
+        "eta_long": eta_long,
+        "eta_short": eta_short,
+        "level": level,
+        "v": v,
+        "n": n,
+    }
 
 
 def est_class(total: Stats, name: str) -> FloatArray:
@@ -548,19 +569,19 @@ def est_markout(total: Stats, name: str = "mid") -> dict[str, FloatArray]:
             )
         )
     raw = np.array([r[0] for r in rows])
-    eps = np.array([r[5] for r in rows])[:, None]
-    eta = np.array([r[4] for r in rows])[:, None]
-    att = 1.0 - 2.0 * eps
+    eps_col = np.array([r[5] for r in rows])[:, None]
+    eta_col = np.array([r[4] for r in rows])[:, None]
+    att = 1.0 - 2.0 * eps_col
     with np.errstate(invalid="ignore", divide="ignore"):
         rho = np.clip(np.array([r[3] for r in rows]) / att**2, -1.0, 1.0)
-        hi = eta + raw / att
-        lo = eta * (1.0 - np.clip(rho, 0.0, 1.0)) + raw / att
+        hi = eta_col + raw / att
+        lo = eta_col * (1.0 - np.clip(rho, 0.0, 1.0)) + raw / att
     return {
         "raw": raw,
         "n": np.array([r[1] for r in rows]),
         "delay": np.array([r[2] for r in rows]),
-        "eps": eps[:, 0],
-        "eta": eta[:, 0],
+        "eps": eps_col[:, 0],
+        "eta": eta_col[:, 0],
         "rho": rho,
         "drift_hi": hi,
         "drift_lo": lo,
@@ -600,7 +621,9 @@ def interval(
     return point, lo, hi
 
 
-def daily_close(prints: pd.DataFrame, lo_s: float = 14.5 * 3600, hi_s: float = 16 * 3600) -> pd.DataFrame:
+def daily_close(
+    prints: pd.DataFrame, lo_s: float = 14.5 * 3600, hi_s: float = 16 * 3600
+) -> pd.DataFrame:
     """Median print rate (bp, annual Act/360) per day and tenor in the close window; NaN if < 5."""
     w = prints[(prints["t"] >= lo_s) & (prints["t"] < hi_s)]
     g = w.groupby(["day", "tenor"])["rate_bp"].agg(["median", "count"]).reset_index()

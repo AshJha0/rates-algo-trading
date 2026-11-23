@@ -33,6 +33,7 @@ from ratesresearch.simcal import (
     VAL_END,
     VAL_START,
     calibrate,
+    factors,
     params,
     prints,
 )
@@ -60,9 +61,7 @@ def _manifest(raw: Path, fetch_log: Path | None) -> None:
         times = {x["name"]: x.get("downloaded_utc") for x in log}
         for entry in m["files"]:
             entry["downloaded_utc"] = times.get(entry["name"])
-        m["missing"] = [
-            {"name": x["name"], "error": x["status"]} for x in log if "sha256" not in x
-        ]
+        m["missing"] = [{"name": x["name"], "error": x["status"]} for x in log if "sha256" not in x]
     first = provenance.load_manifest(REPO / "data/manifests/edge_dtcc.json")
     known = {f["name"]: f["sha256"] for f in first["files"]}
     m["sha256_equal_to_edge_dtcc"] = all(known.get(f["name"]) == f["sha256"] for f in m["files"])
@@ -78,7 +77,9 @@ def _write(path: Path, data: dict[str, Any]) -> None:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="python -m ratesresearch.simcal")
-    ap.add_argument("command", choices=["manifest", "calibrate", "validate", "params", "competitor"])
+    ap.add_argument(
+        "command", choices=["manifest", "calibrate", "validate", "params", "competitor"]
+    )
     ap.add_argument("--raw", type=Path)
     ap.add_argument("--cache", type=Path)
     ap.add_argument("--cal", type=Path)
@@ -102,13 +103,22 @@ def main(argv: list[str]) -> int:
     if a.command == "calibrate":
         p, funnel = prints.load(a.raw, a.cache, CAL_START, CAL_END)
         out = calibrate.estimate_period(
-            p, funnel, par, calendar, auctions, CAL_START, CAL_END, CURVE_CAL_START, None, a.resamples
+            p,
+            funnel,
+            par,
+            calendar,
+            auctions,
+            CAL_START,
+            CAL_END,
+            CURVE_CAL_START,
+            None,
+            a.resamples,
         )
         out["subperiods"] = {
             name: calibrate.factor_estimates(
                 par, s, e, np.array([out["curve"]["loadings"][k] for k in calibrate.TENOR_KEYS])
             )
-            for name, s, e in calibrate.factors.SUBPERIODS
+            for name, s, e in factors.SUBPERIODS
         }
         _write(a.out, out)
         return 0

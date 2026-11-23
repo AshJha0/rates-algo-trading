@@ -172,7 +172,9 @@ def size_fit(p: pd.DataFrame) -> dict[str, Any]:
     return out
 
 
-def factor_estimates(par: pd.DataFrame, start: str, end: str, loadings: FloatArray | None) -> dict[str, Any]:
+def factor_estimates(
+    par: pd.DataFrame, start: str, end: str, loadings: FloatArray | None
+) -> dict[str, Any]:
     """Curve PCA on [start, end]; with ``loadings`` given, also scores on those loadings."""
     ch = factors.daily_changes(par, start, end).to_numpy(dtype=np.float64)
     own = factors.pca(ch)
@@ -189,19 +191,27 @@ def factor_estimates(par: pd.DataFrame, start: str, end: str, loadings: FloatArr
         "factor_sd_bp_per_day": _triple(factors.score_sd(ch, use), lo, hi),
         "explained_by_loadings": round(factors.explained_by(ch, use), 4),
         "explained_by_own_three": round(float(own.explained[:k].sum()), 4),
-        "residual_sd_bp_per_day": _keyed(TENOR_KEYS, np.round(factors.residual_sd(ch, use), 3).tolist()),
+        "residual_sd_bp_per_day": _keyed(
+            TENOR_KEYS, np.round(factors.residual_sd(ch, use), 3).tolist()
+        ),
         "tenor_sd_bp_per_day": _keyed(TENOR_KEYS, np.round(ch.std(axis=0, ddof=1), 3).tolist()),
     }
     if loadings is not None:
-        out["cosine_with_given_loadings"] = np.round(factors.cosines(own.loadings[:, :k], use), 4).tolist()
+        out["cosine_with_given_loadings"] = np.round(
+            factors.cosines(own.loadings[:, :k], use), 4
+        ).tolist()
     return out
 
 
-def spread_estimates(close: pd.DataFrame, par: pd.DataFrame, loadings: FloatArray, start: str, end: str) -> dict[str, Any]:
+def spread_estimates(
+    close: pd.DataFrame, par: pd.DataFrame, loadings: FloatArray, start: str, end: str
+) -> dict[str, Any]:
     f = factors.spread_fit(close, par, loadings, start, end)
 
     def per_tenor(x: FloatArray, digits: int = 3) -> dict[str, Any]:
-        return _keyed(TENOR_KEYS, [None if not math.isfinite(v) else round(float(v), digits) for v in x])
+        return _keyed(
+            TENOR_KEYS, [None if not math.isfinite(v) else round(float(v), digits) for v in x]
+        )
 
     return {
         "daily_changes": per_tenor(f.n_changes, 0),
@@ -211,7 +221,10 @@ def spread_estimates(close: pd.DataFrame, par: pd.DataFrame, loadings: FloatArra
         "noise_sd_bp": per_tenor(f.noise_sd),
         "signal_sd_bp": per_tenor(f.signal_sd),
         "r2_on_curve_factors": per_tenor(f.r2),
-        "beta_on_curve_factors": _keyed(TENOR_KEYS, [[None if not math.isfinite(v) else round(float(v), 3) for v in row] for row in f.beta]),
+        "beta_on_curve_factors": _keyed(
+            TENOR_KEYS,
+            [[None if not math.isfinite(v) else round(float(v), 3) for v in row] for row in f.beta],
+        ),
         "level_ar1": per_tenor(f.ar1),
         "joint_tenors": list(factors.JOINT_TENORS),
         "joint_days": f.joint_n,
@@ -260,7 +273,10 @@ def estimate_period(
     tenor_sd = [same_window["tenor_sd_bp_per_day"][k] for k in TENOR_KEYS]
     out["intraday_share_of_daily_variance"] = _keyed(
         TENOR_KEYS,
-        [None if s is None else round(s * s * SESSION_MINUTES / (d * d), 3) for s, d in zip(sig, tenor_sd, strict=True)],
+        [
+            None if s is None else round(s * s * SESSION_MINUTES / (d * d), 3)
+            for s, d in zip(sig, tenor_sd, strict=True)
+        ],
     )
     return out
 
@@ -268,7 +284,7 @@ def estimate_period(
 def _ratio(val: dict[str, Any], cal: dict[str, Any]) -> float | None:
     if val["value"] is None or cal["value"] is None or cal["value"] == 0:
         return None
-    return round(val["value"] / cal["value"], 3)
+    return round(float(val["value"]) / float(cal["value"]), 3)
 
 
 def compare(cal: dict[str, Any], val: dict[str, Any]) -> dict[str, Any]:
@@ -277,19 +293,37 @@ def compare(cal: dict[str, Any], val: dict[str, Any]) -> dict[str, Any]:
 
     def scale(name: str, c: dict[str, Any], v: dict[str, Any]) -> None:
         r = _ratio(v, c)
-        rows.append({"parameter": name, "calibration": c["value"], "validation": v["value"], "ratio": r, "pass": None if r is None else bool(2 / 3 <= r <= 1.5)})
+        rows.append(
+            {
+                "parameter": name,
+                "calibration": c["value"],
+                "validation": v["value"],
+                "ratio": r,
+                "pass": None if r is None else bool(2 / 3 <= r <= 1.5),
+            }
+        )
 
-    for k, (c, v) in enumerate(zip(cal["curve"]["factor_sd_bp_per_day"], val["curve"]["factor_sd_bp_per_day"], strict=True)):
+    for k, (c, v) in enumerate(
+        zip(cal["curve"]["factor_sd_bp_per_day"], val["curve"]["factor_sd_bp_per_day"], strict=True)
+    ):
         scale(f"factor_sd_{k + 1}", c, v)
-    for subset, names in (("strict", ("robust_sigma",)), ("strict_d2c", ("robust_eta_long", "robust_eta_short"))):
+    for subset, names in (
+        ("strict", ("robust_sigma",)),
+        ("strict_d2c", ("robust_eta_long", "robust_eta_short")),
+    ):
         for name in names:
             for key, c, v in zip(ROW_KEYS, cal[subset][name], val[subset][name], strict=True):
                 scale(f"{subset}.{name}.{key}", c, v)
-    for key, c, v in zip(TENOR_KEYS, cal["strict_d2c"]["prints_per_day"], val["strict_d2c"]["prints_per_day"], strict=True):
+    for key, c, v in zip(
+        TENOR_KEYS,
+        cal["strict_d2c"]["prints_per_day"],
+        val["strict_d2c"]["prints_per_day"],
+        strict=True,
+    ):
         scale(f"strict_d2c.prints_per_day.{key}", c, v)
     cos = val["curve"]["cosine_with_given_loadings"]
     gap = abs(val["curve"]["explained_by_loadings"] - val["curve"]["explained_by_own_three"])
-    markout = []
+    markout: list[dict[str, Any]] = []
     for b, name in enumerate([*prints_mod.BUCKET_NAMES, "all"]):
         c = cal["strict_d2c"]["markout_raw"][b][-1]
         v = val["strict_d2c"]["markout_raw"][b][-1]
@@ -298,7 +332,16 @@ def compare(cal: dict[str, Any], val: dict[str, Any]) -> dict[str, Any]:
             continue
         overlap = c["lo"] <= v["hi"] and v["lo"] <= c["hi"]
         same = (c["value"] > 0) == (v["value"] > 0)
-        markout.append({"bucket": name, "calibration": c, "validation": v, "intervals_overlap": overlap, "same_sign": same, "pass": bool(overlap and same)})
+        markout.append(
+            {
+                "bucket": name,
+                "calibration": c,
+                "validation": v,
+                "intervals_overlap": overlap,
+                "same_sign": same,
+                "pass": bool(overlap and same),
+            }
+        )
     judged = [r for r in rows if r["pass"] is not None]
     return {
         "scale": rows,

@@ -14,6 +14,7 @@ years); the last two allow the stricter "spot, exact tenor" subset used as a sen
 
 from __future__ import annotations
 
+import pickle
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -258,10 +259,12 @@ def build_cache(raw_dir: str | Path, cache_dir: str | Path) -> tuple[pd.DataFram
         day = day_of(f)
         pk = cache / f"{day}.pkl"
         if pk.exists():
-            prints, counts = pd.read_pickle(pk)
+            with pk.open("rb") as handle:
+                prints, counts = pickle.load(handle)
         else:
             prints, counts = parse_file(f, day)
-            pd.to_pickle((prints, counts), pk)
+            with pk.open("wb") as handle:
+                pickle.dump((prints, counts), handle)
         frames.append(prints)
         funnel.append({"day": day, **counts})
     return pd.concat(frames, ignore_index=True), pd.DataFrame(funnel)

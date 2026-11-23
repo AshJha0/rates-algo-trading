@@ -45,11 +45,13 @@ def load_par_curve(path: str | Path) -> pd.DataFrame:
     """Par yields in bp at the desk tenors, indexed by ISO date; days with a gap dropped."""
     df = pd.read_csv(path)
     out = df.set_index("date")[list(PAR_COLUMNS)].astype("float64") * 100.0
-    out.columns = pd.Index(list(DESK_TENORS))
-    return out.dropna()
+    renamed = out.rename(columns=dict(zip(PAR_COLUMNS, DESK_TENORS, strict=True)))
+    return renamed.dropna()
 
 
-def daily_changes(levels: pd.DataFrame, start: str, end: str, max_gap_days: int = 5) -> pd.DataFrame:
+def daily_changes(
+    levels: pd.DataFrame, start: str, end: str, max_gap_days: int = 5
+) -> pd.DataFrame:
     """Changes between consecutive rows at most ``max_gap_days`` calendar days apart, with the
     later date in [start, end]."""
     idx = pd.to_datetime(levels.index)
@@ -126,7 +128,7 @@ def to_semi_bond(rate_bp: pd.DataFrame) -> pd.DataFrame:
     """Annual Act/360 rate (bp) to a semi-annual bond-basis rate (bp): r365 = r 365/360, then
     2 ((1 + r365)^(1/2) - 1). An approximation that ignores payment-date detail (< 0.1 bp)."""
     r = rate_bp * 1e-4 * 365.0 / 360.0
-    return 2.0 * (np.sqrt(1.0 + r) - 1.0) * 1e4
+    return 2.0 * ((1.0 + r) ** 0.5 - 1.0) * 1e4
 
 
 JOINT_TENORS = (5.0, 10.0, 30.0)
@@ -209,4 +211,6 @@ def spread_fit(
     else:
         loading, jsd, jshare = np.full(len(JOINT_TENORS), np.nan), float("nan"), float("nan")
         corr = np.full((len(JOINT_TENORS), len(JOINT_TENORS)), np.nan)
-    return SpreadFit(n, mean, sd, noise, signal, beta, r2, ar1, len(joint), loading, jsd, jshare, corr)
+    return SpreadFit(
+        n, mean, sd, noise, signal, beta, r2, ar1, len(joint), loading, jsd, jshare, corr
+    )
