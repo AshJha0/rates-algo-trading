@@ -134,6 +134,8 @@
       <validValue name="CapReached">4</validValue>
       <validValue name="LimitPrice">5</validValue>
       <validValue name="Stale" description="The venue's book is gapped, too old, or its session is down">6</validValue>
+      <validValue name="Throttled" description="The venue's order rate or order-to-trade limit is reached">7</validValue>
+      <validValue name="Outage" description="The venue rejected or ignored our orders and is excluded until its cool-down ends">8</validValue>
     </enum>
 
     <enum name="ChildState" encodingType="uint8" description="Router child order state (API_SPEC.md Section 15.4)">
@@ -221,6 +223,19 @@
     <field name="quantity" id="8" type="Quantity"/>
     <field name="orderCount" id="9" type="int32"/>
     <field name="timestampNanos" id="10" type="EpochNanos"/>
+  </sbe:message>
+
+  <!-- Added 2026-11-23 (round 6) without a version bump, as DR-RV-R01: TradePrint (4),
+       RouteDecisionLadder (83), RouteDecisionModel (84) and VenueExclusion Throttled (7) and
+       Outage (8). Nothing existing changes, so every recorded frame decodes as before. -->
+  <sbe:message name="TradePrint" id="4" description="One trade on a CLOB, as the venue's market data publishes it">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="instrumentId" id="2" type="InstrumentId"/>
+    <field name="venueSeqNo" id="3" type="SeqNo"/>
+    <field name="aggressorSide" id="4" type="Side" description="Side of the order that removed liquidity"/>
+    <field name="price" id="5" type="Decimal9"/>
+    <field name="quantity" id="6" type="Quantity"/>
+    <field name="timestampNanos" id="7" type="EpochNanos"/>
   </sbe:message>
 
   <sbe:message name="CurveInput" id="3" description="A curve instrument quote or fixing used by the bootstrap">
@@ -365,6 +380,43 @@
     <field name="passiveCost" id="26" type="Decimal9"/>
     <field name="aggressiveCost" id="27" type="Decimal9"/>
     <field name="chosenCost" id="28" type="Decimal9"/>
+  </sbe:message>
+
+  <!-- Round 6 ladder model (DR-R6-R01): each venue row of a decision taken with the ladder model
+       is preceded by one RouteDecisionModel and its levelCount RouteDecisionLadder frames, so a
+       decision journaled by the touch model (no 84 frames) reads exactly as before. -->
+  <sbe:message name="RouteDecisionModel" id="84" description="Ladder-model inputs and outputs of one venue row: limits, scorecard, learned queue rates, the sweep">
+    <field name="decisionId" id="1" type="int64"/>
+    <field name="row" id="2" type="uint8"/>
+    <field name="modelVersion" id="3" type="int32"/>
+    <field name="levelCount" id="4" type="uint8" description="RouteDecisionLadder frames that follow for this row"/>
+    <field name="limitPrice" id="5" type="Decimal9" description="Most aggressive price allowed: collar, parent limit and our own orders; 0 when nothing is allowed"/>
+    <field name="ownOpposite" id="6" type="Decimal9" description="Our best price on the other side at the venue, 0 if none"/>
+    <field name="rejectRate" id="7" type="Decimal9"/>
+    <field name="cancelRejectRate" id="8" type="Decimal9"/>
+    <field name="fillRatio" id="9" type="Decimal9" description="Filled over ordered quantity of our immediate-or-cancel children"/>
+    <field name="markout1s" id="10" type="Decimal9" description="Mean mid move after our fills, our side positive, price points"/>
+    <field name="markout5s" id="11" type="Decimal9"/>
+    <field name="markout30s" id="12" type="Decimal9"/>
+    <field name="ackLatencyNanos" id="13" type="int64"/>
+    <field name="cancelRate" id="14" type="Decimal9" description="Learned cancellation rate per unit queued per second"/>
+    <field name="calibrationObserved" id="15" type="Decimal9" description="Decayed fills observed in the queue bucket"/>
+    <field name="calibrationPredicted" id="16" type="Decimal9" description="Decayed fills the queue model predicted in the bucket"/>
+    <field name="queueBucket" id="17" type="uint8"/>
+    <field name="penalty" id="18" type="Decimal9" description="Scorecard penalty in the all-in price, price points per unit"/>
+    <field name="sweepQuantity" id="19" type="Quantity" description="Quantity the consolidated sweep takes on this row"/>
+    <field name="childLimit" id="20" type="Decimal9" description="Limit of the row's aggressive child: the last level it needs"/>
+    <field name="walkCost" id="21" type="Decimal9" description="Mean all-in cost per unit of the row's sweep levels, price points from the consolidated mid"/>
+    <field name="riskCost" id="22" type="Decimal9" description="Risk charge per unit of the passive leg"/>
+  </sbe:message>
+
+  <sbe:message name="RouteDecisionLadder" id="83" description="One opposite-side price level of a venue as the ladder model saw it">
+    <field name="decisionId" id="1" type="int64"/>
+    <field name="row" id="2" type="uint8"/>
+    <field name="level" id="3" type="uint8"/>
+    <field name="price" id="4" type="Decimal9"/>
+    <field name="displayed" id="5" type="Quantity"/>
+    <field name="own" id="6" type="Quantity" description="Our own resting quantity inside the displayed size"/>
   </sbe:message>
 
   <sbe:message name="ChildOrderTransition" id="82" description="Audit record of one router child order state change or applied fill">
