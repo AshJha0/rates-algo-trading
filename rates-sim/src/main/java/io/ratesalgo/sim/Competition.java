@@ -34,7 +34,7 @@ public final class Competition {
     for (int i = 0; i <= INTERVALS; i++) {
       final double z = -Z_RANGE + i * h;
       final double f = n * Gaussian.pdf(z) * Math.pow(1.0 - Gaussian.cdf(z), n - 1) * Math.exp(logSd * z);
-      sum += (i == 0 || i == INTERVALS) ? f : (i % 2 == 1 ? 4.0 * f : 2.0 * f);
+      sum += (i == 0 || i == INTERVALS) ? f : ((i & 1) == 1 ? 4.0 * f : 2.0 * f);
     }
     return sum * h / 3.0;
   }

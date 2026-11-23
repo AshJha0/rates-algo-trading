@@ -20,17 +20,21 @@ import java.util.List;
  * <pre>
  *   best bid = tick (ceil(D / tick) - 1),  best ask = tick (floor(D / tick) + 1), 5 levels a tick apart
  *   displayed(price) = target(level of price) - consumed(price),  consumed decays by 2^(-1s / half-life) per step
- *   another taker's trade of Q:  J += side (1 - pi) Y sigma sqrt(Q / V)
- *   the desk's order of Q:       I = Y sigma (f(W + side Q) - f(W)),  f(w) = sign(w) sqrt(|w| / V)
- *                                J += (1 - pi) I,  X1 += pi I / (pcpb L[T, level]),  W += side Q
- *   J and W decay by 2^(-1s / half-life) per step
+ *   f(w) = sign(w) Y sigma sqrt(|w| / V)                        the square-root law, signed
+ *   another taker's trade of Q:  J_others += side (1 - pi) f(Q),  J_others decays by 2^(-1s / half-life) per step
+ *   the desk's order of Q:       W_day += side Q,  W_recent += side Q
+ *   J  = J_others + (1 - pi) f(W_recent),   W_recent decays by 4^(-1s / half-life) per step
+ *   X1 = sum over books of pi f(W_day) / (pcpb L[T, level])
  * </pre>
  *
- * <p>W is the desk's recent signed marketable volume. For a single order W is zero and I is the
- * design's Y sigma sqrt(Q / V) exactly. For a sliced order the slices add up to the impact of
- * their total, less what has decayed, which is what a square-root law of metaorder size means;
- * applying the law to each slice on its own would charge twenty slices 4.5 times the block
- * (DECISIONS.md DR-R3-04, design document "Deviations and clarifications").
+ * <p>W_day is the desk's signed marketable volume in this book so far today, W_recent the same
+ * with decay. For a single order both are Q, so the book moves by the design's
+ * I = Y sigma sqrt(Q / V), a share pi of it for good, and the transient share halves in one
+ * half-life (W_recent falls to a quarter, its root to a half). For a sliced order the slices add
+ * up to the impact of their total: the square-root law is a law of metaorder size. Applying it to
+ * each slice on its own, as the design's section 8 reads literally, would charge twenty slices
+ * 4.5 times the block in permanent impact (DECISIONS.md DR-R3-04; design document, "Deviations
+ * and clarifications").
  *
  * <p>Queue rule for the desk's resting orders: an order waits behind the provider size displayed
  * at its price when it was entered. Takers at that price consume that size first, then the order,
@@ -99,8 +103,9 @@ public final class BookModel {
   private int processed = -1;
   private long clock;
   private long now;
-  private double transientJ;
-  private double ownVolume;
+  private double othersJ;
+  private double ownDayVolume;
+  private double ownRecentVolume;
   private double takerFilledUnits;
   private int nextId = 1;
 
@@ -202,17 +207,22 @@ public final class BookModel {
 
   /** D: the latent mid plus the transient displacement, at the book's current time. */
   public double displacedMid() {
-    return model.latentMid(instrument, clock) + transientJ;
+    return model.latentMid(instrument, clock) + transientDisplacement();
   }
 
-  /** J: the transient displacement of the book, quoted units. */
+  /** J: the transient displacement of the book, quoted units: other takers' part plus the desk's. */
   public double transientDisplacement() {
-    return transientJ;
+    return othersJ + (1.0 - permanentShare) * signedRoot(ownRecentVolume);
   }
 
-  /** W: the desk's recent signed marketable volume, quantity units, positive for buying. */
+  /** W_recent: the desk's signed marketable volume with decay, quantity units, positive for buying. */
   public double ownRecentVolume() {
-    return ownVolume;
+    return ownRecentVolume;
+  }
+
+  /** W_day: the desk's signed marketable volume in this book so far, quantity units. */
+  public double ownDayVolume() {
+    return ownDayVolume;
   }
 
   /** The providers' best bid. */
@@ -283,8 +293,8 @@ public final class BookModel {
       processed++;
       clock = processed * MarketSpec.STEP_NANOS;
       if (processed > 0) {
-        transientJ *= decay;
-        ownVolume *= decay;
+        othersJ *= decay;
+        ownRecentVolume *= decay * decay;
         for (int l = 0; l < levels; l++) {
           bidConsumed[l] *= decay;
           askConsumed[l] *= decay;
@@ -442,15 +452,16 @@ public final class BookModel {
 
   /**
    * Impact of a marketable quantity of the desk that has just traded: transient to the book,
-   * permanent to the level factor (see the class comment for the law). The venue simulator calls
+   * permanent to the level factor (see the class comment for the law). Must be called in time
+   * order across all books of a session. The venue simulator calls
    * this after its own matching engine has filled the order.
    */
   public void ownMarketable(final long nanos, final boolean buy, final double filledUnits) {
-    final double before = signedRoot(ownVolume);
-    ownVolume += buy ? filledUnits : -filledUnits;
-    final double impact = signedRoot(ownVolume) - before;
-    transientJ += (1.0 - permanentShare) * impact;
-    model.shiftLevel(nanos, permanentShare * impact * permanentPerPrice);
+    final double signed = buy ? filledUnits : -filledUnits;
+    final double before = signedRoot(ownDayVolume);
+    ownDayVolume += signed;
+    ownRecentVolume += signed;
+    model.shiftLevel(nanos, permanentShare * (signedRoot(ownDayVolume) - before) * permanentPerPrice);
     rekey();
   }
 
@@ -458,7 +469,7 @@ public final class BookModel {
   public void otherMarketable(final boolean buy, final double filledUnits) {
     if (filledUnits > 0.0) {
       final double impact = spec.peakImpact(book, filledUnits);
-      transientJ += (1.0 - permanentShare) * (buy ? impact : -impact);
+      othersJ += (1.0 - permanentShare) * (buy ? impact : -impact);
       rekey();
     }
   }

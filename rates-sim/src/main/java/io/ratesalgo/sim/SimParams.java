@@ -17,7 +17,7 @@ import java.util.Set;
  * read from {@code sim_v2_structure.json}. No simulation constant is declared in code.
  *
  * <p>Loading is strict. A missing key, an unknown key, a duplicate key, a unit text that does not
- * name the expected unit, or a value that breaks a stated identity (unit-length loadings, shares
+ * start with the expected unit, or a value that breaks a stated identity (unit-length loadings, shares
  * that sum to one, move = adverse move / informed fraction) refuses the file. Values that the
  * model does not read (the evidence entries of the calibration) must still be present, so that a
  * renamed entry is noticed.
@@ -80,7 +80,7 @@ public final class SimParams {
     /** Realised half-spread a break-even competitor needs, bp of client DV01. */
     ALL_IN_COST_BP("competitors", "all_in_cost", "bp of client DV01"),
     /** Treasury competitor median half-spread as a multiple of the swap median. */
-    TREASURY_HALF_SPREAD_MULTIPLE("competitors", "treasury_half_spread_multiple", "multiple of the swap median"),
+    TREASURY_HALF_SPREAD_MULTIPLE("competitors", "treasury_half_spread_multiple", "Treasury competitor median half-spread in bp of yield"),
     /** Exponent of size and tenor in the median half-spread; the design uses 0. */
     SIZE_AND_TENOR_SCALING("competitors", "size_and_tenor_scaling", "exponent"),
     /** Expected move against the winning dealer per trade, bp of yield. */
@@ -341,26 +341,35 @@ public final class SimParams {
       return (List<Object>) v;
     }
 
-    /** A calibration entry: checks its shape, its status and that the unit text names {@code unit}. */
+    /** A calibration entry: checks its shape, its status and that the unit text starts with {@code unit}. */
     Obj entry(final String key, final String unit) {
       final Obj e = child(key);
-      for (final String k : e.map.keySet()) {
+      e.checkEntry(unit);
+      return e;
+    }
+
+    /** An entry the model does not read (evidence of the calibration): it must be there and well formed. */
+    void evidence(final String key, final String unit) {
+      child(key).checkEntry(unit);
+    }
+
+    private void checkEntry(final String unit) {
+      for (final String k : map.keySet()) {
         if (!ENTRY_KEYS.contains(k)) {
-          throw new IllegalArgumentException(e.where + ": unknown key '" + k + "'");
+          throw new IllegalArgumentException(where + ": unknown key '" + k + "'");
         }
       }
-      if (!e.map.containsKey("value")) {
-        throw new IllegalArgumentException(e.where + ": missing key 'value'");
+      if (!map.containsKey("value")) {
+        throw new IllegalArgumentException(where + ": missing key 'value'");
       }
-      final String status = e.text("status");
+      final String status = text("status");
       if (!STATUSES.contains(status)) {
-        throw new IllegalArgumentException(e.where + ": unknown status '" + status + "'");
+        throw new IllegalArgumentException(where + ": unknown status '" + status + "'");
       }
-      final String u = e.text("unit");
-      if (unit != null && !u.contains(unit)) {
-        throw new IllegalArgumentException(e.where + ": unit '" + u + "' does not name '" + unit + "'");
+      final String u = text("unit");
+      if (!u.startsWith(unit)) {
+        throw new IllegalArgumentException(where + ": unit '" + u + "' does not start with '" + unit + "'");
       }
-      return e;
     }
 
     /** Requires the keys to be present without reading them. */
@@ -437,7 +446,7 @@ public final class SimParams {
     final int end = minuteOfDay(session.text("end_ny"), "session.end_ny");
     put(b, Scalar.SESSION_START_MINUTE_NY, start);
     put(b, Scalar.SESSION_MINUTES, session.number("minutes"));
-    if (end - start != b.scalars.get(Scalar.SESSION_MINUTES)) {
+    if (Math.abs(end - start - b.scalars.get(Scalar.SESSION_MINUTES)) > 1e-9) {
       throw new IllegalArgumentException("session: minutes is not end_ny minus start_ny");
     }
     session.done();
@@ -451,7 +460,7 @@ public final class SimParams {
     }
     loadingValue.done();
     b.factorDailySd = numbers(curve.entry("daily_sd", "bp per day").take("value"), FACTORS, "daily_sd");
-    curve.entry("session_variance_share", "share of the daily variance");
+    curve.evidence("session_variance_share", "share of the daily variance");
     b.factorSd =
         numbers(curve.entry("sd_per_sqrt_minute", "bp per sqrt-minute").take("value"), FACTORS, "sd_per_sqrt_minute");
     b.idioSd =
@@ -464,17 +473,17 @@ public final class SimParams {
     windows.done();
 
     final Obj spread = root.child("swap_spread_factor");
-    spread.entry("daily_sd", "bp per day");
+    spread.evidence("daily_sd", "bp per day");
     final Obj basis = root.child("futures_basis");
 
     final Obj rfq = root.child("rfq");
-    rfq.entry("market_prints_per_day_by_tenor", "prints per day");
-    rfq.entry("desk_inquiry_share", "desk swap RFQs per market D2C print");
+    rfq.evidence("market_prints_per_day_by_tenor", "D2C facility prints per day");
+    rfq.evidence("desk_inquiry_share", "desk swap RFQs per market D2C print");
     b.tenorMix = byTenor(rfq.entry("tenor_mix", "probability").child("value"), b.tenorsYears);
-    final Obj share = rfq.entry("time_of_day_share", "30-minute bin");
+    final Obj share = rfq.entry("time_of_day_share", "share of the day's prints per 30-minute bin");
     final List<Object> shares = share.list("value");
     b.timeOfDayShare = numbers(shares, shares.size(), "time_of_day_share");
-    final Obj sizes = rfq.entry("size_lognormal_by_tenor", "USD millions").child("value");
+    final Obj sizes = rfq.entry("size_lognormal_by_tenor", "notional in USD millions").child("value");
     b.sizeLogMean = new double[nodes];
     b.sizeLogSd = new double[nodes];
     b.sizeCapMm = new double[nodes];
@@ -489,13 +498,13 @@ public final class SimParams {
     sizes.done();
 
     final Obj comp = root.child("competitors");
-    comp.entry("winner_half_spread_rms", "bp of yield");
+    comp.evidence("winner_half_spread_rms", "bp of yield");
     final Obj dealers = comp.entry("dealers_min_max", "dealers asked, uniform from min to max inclusive");
     put(b, Scalar.DEALERS_MIN, dealers.number("value"));
     put(b, Scalar.DEALERS_MAX, numbers(dealers.take("interval"), 2, "dealers_min_max.interval")[1]);
 
     final Obj informed = root.child("informed_flow");
-    informed.entry("measured_raw_realised_half_spread_5min", "bp");
+    informed.evidence("measured_raw_realised_half_spread_5min", "bp");
     final Obj tiers = informed.entry("tier_weights_and_informed_probability", "weights of client tiers A, B, C");
     final double[] rest = numbers(tiers.take("interval"), TIERS - 1, "tier weights");
     b.tierWeight = new double[] {tiers.number("value"), rest[0], rest[1]};
