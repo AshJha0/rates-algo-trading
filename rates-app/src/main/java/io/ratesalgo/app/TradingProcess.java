@@ -418,6 +418,9 @@ public final class TradingProcess implements AutoCloseable {
       throw new UncheckedIOException(e);
     }
     final InboundRouter gatewayInbound = new InboundRouter(inboundRings, groupOf);
+    // a fill or reject the loop never received leaves its view of the venue wrong: stop trading
+    gatewayInbound.undeliveredHandler(
+        (templateId, group) -> requestHalt("a session message could not be delivered to the loop", true));
     final Clock fixClock = fixClock(clock);
     d2c = new VenueSession(AppIds.D2C_VENUE, AppIds.D2C_GATEWAY, new String[] {AppIds.COMP_ID, venues.d2c().compId()},
         "127.0.0.1", venues.d2c().port(), universe.instrumentMap(), gatewayInbound, fixClock, d2cRings);
