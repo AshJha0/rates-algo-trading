@@ -34,7 +34,14 @@ import java.util.List;
  * <p>One USD SOFR OIS curve is bootstrapped from the par rates of the swap templates. Each
  * CurveInput (template 3, kind ParSwap) that reaches the loop moves one pillar's quote and calls
  * {@link CurveBuilder#rebuild}, which re-solves only that pillar and the ones after it; then every
- * swap's par rate and every instrument's unit key-rate ladder are recomputed in place.
+ * swap's par rate and every instrument's unit key-rate ladder are recomputed in place. An input
+ * that repeats the pillar's quote only refreshes the reference time: the curve is the same, so the
+ * par rates and ladders would come out bit for bit the same.
+ *
+ * <p>A quote is checked before it touches the curve ({@link Options#maxQuoteMove()}); a quote that
+ * fails the check, or one the bootstrap cannot solve, is counted and dropped, the previous curve
+ * stays, and the reference time is not refreshed, so the staleness guard sees a feed that sends
+ * only bad quotes as stale. Nothing is thrown onto the loop thread.
  *
  * <ul>
  *   <li>Swaps: fair mid is the curve-implied par rate in percent; the ladder is the gradient of a
@@ -45,7 +52,10 @@ import java.util.List;
  *       the annuity's own sensitivity, under 0.1 percent of the DV01 for a 5 bp move.
  *   <li>Bonds: fair mid is the mid of the composite book; the quoting engine itself prefers the
  *       composite microprice (FairValueEngine) and falls back to this. The ladder is the gradient
- *       of the curve dirty price per unit face.
+ *       of the curve dirty price per unit face, at zero spread to the OIS curve by default. With
+ *       {@link Options#bondRiskAtMarket()} it is taken at the z-spread that reprices the market
+ *       dirty price (composite mid, or the starting price before there is a book), which is the
+ *       bond's risk as it trades.
  * </ul>
  *
  * <p>Ladders are mapped to the eight key-rate tenors by {@link Dv01Adapter}. After construction
@@ -54,10 +64,45 @@ import java.util.List;
  */
 public final class AnalyticsPricing implements FairValueSource, SensitivityProvider {
 
+  /**
+   * Settings of the binding.
+   *
+   * @param bondRiskAtMarket take bond ladders at the z-spread solved to the market dirty price
+   *     instead of at zero spread. Off by default: it changes every bond DV01 and with it every
+   *     recorded simulation figure.
+   * @param maxQuoteMove largest accepted change of a pillar quote from its previous value, as a
+   *     decimal rate. The default of 0.01 (100 bp) is far above any move between two updates and
+   *     well below a unit or decimal-place error (3.75 percent sent as 37.5 or 0.0375).
+   */
+  public record Options(boolean bondRiskAtMarket, double maxQuoteMove) {
+
+    /** Validates the band. */
+    public Options {
+      if (!(maxQuoteMove > 0.0)) {
+        throw new IllegalArgumentException("maxQuoteMove must be positive: " + maxQuoteMove);
+      }
+    }
+
+    /** Zero-spread bond risk and a 100 bp band: the behaviour before the options existed. */
+    public static Options defaults() {
+      return new Options(false, 0.01);
+    }
+  }
+
   /** Per-cent to decimal and Decimal9 together: a percent mantissa times this is a decimal rate. */
   private static final double MANTISSA_PERCENT_TO_DECIMAL = 1e-11;
 
+  /**
+   * Largest z-spread to the OIS curve taken as a real price, decimal: 500 bp. Treasuries trade
+   * within tens of basis points of SOFR swaps; a price that needs more than this is a broken book.
+   */
+  private static final double MAX_BOND_SPREAD = 0.05;
+
+  /** Decimal9 price per 100 to a double. */
+  private static final double MANTISSA_TO_PRICE = 1e-9;
+
   private final UsdUniverse universe;
+  private final Options options;
   private final int today;
   private final CurveBuilder builder;
   private final DiscountCurve curve;
@@ -72,6 +117,10 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
   private final OisSwap[] unitSwaps;
   private final FixedRateBond[] bonds;
   private final int[] bondSettlement;
+  private final int[] bondIds;
+  private final double[] bondAccrued;
+  private final double[] bondStartClean;
+  private final double[] bondSpread;
 
   /** Per dense directory index. */
   private final boolean[] isSwap;
@@ -86,6 +135,8 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
   private BookSource book;
   private long newestInput = NO_VALUE;
   private long rebuilds;
+  private long rejectedInputs;
+  private long failedSpreadSolves;
 
   /**
    * Builds the curve from the universe's starting par rates and the instrument directory.
@@ -94,7 +145,19 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
    * @param startNanos epoch nanoseconds the starting quotes are stamped with
    */
   public AnalyticsPricing(final UsdUniverse universe, final long startNanos) {
+    this(universe, startNanos, Options.defaults());
+  }
+
+  /**
+   * Builds the curve from the universe's starting par rates and the instrument directory.
+   *
+   * @param universe the instruments
+   * @param startNanos epoch nanoseconds the starting quotes are stamped with
+   * @param options bond risk mode and the quote band
+   */
+  public AnalyticsPricing(final UsdUniverse universe, final long startNanos, final Options options) {
     this.universe = universe;
+    this.options = options;
     this.today = universe.valuationDate();
     final List<UsdUniverse.SwapSpec> swaps = universe.swaps();
     final List<CurveInstrument> instruments = new ArrayList<>();
@@ -136,13 +199,22 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
     final List<UsdUniverse.BondSpec> bondSpecs = universe.bonds();
     bonds = new FixedRateBond[bondSpecs.size()];
     bondSettlement = new int[bondSpecs.size()];
+    bondIds = new int[bondSpecs.size()];
+    bondAccrued = new double[bondSpecs.size()];
+    bondStartClean = new double[bondSpecs.size()];
+    bondSpread = new double[bondSpecs.size()];
     for (int j = 0; j < bondSpecs.size(); j++) {
       final UsdUniverse.BondSpec b = bondSpecs.get(j);
-      final int dated = epochDay(b.bond().issueDate());
+      // interest runs from the dated date, which is before the issue date when the nominal date
+      // fell on a weekend; the published first coupon date checks the schedule
+      final int dated = epochDay(b.bond().datedDate());
       final int maturity = epochDay(b.bond().maturity());
       bonds[j] = new FixedRateBond(b.securityId(), BondConvention.UST, b.bond().couponMantissa() * MANTISSA_PERCENT_TO_DECIMAL,
-          dated, maturity);
-      bondSettlement[j] = Math.max(bonds[j].settlementDate(today), dated);
+          dated, epochDay(b.bond().firstCouponDate()), maturity);
+      bondSettlement[j] = Math.max(bonds[j].settlementDate(today), epochDay(b.bond().issueDate()));
+      bondIds[j] = b.instrumentId();
+      bondAccrued[j] = bondPricer.accrued(bonds[j], bondSettlement[j]);
+      bondStartClean[j] = b.initialMid() * MANTISSA_TO_PRICE;
       directory.add(Instrument.bond(b.instrumentId(), b.securityId(), CurrencyCode.USD,
           Math.max((maturity - today) / 365.25, 0.1), 2_500_000_000L));
     }
@@ -195,23 +267,71 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
     return rebuilds;
   }
 
+  /** Curve quotes dropped: outside the band, or not solvable; the curve kept its previous state. */
+  public long rejectedInputs() {
+    return rejectedInputs;
+  }
+
+  /**
+   * Times a bond's market price had no z-spread within 500 bp of the curve; the bond's ladder fell
+   * back to zero spread that time.
+   */
+  public long failedSpreadSolves() {
+    return failedSpreadSolves;
+  }
+
+  /** The settings the binding was built with. */
+  public Options options() {
+    return options;
+  }
+
+  /** The z-spread last used for a bond's ladder, decimal; zero unless bond risk is at market. */
+  public double bondSpread(final int instrumentId) {
+    final int i = directory.indexOf(instrumentId);
+    return i < 0 || isSwap[i] ? Double.NaN : bondSpread[kindIndex[i]];
+  }
+
   /**
    * One curve input from the loop. A ParSwap quote for a curve swap moves its pillar (value is the
    * par rate in percent as a Decimal9 mantissa); an unchanged quote only refreshes the reference
-   * time. Returns true if the instrument is a curve pillar.
+   * time; a quote further than {@link Options#maxQuoteMove()} from the pillar's previous quote, or
+   * one the bootstrap cannot solve, is counted in {@link #rejectedInputs()} and changes nothing.
+   * Returns true if the instrument is a curve pillar, whether or not the quote was accepted.
    */
   public boolean onCurveInput(final int instrumentId, final long valueMantissa, final long timestampNanos) {
     final int i = directory.indexOf(instrumentId);
     if (i < 0 || !isSwap[i] || pillarOfSwap[kindIndex[i]] < 0) {
       return false;
     }
-    newestInput = Math.max(newestInput, timestampNanos);
     final int pillar = pillarOfSwap[kindIndex[i]];
     final double quote = valueMantissa * MANTISSA_PERCENT_TO_DECIMAL;
-    if (Double.compare(quote, builder.instruments().get(pillar).quote()) != 0) {
-      builder.rebuild(pillar, quote);
-      rebuilds++;
+    final double previous = builder.instruments().get(pillar).quote();
+    // written so that a NaN or infinite quote fails the test too
+    if (!(Math.abs(quote - previous) <= options.maxQuoteMove())) {
+      rejectedInputs++;
+      return true;
     }
+    if (Double.compare(quote, previous) == 0) {
+      // same curve: par rates and ladders would be recomputed to the same bits, so only the
+      // reference time moves (and the bond spreads, which follow the book, when they are in use)
+      newestInput = Math.max(newestInput, timestampNanos);
+      for (int j = 0; j < swapIds.length; j++) {
+        referenceNanos[directory.indexOf(swapIds[j])] = newestInput;
+      }
+      if (options.bondRiskAtMarket()) {
+        recomputeBonds();
+      }
+      return true;
+    }
+    try {
+      builder.rebuild(pillar, quote);
+    } catch (final IllegalStateException | ArithmeticException ignored) {
+      // rebuild put the previous quote and pillars back; keep pricing off the last good curve
+      rejectedInputs++;
+      return true;
+    }
+    rebuilds++;
+    newestInput = Math.max(newestInput, timestampNanos);
     recompute();
     return true;
   }
@@ -228,12 +348,50 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
       swapPricer.pvGradient(swap, curve, curve, FixingHistory.EMPTY, today, gradient, gradient);
       ladder(gradient, unitLadder[i]);
     }
+    recomputeBonds();
+  }
+
+  private void recomputeBonds() {
     for (int j = 0; j < bonds.length; j++) {
-      final int i = directory.indexOf(universe.bonds().get(j).instrumentId());
+      final int i = directory.indexOf(bondIds[j]);
       java.util.Arrays.fill(gradient, 0.0);
-      bondPricer.dirtyFromCurveGradient(bonds[j], curve, bondSettlement[j], 0.01, gradient);
+      bondSpread[j] = 0.0;
+      boolean atMarket = false;
+      if (options.bondRiskAtMarket()) {
+        try {
+          final double spread =
+              bondPricer.marketGradient(bonds[j], curve, marketClean(j) + bondAccrued[j], bondSettlement[j], 0.01, gradient);
+          // NaN fails the comparison as well
+          atMarket = Math.abs(spread) <= MAX_BOND_SPREAD;
+          if (atMarket) {
+            bondSpread[j] = spread;
+          }
+        } catch (final IllegalStateException ignored) {
+          // no spread reprices this price
+        }
+        if (!atMarket) {
+          // a broken book: fall back to the curve's own risk rather than size hedges off it
+          failedSpreadSolves++;
+          java.util.Arrays.fill(gradient, 0.0);
+        }
+      }
+      if (!atMarket) {
+        bondPricer.dirtyFromCurveGradient(bonds[j], curve, bondSettlement[j], 0.01, gradient);
+      }
       ladder(gradient, unitLadder[i]);
     }
+  }
+
+  /** Market clean price per 100 of bond j: the composite mid, or the starting price without one. */
+  private double marketClean(final int j) {
+    if (book != null) {
+      final long bid = book.bestBid(bondIds[j]);
+      final long ask = book.bestAsk(bondIds[j]);
+      if (bid != NO_VALUE && ask != NO_VALUE) {
+        return 0.5 * (bid + ask) * MANTISSA_TO_PRICE;
+      }
+    }
+    return bondStartClean[j];
   }
 
   /** dValue/d ln P at the pillars into a per-unit key-rate ladder on the eight tenors. */
