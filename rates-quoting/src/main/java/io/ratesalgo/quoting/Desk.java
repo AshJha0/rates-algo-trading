@@ -7,6 +7,7 @@ import io.ratesalgo.api.HedgeOrderSink;
 import io.ratesalgo.api.Instrument;
 import io.ratesalgo.api.InstrumentDirectory;
 import io.ratesalgo.api.OutboundSink;
+import io.ratesalgo.api.ProductType;
 import io.ratesalgo.api.SensitivityProvider;
 import io.ratesalgo.common.time.Clock;
 import io.ratesalgo.hedge.AxeSource;
@@ -128,6 +129,7 @@ public final class Desk {
     }
     tiers = new TierTableControl(in.tierTable());
     final HitRateModel hitRate = new HitRateModel(in.preset(), in.quotingConfig().learningRate);
+    resolveVolatilityReference(in.directory(), in.quotingConfig());
     markouts = strategy.markoutStore() ? loadMarkouts(strategy) : null;
     final QuotingEngine.StrategyParts parts =
         new QuotingEngine.StrategyParts(
@@ -170,6 +172,39 @@ public final class Desk {
     killSwitch.register(packages);
     for (final Hedger h : hedgers) {
       killSwitch.register(h);
+    }
+  }
+
+  /**
+   * Sets each currency's volatility reference to the instrument nearest the strategy's reference
+   * tenor, swaps first, where the configuration names none.
+   */
+  private static void resolveVolatilityReference(final InstrumentDirectory directory, final QuotingConfig config) {
+    final double years = config.strategy().volatilityReferenceTenor();
+    if (Double.isNaN(years)) {
+      return;
+    }
+    for (int c = 0; c < CurrencyCode.COUNT; c++) {
+      if (config.volReference[c] != 0) {
+        continue;
+      }
+      int best = 0;
+      double bestScore = Double.MAX_VALUE;
+      for (int i = 0; i < directory.size(); i++) {
+        final Instrument inst = directory.byIndex(i);
+        if (inst.currency().index() != c || inst.type() == ProductType.FUTURE) {
+          continue;
+        }
+        // a swap is preferred: it is what the desk quotes most and it carries the spread factor
+        final double score = Math.abs(inst.tenorYears() - years) + (inst.type() == ProductType.SWAP ? 0.0 : 1_000.0);
+        if (score < bestScore) {
+          bestScore = score;
+          best = inst.id();
+        }
+      }
+      if (best != 0) {
+        config.volatilityReference(CurrencyCode.ofIndex(c), best);
+      }
     }
   }
 

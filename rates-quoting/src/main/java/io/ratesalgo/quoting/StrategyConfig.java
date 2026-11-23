@@ -53,6 +53,7 @@ public final class StrategyConfig {
   CoverModel coverModel;
   TierPriors tierPriors;
   HedgeAvailability hedgeAvailability = HedgeAvailability.ALL;
+  double volatilityTenorYears = Double.NaN;
 
   /** Every capability off. */
   public StrategyConfig() {}
@@ -193,6 +194,24 @@ public final class StrategyConfig {
   public StrategyConfig hedgeAvailability(final HedgeAvailability availability) {
     hedgeAvailability = availability == null ? HedgeAvailability.ALL : availability;
     return this;
+  }
+
+  /**
+   * Estimate each currency's realised volatility from the swap (or, without one, the bond) whose
+   * tenor is nearest {@code years}, unless {@code QuotingConfig.volatilityReference} already names
+   * an instrument. The desk resolves it from its instrument directory at start, so a preset need
+   * not know instrument ids. NaN, the default, leaves volatility at the baseline.
+   */
+  public StrategyConfig volatilityReferenceTenor(final double years) {
+    if (!(years > 0.0) && !Double.isNaN(years)) {
+      throw new IllegalArgumentException("volatility reference tenor " + years);
+    }
+    volatilityTenorYears = years;
+    return this;
+  }
+
+  public double volatilityReferenceTenor() {
+    return volatilityTenorYears;
   }
 
   /** Whether any switch that changes the RFQ price is on. */
