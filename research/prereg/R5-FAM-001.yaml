@@ -42,7 +42,7 @@ metric: >
   (spread capture, inventory marking, hedge cost, carry and roll, funding, fees, residual) per arm
   in USD per session and in bp of client DV01. Guard metrics below.
 
-baseline: default
+baseline: baseline
 treatments: [v2, v2_minus_cover_pricing, v2_minus_reservation_price, v2_minus_factor_hedging, v2_minus_internalisation, v2_minus_markouts, v2_minus_quote_protection, cover_only]
 
 data_set:
@@ -200,4 +200,4 @@ limitations: >
 author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
 date: 2026-11-23
 config: research/prereg/R5-FAM-001.config.yaml
-config_sha256: 9b6a2fc2ec6d70340aac25d02fc075913f984599bba402ef158e7b250773dcdc
+config_sha256: 55479fb5198ee293dce858cbdb21c996371da1ba9432c75ae7146131f7294ba0

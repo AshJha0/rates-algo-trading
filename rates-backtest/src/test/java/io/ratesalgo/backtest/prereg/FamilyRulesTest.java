@@ -37,21 +37,23 @@ class FamilyRulesTest {
       arms: {default: a, v2: b, x: c}
       """;
   static final String GOOD =
-      STATS
-          + "family: {id: F, q: 0.05, guards_vs_default: {client_dv01: 0.25},"
-          + " structural_declines: not_above_baseline, hypotheses: ["
+      STATS.replace("x: c}", "x: c, legacy: d}")
+          + "family: {id: F, q: 0.05, reference_arm: default, guards_vs_reference: {client_dv01: 0.25},"
+          + " descriptive_arms: [legacy], structural_declines: not_above_baseline, hypotheses: ["
           + "{id: H1, treatment: v2, baseline: default, guards: {quoted_share: 0.8}},"
           + " {id: H2, treatment: v2, baseline: x}]}\n"
-          + "rows: [{row: central, arms: [default, v2, x], sessions: 2000},"
+          + "rows: [{row: central, arms: [default, v2, x, legacy], sessions: 2000},"
           + " {row: 'impact:low', arms: [default, v2], sessions: 1000},"
           + " {row: 'impact:high', arms: [default, v2], sessions: 1000}]\n"
           + "excluded_band_points: [{row: 'drift_tau:low', reason: refused},"
           + " {row: 'drift_tau:high', reason: refused}]\n";
   static final String BAD =
       STATS
-          + "family: {q: 2, guards_vs_default: {speed: 1}, hypotheses: ["
+          + "family: {q: 2, reference_arm: ghost, guards_vs_reference: {speed: 1},"
+          + " descriptive_arms: [v2, ghost], hypotheses: ["
           + "{id: H1, treatment: v9, baseline: default, guards: {hit_rate: 0}},"
-          + " {id: H1, treatment: x, baseline: x}, {treatment: v2}]}\n"
+          + " {id: H1, treatment: x, baseline: x}, {treatment: v2}, {id: H3, treatment: ghost,"
+          + " baseline: default}]}\n"
           + "rows: [{row: 'impact:low', arms: [default], sessions: 2000},"
           + " {row: 'impact:low', arms: [default, nobody], sessions: 5000},"
           + " {row: 'speed:low', arms: [], sessions: 0}]\n"
@@ -80,15 +82,22 @@ class FamilyRulesTest {
     final Path repo = repo(dir);
     assertEquals(List.of(), problems(repo, PREREG, GOOD));
     assertEquals(
+        List.of("config family.reference_arm 'nobody' is not an arm of the design"),
+        problems(repo, PREREG, GOOD.replace("reference_arm: default", "reference_arm: nobody")));
+    assertEquals(
         List.of(
             "config family.id is missing",
             "config family.q must be a number between 0 and 1",
+            "config family.descriptive_arms: 'v2' is also the baseline or a treatment",
+            "config family.descriptive_arms: 'ghost' is not named under config arms",
             "hypothesis H1: treatment 'v9' is not an arm of the design",
             "hypothesis H1: guards.hit_rate must be a positive ratio",
             "config family: hypothesis id 'H1' is listed twice",
             "hypothesis H1: treatment and baseline are the same arm",
             "config family.hypotheses[2] needs an id",
-            "config family.guards_vs_default.speed is not a guard; known: [quoted_share, hit_rate, client_dv01]",
+            "hypothesis H3: treatment 'ghost' is a descriptive arm and enters no hypothesis",
+            "config family.reference_arm 'ghost' is a descriptive arm",
+            "config family.guards_vs_reference.speed is not a guard; known: [quoted_share, hit_rate, client_dv01]",
             "config rows[0] must be the central row",
             "config rows: 'impact:low' is listed twice",
             "config rows 'impact:low': arm 'nobody' is not an arm of the design",
@@ -116,15 +125,18 @@ class FamilyRulesTest {
     final String noDefault = PREREG.replace("baseline: default", "baseline: d").replace("treatments: [v2, x]", "treatments: [v2]");
     final String cfg =
         STATS.replace("default: a", "d: a")
-            + "family: {id: F, q: 0.05, guards_vs_default: {client_dv01: 1}, hypotheses: [{id: H1,"
+            + "family: {id: F, q: 0.05, guards_vs_default: {client_dv01: 1}, guards_vs_reference:"
+            + " {client_dv01: 1}, descriptive_arms: 3, hypotheses: [{id: H1,"
             + " treatment: v2, baseline: d, guards: [1]}]}\nrows: [{row: central, arms: [d],"
             + " sessions: 7}]\nexcluded_band_points: [{row: 'impact:low', reason: r},"
             + " {row: 'impact:high', reason: r}, {row: 'drift_tau:low', reason: r},"
             + " {row: 'drift_tau:high', reason: r}]\n";
     assertEquals(
         List.of(
+            "config family.descriptive_arms must be a list of arm names",
             "hypothesis H1: guards must be a mapping of guard name to minimum ratio",
-            "config family.guards_vs_default needs an arm named 'default'",
+            "config family.guards_vs_default is replaced by reference_arm and guards_vs_reference",
+            "config family.guards_vs_reference needs family.reference_arm",
             "config rows[0] (central) must run every arm of the design",
             "config rows[0] sessions 7 differs from data_set.sessions 2000"),
         problems(repo, noDefault, cfg));

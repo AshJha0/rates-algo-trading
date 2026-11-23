@@ -113,7 +113,7 @@ public final class SessionExecutor {
       java.util.Set.of(
           "rfqs", "quoted", "withdrawn", "won", "hedge_fills", "client_dv01_usd", "hedge_dv01_usd", "max_abs_net_dv01",
           "input_chain", "wall_ms", "config_hash", "rfqs_seen", "structural_declines", "desk_quotes", "child_orders",
-          "withdrawals", "cancels", "curve_rounds", "futures_dust_fills");
+          "withdrawals", "cancels", "curve_rounds", "futures_dust_fills", "unrouted_reports");
 
   /** Runs every row and arm of one seed and returns the session's record. */
   public Map<String, Object> run(

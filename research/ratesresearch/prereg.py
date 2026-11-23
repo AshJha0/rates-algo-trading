@@ -303,9 +303,13 @@ def _band_labels(raw: dict[str, Any]) -> list[str]:
 
 
 def _v2_family(
-    raw: dict[str, Any], cfg: dict[str, Any], arms: list[str], problems: list[str]
+    raw: dict[str, Any], cfg: dict[str, Any], tested: list[str], problems: list[str]
 ) -> None:
-    """A registered family (Java ``FamilyRules``): hypotheses, data-set rows, excluded points."""
+    """A registered family (Java ``FamilyRules``): hypotheses, data-set rows, excluded points.
+
+    ``tested`` is the baseline then the treatments; the family's descriptive arms are added.
+    """
+    arms = list(tested)
     fam = cfg.get("family")
     if not isinstance(fam, dict):
         problems.append("config family must be a mapping with id, q and hypotheses")
@@ -315,6 +319,25 @@ def _v2_family(
         q = fam.get("q")
         if not (_is_number(q) and 0 < q < 1):
             problems.append("config family.q must be a number between 0 and 1")
+        descriptive: list[str] = []
+        if fam.get("descriptive_arms") is not None:
+            if isinstance(fam["descriptive_arms"], list):
+                named = cfg.get("arms")
+                for o in fam["descriptive_arms"]:
+                    a = str(o)
+                    if a in tested:
+                        problems.append(
+                            f"config family.descriptive_arms: '{a}' is also the baseline or a"
+                            " treatment"
+                        )
+                    elif not isinstance(named, dict) or a not in named:
+                        problems.append(
+                            f"config family.descriptive_arms: '{a}' is not named under config arms"
+                        )
+                    descriptive.append(a)
+            else:
+                problems.append("config family.descriptive_arms must be a list of arm names")
+        arms += [a for a in dict.fromkeys(descriptive) if a not in arms]
         hyps = fam.get("hypotheses")
         if not isinstance(hyps, list) or not hyps:
             problems.append("config family.hypotheses must be a non-empty list")
@@ -329,17 +352,34 @@ def _v2_family(
                 problems.append(f"config family: hypothesis id '{hid}' is listed twice")
             seen.add(hid)
             for role in ("treatment", "baseline"):
-                if str(h.get(role)) not in arms:
+                a = str(h.get(role))
+                if a not in arms:
+                    problems.append(f"hypothesis {hid}: {role} '{a}' is not an arm of the design")
+                elif a in descriptive:
                     problems.append(
-                        f"hypothesis {hid}: {role} '{h.get(role)}' is not an arm of the design"
+                        f"hypothesis {hid}: {role} '{a}' is a descriptive arm and enters no"
+                        " hypothesis"
                     )
             if str(h.get("treatment")) == str(h.get("baseline")):
                 problems.append(f"hypothesis {hid}: treatment and baseline are the same arm")
             _guard_map(h.get("guards"), f"hypothesis {hid}: guards", problems)
         if fam.get("guards_vs_default") is not None:
-            _guard_map(fam["guards_vs_default"], "config family.guards_vs_default", problems)
-            if "default" not in arms:
-                problems.append("config family.guards_vs_default needs an arm named 'default'")
+            problems.append(
+                "config family.guards_vs_default is replaced by reference_arm and"
+                " guards_vs_reference"
+            )
+        reference = fam.get("reference_arm")
+        if reference is not None:
+            if str(reference) not in arms:
+                problems.append(
+                    f"config family.reference_arm '{reference}' is not an arm of the design"
+                )
+            elif str(reference) in descriptive:
+                problems.append(f"config family.reference_arm '{reference}' is a descriptive arm")
+        if fam.get("guards_vs_reference") is not None:
+            _guard_map(fam["guards_vs_reference"], "config family.guards_vs_reference", problems)
+            if reference is None:
+                problems.append("config family.guards_vs_reference needs family.reference_arm")
     sessions = raw["data_set"].get("sessions") if isinstance(raw.get("data_set"), dict) else None
     band = _band_labels(raw)
     rows = cfg.get("rows")

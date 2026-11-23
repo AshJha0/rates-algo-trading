@@ -42,13 +42,13 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class FamilyHarnessTest {
 
-  /** The toy arms under the family's names: default, v2 and x. */
+  /** The toy arms under the family's names: default, v2, x and the descriptive arm legacy. */
   public static final class FamilyToyArms implements ArmFactory {
     static final AtomicInteger CREATED = new AtomicInteger();
 
     static String toy(final String arm) {
       return switch (arm) {
-        case "default" -> "fixed";
+        case "default", "legacy" -> "fixed";
         case "v2" -> "fixed_hedged";
         case "x" -> "idle";
         default -> arm;
@@ -68,7 +68,8 @@ class FamilyHarnessTest {
 
     @Override
     public String configurationHash(final String arm) {
-      return Hashing.sha256Text(toy(arm));
+      // legacy runs the default arm's toy under a configuration of its own
+      return Hashing.sha256Text("legacy".equals(arm) ? arm : toy(arm));
     }
   }
 
@@ -80,15 +81,15 @@ class FamilyHarnessTest {
     final Path config = repo.resolve("research/prereg/" + id + ".config.yaml");
     Files.writeString(
         config,
-        "arms: {default: a, v2: b, x: c}\n"
+        "arms: {default: a, v2: b, x: c, legacy: d}\n"
             + "seeds: {pilot_base: 29000000}\n"
             + "statistics: {block_sessions: 21, resamples: 200, bootstrap_seed: 5}\n"
             + "smallest_effect: {usd_per_session: 1000}\n"
-            + "family: {id: " + id + ", q: 0.05, guards_vs_default: {client_dv01: 0.25},"
-            + " structural_declines: not_above_baseline, hypotheses: ["
+            + "family: {id: " + id + ", q: 0.05, reference_arm: default, guards_vs_reference: {client_dv01: 0.25},"
+            + " descriptive_arms: [legacy], structural_declines: not_above_baseline, hypotheses: ["
             + "{id: H1, treatment: v2, baseline: default, guards: {quoted_share: 0.8}},"
             + " {id: H2, treatment: v2, baseline: x}]}\n"
-            + "rows: [{row: central, arms: [default, v2, x], sessions: 2000},"
+            + "rows: [{row: central, arms: [default, v2, x, legacy], sessions: 2000},"
             + " {row: 'winner_half_spread:low', arms: [default, v2], sessions: 1000}]\n"
             + "excluded_band_points: [{row: 'winner_half_spread:high', reason: refused at start-up}]\n",
         StandardCharsets.UTF_8);
@@ -132,6 +133,7 @@ class FamilyHarnessTest {
     central.put("default", arm(base, 10, 3));
     central.put("v2", arm(base + 50.0 + 10.0 * Math.cos(n), 10, 0));
     central.put("x", arm(base + 50.0 + 5.0 * Math.cos(3.0 * n), 10, 0));
+    central.put("legacy", arm(base - 20.0, 3, 7));
     final Map<String, Object> rows = new LinkedHashMap<>();
     rows.put("central", Map.of("journal_sha256", "j" + seed, "journal_chain", "c" + seed, "arms", central));
     if (n < 1000) {
@@ -166,15 +168,15 @@ class FamilyHarnessTest {
     };
     final HarnessFixtures.Run r = HarnessFixtures.run(args);
     assertEquals(ExperimentRunner.OK, r.code(), r.out());
-    assertTrue(r.out().contains("family F-1, 2 hypotheses, 2 rows, 8000 arm-sessions in all"), r.out());
-    assertTrue(r.out().contains("3 rows recorded"), r.out());
+    assertTrue(r.out().contains("family F-1, 2 hypotheses, 2 rows, 10000 arm-sessions in all"), r.out());
+    assertTrue(r.out().contains("4 rows recorded"), r.out());
     // the table LedgerCli --bh family:F-1 prints is printed by the run
     assertTrue(r.out().contains("family family:F-1 (q = 0.05): 2 tests from 2 ledger rows"), r.out());
     assertTrue(r.out().contains("  F-1 H1 v2_vs_default  seq 1"), r.out());
     assertTrue(r.out().contains("  F-1 H2 v2_vs_x  seq 2"), r.out());
 
     final List<Map<String, Object>> rows = new Ledger(Path.of(ledger)).entries();
-    assertEquals(3, rows.size());
+    assertEquals(4, rows.size());
     final Object run = rows.get(0).get("family_run");
     for (final Map<String, Object> row : rows) {
       assertEquals("F-1", row.get("family_id"));
@@ -184,13 +186,22 @@ class FamilyHarnessTest {
       assertEquals(DataSets.sessionsKey(BASE, 0, 2000), row.get("data_set"));
       assertEquals("confirmation", row.get("scope"));
     }
-    assertEquals(List.of("H1", "H2", "D0"), rows.stream().map(e -> e.get("hypothesis_id")).toList());
+    assertEquals(List.of("H1", "H2", "D0", "D1"), rows.stream().map(e -> e.get("hypothesis_id")).toList());
     assertEquals("description", rows.get(2).get("verdict"));
+    assertEquals("default", Yaml.asMap(rows.get(2).get("results"), "d0").get("arm"));
+    // the descriptive arm is its own description row, with no test and outside the BH table
+    final Map<String, Object> d1 = Yaml.asMap(rows.get(3).get("results"), "d1");
+    assertEquals("description", rows.get(3).get("verdict"));
+    assertEquals("legacy", d1.get("arm"));
+    assertEquals(ExperimentSummary.DESCRIPTIVE_ARMS_NOTE, d1.get("note"));
+    assertTrue(Yaml.asMap(d1.get("description"), "legacy").containsKey("mean_pnl_usd"));
+    assertFalse(d1.containsKey("primary"));
+    assertNull(rows.get(3).get("guards_min"));
     final Map<String, Object> h1 = Yaml.asMap(rows.get(0).get("results"), "results");
     final Map<String, Object> c = Yaml.asMap(Yaml.asMap(h1.get("primary"), "primary").get("v2_vs_default"), "c");
     assertEquals(2000L, ((Number) c.get("n")).longValue());
     final Map<String, Object> guards = Yaml.asMap(c.get("guards"), "guards");
-    assertEquals(1.0, ((Number) guards.get("client_dv01_vs_default_ratio")).doubleValue(), 0.0);
+    assertEquals(1.0, ((Number) guards.get("client_dv01_vs_reference_ratio")).doubleValue(), 0.0);
     assertEquals(1.0, ((Number) guards.get("structural_declines_not_above_baseline_ratio")).doubleValue(), 0.0);
     assertNotNull(c.get("minimum_detectable_difference_80"));
     // the sensitivity row is description: a sign and an interval, no p-value
@@ -201,7 +212,7 @@ class FamilyHarnessTest {
     assertFalse(low.containsKey("paired_p"));
     assertNull(Yaml.asMap(rows.get(1).get("results"), "r2").get("band_secondary"), "v2 against x is not in the band row");
     final Map<String, Object> min = Yaml.asMap(rows.get(0).get("guards_min"), "min");
-    assertEquals(Map.of("quoted_share", 0.8, "client_dv01_vs_default", 0.25, "structural_declines_not_above_baseline", 1.0),
+    assertEquals(Map.of("quoted_share", 0.8, "client_dv01_vs_reference", 0.25, "structural_declines_not_above_baseline", 1.0),
         min.entrySet().stream().collect(java.util.stream.Collectors.toMap(Map.Entry::getKey,
             e -> ((Number) e.getValue()).doubleValue())));
     assertTrue(Files.isRegularFile(cp.summaryFile()));
@@ -209,7 +220,7 @@ class FamilyHarnessTest {
     // one look at the data set, said so by the looks report
     final String looks = DataSets.report(rows);
     assertTrue(looks.contains(": 1 look\n"), looks);
-    assertTrue(looks.contains("  look 1  seq 1..3  F-1  confirmation  family F-1, 3 rows  (recorded as look 1)"), looks);
+    assertTrue(looks.contains("  look 1  seq 1..4  F-1  confirmation  family F-1, 4 rows  (recorded as look 1)"), looks);
     assertFalse(looks.contains("warning"), looks);
     final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     assertEquals(0, LedgerCli.run(new String[] {"--ledger", ledger, "--bh", "family:F-1"},
@@ -233,14 +244,17 @@ class FamilyHarnessTest {
     final SessionDesign d = SessionDesign.of(p, root);
     assertEquals(31_000_000L, d.seedBase());
     assertEquals(2000, d.sessions());
-    assertEquals(9, d.arms().size());
+    assertEquals(10, d.arms().size());
+    assertEquals("legacy", d.arms().get(9));
+    assertEquals(List.of("legacy"), d.plan().descriptiveArms());
+    assertEquals("baseline", d.plan().referenceArm());
     assertEquals("R5-FAM-001", d.plan().familyId());
     assertEquals(8, d.plan().hypotheses().size());
-    assertEquals(22_000L, d.plan().armSessions());
+    assertEquals(24_000L, d.plan().armSessions());
     assertEquals(4_000L, d.plan().journals());
     assertEquals(List.of("central", "all_in_cost:low", "winner_half_spread:low"),
         d.plan().rows().stream().map(SessionDesign.RowPlan::label).toList());
-    assertEquals(List.of("default", "v2"), d.row("all_in_cost:low").arms());
+    assertEquals(List.of("baseline", "v2"), d.row("all_in_cost:low").arms());
     assertEquals(1000, d.row("winner_half_spread:low").sessions());
     assertNull(d.row("impact:low"));
     // both excluded points are what the pre-registration says: refused at start-up
@@ -248,10 +262,13 @@ class FamilyHarnessTest {
     assertEquals(List.of(), ExperimentRunner.exclusionRefusals(d));
     assertEquals(3, ExperimentRunner.rows(d).size());
     final SessionDesign.Hypothesis h1 = d.plan().hypotheses().get(0);
-    assertEquals("v2_vs_default", h1.comparison());
+    assertEquals("v2_vs_baseline", h1.comparison());
+    for (final SessionDesign.Hypothesis h : d.plan().hypotheses()) {
+      assertFalse(h.treatment().equals("legacy") || h.baseline().equals("legacy"), h.id());
+    }
     assertEquals(0.25, h1.guards().get("hit_rate"), 0.0);
     assertTrue(d.plan().structuralGuard());
-    assertEquals(0.25, d.plan().guardsVsDefault().get("client_dv01"), 0.0);
+    assertEquals(0.25, d.plan().guardsVsReference().get("client_dv01"), 0.0);
     assertNull(ExperimentRunner.supersededRefusal(p, d));
     // and it is unsigned: the runner refuses it
     final HarnessFixtures.Run run =
@@ -387,12 +404,12 @@ class FamilyHarnessTest {
             "pilot", "--prereg", prereg, "--repo", repo.toString(), "--out", out.toString(), "--factory",
             FamilyToyArms.class.getName(), "--pilot", "2", "--timing-only", "--in-process", "--workers", "8");
     assertEquals(ExperimentRunner.OK, r.code(), r.out());
-    assertTrue(r.out().contains("arms [default, v2, x]"), r.out());
+    assertTrue(r.out().contains("arms [default, v2, x, legacy]"), r.out());
     assertTrue(r.out().contains("timing only: no P&L is written or read"), r.out());
     assertTrue(r.out().contains("config_hashes_distinct: true"), r.out());
     assertTrue(r.out().contains("inputs_identical_across_arms: true"), r.out());
-    assertTrue(r.out().contains("\"arm_sessions\":8000"), r.out());
-    assertTrue(r.out().contains("\"hours_at_25_s_per_arm_session\":6.9"), r.out());
+    assertTrue(r.out().contains("\"arm_sessions\":10000"), r.out());
+    assertTrue(r.out().contains("\"hours_at_25_s_per_arm_session\":8.7"), r.out());
     for (final String forbidden : List.of("position_pnl", "mean_pnl", "spread_capture", "mean_difference", "difference_sd", "session_sd")) {
       assertFalse(r.out().contains(forbidden), forbidden + " in " + r.out());
     }
@@ -416,12 +433,13 @@ class FamilyHarnessTest {
   }
 
   @Test
-  void theFamilySummaryJudgesGuardsAgainstTheBaselineAndTheDefaultArm() {
+  void theFamilySummaryJudgesGuardsAgainstTheBaselineAndTheReferenceArm() {
     final SessionDesign.Plan plan =
         new SessionDesign.Plan(
-            List.of(new SessionDesign.RowPlan("central", List.of("default", "v2", "x"), 2000)),
+            List.of(new SessionDesign.RowPlan("central", List.of("default", "v2", "x", "legacy"), 2000)),
             List.of(new SessionDesign.Hypothesis("H1", "x", "default", Map.of("client_dv01", 0.5))),
-            "F", 0.05, Map.of("client_dv01", 0.25), true, Map.of(), null);
+            "F", 0.05, "v2", Map.of("client_dv01", 0.25, "quoted_share", 0.5, "hit_rate", 0.5), List.of("legacy"), true,
+            Map.of(), null);
     final SessionDesign design =
         new SessionDesign("F", BASE, 0, 4, "default", List.of("v2", "x"), List.of(), 2, 200, 5L, 1000.0, 29_000_000L, false,
             Map.of(), plan);
@@ -438,14 +456,26 @@ class FamilyHarnessTest {
     final Map<String, Object> g = Yaml.asMap(c.get("guards"), "g");
     assertEquals(0.0, ((Number) g.get("structural_declines_not_above_baseline_ratio")).doubleValue(), 0.0);
     assertEquals(9L * 4, ((Number) g.get("treatment_structural_declines")).longValue());
-    assertEquals(Map.of("client_dv01", 0.5, "client_dv01_vs_default", 0.25, "structural_declines_not_above_baseline", 1.0),
+    assertEquals(Map.of("client_dv01", 0.5, "client_dv01_vs_reference", 0.25, "quoted_share_vs_reference", 0.5,
+            "hit_rate_vs_reference", 0.5, "structural_declines_not_above_baseline", 1.0),
         ExperimentSummary.guardMinimums(plan.hypotheses().get(0), plan));
+    // every guard against the reference arm (v2 here), not against a fixed arm name
+    assertEquals(1.0, ((Number) g.get("client_dv01_vs_reference_ratio")).doubleValue(), 0.0);
+    assertEquals(1.0, ((Number) g.get("quoted_share_vs_reference_ratio")).doubleValue(), 0.0);
+    assertEquals(1.0, ((Number) g.get("hit_rate_vs_reference_ratio")).doubleValue(), 0.0);
+    assertEquals(9L * 4, ((Number) g.get("treatment_structural_declines")).longValue());
     // delta_80 = (z_0.975 + z_0.8) sd / sqrt(n), and at a = 0.05 / m for one hypothesis the same
     final double sd = ((Number) c.get("sd_difference")).doubleValue();
     final Map<String, Object> mde = Yaml.asMap(c.get("minimum_detectable_difference_80"), "mde");
     assertEquals(ExperimentSummary.round((1.959964 + 0.841621) * sd / 2.0, 2), ((Number) mde.get("at_a_0_05")).doubleValue(), 0.011);
     assertEquals(mde.get("at_a_0_05"), mde.get("at_a_0_05_over_m"));
     assertEquals(Map.of(), r.get("band_secondary"));
-    assertNotNull(r.get("descriptive_baseline"));
+    // the reference arm is described; the descriptive arm is reported apart, outside every test
+    assertEquals(Yaml.asMap(Yaml.asMap(Yaml.asMap(r.get("rows"), "rows").get("central"), "c").get("arms"), "a").get("v2"),
+        r.get("descriptive_baseline"));
+    assertEquals(List.of("legacy"), List.copyOf(Yaml.asMap(r.get("descriptive_arms"), "d").keySet()));
+    assertEquals(ExperimentSummary.DESCRIPTIVE_ARMS_NOTE, r.get("descriptive_arms_note"));
+    assertThrows(IllegalArgumentException.class, () -> ExperimentSummary.Arm.collect(Map.of(), "central", "x")
+        .guard("speed"));
   }
 }

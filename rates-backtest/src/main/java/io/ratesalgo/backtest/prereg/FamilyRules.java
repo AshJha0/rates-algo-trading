@@ -16,12 +16,14 @@ import java.util.Set;
  *   family:
  *     id: R5-FAM-001
  *     q: 0.05
- *     hypotheses: [{id: H1, treatment: v2, baseline: default, guards: {quoted_share: 0.8, ...}}, ...]
- *     guards_vs_default: {client_dv01: 0.25}        optional; needs an arm named default
+ *     hypotheses: [{id: H1, treatment: v2, baseline: baseline, guards: {quoted_share: 0.8, ...}}, ...]
+ *     reference_arm: baseline                       optional; the arm the description reads
+ *     guards_vs_reference: {client_dv01: 0.25}      optional; needs reference_arm
+ *     descriptive_arms: [legacy]                    optional; run and described, in no hypothesis
  *     structural_declines: not_above_baseline       optional
  *   rows:
- *     - {row: central, arms: [every arm], sessions: data_set.sessions}
- *     - {row: "all_in_cost:low", arms: [default, v2], sessions: 1000}
+ *     - {row: central, arms: [every arm, descriptive ones too], sessions: data_set.sessions}
+ *     - {row: "all_in_cost:low", arms: [baseline, v2], sessions: 1000}
  *   excluded_band_points:
  *     - {row: "all_in_cost:high", reason: why it is not run}
  * </pre>
@@ -44,11 +46,11 @@ public final class FamilyRules {
    *
    * @param raw the pre-registration
    * @param config its config
-   * @param arms baseline then treatments
+   * @param tested baseline then treatments; the family's descriptive arms are added to them
    */
   public static void validate(
-      final Map<String, Object> raw, final Map<String, Object> config, final List<String> arms, final List<String> problems) {
-    family(config.get("family"), arms, problems);
+      final Map<String, Object> raw, final Map<String, Object> config, final List<String> tested, final List<String> problems) {
+    final List<String> arms = family(config.get("family"), config.get("arms"), tested, problems);
     final Object sessions = raw.get("data_set") instanceof Map<?, ?> ds ? ds.get("sessions") : null;
     final List<String> band = bandLabels(raw);
     final List<String> run = rows(config.get("rows"), arms, sessions, band, problems);
@@ -84,16 +86,40 @@ public final class FamilyRules {
     }
   }
 
-  private static void family(final Object raw, final List<String> arms, final List<String> problems) {
+  /** Checks the family mapping and returns every arm of the design, the descriptive ones last. */
+  private static List<String> family(
+      final Object raw, final Object configArms, final List<String> tested, final List<String> problems) {
+    final List<String> arms = new ArrayList<>(tested);
     if (!(raw instanceof Map<?, ?> fam)) {
       problems.add("config family must be a mapping with id, q and hypotheses");
-      return;
+      return arms;
     }
     if (blank(fam.get("id"))) {
       problems.add("config family.id is missing");
     }
     if (!(fam.get("q") instanceof Number q) || !(q.doubleValue() > 0.0 && q.doubleValue() < 1.0)) {
       problems.add("config family.q must be a number between 0 and 1");
+    }
+    final List<String> descriptive = new ArrayList<>();
+    if (fam.get("descriptive_arms") != null) {
+      if (fam.get("descriptive_arms") instanceof List<?> d) {
+        for (final Object o : d) {
+          final String a = String.valueOf(o);
+          if (tested.contains(a)) {
+            problems.add("config family.descriptive_arms: '" + a + "' is also the baseline or a treatment");
+          } else if (!(configArms instanceof Map<?, ?> named) || !named.containsKey(a)) {
+            problems.add("config family.descriptive_arms: '" + a + "' is not named under config arms");
+          }
+          descriptive.add(a);
+        }
+      } else {
+        problems.add("config family.descriptive_arms must be a list of arm names");
+      }
+    }
+    for (final String a : descriptive) {
+      if (!arms.contains(a)) {
+        arms.add(a);
+      }
     }
     final List<?> hyps;
     if (fam.get("hypotheses") instanceof List<?> l && !l.isEmpty()) {
@@ -113,8 +139,11 @@ public final class FamilyRules {
         problems.add("config family: hypothesis id '" + id + "' is listed twice");
       }
       for (final String role : List.of("treatment", "baseline")) {
-        if (!arms.contains(String.valueOf(h.get(role)))) {
-          problems.add("hypothesis " + id + ": " + role + " '" + h.get(role) + "' is not an arm of the design");
+        final String a = String.valueOf(h.get(role));
+        if (!arms.contains(a)) {
+          problems.add("hypothesis " + id + ": " + role + " '" + a + "' is not an arm of the design");
+        } else if (descriptive.contains(a)) {
+          problems.add("hypothesis " + id + ": " + role + " '" + a + "' is a descriptive arm and enters no hypothesis");
         }
       }
       if (String.valueOf(h.get("treatment")).equals(String.valueOf(h.get("baseline")))) {
@@ -123,11 +152,23 @@ public final class FamilyRules {
       guardMap(h.get("guards"), "hypothesis " + id + ": guards", problems);
     }
     if (fam.get("guards_vs_default") != null) {
-      guardMap(fam.get("guards_vs_default"), "config family.guards_vs_default", problems);
-      if (!arms.contains("default")) {
-        problems.add("config family.guards_vs_default needs an arm named 'default'");
+      problems.add("config family.guards_vs_default is replaced by reference_arm and guards_vs_reference");
+    }
+    final Object reference = fam.get("reference_arm");
+    if (reference != null) {
+      if (!arms.contains(String.valueOf(reference))) {
+        problems.add("config family.reference_arm '" + reference + "' is not an arm of the design");
+      } else if (descriptive.contains(String.valueOf(reference))) {
+        problems.add("config family.reference_arm '" + reference + "' is a descriptive arm");
       }
     }
+    if (fam.get("guards_vs_reference") != null) {
+      guardMap(fam.get("guards_vs_reference"), "config family.guards_vs_reference", problems);
+      if (reference == null) {
+        problems.add("config family.guards_vs_reference needs family.reference_arm");
+      }
+    }
+    return arms;
   }
 
   private static List<String> rows(

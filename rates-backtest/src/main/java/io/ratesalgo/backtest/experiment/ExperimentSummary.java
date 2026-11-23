@@ -30,6 +30,10 @@ public final class ExperimentSummary {
 
   private ExperimentSummary() {}
 
+  /** What a family's descriptive arms are, printed with them. */
+  static final String DESCRIPTIVE_ARMS_NOTE =
+      "description only: in no hypothesis, no test and outside the family's error control";
+
   /**
    * The results of a complete run.
    *
@@ -81,8 +85,8 @@ public final class ExperimentSummary {
    * The results of a complete run of a registered family, computed once: per data-set row each
    * arm's summary over the sessions that row has; per hypothesis the paired comparison on the
    * central row with its guards and its minimum detectable difference; for each sensitivity row,
-   * the comparisons whose two arms it runs, as description (sign and interval, no p-value); and
-   * the default arm's description.
+   * the comparisons whose two arms it runs, as description (sign and interval, no p-value); the
+   * reference arm's description; and each descriptive arm's summary, outside every test.
    *
    * @param sessions every registered session's record, in seed order
    */
@@ -150,14 +154,23 @@ public final class ExperimentSummary {
     out.put(
         "band_secondary_note",
         "description only: sign and interval at each sensitivity row; not part of the family's error control");
-    if (central.containsKey("default")) {
-      out.put("descriptive_baseline", Yaml.asMap(Yaml.asMap(rows.get(BandParameters.CENTRAL), "row").get("arms"), "arms").get("default"));
+    final Map<String, Object> centralArms = Yaml.asMap(Yaml.asMap(rows.get(BandParameters.CENTRAL), "row").get("arms"), "arms");
+    if (plan.referenceArm() != null && central.containsKey(plan.referenceArm())) {
+      out.put("descriptive_baseline", centralArms.get(plan.referenceArm()));
+    }
+    if (!plan.descriptiveArms().isEmpty()) {
+      final Map<String, Object> described = new LinkedHashMap<>();
+      for (final String arm : plan.descriptiveArms()) {
+        described.put(arm, centralArms.get(arm));
+      }
+      out.put("descriptive_arms", described);
+      out.put("descriptive_arms_note", DESCRIPTIVE_ARMS_NOTE);
     }
     return out;
   }
 
   /**
-   * The family's guards beside the hypothesis' own: the treatment's client DV01 over the default
+   * The family's guards beside the hypothesis' own: the treatment's client DV01 over the reference
    * arm's, and whether it declines no more RFQs for a structural reason than its baseline (1 when
    * it does not, 0 when it does, so that every guard is a ratio checked against a minimum).
    */
@@ -168,8 +181,11 @@ public final class ExperimentSummary {
     final Map<String, Object> guards = (Map<String, Object>) c.get("guards");
     final Arm t = central.get(h.treatment());
     final Arm b = central.get(h.baseline());
-    if (!plan.guardsVsDefault().isEmpty() && central.containsKey("default")) {
-      guards.put("client_dv01_vs_default_ratio", ratio(t.sumClientDv01(), central.get("default").sumClientDv01()));
+    final Arm reference = plan.referenceArm() == null ? null : central.get(plan.referenceArm());
+    if (reference != null) {
+      for (final String g : plan.guardsVsReference().keySet()) {
+        guards.put(g + "_vs_reference_ratio", ratio(t.guard(g), reference.guard(g)));
+      }
     }
     if (plan.structuralGuard()) {
       guards.put("structural_declines_not_above_baseline_ratio", t.structuralDeclines <= b.structuralDeclines ? 1.0 : 0.0);
@@ -181,8 +197,8 @@ public final class ExperimentSummary {
   /** The guard minimums a family's hypothesis row is judged by. */
   public static Map<String, Object> guardMinimums(final SessionDesign.Hypothesis h, final SessionDesign.Plan plan) {
     final Map<String, Object> min = new LinkedHashMap<>(h.guards());
-    for (final Map.Entry<String, Double> e : plan.guardsVsDefault().entrySet()) {
-      min.put(e.getKey() + "_vs_default", e.getValue());
+    for (final Map.Entry<String, Double> e : plan.guardsVsReference().entrySet()) {
+      min.put(e.getKey() + "_vs_reference", e.getValue());
     }
     if (plan.structuralGuard()) {
       min.put("structural_declines_not_above_baseline", 1.0);
@@ -356,6 +372,16 @@ public final class ExperimentSummary {
 
     double hitRate() {
       return quoted == 0 ? 0.0 : (double) won / quoted;
+    }
+
+    /** The value a guard of this name compares, summed or pooled over the arm's sessions. */
+    double guard(final String name) {
+      return switch (name) {
+        case "quoted_share" -> quotedShare();
+        case "hit_rate" -> hitRate();
+        case "client_dv01" -> sumClientDv01();
+        default -> throw new IllegalArgumentException("not a guard: " + name);
+      };
     }
 
     Map<String, Object> summary(final SessionDesign design) {

@@ -78,8 +78,17 @@ public record DeskProfile(
    * with it.
    */
   public static DeskProfile v2() {
-    return new DeskProfile(
-        DeskSettings.strategyV2(), PricingBindings.Version.V2, RouterModel.LADDER, Market.SIM_V2, null, null);
+    return simV2(DeskSettings.strategyV2());
+  }
+
+  /**
+   * The simulator v2 footing with these settings: simulator v2's venues and universe, pricing v2
+   * and the ladder router. Every arm of a family on this footing differs from the others only in
+   * its settings' strategy switches. With {@link DeskSettings#defaults()} it is the recorded
+   * strategy on the v2 market; no recorded figure was made with it.
+   */
+  public static DeskProfile simV2(final DeskSettings settings) {
+    return new DeskProfile(settings, PricingBindings.Version.V2, RouterModel.LADDER, Market.SIM_V2, null, null);
   }
 
   /** The same profile with other settings (the strategy preset is part of them). */

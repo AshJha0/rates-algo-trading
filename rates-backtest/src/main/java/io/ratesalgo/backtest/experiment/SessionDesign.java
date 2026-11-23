@@ -86,7 +86,10 @@ public record SessionDesign(
    * @param hypotheses the family's hypotheses; empty for a single pre-registration
    * @param familyId the family's id, or null
    * @param q the family's false-discovery level
-   * @param guardsVsDefault minimums of treatment over the {@code default} arm, by guard name
+   * @param referenceArm the arm the family's description and {@code guardsVsReference} read, or null
+   * @param guardsVsReference minimums of treatment over the reference arm, by guard name
+   * @param descriptiveArms arms run and described but in no hypothesis and outside the family's
+   *     error control
    * @param structuralGuard true when a treatment may decline no more RFQs for a structural reason
    *     than its baseline
    * @param excluded band rows left out, with the reason
@@ -97,14 +100,17 @@ public record SessionDesign(
       List<Hypothesis> hypotheses,
       String familyId,
       double q,
-      Map<String, Double> guardsVsDefault,
+      String referenceArm,
+      Map<String, Double> guardsVsReference,
+      List<String> descriptiveArms,
       boolean structuralGuard,
       Map<String, String> excluded,
       String supersededBy) {
     public Plan {
       rows = List.copyOf(rows);
       hypotheses = List.copyOf(hypotheses);
-      guardsVsDefault = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(guardsVsDefault));
+      guardsVsReference = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(guardsVsReference));
+      descriptiveArms = List.copyOf(descriptiveArms);
       excluded = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(excluded));
     }
 
@@ -162,7 +168,7 @@ public record SessionDesign(
       rows.add(new RowPlan(p + ":low", arms, sessions));
       rows.add(new RowPlan(p + ":high", arms, sessions));
     }
-    return new Plan(rows, List.of(), null, 0.05, Map.of(), false, Map.of(), supersededBy);
+    return new Plan(rows, List.of(), null, 0.05, null, Map.of(), List.of(), false, Map.of(), supersededBy);
   }
 
   /** Reads the design of a valid version 2 pre-registration. */
@@ -244,12 +250,20 @@ public record SessionDesign(
         excluded.put(String.valueOf(e.get("row")), String.valueOf(e.get("reason")));
       }
     }
+    final List<String> descriptive = new ArrayList<>();
+    if (family.get("descriptive_arms") instanceof List<?> d) {
+      for (final Object a : d) {
+        descriptive.add(String.valueOf(a));
+      }
+    }
     return new Plan(
         rows,
         hypotheses,
         String.valueOf(family.get("id")),
         ((Number) family.get("q")).doubleValue(),
-        numbers(family.get("guards_vs_default")),
+        family.get("reference_arm") == null ? null : String.valueOf(family.get("reference_arm")),
+        numbers(family.get("guards_vs_reference")),
+        descriptive,
         "not_above_baseline".equals(String.valueOf(family.get("structural_declines"))),
         excluded,
         superseded);
@@ -275,11 +289,12 @@ public record SessionDesign(
     return null;
   }
 
-  /** Every arm, baseline first. */
+  /** Every arm, baseline first, then the treatments, then a family's descriptive arms. */
   public List<String> arms() {
     final List<String> out = new ArrayList<>();
     out.add(baseline);
     out.addAll(treatments);
+    out.addAll(plan.descriptiveArms());
     return out;
   }
 
