@@ -70,7 +70,7 @@ def http(method: str, url: str, headers: dict[str, str] | None = None) -> tuple[
     if method == "POST":
         req.data = b""
     try:
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=15) as r:
             return r.status, r.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8")
@@ -119,17 +119,20 @@ def checks(r: Rehearsal, trading: str, venue: str, token: str, journal_dir: Path
     seen: dict[str, object] = {}
 
     def quoting() -> bool:
-        status, body = http("GET", f"{trading}/control/status")
+        status, body = http("GET", f"{trading}/control/status", {"X-Control-Token": token})
         seen.update(json.loads(body) if status == 200 else {})
         return int(str(seen.get("liveQuotes", 0))) > 0
 
     r.check("trading process quoting before the kill", wait_until(quoting, 60.0), json.dumps(seen))
     r.check("venue simulator ready", http("GET", f"{venue}/health/ready")[0] == 200)
+    status, _ = http("GET", f"{trading}/control/status")
+    r.check("status refused without the control token", status == 403, f"status {status}")
     status, _ = http("POST", f"{trading}/control/kill")
     r.check("kill refused without the control token", status == 403, f"status {status}")
     status, body = http("POST", f"{trading}/control/kill",
                         {"X-Control-Token": token, "X-Requested-By": str(REQUESTED_BY)})
-    r.check("kill accepted", status == 200, body.strip())
+    # 200 only when the process confirmed the withdrawal; it answers 503 with the reason otherwise
+    r.check("kill confirmed", status == 200, body.strip())
     state = json.loads(body) if status == 200 else {}
     r.check("every quote pulled", state.get("liveQuotes") == 0 and state.get("killSwitch") is True, body.strip())
     r.check("quoting disabled", state.get("quoting") is False)

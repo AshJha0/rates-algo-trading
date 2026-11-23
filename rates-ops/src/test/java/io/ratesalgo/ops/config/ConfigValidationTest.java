@@ -1,6 +1,7 @@
 package io.ratesalgo.ops.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,6 +37,14 @@ class ConfigValidationTest {
     assertEquals(2001, c.instruments().get(0)[0]);
     assertEquals(5, c.retentionYears());
     assertEquals(200, c.maxMessagesPerSecond());
+    // the committed files bind loopback and leave the loop threads as they always ran
+    assertEquals("127.0.0.1", c.bindAddress());
+    assertEquals("backoff", c.loopIdleStrategy());
+    assertEquals(-1, c.loopCpu());
+    assertNull(c.controlToken(Map.of()));
+    assertNull(c.controlToken(Map.of("RATES_CONTROL_TOKEN", "")));
+    assertEquals("t", c.controlToken(Map.of("RATES_CONTROL_TOKEN", "t")));
+    assertNull(c.controlBindProblem(Map.of()), "loopback needs no token");
   }
 
   @Test
@@ -45,6 +54,10 @@ class ConfigValidationTest {
         Map.of("RATES_HTTP_PORT", "9100", "RATES_JOURNAL_DIR", "/tmp/j"));
     assertEquals(9100, c.port());
     assertEquals("/tmp/j", c.journalDirectory());
+    final ProcessConfig open = ProcessConfig.load(BLUE, schema, Map.of("RATES_HTTP_BIND", "0.0.0.0"));
+    assertEquals("0.0.0.0", open.bindAddress());
+    assertTrue(open.controlBindProblem(Map.of()).contains("not loopback"));
+    assertNull(open.controlBindProblem(Map.of("RATES_CONTROL_TOKEN", "t")));
     final ProcessConfig.InvalidConfigException e = assertThrows(ProcessConfig.InvalidConfigException.class,
         () -> ProcessConfig.load(BLUE, schema, Map.of("RATES_HTTP_PORT", "not-a-port")));
     assertTrue(e.errors().get(0).contains("$.http.port"), e.errors()::toString);

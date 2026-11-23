@@ -162,6 +162,14 @@ public final class TcpInitiator implements FixTransport, AutoCloseable {
   /** Reads and dispatches what is available, then runs the session timers. Returns messages. */
   public int poll() {
     int messages = 0;
+    final SocketChannel current = channel;
+    if (current != null && !current.isOpen()) {
+      // closed under us by abort(): tell the session once, as a read failure would have
+      channel = null;
+      if (session != null) {
+        session.onDisconnected();
+      }
+    }
     if (isConnected()) {
       int n;
       try {

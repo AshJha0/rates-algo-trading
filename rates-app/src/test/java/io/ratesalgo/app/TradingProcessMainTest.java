@@ -81,8 +81,21 @@ class TradingProcessMainTest {
       assertNotNull(s);
       assertNull(s.process());
       assertEquals(200, http("GET", s.server().port(), "/health/ready").statusCode());
-      assertEquals("{\"role\":\"venue-sim\"}", http("GET", s.server().port(), "/control/status").body());
-      assertEquals(200, http("POST", s.server().port(), "/control/kill").statusCode());
+      // no token in the environment: the control endpoints are closed, health is not
+      assertEquals(403, http("GET", s.server().port(), "/control/status").statusCode());
+      assertEquals(403, http("POST", s.server().port(), "/control/kill").statusCode());
+    }
+    try (TradingProcessMain.Started s = start(VENUE, Map.of("RATES_HTTP_PORT", "0", "RATES_CONTROL_TOKEN", "v"))) {
+      assertEquals("{\"role\":\"venue-sim\"}",
+          http("GET", s.server().port(), "/control/status", "X-Control-Token", "v").body());
+      assertEquals(200, http("POST", s.server().port(), "/control/kill", "X-Control-Token", "v").statusCode());
+    }
+    // a bind beyond loopback without a token is refused like any invalid configuration
+    assertNull(start(VENUE, Map.of("RATES_HTTP_PORT", "0", "RATES_HTTP_BIND", "0.0.0.0")));
+    assertTrue(err.toString(StandardCharsets.UTF_8).contains("is not loopback"), err.toString(StandardCharsets.UTF_8));
+    try (TradingProcessMain.Started s = start(VENUE, Map.of("RATES_HTTP_PORT", "0", "RATES_HTTP_BIND", "0.0.0.0",
+        "RATES_CONTROL_TOKEN", "v"))) {
+      assertEquals(200, http("GET", s.server().port(), "/health/live").statusCode());
     }
   }
 
@@ -98,17 +111,21 @@ class TradingProcessMainTest {
       // the process runs in wall-clock time (time scale 60), so a loaded machine delays the first
       // quote; wait on the status itself with a generous ceiling (DR-INT-06)
       final long deadline = System.nanoTime() + 180_000_000_000L;
-      String status = http("GET", port, "/control/status").body();
+      String status = http("GET", port, "/control/status", "X-Control-Token", "t0k3n").body();
       while (!status.matches(".*\"quotesSent\":[1-9].*")) {
         assertTrue(System.nanoTime() < deadline, "no quote within 180 s; last status " + status);
         Thread.sleep(50);
-        status = http("GET", port, "/control/status").body();
+        status = http("GET", port, "/control/status", "X-Control-Token", "t0k3n").body();
       }
+      assertEquals(403, http("GET", port, "/control/status").statusCode(), "status needs the token");
       assertEquals(403, http("POST", port, "/control/kill").statusCode());
       final HttpResponse<String> kill =
           http("POST", port, "/control/kill", "X-Control-Token", "t0k3n", "X-Requested-By", "9001");
       assertEquals(200, kill.statusCode());
       assertTrue(kill.body().contains("\"killSwitch\":true") && kill.body().contains("\"liveQuotes\":0"), kill.body());
+      assertTrue(kill.body().contains("\"withdrawn\":true"), kill.body());
+      assertTrue(s.process().withdrawn() && s.process().killMessagePublished());
+      assertEquals(503, http("GET", port, "/health/ready").statusCode(), "a halted process is not ready");
       final String metrics = http("GET", port, "/metrics").body();
       assertTrue(metrics.contains("\nrates_kill_switch_engaged 1\n") && metrics.contains("\nrates_quotes_live 0\n"),
           metrics);

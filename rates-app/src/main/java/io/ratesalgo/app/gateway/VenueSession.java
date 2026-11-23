@@ -13,6 +13,7 @@ import io.ratesalgo.fix.session.FixSession;
 import io.ratesalgo.fix.session.FixSessionConfig;
 import io.ratesalgo.fix.session.FixSessionHandler;
 import io.ratesalgo.fix.session.SessionState;
+import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
 import java.nio.ByteBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
@@ -37,8 +38,17 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  * timers, drain the outbound rings, and make a reconnect attempt when one is due. A connection
  * whose Logon is not accepted (connect refused, closed by the venue before its Logon, or timed out)
  * is retried under the session's {@link ReconnectPolicy}, with a GatewayStatus RECONNECTING per
- * attempt so that every attempt is journaled by the loop (DR-INT-09). Not thread-safe; one thread
- * owns a session.
+ * attempt so that every attempt is journaled by the loop (DR-INT-09).
+ *
+ * <p>The session can also withdraw by itself, without the loop ({@link #halt}): it keeps its own
+ * record of the quotes and orders working at the venue ({@link LiveSet}), and once halted it lets
+ * nothing from the loop out, cancels everything in that record, repeats the cancels the venue has
+ * not answered, and logs out if they stay unanswered or if it was asked to. A logout is the
+ * stronger step: the venue then cancels on disconnect whatever it still holds for us. A halt is
+ * final for the process; there is no way back to quoting short of a restart.
+ *
+ * <p>Not thread-safe; one thread owns a session. Other threads may read {@link #haltState} and
+ * {@link #unconfirmed}, and may call {@link #abort}.
  */
 @HotPath
 public final class VenueSession implements FixSessionHandler {
@@ -66,6 +76,35 @@ public final class VenueSession implements FixSessionHandler {
   private long nextAttemptNanos = Long.MAX_VALUE;
   private long reconnectAttempts;
   private long reconnectGiveUps;
+
+  /** {@link #haltState}: trading normally. */
+  public static final int RUNNING = 0;
+
+  /** {@link #haltState}: halted, with quotes or orders not yet confirmed gone. */
+  public static final int HALTING = 1;
+
+  /** {@link #haltState}: halted, and nothing of ours is working at the venue. */
+  public static final int WITHDRAWN = 2;
+
+  /** Quotes and orders tracked at once before the record stops being complete. */
+  static final int LIVE_CAPACITY = 8192;
+
+  private final LiveSet live;
+  private final MessageHeaderDecoder outHeader = new MessageHeaderDecoder();
+  private final long cancelRetryNanos;
+  private final int maxCancelRounds;
+  private final long logoutGraceNanos;
+  private boolean halted;
+  private boolean logoutRequested;
+  private int cancelRounds;
+  private long nextCancelNanos;
+  private long logoutDeadlineNanos;
+  private long blockedOutbound;
+  private int publishedState;
+  private int publishedUnconfirmed;
+  // written by the owner when the value changes, never per duty cycle
+  private volatile int haltState;
+  private volatile int unconfirmed;
 
   /**
    * A session to {@code host:port}.
@@ -104,6 +143,47 @@ public final class VenueSession implements FixSessionHandler {
       final Clock clock,
       final RingBuffer[] outbound,
       final ReconnectPolicy reconnect) {
+    this(venueId, statusId, compIds, host, port, instruments, inbound, clock, outbound, reconnect,
+        WithdrawPolicy.DEFAULT);
+  }
+
+  /**
+   * How a halted session presses its cancels.
+   *
+   * @param cancelRetryNanos wait before cancels the venue has not answered are sent again
+   * @param maxCancelRounds repeats before the session gives up on acknowledgements and logs out
+   * @param logoutGraceNanos wait for the venue to answer our Logout before the socket is closed
+   */
+  public record WithdrawPolicy(long cancelRetryNanos, int maxCancelRounds, long logoutGraceNanos) {
+
+    /** Cancels repeated every 250 ms, three times, then Logout; one second for the venue's Logout. */
+    public static final WithdrawPolicy DEFAULT = new WithdrawPolicy(250_000_000L, 3, 1_000_000_000L);
+
+    /** Validates the settings. */
+    public WithdrawPolicy {
+      if (cancelRetryNanos <= 0 || maxCancelRounds < 0 || logoutGraceNanos <= 0) {
+        throw new IllegalArgumentException("withdraw policy needs positive waits and rounds of at least 0");
+      }
+    }
+  }
+
+  /** A session to {@code host:port} with the given reconnect and withdraw policies. */
+  public VenueSession(
+      final int venueId,
+      final int statusId,
+      final String[] compIds,
+      final String host,
+      final int port,
+      final InstrumentMap instruments,
+      final MessageSink inbound,
+      final Clock clock,
+      final RingBuffer[] outbound,
+      final ReconnectPolicy reconnect,
+      final WithdrawPolicy withdraw) {
+    this.live = new LiveSet(venueId, LIVE_CAPACITY);
+    this.cancelRetryNanos = withdraw.cancelRetryNanos();
+    this.maxCancelRounds = withdraw.maxCancelRounds();
+    this.logoutGraceNanos = withdraw.logoutGraceNanos();
     this.reconnect = reconnect;
     this.statusId = statusId;
     this.inbound = inbound;
@@ -122,6 +202,9 @@ public final class VenueSession implements FixSessionHandler {
    * ReconnectPolicy#NONE} a refused TCP connect throws, as before DR-INT-09.
    */
   public void connect() {
+    if (halted) {
+      return; // a halted session stays down
+    }
     wanted = true;
     failedAttempts = 0;
     nextAttemptNanos = Long.MAX_VALUE;
@@ -183,17 +266,146 @@ public final class VenueSession implements FixSessionHandler {
     for (final RingBuffer ring : outbound) {
       work += ring.read(drain, 256);
     }
+    if (halted) {
+      work += haltWork();
+    }
     return work;
   }
 
   private void onOutbound(final int msgTypeId, final MutableDirectBuffer buffer, final int index, final int length) {
     outboundRecords++;
-    gateway.offer(buffer, index, length);
+    if (halted) {
+      // New quotes and orders must not go out. The loop's own cancels are dropped too: every
+      // quote and order that reached the venue is in the live set, and the session is already
+      // cancelling those and repeating the cancels until the venue answers.
+      blockedOutbound++;
+      return;
+    }
+    if (gateway.offer(buffer, index, length)) {
+      outHeader.wrap(buffer, index);
+      live.onSent(msgTypeId, buffer, index, outHeader.blockLength(), outHeader.version());
+    }
   }
 
   @Override
   public void onApplicationMessage(final FixSession fixSession, final FixParser message, final boolean possDup) {
+    live.onVenueMessage(message);
     gateway.onApplicationMessage(fixSession, message, possDup);
+  }
+
+  // ---------------------------------------------------------------- halt
+
+  /**
+   * Stops this session trading, from the gateway side: nothing more from the loop is sent, every
+   * quote and order in the live set is cancelled, reconnects stop. With {@code logout} the session
+   * also logs out after the cancels, so that the venue's cancel-on-disconnect covers anything the
+   * live set missed; a later call may add the logout to a halt made without it. Idempotent; owner
+   * thread only.
+   */
+  public void halt(final boolean logout) {
+    if (!halted) {
+      halted = true;
+      wanted = false;
+      nextAttemptNanos = Long.MAX_VALUE;
+      cancelRounds = 0;
+      if (isActive()) {
+        live.cancelAll(gateway, clock.epochNanos());
+      }
+      nextCancelNanos = clock.nanoTime() + cancelRetryNanos;
+    }
+    if (logout && !logoutRequested) {
+      beginLogout();
+    }
+    publishHaltState();
+  }
+
+  private void beginLogout() {
+    logoutRequested = true;
+    logoutDeadlineNanos = clock.nanoTime() + logoutGraceNanos;
+    session.logout();
+  }
+
+  /** Halted duty: repeat unanswered cancels, escalate to Logout, close a session that will not end. */
+  private int haltWork() {
+    int work = 0;
+    final long now = clock.nanoTime();
+    if (logoutRequested) {
+      if (tcp.isConnected() && now - logoutDeadlineNanos >= 0) {
+        tcp.disconnect(); // the venue did not answer our Logout: drop the connection
+        work++;
+      }
+    } else if (isActive() && (live.liveQuotes() + live.liveOrders() > 0 || live.overflowed())
+        && now - nextCancelNanos >= 0) {
+      if (cancelRounds >= maxCancelRounds || live.overflowed()) {
+        beginLogout();
+      } else {
+        cancelRounds++;
+        live.cancelAll(gateway, clock.epochNanos());
+        nextCancelNanos = now + cancelRetryNanos;
+      }
+      work++;
+    }
+    publishHaltState();
+    return work;
+  }
+
+  private void publishHaltState() {
+    final boolean down = session.state() == SessionState.DISCONNECTED;
+    final int left = down ? 0 : live.liveQuotes() + live.liveOrders();
+    final boolean withdrawn = down || (!logoutRequested && left == 0 && !live.overflowed());
+    final int state = withdrawn ? WITHDRAWN : HALTING;
+    if (left != publishedUnconfirmed) {
+      publishedUnconfirmed = left;
+      unconfirmed = left;
+    }
+    if (state != publishedState) {
+      publishedState = state;
+      haltState = state;
+    }
+  }
+
+  /** {@link #RUNNING}, {@link #HALTING} or {@link #WITHDRAWN}; readable from any thread. */
+  public int haltState() {
+    return haltState;
+  }
+
+  /** While halted: quotes plus orders the venue has not yet confirmed gone. Any thread. */
+  public int unconfirmed() {
+    return unconfirmed;
+  }
+
+  /**
+   * Closes the socket from any thread, for when the owner thread is stuck or dead: the venue sees
+   * the disconnect and cancels what we have working there. The owner, if it still runs, finds the
+   * closed socket on its next duty cycle.
+   */
+  public void abort() {
+    tcp.abort();
+  }
+
+  /** Quotes the session believes are working at the venue. Owner thread. */
+  public int liveQuotes() {
+    return live.liveQuotes();
+  }
+
+  /** Orders the session believes are working at the venue. Owner thread. */
+  public int liveOrders() {
+    return live.liveOrders();
+  }
+
+  /** Cancels the session itself sent while halted. */
+  public long haltCancelsSent() {
+    return live.cancelsSent();
+  }
+
+  /** Records from the loop not sent because the session was halted. */
+  public long blockedOutbound() {
+    return blockedOutbound;
+  }
+
+  /** True once {@link #halt} has been called. Owner thread. */
+  public boolean isHalted() {
+    return halted;
   }
 
   @Override
@@ -208,10 +420,14 @@ public final class VenueSession implements FixSessionHandler {
   @Override
   public void onDisconnect(final FixSession fixSession) {
     disconnects++;
+    live.onDisconnect();
     gateway.onDisconnect(fixSession);
     publishStatus(false);
     if (!loggedOnThisConnection) {
       attemptFailed();
+    }
+    if (halted) {
+      publishHaltState();
     }
   }
 

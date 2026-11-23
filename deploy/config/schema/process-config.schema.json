@@ -85,6 +85,14 @@
       "properties": {
         "years": {"type": "integer", "minimum": 5, "maximum": 7}
       }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loopIdleStrategy": {"type": "string", "enum": ["busy-spin", "yield", "backoff"]},
+        "loopCpu": {"type": "integer", "minimum": -1, "maximum": 4095}
+      }
     }
   }
 }
