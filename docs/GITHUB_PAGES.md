@@ -4,9 +4,9 @@ The site at <https://ashjha0.github.io/rates-algo-trading/> is built with MkDocs
 
 ## How it is published
 
-The `Docs` workflow in `.github/workflows/docs.yml` runs `mkdocs build --strict` on every push and pull request. The build fails on any broken link, missing snippet file or unrecognised page, so the site cannot drift from the documents.
+The `Docs` workflow in `.github/workflows/docs.yml` runs `python tools/check_site_current.py` (the site home page, STATUS.md and README name the latest CHANGELOG release and no stale phrase) and then `mkdocs build --strict` on every push and pull request. The build fails on any broken link, missing snippet file or unrecognised page, so the site cannot drift from the documents.
 
-Deployment uses GitHub Actions as the Pages source. Until the repository's Pages setting is switched to "GitHub Actions" (Settings, Pages, Build and deployment, Source), the deploy step has nowhere to publish and the site is built and checked only. Once the source is set, the workflow uploads the built `site/` directory as a Pages artifact and deploys it on pushes to `main`. No `gh-pages` branch is used.
+Deployment uses GitHub Actions as the Pages source, which is set (checked 2026-11-23 with `gh api`: `build_type` is `workflow`). If the source were changed away from "GitHub Actions", the deploy step would have nowhere to publish and the site would be built and checked only. With it set, the workflow uploads the built `site/` directory as a Pages artifact and deploys it on pushes to `main`. No `gh-pages` branch is used.
 
 The docs workflow beside the CI and ops workflows is drawn in [CI and release pipeline](../site/pages/diagrams.md#ci-and-release-pipeline).
 
