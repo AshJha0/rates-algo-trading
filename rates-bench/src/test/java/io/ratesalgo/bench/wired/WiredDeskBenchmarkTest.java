@@ -96,4 +96,31 @@ class WiredDeskBenchmarkTest {
     assertTrue(WiredDeskSuite.shippedFlags(false).size() < WiredDeskSuite.shippedFlags(true).size());
     assertTrue(List.copyOf(WiredDeskSuite.shippedFlags(true)).contains("--enable-native-access=ALL-UNNAMED"));
   }
+
+  @Test
+  void theSuitePlansOneJvmPerConfigurationAndTheGcComparison() {
+    final java.util.Map<String, String> all = new java.util.LinkedHashMap<>();
+    all.put("gc-compare", "true");
+    all.put("out", dir.toString());
+    final List<List<String>> runs = WiredDeskSuite.plan(all, false, "cp");
+    assertEquals(9, runs.size());
+    assertTrue(runs.get(0).contains("-XX:+UseZGC") && runs.get(0).contains("--profile=default"));
+    assertTrue(runs.get(8).contains("-XX:+UseParallelGC") && !runs.get(8).contains("-XX:+UseZGC"));
+    assertTrue(runs.get(8).stream().anyMatch(a -> a.startsWith("--label=local-UseParallelGC")));
+    assertTrue(runs.stream().allMatch(r -> r.contains("-Drates.probes=true")));
+    final java.util.Map<String, String> one = java.util.Map.of("configs", "lowLatency-ring-tls", "rate", "50");
+    final List<List<String>> linux = WiredDeskSuite.plan(one, true, "cp");
+    assertEquals(1, linux.size());
+    assertTrue(linux.get(0).contains("-XX:+UseTransparentHugePages"));
+    assertTrue(linux.get(0).contains("--journal=ring") && linux.get(0).contains("--rate=50"));
+    assertThrows(IllegalArgumentException.class, () -> WiredDeskSuite.plan(java.util.Map.of("configs", "fast"), false, "cp"));
+  }
+
+  @Test
+  void everyBadArgumentIsRefused() {
+    for (final String bad : new String[] {"--profile=fast", "--transport=udp", "--rate=0", "--rate=200000",
+        "--warmup-seconds=-1", "--measure-seconds=0"}) {
+      assertThrows(IllegalArgumentException.class, () -> WiredDeskBenchmark.Config.parse(new String[] {bad}), bad);
+    }
+  }
 }

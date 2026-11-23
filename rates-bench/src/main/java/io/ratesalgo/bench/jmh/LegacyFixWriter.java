@@ -5,12 +5,11 @@ import io.ratesalgo.fix.codec.FixParser;
 import io.ratesalgo.fix.codec.FixTags;
 import io.ratesalgo.fix.codec.FixTime;
 import java.nio.ByteBuffer;
-import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
- * The FIX encoder as it was before round 6, kept verbatim (renamed, unused methods removed) as the
+ * The FIX encoder as it was before round 6, kept verbatim (renamed; the methods the benchmark does not call removed) as the
  * "before" of {@link FixEncodeBenchmark}: the body goes to a scratch buffer and {@link #finish}
  * copies it behind BeginString and BodyLength, then sums every byte one at a time for CheckSum.
  */
@@ -63,27 +62,8 @@ final class LegacyFixWriter {
     return this;
   }
 
-  /** Single-character field. */
-  public LegacyFixWriter putChar(final int tag, final byte value) {
-    putTag(tag);
-    body.putByte(position++, value);
-    end();
-    return this;
-  }
 
-  /** Two-character field such as {@code TA}. */
-  public LegacyFixWriter putChars(final int tag, final byte first, final byte second) {
-    putTag(tag);
-    body.putByte(position++, first);
-    body.putByte(position++, second);
-    end();
-    return this;
-  }
 
-  /** Boolean field ({@code Y} or {@code N}). */
-  public LegacyFixWriter putBool(final int tag, final boolean value) {
-    return putChar(tag, value ? (byte) 'Y' : (byte) 'N');
-  }
 
   /** ASCII field from a byte array. */
   public LegacyFixWriter putAscii(final int tag, final byte[] value) {
@@ -94,24 +74,7 @@ final class LegacyFixWriter {
     return this;
   }
 
-  /** ASCII field copied from a buffer region. */
-  public LegacyFixWriter putAscii(final int tag, final DirectBuffer src, final int offset, final int length) {
-    putTag(tag);
-    body.putBytes(position, src, offset, length);
-    position += length;
-    end();
-    return this;
-  }
 
-  /** ASCII field from a CharSequence (no allocation; characters must be ASCII). */
-  public LegacyFixWriter putText(final int tag, final CharSequence value) {
-    putTag(tag);
-    for (int i = 0; i < value.length(); i++) {
-      body.putByte(position++, (byte) value.charAt(i));
-    }
-    end();
-    return this;
-  }
 
   /** UTCTimestamp field with millisecond precision. */
   public LegacyFixWriter putTimestamp(final int tag, final long epochNanos) {

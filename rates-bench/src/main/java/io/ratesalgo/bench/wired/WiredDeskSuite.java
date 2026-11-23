@@ -52,9 +52,28 @@ public final class WiredDeskSuite {
     }
     final Path out = Path.of(a.getOrDefault("out", "target/wired"));
     Files.createDirectories(out);
-    final List<String> configs =
-        a.containsKey("configs") ? List.of(a.get("configs").split(",", -1)) : ALL;
     final boolean linux = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("linux");
+    final List<List<String>> runs = plan(a, linux, System.getProperty("java.class.path"));
+    int failed = 0;
+    for (final List<String> cmd : runs) {
+      System.out.println("== " + cmd.get(cmd.size() - 8) + " " + cmd.get(cmd.size() - 7) + " " + cmd.get(cmd.size() - 6));
+      final Process p = new ProcessBuilder(cmd).inheritIO().start();
+      final int code = p.waitFor();
+      if (code != 0) {
+        failed++;
+        System.out.println("   exited with " + code + "; kept going, every run is reported");
+      }
+    }
+    System.out.println("runs: " + runs.size() + ", failed: " + failed + ", reports in " + out.toAbsolutePath());
+    if (failed == runs.size()) {
+      System.exit(1);
+    }
+  }
+
+  /** The command line of every run the arguments ask for, in order. */
+  static List<List<String>> plan(final Map<String, String> a, final boolean linux, final String classPath) {
+    final Path out = Path.of(a.getOrDefault("out", "target/wired"));
+    final List<String> configs = a.containsKey("configs") ? List.of(a.get("configs").split(",", -1)) : ALL;
     final List<String[]> runs = new ArrayList<>();
     for (final String name : configs) {
       runs.add(new String[] {name, "-XX:+UseZGC"});
@@ -62,9 +81,12 @@ public final class WiredDeskSuite {
     if (Boolean.parseBoolean(a.getOrDefault("gc-compare", "false"))) {
       runs.add(new String[] {"default-direct-plain", "-XX:+UseParallelGC"});
     }
-    int failed = 0;
+    final List<List<String>> commands = new ArrayList<>();
     for (final String[] run : runs) {
       final String[] parts = run[0].split("-", -1);
+      if (parts.length != 3) {
+        throw new IllegalArgumentException("a configuration is profile-journal-transport: " + run[0]);
+      }
       final List<String> cmd = new ArrayList<>();
       cmd.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
       for (final String flag : shippedFlags(linux)) {
@@ -74,7 +96,7 @@ public final class WiredDeskSuite {
       cmd.add("-Xlog:gc*,safepoint:file=" + out.resolve(run[0] + "-" + gcName + "-jvm.log") + ":uptime,level,tags");
       cmd.add("-Drates.probes=true");
       cmd.add("-cp");
-      cmd.add(System.getProperty("java.class.path"));
+      cmd.add(classPath);
       cmd.add(WiredDeskBenchmark.class.getName());
       cmd.add("--profile=" + parts[0]);
       cmd.add("--journal=" + parts[1]);
@@ -84,17 +106,8 @@ public final class WiredDeskSuite {
       cmd.add("--measure-seconds=" + a.getOrDefault("measure-seconds", "60"));
       cmd.add("--label=" + a.getOrDefault("label", "local") + ("-XX:+UseZGC".equals(run[1]) ? "" : "-" + gcName));
       cmd.add("--out=" + out);
-      System.out.println("== " + run[0] + " (" + gcName + ")");
-      final Process p = new ProcessBuilder(cmd).inheritIO().start();
-      final int code = p.waitFor();
-      if (code != 0) {
-        failed++;
-        System.out.println("   run " + run[0] + " exited with " + code + "; kept going, every run is reported");
-      }
+      commands.add(cmd);
     }
-    System.out.println("runs: " + runs.size() + ", failed: " + failed + ", reports in " + out.toAbsolutePath());
-    if (failed == runs.size()) {
-      System.exit(1);
-    }
+    return commands;
   }
 }
