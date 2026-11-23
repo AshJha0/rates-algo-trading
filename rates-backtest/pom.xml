@@ -16,7 +16,7 @@
   <properties>
     <!-- SnakeYAML reads data/presets.yaml, pre-registrations and ledger lines. The back-tester
          is off the hot path (docs/ARCHITECTURE.md), so a parsing library is acceptable here. -->
-    <snakeyaml.version>2.5</snakeyaml.version>
+    <snakeyaml.version>2.7</snakeyaml.version>
   </properties>
 
   <dependencies>

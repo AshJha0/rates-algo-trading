@@ -14,8 +14,8 @@
   <description>Operations layer: health, readiness and control endpoints on the JDK HTTP server, Prometheus text exposition, configuration validation against a JSON Schema, and the stress-test harness. No web framework, no metrics client library.</description>
 
   <properties>
-    <snakeyaml.version>2.5</snakeyaml.version>
-    <maven-dependency-plugin.version>3.8.1</maven-dependency-plugin.version>
+    <snakeyaml.version>2.7</snakeyaml.version>
+    <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
   </properties>
 
   <dependencies>
