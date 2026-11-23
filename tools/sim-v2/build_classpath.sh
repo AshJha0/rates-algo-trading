@@ -10,10 +10,11 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 mvn="${MVN:-mvn}"
 # compile in the same invocation, so the reactor resolves sibling modules to their target/classes
-"$mvn" -q -o -B -ntp -pl rates-app -am compile dependency:build-classpath -Dmdep.outputFile=target/cp.txt   -Dspotbugs.skip=true -Djacoco.skip=true -Dcheckstyle.skip=true
+"$mvn" -q -o -B -ntp -pl rates-app -am compile dependency:build-classpath -Dmdep.outputFile=target/cp.txt -Dmdep.includeScope=runtime   -Dspotbugs.skip=true -Djacoco.skip=true -Dcheckstyle.skip=true
 sep=":"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) sep=";" ;; esac
-third_party=$(tr "$sep" '\n' < rates-app/target/cp.txt | grep -v 'io[/\]ratesalgo' | paste -sd "$sep" -)
+# jars only: the reactor's own modules are added below from their target/classes
+third_party=$(tr "$sep" '\n' < rates-app/target/cp.txt | grep -v 'io[/\]ratesalgo' | grep -v 'target[/\]' | paste -sd "$sep" -)
 cp="rates-app/target/classes"
 for m in rates-*/; do
   m="${m%/}"

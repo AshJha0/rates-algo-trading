@@ -12,12 +12,14 @@ rem OUTDIR\heartbeat.txt at least once a minute and OUTDIR\runner.log; on exit i
 rem OUTDIR\DONE, or OUTDIR\FAILED.runner with the exit code (OUTDIR\FAILED is the runner's own
 rem marker for a session that failed twice). Watch it with tools\sim-v2\status.cmd OUTDIR.
 setlocal EnableExtensions
+rem shift moves %0 too, so the script's own folder is kept first
+set "HERE=%~dp0"
 if "%~2"=="" (
   echo usage: launch_detached.cmd OUTDIR run^|pilot --prereg FILE [options]
   exit /b 1
 )
 set "OUT=%~f1"
-pushd "%~dp0..\.." || exit /b 1
+pushd "%HERE%..\.." || exit /b 1
 set "REPO=%CD%"
 popd
 rem the runner's arguments travel as one line; they must not contain spaces
@@ -28,5 +30,5 @@ if "%~1"=="" goto launch
 set "ARGS=%ARGS% %~1"
 goto collect
 :launch
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0launch_detached.ps1" -Out "%OUT%" -Repo "%REPO%" -ArgLine "%ARGS%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%launch_detached.ps1" -Out "%OUT%" -Repo "%REPO%" -ArgLine "%ARGS%"
 exit /b %ERRORLEVEL%
