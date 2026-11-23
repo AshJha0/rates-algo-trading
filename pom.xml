@@ -73,9 +73,10 @@
 
     <!-- Minimum line coverage per module, checked by JaCoCo at verify. -->
     <jacoco.minimum.line>0.85</jacoco.minimum.line>
-    <!-- Minimum branch coverage per module. Set just under the lowest module as measured on
-         2026-11-23 (DECISIONS.md DR-RV-C05), so it stops a fall and asks nothing new today. -->
-    <jacoco.minimum.branch>0.00</jacoco.minimum.branch>
+    <!-- Minimum branch coverage per module. Every module met it when it was set: measured on
+         2026-11-23 the lowest was rates-strategy at 0.783 and the highest rates-common at 0.955
+         (DECISIONS.md DR-RV-C05). It stops a fall; raise it as the low modules gain tests. -->
+    <jacoco.minimum.branch>0.75</jacoco.minimum.branch>
 
     <!-- The pit profile mutates only the modules that set this to false in their own pom. -->
     <pit.skip>true</pit.skip>
