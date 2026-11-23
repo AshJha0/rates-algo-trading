@@ -5,8 +5,8 @@ still describing "Phase 0: foundations only" a month after v1.0.0. This check st
 happening again. It reads the latest release heading in CHANGELOG.md (``## [x.y.z] - YYYY-MM-DD``,
 Unreleased ignored) and then, for each front page:
 
-- the header (the text before the first ``## `` heading) must name that version, must not name an
-  older one, and every ISO date in it must be on or after the release date;
+- the header (the first paragraph of prose after the title and badges) must name that version,
+  must not name an older one, and every ISO date in it must be on or after the release date;
 - the whole page must not contain a phrase that described an earlier state of the project.
 
 Front pages: the site home page (docs/site/pages/index.md), STATUS.md and README.md.
@@ -49,9 +49,18 @@ def latest_release(changelog: str) -> tuple[tuple[int, int, int], date]:
 
 
 def header(text: str) -> str:
-    """Text before the first second-level heading."""
-    match = re.search(r"^## ", text, re.MULTILINE)
-    return text[: match.start()] if match else text
+    """The first paragraph of prose: the page's status line, after the title and any badges."""
+    paragraph: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if paragraph:
+                break
+            continue
+        if not paragraph and stripped.startswith(("#", "[![")):
+            continue
+        paragraph.append(stripped)
+    return " ".join(paragraph)
 
 
 def check_page(rel: str, text: str, version: tuple[int, int, int], released: date) -> list[str]:

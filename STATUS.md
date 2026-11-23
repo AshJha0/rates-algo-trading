@@ -1,6 +1,10 @@
 # Status
 
-Updated 2026-10-31 for v1.0.0. Every phase gate and both rounds are closed. What is not done is under "Open items" and in README.md "Limits".
+Updated 2026-11-23. Version 1.1.0 is drafted in CHANGELOG.md (dated 2026-11-23); its tag follows the fix round.
+
+The only tag so far is v1.0.0, on 8e6ae10 (the merge of pull request #6, 2026-11-01). Every phase gate and rounds 1 and 2 are closed, and pull requests #1 to #9 are merged. An in-depth review on 2026-11-23 ([docs/reviews/REVIEW_2026-11-23.md](docs/reviews/REVIEW_2026-11-23.md)) found that the P&L figures are fixed by declared simulator constants, that parts of the safety path fail open, and that this file and the governance documents had gone stale; the fix round is in progress (last row of the table). What is not done is under "Open items" and in README.md "Limits".
+
+The gate entries below are historical. Their figures were measured on the date they give and have not been re-run since, unless a later date is given. Where an entry said CI was pending, that was true when it was written; every branch named here was later merged, and CI first went green on main at 4facfef on 2026-10-31 (P0 gate).
 
 ## Phase table
 
@@ -16,9 +20,15 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 | P4 | Smart order router | 8 | 0.5 to 1 | 0.3 (one working session of about 6.5 hours) | 2026-10-31 | closed (pull request 1) |
 | P5 | Back-tester with pre-registration (W7), Python quant research (W10); latency jobs | 18 | 1.5 | 0.3 | 2026-10-31 | closed (pull request 1) |
 | P6 | Documentation, regulation mapping, knowledge check, release | 16 | 1 | 0.3 for the branch share (11 plan-days); about 0.1 for the final documentation pass and release (5 plan-days) | 2026-10-31 | closed with v1.0.0 (see "P6 remainder and release") |
-| Round 1 integration | P0 to P6 merged into one branch, fixes found at integration | not planned | not planned | about 0.1 (pull requests 1 and 2, merged 08:26 and 11:15 UTC) | 2026-10-31 | closed |
+| Round 1 integration | P0 to P6 merged into one branch, fixes found at integration | not planned | not planned | about 0.1 (pull requests 1 and 2, opened 08:26 and 11:15 UTC, merged 08:33 and 11:28 UTC) | 2026-10-31 | closed |
 | Round 2 | Wiring (`rates-app`), journal write path, LEARN, recipes 23 to 34 and diagrams, desk features (`rates-strategy`), edge research, P&L audit, review, audit fix packages A1, A2, B, C, D, integration | not planned in plan-days; each workstream briefed as one session | 1 | 0.4 (first commit 12:11 UTC, merge ecfc591 at 21:33 UTC on 2026-10-31) | 2026-10-31 | closed: pull request 3 merged; per workstream below |
-| Version 1 integration | Hedge slicing (V1H-001, V1H-002), recipes 35 and 36, Docker image build and rehearsal in CI, hosted-runner latency row, DMO finding, documentation pass | not planned | not planned | in progress | 2026-11-01 | in progress (pull request to main) |
+| Release pass | Documentation pass, band P&L risk, version 1.0.0 | part of P6 | part of P6 | see "P6 remainder and release" | 2026-10-31 | closed: pull request 4, merged 2026-11-01 11:16 UTC |
+| Version 1 integration | Hedge slicing (V1H-001, V1H-002), recipes 35 and 36, Docker image build and rehearsal in CI, hosted-runner latency row, DMO finding, documentation pass | not planned | not planned | about 0.1 (pull request 5 opened 12:14, merged 14:06 UTC) | 2026-11-01 | closed: pull request 5, merged 2026-11-01 |
+| Journal shutdown fix and v1.0.0 tag | Journal close waits while background threads make progress (DR-INT-10) | not planned | not planned | under 0.1 (pull request 6 opened 16:09, merged 16:44 UTC) | 2026-11-01 | closed: pull request 6; tag v1.0.0 on its merge 8e6ae10; GitHub release published 17:17 UTC |
+| Audit re-run | AUDIT-21 to AUDIT-26: the production-desk audit re-run at v1.0.0, combined settings, one holdout look | not planned | not planned | about 0.05 (commits 07:58 to 08:48 UTC) | 2026-11-07 | closed: pull request 7, merged 2026-11-07 11:21 UTC; ledger seq 25 to 30 |
+| Hedge carry and forward log | Risk carry, hedge latency sweep, carry-time limits V1C-001 and V1C-002; forward log (paper trading) on the `forward-log` branch | not planned | not planned | about 0.2 (commits 19:24 to 23:59 UTC) | 2026-11-07 | closed: pull request 8, merged 2026-11-08 00:10 UTC; ledger seq 31 and 32 |
+| README ledger count | README ledger row count 32 | not planned | not planned | minutes | 2026-11-08 | closed: pull request 9, merged 2026-11-08 00:41 UTC |
+| Review 2026-11-23 and fix round | Six read-only reviews; then documentation (this file, README, site, governance) and code fixes in parallel lanes | not planned | not planned | in progress | 2026-11-23 | in progress: [docs/reviews/REVIEW_2026-11-23.md](docs/reviews/REVIEW_2026-11-23.md) Section 9 |
 
 ## Estimate versus actual
 
@@ -26,11 +36,11 @@ Filled at each gate. Each entry records the planned and actual figures, the revi
 
 ### P0 gate
 
-Planned: 10 plan-days, 1 wall-clock day. Actual: built on 2026-10-31 alongside P1 to P6 and merged with them in pull request 1 (08:26 UTC). Pull request 2 (4facfef, 11:15 UTC) fixed the loop allocation check for Linux CI (DR-INT-02), and the gate closed when CI went green on main at 4facfef on Linux and Windows. The difference from plan is attributed to the pinned contracts (SBE schema, journal, clock) being written first, so the other phases built against them in parallel.
+Planned: 10 plan-days, 1 wall-clock day. Actual: built on 2026-10-31 alongside P1 to P6 and merged with them in pull request 1 (opened 08:26, merged 08:33 UTC). Pull request 2 (4facfef, opened 11:15, merged 11:28 UTC) fixed the loop allocation check for Linux CI (DR-INT-02), and the gate closed when CI went green on main at 4facfef on Linux and Windows. The difference from plan is attributed to the pinned contracts (SBE schema, journal, clock) being written first, so the other phases built against them in parallel.
 
 ### P1 gate (workstream W1, analytics)
 
-Planned: 16 plan-days, 1 to 1.5 wall-clock days. Actual: started and finished on 2026-10-31, about 7 hours elapsed from the first commit of the session to the push, including two pauses for a model change. Branch `claude/p1-analytics-df37ab`. Acceptance (P1 gate), measured locally on 2026-10-31 with JDK 25.0.5 on Windows 11 (`mvn -B -ntp verify`); CI on Linux and Windows pending:
+Planned: 16 plan-days, 1 to 1.5 wall-clock days. Actual: started and finished on 2026-10-31, about 7 hours elapsed from the first commit of the session to the push, including two pauses for a model change. Branch `claude/p1-analytics-df37ab`. Acceptance (P1 gate), measured locally on 2026-10-31 with JDK 25.0.5 on Windows 11 (`mvn -B -ntp verify`); CI on Linux and Windows was pending then and passed on main at 4facfef:
 
 - 224-instrument QuantLib 1.44 golden passes (`AnalyticsGoldenTest`): swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16, conversion factors exact; API_SPEC.md Section 7.2 lists every figure.
 - Treasury worked examples: all 84 note and bond and 332 bill auctions of 2024 reproduce to the published digits (`PublishedExamplesTest`). No UK DMO golden test: the DMO formulae paper, fetched on 2026-11-01, gives the conventional gilt formulae without a numerical worked example (DR-V1G-02).
@@ -44,11 +54,11 @@ The difference from plan is attributed to reusing QuantLib's published conventio
 
 ### P4 gate
 
-Planned: 8 plan-days, 0.5 to 1 wall-clock day. Actual: one working session on 2026-10-31 (about 6.5 hours of wall-clock time from 01:00 to 07:30, including a pause for a model switch; build and test time is part of it), so within the planned wall-clock range. Acceptance evidence, all from `mvn -B -ntp verify` on JDK 25.0.5, Windows 11, 2026-10-31: state machine property tests green (`ChildOrderBookPropertiesTest`, `RouterChaosPropertiesTest`); router beats single-venue aggressive by 2.8780 bps (95% interval 2.7210 to 2.9855) and the even split by 2.7065 bps (2.5309 to 2.8272) in scenario `ust10y_three_venue_v1` (`BacktestTest`; after the DR-R2R-04 cost-model fix the same test gives 2.9388 [2.7792, 3.0631] and 2.7673 [2.5802, 2.9026], API_SPEC.md Section 15.6); every decision rebuilt from a replayed journal and re-evaluated to the same mantissas (`DecisionReplayTest`); 0 bytes allocated over 60 parents after warm-up (`RouterAllocationTest`); JaCoCo line floor met and SpotBugs clean for `rates-router`. The gate closes when the same jobs are green in CI on the combined branch.
+Planned: 8 plan-days, 0.5 to 1 wall-clock day. Actual: one working session on 2026-10-31 (about 6.5 hours of wall-clock time from 01:00 to 07:30, including a pause for a model switch; build and test time is part of it), so within the planned wall-clock range. Acceptance evidence, all from `mvn -B -ntp verify` on JDK 25.0.5, Windows 11, 2026-10-31: state machine property tests green (`ChildOrderBookPropertiesTest`, `RouterChaosPropertiesTest`); router beats single-venue aggressive by 2.8780 bps (95% interval 2.7210 to 2.9855) and the even split by 2.7065 bps (2.5309 to 2.8272) in scenario `ust10y_three_venue_v1` (`BacktestTest`; after the DR-R2R-04 cost-model fix the same test gives 2.9388 [2.7792, 3.0631] and 2.7673 [2.5802, 2.9026], API_SPEC.md Section 15.6); every decision rebuilt from a replayed journal and re-evaluated to the same mantissas (`DecisionReplayTest`); 0 bytes allocated over 60 parents after warm-up (`RouterAllocationTest`); JaCoCo line floor met and SpotBugs clean for `rates-router`. The gate closed when the same jobs went green in CI on main at 4facfef.
 
 ### P5 gate (W7 back-testing, W10 research)
 
-Planned: 18 plan-days, 1.5 wall-clock days. Actual: one session on 2026-10-31, from about 01:00 to 08:00 UTC including a pause while the coordinating session changed models, so about 0.3 calendar days elapsed; active working time was not measured. Review and CI time are not included: the branch is pushed for the coordinator's combined pull request and has not run in GitHub Actions yet.
+Planned: 18 plan-days, 1.5 wall-clock days. Actual: one session on 2026-10-31, from about 01:00 to 08:00 UTC including a pause while the coordinating session changed models, so about 0.3 calendar days elapsed; active working time was not measured. Review and CI time are not included. When this entry was written the branch had not run in GitHub Actions; it was merged in pull request 1. There was no independent review.
 
 Gate checks, all run locally on 2026-10-31 on Windows 11 with JDK 25.0.5 and Python 3.12.10:
 
@@ -71,7 +81,7 @@ Deferred from P5, with reasons: the latency job and its histogram (the report re
 
 Planned: 11 of the 16 P6 plan-days (W11 post-trade and books and records 5, compliance inventory with the stress and surveillance hooks 2, deployment and operations 3, LEARN Sections 12 and 14 1). The other 5 plan-days are the knowledge check, pitfalls and further reading, the final documentation pass and the v1.0.0 release, which follow integration.
 
-Actual: started 2026-10-31 01:01 UTC, paused from about 01:25 to 06:25 UTC by the coordinating session (model change and budget pause), finished about 07:45 UTC; working wall-clock about 1 hour 50 minutes, measured from the session's commit times. CI time is not included: the branch has not run in GitHub Actions.
+Actual: started 2026-10-31 01:01 UTC, paused from about 01:25 to 06:25 UTC by the coordinating session (model change and budget pause), finished about 07:45 UTC; working wall-clock about 1 hour 50 minutes, measured from the session's commit times. CI time is not included; the branch was merged in pull request 1.
 
 Attributed to: one session building against its own fixtures without waiting on other phases; the parts that depend on P1 to P5 are interfaces with fixtures (API_SPEC.md Section 17.14).
 
@@ -108,9 +118,9 @@ Deferred: the same runs on a pinned Linux host with isolated cores (DR-005); a m
 
 ### P2 venue half (W3)
 
-Planned: 9 plan-days, 0.75 wall-clock days. Actual: work ran from about 00:55 to 08:30 UTC on 2026-10-31 (first and last commits on the branch `claude/p2-venues-3d7318`), of which about five hours were a pause requested by the owner, so about 2.5 hours of working time, or 0.3 wall-clock days on this table's definition. The difference is attributed to building against fixed contracts (SBE schema, journal, clock) and to the conformance runner, which found the two interoperability faults early (QuoteCancelType 5 is not FIX 4.4; cancel acks must alias the original ClOrdID). Reviewer and CI time are not included and have not happened yet.
+Planned: 9 plan-days, 0.75 wall-clock days. Actual: work ran from about 00:55 to 08:30 UTC on 2026-10-31 (first and last commits on the branch `claude/p2-venues-3d7318`), of which about five hours were a pause requested by the owner, so about 2.5 hours of working time, or 0.3 wall-clock days on this table's definition. The difference is attributed to building against fixed contracts (SBE schema, journal, clock) and to the conformance runner, which found the two interoperability faults early (QuoteCancelType 5 is not FIX 4.4; cancel acks must alias the original ClOrdID). CI time is not included. There was no independent reviewer.
 
-Evidence for the venue part of the P2 gate, from `mvn -B -ntp verify` on JDK 25.0.5, Windows 11, 2026-10-31: `CertSuiteTest` 16 scripts green across the three venues and every flow; `SyntheticDayTest` 568 RFQs with zero sequence errors; cancel-on-disconnect in `d2c-cancel-on-disconnect`, `clob-cancel-on-disconnect` and `ChaosTest`; gap recovery in `ChaosTest` (session resend and feed snapshot); `MarketDataQualityTest` property test; `AllocationTest` zero bytes over one million messages; JaCoCo line floor 0.85 met per module; SpotBugs clean. The gate closes when the same jobs pass in GitHub Actions on Linux and Windows.
+Evidence for the venue part of the P2 gate, from `mvn -B -ntp verify` on JDK 25.0.5, Windows 11, 2026-10-31: `CertSuiteTest` 16 scripts green across the three venues and every flow; `SyntheticDayTest` 568 RFQs with zero sequence errors; cancel-on-disconnect in `d2c-cancel-on-disconnect`, `clob-cancel-on-disconnect` and `ChaosTest`; gap recovery in `ChaosTest` (session resend and feed snapshot); `MarketDataQualityTest` property test; `AllocationTest` zero bytes over one million messages; JaCoCo line floor 0.85 met per module; SpotBugs clean. The gate closed when the same jobs passed in GitHub Actions on main at 4facfef.
 
 ### P3 gate
 
@@ -188,12 +198,29 @@ The difference from plan is attributed to LEARN's knowledge check and pitfalls h
 
 ### Version 1 integration (branch `v1-integration`)
 
-Started 2026-11-01 on main d89bfb1. Merged `claude/v1-hedge-f17740` (hedge slicing adopted as the back-tested desk default, V1H-001 supported at every band point; the cost-aware trigger V1H-002 not supported and opt-in; PNL_AUDIT items 1 and 10; ledger seq 23 and 24, no renumbering) and `claude/v1-gaps-ea4320` (COOKBOOK recipes 35 and 36, so every listed recipe is written; CI builds every image in `deploy/` and runs the rehearsal inside the trading image, DR-V1G-03; the CI latency job writes its percentiles to the job summary and BENCHMARKS has a GitHub-hosted Linux row, DR-V1G-04; the DMO finding, DR-V1G-02). The documentation pass in the same branch brought README, CHANGELOG, the diagrams and this file up to date.
+Started 2026-11-01 on main d89bfb1; merged to main as pull request 5 at 14:06 UTC the same day. Merged `claude/v1-hedge-f17740` (hedge slicing adopted as the back-tested desk default, V1H-001 supported at every band point; the cost-aware trigger V1H-002 not supported and opt-in; PNL_AUDIT items 1 and 10; ledger seq 23 and 24, no renumbering) and `claude/v1-gaps-ea4320` (COOKBOOK recipes 35 and 36, so every listed recipe is written; CI builds every image in `deploy/` and runs the rehearsal inside the trading image, DR-V1G-03; the CI latency job writes its percentiles to the job summary and BENCHMARKS has a GitHub-hosted Linux row, DR-V1G-04; the DMO finding, DR-V1G-02). The documentation pass in the same branch brought README, CHANGELOG, the diagrams and this file up to date.
+
+### Pull request 6 and the v1.0.0 tag
+
+`RingJournal.close()` and `SegmentedJournal.close()` wait while their background threads make progress and give up only after 60 s with none (DR-INT-10). Pull request 6 merged at 16:44 UTC on 2026-11-01; the tag v1.0.0 is on its merge commit 8e6ae10, and the GitHub release was published at 17:17 UTC. CHANGELOG.md dated 1.0.0 as 2026-10-31 until 2026-11-23; it now says 2026-11-01.
+
+### Audit re-run (pull request 7)
+
+AUDIT-21 to AUDIT-24 re-ran AUDIT-11 to AUDIT-14 at v1.0.0; AUDIT-25 tried six combined settings on the same 20 sessions; AUDIT-26 was the one look at 5 unopened sessions, and the chosen setting failed it. Ledger seq 25 to 30, recorded 2026-11-07 between 08:08 and 08:35 UTC; docs/research/PNL_AUDIT.md. AUDIT-22 to AUDIT-24 carry `code_dirty: true` for the same reason as the earlier audit rows. The review of 2026-11-23 counts these as further reads of the same 20 sessions, each recorded as look 1 (review Section 2.4).
+
+### Hedge carry and forward log (pull request 8)
+
+Risk carry time, an exploratory hedge latency sweep and two carry-time limits, V1C-001 and V1C-002, both not supported (ledger seq 31 and 32, DR-V1C-01 to DR-V1C-03). The forward log (DR-FWD-01 to DR-FWD-04): a scheduled workflow, `.github/workflows/forward.yml`, writes each Treasury business day to the `forward-log` branch. It is not a track record (README "Limits"). The prepared-roll allocation test was made deterministic in the same pull request. README's test count (639 Java, 114 Python) comes from a local run on this branch on 2026-11-07.
+
+### Review 2026-11-23 and fix round (in progress)
+
+Six read-only reviews of main at 44c4f45 produced docs/reviews/REVIEW_2026-11-23.md. Its fix plan (Section 9) is ordered in rounds. Round 1 (documentation) is in this pull request: the site home page, this file, README "Measured results" and "Limits", the governance documents and the RTS 6 inventory statuses, the reviewer summary, and CHANGELOG 1.1.0. Code fixes run in parallel lanes and are recorded in CHANGELOG.md when they merge. No estimate was written in plan-days.
 
 ## Open items
 
-- Owner: the repository is private until the owner is satisfied (DR-001 amendment). The site deploys once it is public and the Pages source is set to "GitHub Actions" (docs/GITHUB_PAGES.md). Branch protection on `main` should be turned on then, requiring the CI jobs.
-- P6: the Section 17.14 interfaces are bound by round 2 except those listed under R2 below; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as planned in docs/compliance/RTS6_INVENTORY.md.
+- Repository settings, checked 2026-11-23 with `gh api`: the repository is public; the `main` ruleset is active (created 2026-11-01) with nine required status checks, 0 required approvals, strict status checks off, and deletion and force pushes blocked; the Pages source is GitHub Actions, so `docs.yml` deploys the site from main. The DR-001 amendment that kept the repository private is superseded (DECISIONS.md DR-REV-01). Turning on strict status checks is review item E5.
+- Review 2026-11-23: every finding not fixed in the current round stays open in docs/reviews/REVIEW_2026-11-23.md Section 9.
+- P6: the Section 17.14 interfaces are bound by round 2 except those listed under R2 below; build the Aeron replication and quoting lease (DR-P6-06); APA publication, the Part 43 message and the pre-execution credit check are listed as absent in docs/compliance/RTS6_INVENTORY.md.
 - R2 (deferred): bind `MarkSource`, `CarrySource`, `BusinessCalendar`, `VenueStatusPort` and `QuotingControl` (API_SPEC.md 17.14) beyond fixtures; tail the journals into the position keeper live instead of after the run; a futures simulator for the routers and the hedger (DR-R2W-08); a trade feed for the routers' queue model; a second currency and so a second loop; the CLOB quoter is built but not enabled; the SEF simulator is not connected; reconcile the router on reconnect (`SmartOrderRouter.reconcile` with an OrderMassStatusRequest); retire one of the two cancel message pairs (DR-R2W-04).
 - R2 (findings outside its scope): `Venues.T0` is documented as 13:30Z, 08:30 New York, but is 14:30Z, 09:30 New York; the D2C arrival peak is at 08:30, so tests starting at `T0` see the base rate only.
 - Audit-fix controls ship off by default and are not turned on by the wired process: package A1 (hit-rate learning and cover averaging take effect only once the engine is fed outcomes and cover gaps), package C (router filled-adverse and message costs, on only in `RouterPresets.globalWithControls`), package B (CLOB inventory skew, off until called). Turning them on is a pre-registered experiment, not a config edit.
