@@ -115,6 +115,11 @@ public final class RouterBenchmarkResult {
         0.95, scenario.seed() ^ s);
   }
 
+  /** True if the router's risk-adjusted cost is no worse than strategy s's beyond the tolerance. */
+  public boolean withinTolerance(final int s) {
+    return riskAdjustedTicks(0) - riskAdjustedTicks(s) <= scenario.toleranceTicks();
+  }
+
   /** Day-block bootstrap interval of the mean difference, ticks. */
   public double[] meanInterval(final int s) {
     return PairedStats.pairedBlockBootstrap(
@@ -183,6 +188,15 @@ public final class RouterBenchmarkResult {
       }
       sb.append(String.format(Locale.ROOT, "- Against %s: %s (difference %s ticks, 95%% [%s, %s]).%n",
           names[s], verdict, one(ra), one(ri[0]), one(ri[1])));
+    }
+    sb.append(String.format(Locale.ROOT,
+        "%n## The check declared before the run%n%nThe router's risk-adjusted cost was to be no worse"
+            + " than each real baseline's by more than %s ticks.%n%n",
+        String.format(Locale.ROOT, "%.2f", scenario.toleranceTicks())));
+    for (int s = 1; s <= Math.min(RouterBenchmark.REAL_BASELINES, names.length - 1); s++) {
+      final double worse = riskAdjustedTicks(0) - riskAdjustedTicks(s);
+      sb.append(String.format(Locale.ROOT, "- %s: router worse by %s ticks: %s.%n", names[s],
+          String.format(Locale.ROOT, "%.2f", worse), withinTolerance(s) ? "holds" : "FAILS"));
     }
     sb.append("\nThe strawmen (single shot on one venue and the even split, both with the old 8-tick collar)"
         + " are kept only to show what the earlier 2.94 bp claim was measured against.\n");

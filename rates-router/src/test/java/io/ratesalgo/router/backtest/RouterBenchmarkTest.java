@@ -16,8 +16,9 @@ import org.junit.jupiter.api.Test;
  * The router benchmark (docs/research/ROUTER_BENCHMARK.md). It asserts only what must hold
  * whatever the numbers: every parent of every strategy completes, no fill is outside its order's
  * limit, the router never prices past its 2-tick collar and never crosses itself, and its
- * risk-adjusted cost is not worse than any real baseline's by more than the scenario's
- * tolerance. The measured numbers go to the report, written when {@code
+ * risk-adjusted cost is not worse than baselines (a) to (c) by more than the scenario's
+ * tolerance. Against (d) that declared check failed on the one run, and the test holds the
+ * report to saying so. The measured numbers go to the report, written when {@code
  * -Drouter.benchmark.report=<path>} is set; {@code -Drouter.benchmark.commit=<hash>} names the
  * commit that fixed the scenario.
  */
@@ -47,12 +48,21 @@ class RouterBenchmarkTest {
     assertTrue(r.maxTicksPastTouch(0) <= RouterPresets.ladder().aggressiveCollarTicks(),
         "router priced past its collar: " + r.maxTicksPastTouch(0));
     assertEquals(0, r.selfCrosses(0), "router crossed its own order");
-    for (int s = 1; s <= RouterBenchmark.REAL_BASELINES; s++) {
+    // The check declared before the run (router no worse than each real baseline by more than
+    // the tolerance) held against (a), (b) and (c) and FAILED against (d), passive with a
+    // deadline, by 0.40 ticks on the one run of 2026-11-23. The scenario was not changed to
+    // alter that: (a) to (c) stay asserted, and (d) is asserted to be reported as failing, so
+    // the report cannot silently change its answer.
+    for (int s = 1; s <= 3; s++) {
       final double worse = r.riskAdjustedTicks(0) - r.riskAdjustedTicks(s);
-      assertTrue(worse <= sc.toleranceTicks(),
+      assertTrue(r.withinTolerance(s),
           String.format(Locale.ROOT, "router risk-adjusted cost %.3f ticks worse than %s",
               worse, r.name(s)));
     }
+    assertTrue(
+        !r.withinTolerance(4) && body.contains("(d) passive, deadline: router worse by")
+            && body.contains("FAILS"),
+        "the recorded result against (d) changed: rerun and update the report");
   }
 
   /** The report's fixed opening: what it is, what it is not, and the scenario. */
@@ -96,11 +106,16 @@ class RouterBenchmarkTest {
         + " even-split baselines with an 8-tick collar, labelled strawmen; and the touch-model router"
         + " (v1 preset) for reference. Sweeps read 10 levels and retry remainders after 0.5 s.\n\n");
     sb.append(String.format(Locale.ROOT,
-        "The test fails if the router's risk-adjusted cost is worse than any of (a) to (d) by more than"
-            + " %.2f ticks, if any parent does not complete, if any fill is outside its order's limit, or"
-            + " if the router prices past its 2-tick collar or crosses itself.%n%n",
+        "Declared before the run: the router's risk-adjusted cost should be no worse than any of (a)"
+            + " to (d) by more than %.2f ticks. The one run met that against (a), (b) and (c) and did not"
+            + " against (d) (see the check at the end); the scenario was not changed. The test asserts"
+            + " the check for (a) to (c), that the report records the failure against (d), that every"
+            + " parent completes, that no fill is outside its order's limit, and that the router never"
+            + " prices past its 2-tick collar or crosses itself.%n%n",
         sc.toleranceTicks()));
-    sb.append("One run; the numbers are deterministic for the seed.\n\n");
+    sb.append("One run. The numbers are deterministic for the seed, so regenerating the file with the"
+        + " command at the end repeats the same run. A first attempt stopped before producing any number"
+        + " (a strawman baseline hung on a rejected order; fixed in 20484e2).\n\n");
     return sb.toString();
   }
 }
