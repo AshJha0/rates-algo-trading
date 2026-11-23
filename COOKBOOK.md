@@ -1871,7 +1871,7 @@ Expected output (recorded 2026-10-31 after the round 2 review merge, JDK 25.0.5,
 
 ```
 10 simulated minutes: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills
-after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":27,"fills":16,"hedgesRouted":210,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000,"halted":true,"withdrawn":true,"haltReason":"kill switch, requested by 9001"}
+after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":27,"fills":16,"hedgesRouted":210,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000,"halted":true,"withdrawn":true,"haltReason":"kill switch, requested by 9001","recovered":false,"recoveredFrames":0,"journalTornTails":0,"outboundCompleted":0,"reconciling":false,"bookSynced":true,"ready":false}
   1/1/2001 net 1,000,000,000
   1/1/2002 net 7,500,000,000
   1/1/2003 net 10,000,000,000
