@@ -832,6 +832,9 @@ public final class TradingProcess implements AutoCloseable {
     if (driver == null) {
       // stepped on the caller's thread, which owns the sessions and the loops
       applyHalt();
+      for (final Group g : groups) {
+        g.loop.doWork(); // make room in a full inbound ring before the gateways deliver into it
+      }
       pump();
       // the pump has let the loops drain their rings: a KillSwitch that found one full fits now
       offerKillMessage();
