@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the system as built at v1.0.0 (2026-10-31): the phase modules P0 to P6, wired by round 2 into one trading process (`rates-app`), with the desk features of `rates-strategy` beside the quoting engine. The status column says, component by component, what exists and how it is wired. Where a row says "planned", nothing in the repository implements it yet.
+This document describes the system as built at v1.0.0 (2026-10-31), with the 1.1.0 fix-round changes noted where they change the picture: the phase modules P0 to P6, wired by round 2 into one trading process (`rates-app`), with the desk features of `rates-strategy` beside the quoting engine. The status column says, component by component, what exists and how it is wired. Where a row says "planned", nothing in the repository implements it yet.
 
 ## Components
 
@@ -12,13 +12,13 @@ This document describes the system as built at v1.0.0 (2026-10-31): the phase mo
 | Pricing | Curves, swap and bond pricers, futures analytics, incremental revaluation on input change, validated against QuantLib | P1 (`rates-analytics`); wired (round 2) by `AnalyticsPricing`, P3's `FairValueSource` and `SensitivityProvider`, one pillar rebuild per CurveInput on the loop (Section 18.3) |
 | Quoting engine | Turn an RFQ or book state plus inventory and risk into a two-way quote with skew; manage quote lifetimes | P3 (`rates-quoting`); wired (round 2) as `DeskGroup` handlers on the loop, quoting the D2C simulator over FIX |
 | Smart order router | Choose venue and size for hedge and client orders; record decision inputs for markout analysis | P4 (`rates-router`); wired (round 2): one router per hedge instrument behind the hedger's `HedgeOrderSink`, children to the CLOB through the outbound ring, decisions to the `route` journal (DR-R2W-07) |
-| Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | P3 (`rates-risk`); wired (round 2) on the loop with the pricing binding's ladders; the kill switch is reached through `POST /control/kill` as an inbound KillSwitch message (DR-R2W-10) |
+| Risk engine | DV01 and key-rate ladders, limits, breaches, kill switch | P3 (`rates-risk`); wired (round 2) on the loop with the pricing binding's ladders; the kill switch is reached through `POST /control/kill` as an inbound KillSwitch message (DR-R2W-10); since 1.1.0 the withdrawal itself is done by the venue sessions on a halt flag, without the loop (DR-RV-S01, API_SPEC.md Section 18.9) |
 | Hedger | Decide when and how to hedge residual DV01 with futures and benchmarks | P3 (`rates-hedge`); wired (round 2): on the loop's housekeeping timer every 250 ms, Treasuries on the CLOB only (no futures venue yet) |
 | Journal and replay | Append-only hash-chained record of inputs; replayer that drives the same handlers and verifies the chain | exists in P0 (`rates-journal`); segment rolling and the loop's outbound replay comparison from P2 |
 | Back-tester | Replay journals or simulated days through the live code path with pre-registered hypotheses and holdouts; attribution | P5 (`rates-backtest`); wired (round 2): `LoopReplay` with the desk's factory reproduces a recorded day's outbound hash, and `DeskStrategy` runs the same desk under the back-tester for the daily report (Section 18.7) |
 | Analytics (research) | Python: provenance, calibration of simulator parameters, result analysis | exists (`research/ratesresearch`): provenance and chain hash (P0), QuantLib goldens (P1), statistics, hit-rate, flow and markout research and notebooks (P5), edge studies (round 2, docs/research/EDGE_STUDIES.md) |
 | Desk features | Hedge budgets with internalisation and netting, axes, quote sizing, client tiering, hedge timing, funding penalty, coupon carry; desk P&L view and waterfall; desk experiments | round 2 (`rates-strategy`, API_SPEC.md Section 19, docs/research/DESK_FEATURES.md): `DeskQuoter` reproduces `ModelSpreadStrategy` byte for byte at its defaults; runs under the back-tester, not on the wired loop |
-| Control plane | Start, stop, parameter changes with approval, limit changes, kill switch operation; all changes journaled | partly wired (round 2): the kill switch, journaled as an input; parameter and limit changes with approval are planned |
+| Control plane | Start, stop, parameter changes with approval, limit changes, kill switch operation; all changes journaled | partly wired (round 2): the kill switch, journaled as an input; since 1.1.0 also a halt flag read by the gateway thread and a supervisor thread that halts on a dead or stalled loop or gateway thread; parameter and limit changes with approval are planned |
 | AI assistants | Draft, review and summarise under `docs/AI_USE_POLICY.md`; never change production parameters without a human-approved PR | policy and change log (`docs/ai_change_log.md`); no in-process tooling |
 | Post-trade, books and records | Positions, fills, P&L by attribution, end-of-day marks, order records, clearing and settlement state, reconciliations, restart procedure, surveillance hooks | P6 (`rates-posttrade`); wired (round 2): `JournalFeed` feeds the loop's journals to the position keeper, `VenueReconciliation` checks it against both venues' trade registers; marks, carry, calendars and the venue status port stay on fixtures |
 | Operations | Health, readiness, metrics and control endpoints, configuration validation, stress harness, images, rehearsal, runbooks | P6 (`rates-ops`, `deploy/`, `docs/runbooks/`); the images and the rehearsal start `rates-app`'s `TradingProcessMain` (DR-R2W-14) |
@@ -32,7 +32,7 @@ One thread owns one instrument group's state. All inputs for that group (venue m
 What exists (P2, `rates-core`):
 
 - `EventLoop.doWork()` is one duty cycle: latch the clock once (`EventClock`), drain each inbound Agrona `ManyToOneRingBuffer` up to a read limit with check, journal, dispatch by SBE template id to a registered `MessageHandler`, then raise backpressure; poll the `TimerWheel` and journal a clock tick if timers fired; call each `Agent`.
-- `EventLoop.publish` journals each outbound message and writes it to the gateway's `OneToOneRingBuffer`. A full ring drops, counts and raises a journaled `BackpressureEvent` after the handler returns (DECISIONS.md DR-P2C-05).
+- `EventLoop.publish` journals each outbound message and writes it to the gateway's `OneToOneRingBuffer`. A full ring drops, counts and raises a journaled `BackpressureEvent` after the handler returns (DECISIONS.md DR-P2C-05). Since 1.1.0 the templates named with `EventLoop.Builder.retryOnDrop` (the wired process names its four cancel and withdraw messages) are queued and offered again instead; the retry touches the ring only, never the journal (DR-RV-S04).
 - `LoopRunner` runs a loop on a named thread with an Agrona idle strategy (busy spin, yielding or backoff), optional Linux core pinning through `net.openhft:affinity` (optional dependency; skipped elsewhere), start-of-day and end-of-day hooks, and on any exception journals a LoopError and stops.
 - `LoopReplay` rebuilds the loop from the same `LoopFactory`, replays the inbound journal with a `ManualClock`, and compares produced outbound messages with the recorded outbound journal by chain hash, reporting the first mismatch (DR-P2C-01).
 - `SegmentedJournal` (in `rates-journal`) rolls `name.000001.raj` onward with one chain across segments (DR-P2C-03).
@@ -41,7 +41,7 @@ What exists (P2, `rates-core`):
 
 Rules that follow from this:
 
-- Cross-thread handoff is only through ring buffers carrying SBE-encoded bytes. No shared mutable objects, no locks, no `volatile` fields outside the buffer implementations, the runner's run flag, the counters and the journals' hand-over of prepared and full segments to their own background threads (DR-R2J-02).
+- Cross-thread handoff is only through ring buffers carrying SBE-encoded bytes. No shared mutable objects, no locks, no `volatile` fields outside the buffer implementations, the runner's run flag, the counters and the journals' hand-over of prepared and full segments to their own background threads (DR-R2J-02). Since 1.1.0 the process adds a small set of cross-thread holders outside the loop: the halt flag, each venue session's halt state and unconfirmed count (read by the supervisor and the kill call), and the status fields the status agent writes; another thread may close a session's socket but never drive it (DR-RV-S03).
 - No allocation on the hot path after warm-up. Flyweight codecs are reused; collections are pre-sized; primitives are preferred to boxed values. `LoopAllocationTest` checks the `ThreadMXBean.getThreadAllocatedBytes` delta on the loop thread over three windows of one million messages after warm-up (the last must be zero, see docs/BENCHMARKS.md and DR-INT-02). It runs once per journal mode, with 256 MiB segments so that each journal rolls inside the measured windows: a roll allocates nothing (DR-R2J-02).
 - No thread in the loop's process may make garbage at a steady rate or hold off a safepoint. A collection, or a long time to safepoint on any thread, stops the loop thread as well; the latency harness reports collections over its measured phase (DR-R2J-01).
 - Pricing is incremental. A book update reprices the affected instruments, not the group. A curve input reprices what depends on that curve node.
@@ -61,8 +61,29 @@ Rules that follow from this:
  curve feed (D2C mids) ----------------------+          |           |
  CLOB liquidity (LP), SimClock, venue events       inbound ring --> EventLoop: DeskGroup handlers, timers
                                                                       journals: in, out, route
- HTTP thread: OpsHttpServer -- KillSwitch --> InboundRouter     status agent --> /control/status, /metrics
+ HTTP thread: OpsHttpServer -- kill() --> halt flag --> each VenueSession withdraws (cancels, then logout)
+                                    \-- KillSwitch --> InboundRouter --> loop (journaled, for replay)
+ rates-supervisor thread: watches loop duty cycles and the gateway thread; halts, closes sockets
+ status agent --> /control/status (token), /metrics
+ venue OrderCancelReject (35=9) --> VenueGateway --> InboundRouter --> DeskGroup --> router child
 ```
+
+Since 1.1.0 (API_SPEC.md Section 18.9): the kill and any supervisor halt act on the gateway thread first, which withdraws from its own record of live quotes and orders and needs neither the loop nor ring space; the journaled KillSwitch keeps replay equal. The feed binding turns a refused or gapped book delta into DISCONNECTED, a snapshot and CONNECTED (Section 18.5). A session message the loop's ring will not take after 2^20 spins halts the process. A venue's cancel reject reaches the router as template 45.
+
+Start-up on existing journals (1.1.0, review L6, API_SPEC.md Section 18.9; diagram `docs/diagrams/replay_determinism.mmd`):
+
+```
+ journal dir --> JournalRecovery.repair --> LoopRecovery: inbound journal --> live EventLoop (RecoveryClock)
+   (cut torn tail;        |                    produced messages checked against outbound journal
+    refuse other damage)  |                    mismatch, outbound past inbound, trailing LoopError --> refuse to start
+                          v
+ RecoveryClock goes live --> GatewayStatus DISCONNECTED for both sessions (journaled) --> feed rebuild required
+   --> sessions log on, resuming sequence numbers (MappedSequenceStore, <journalDir>/fix)
+   --> CLOB: RECONCILING (4) --> OrderMassStatusRequest --> answers to the loop --> RECONCILED (5)
+   --> snapshot on the feed --> /health/ready 200
+```
+
+The loop keeps the CLOB down from DISCONNECTED until RECONCILED. A dropped session reconnects under `fix.reconnect` and goes through the same RECONCILING step; a halted one does not reconnect. FIX runs over TLS 1.3 (`TcpInitiator`, `SSLEngine` on the gateway thread) unless the venue is on loopback; the control endpoint serves HTTPS with `http.tls` (DR-RV-X06).
 
 - One loop per instrument group; a group is a currency (DR-R2W-03), so the USD universe runs one loop, `usd`, journaling to `<journal dir>/usd/in`, `out` and `route`.
 - The gateways, the feed, the curve feed and the simulated venues share one driver thread, which also paces simulated time; it reaches loop state only through the rings.
@@ -139,9 +160,9 @@ Dependencies: `rates-common`, `rates-messages`, `rates-journal`, Agrona, and Sna
 
 Flow of one run. `BacktestRunner` reads journals with `JournalReader` (chain verified), drives a `ManualClock`, decodes the SBE payloads and calls the `Strategy`. The strategy acts through `StrategyContext`: quotes go to `RfqOutcomeModel` (competitors from `CompetitorModel`, win probability from `HitRateModel` at the run's band point, random draws keyed by RFQ id), market orders to `HedgeCostModel`, limit orders to `ClobFillModel`. Fills are booked in `PositionBook`, which keeps cash and position and the attribution lines side by side; their difference is the residual, checked below one cent. Every output message is SBE-encoded and folded into the output chain hash, which is what the determinism test compares (API_SPEC.md Section 16.1).
 
-Inputs until the P2 simulators are bound: `SyntheticDay` journals, generated from the presets with a seed per date. Research reads the outputs (`fills.csv`, `rfqs.csv`, `pnl.csv`, `summary.json`) and the ledger, and writes presets; the two sides share files and pinned formats (API_SPEC.md Section 16), not code. Experiments go through pre-registration and the ledger (`docs/diagrams/experiment_lifecycle.mmd`). The daily report (`ReportCli`) runs unattended from a journal and a config.
+Inputs: `SyntheticDay` journals, generated from the presets with a seed per date, or a session of the wired process exported by `JournalExport` (rates-app, round 2). Research reads the outputs (`fills.csv`, `rfqs.csv`, `pnl.csv`, `summary.json`) and the ledger, and writes presets; the two sides share files and pinned formats (API_SPEC.md Section 16), not code. Experiments go through pre-registration and the ledger (`docs/diagrams/experiment_lifecycle.mmd`). The daily report (`ReportCli`) runs unattended from a journal and a config.
 
-Binding to the event loop (planned with the coordinator). The P2 loop's replay mode delivers the same SBE flyweights; an adapter that implements `Strategy` over the loop's handlers, or a `BacktestRunner` input that reads the loop's output journal, is the binding point. The outcome models stay in the back-tester until the venue simulators (P2) settle RFQs themselves, at which point the hit-rate model moves into the simulator and the back-tester reads QuoteResponses from the journal.
+Binding to the event loop (done in round 2). `JournalExport` exports a recorded session's inbound journal, and `DeskStrategy` runs the production desk as a back-tester `Strategy`; `DeskBacktest` combines them (rates-app, API_SPEC.md Section 18). RFQ outcomes still come from the back-tester's own `RfqOutcomeModel`, not from the venue simulator that recorded the session (paragraph corrected 2026-11-23).
 
 ## Threading and memory rules
 
@@ -223,10 +244,10 @@ Deployment (`deploy/`, topology in `docs/diagrams/deployment_topology.mmd`):
 
 - one image per process on `eclipse-temurin:25-jre`, running as a non-root user, with the Agrona `--add-opens` flags on the launch line: trading, venue simulator, end-of-day report generator;
 - a compose file for the simulated environment with Prometheus, the alert rules and a Grafana dashboard, all versioned in the repository;
-- a blue/green switch that checks the target is ready, kills quoting on the active colour and confirms its quotes are gone before recording the switch;
+- a blue/green switch that checks the target is ready, kills quoting on the active colour, and records the switch only when that kill answered 200 with zero live quotes, or when the operator overrides with `RATES_OLD_COLOUR_CONFIRMED_DOWN=1`, which is recorded (1.1.0, review E8);
 - a deployment rehearsal that starts the processes (as containers, or as local JVMs in CI), checks readiness, exercises the kill switch through the control endpoint and checks every quote is pulled and the kill journaled (`.github/workflows/ops.yml`).
 
-Recovery: the restart procedure replays the journal, reconciles with every venue's order and quote status, and enables quoting only when nothing blocks (API_SPEC.md Section 17.9). The warm standby over Aeron is designed in `docs/runbooks/warm-standby-design.md` (DR-P6-06) and built at integration. Runbooks per incident class are under `docs/runbooks/`; the compliance control inventory is `docs/compliance/RTS6_INVENTORY.md`.
+Recovery: the restart procedure replays the journal, reconciles with every venue's order and quote status, and enables quoting only when nothing blocks (API_SPEC.md Section 17.9). Since 1.1.0 the trading process itself restarts on its journals: it cuts a torn tail, rebuilds each loop by replay through the live loop, resumes the FIX sequence numbers and reconciles the CLOB before using it, and refuses to start on journals it cannot reproduce (Process topology above; DR-RV-X01 to X05; `docs/runbooks/restart.md`). The rehearsal's process mode kills the trading JVM hard and checks that it recovers. The warm standby over Aeron is designed in `docs/runbooks/warm-standby-design.md` (DR-P6-06) and built at integration. Runbooks per incident class are under `docs/runbooks/`; the compliance control inventory is `docs/compliance/RTS6_INVENTORY.md`.
 
 ## Forward log (paper trading)
 

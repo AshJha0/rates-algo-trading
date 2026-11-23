@@ -27,7 +27,9 @@ import java.util.Map;
  *
  * <p>Refuses (exit code 2, nothing run, nothing recorded) when the pre-registration is missing or
  * invalid, when a holdout date overlaps the fitting period or the evaluation period, when the
- * config hash does not match, or when the holdout has already been opened once. Otherwise runs
+ * config hash does not match, when the holdout has already been opened once, or when the ledger
+ * shows a look at the same sessions by another pre-registration that this one does not declare
+ * under {@code prior_looks} ({@link DataSets}). Otherwise runs
  * the experiment on the evaluation period's business days (or on the holdout dates), appends one
  * record to the ledger whatever the verdict, writes {@code <id>-<scope>-band_risk.json} and {@code
  * .md} (daily-P&amp;L volatility, Sharpe ratio and maximum drawdown per strategy and band point, a
@@ -82,6 +84,12 @@ public final class ExperimentCli {
     }
     final List<LocalDate> days = "holdout".equals(scope) ? prereg.holdout() : prereg.period().businessDays();
     final Experiment experiment = new Experiment(repo, repo.resolve(prereg.config()));
+    final List<Map<String, Object>> before = ledger.entries();
+    final String undeclared = DataSets.refusal(before, DataSets.key(days, experiment::daySeed), prereg, List.of());
+    if (undeclared != null) {
+      out.println("refused: " + undeclared);
+      return REFUSED;
+    }
     final Experiment.Outcome outcome = experiment.run(prereg.baseline(), prereg.treatments(), days, work);
 
     final StringBuilder concat = new StringBuilder();
@@ -102,6 +110,7 @@ public final class ExperimentCli {
         "recorded_utc", Instant.ofEpochSecond(SystemClock.INSTANCE.epochNanos() / 1_000_000_000L).toString());
     record.put("results", outcome.results());
     record.put("verdict", outcome.verdict());
+    DataSets.stamp(record, before, prereg);
     ledger.append(record);
     final List<Map<String, Object>> risk = BandRisk.fromExperimentResults(outcome.results());
     try {

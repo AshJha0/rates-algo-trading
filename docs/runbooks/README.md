@@ -4,14 +4,15 @@ One runbook per incident class, plus the daily procedures and the warm-standby d
 
 | Incident class | Runbook | Alert rules |
 |---|---|---|
-| Market data feed gap | [feed-gap.md](feed-gap.md) | InboundQueueBacklog; KillSwitch reason FeedGap |
-| Venue session lost | [venue-disconnect.md](venue-disconnect.md) | VenueSimulatorDown; KillSwitch reason SessionLoss |
+| Market data feed gap | [feed-gap.md](feed-gap.md) | InboundQueueBacklog; GatewayStatus DISCONNECTED for the feed (status id 3); quotes pulled with reason FeedGap |
+| Venue session lost | [venue-disconnect.md](venue-disconnect.md) | VenueSimulatorDown; GatewayStatus DISCONNECTED; quotes pulled with reason SessionLoss |
 | Risk limit breach | [limit-breach.md](limit-breach.md) | LimitUtilisationHigh, KillSwitchEngaged, QuotesLiveAfterKill |
 | Pricing fault | [pricing-fault.md](pricing-fault.md) | PricingStageSlow; KillSwitch reason StaleReference |
 | Standby takeover | [standby-takeover.md](standby-takeover.md) | TradingProcessDown |
+| Process restart on its journals | [restart.md](restart.md) | TradingProcessDown; `"recovered":true` in the status; `restart refused` on standard error |
 | Reconciliation break | [reconciliation-break.md](reconciliation-break.md) | UnexplainedReconciliationBreaks |
 
-Daily procedures: [start-of-day.md](start-of-day.md), [end-of-day.md](end-of-day.md). Design: [warm-standby-design.md](warm-standby-design.md). Record template: [post-incident-template.md](post-incident-template.md).
+Daily procedures: [start-of-day.md](start-of-day.md), [end-of-day.md](end-of-day.md). Restart after a crash or a stop: [restart.md](restart.md). Certificate and password rotation: [certificate-rotation.md](certificate-rotation.md). Design: [warm-standby-design.md](warm-standby-design.md). Record template: [post-incident-template.md](post-incident-template.md).
 
 The controls these runbooks act on are drawn in [RTS 6 control map](../site/pages/diagrams.md#rts-6-control-map).
 
@@ -20,7 +21,7 @@ The controls these runbooks act on are drawn in [RTS 6 control map](../site/page
 - The journal is the record. Every query below uses `tools/journal_query.py`, which verifies the hash chain as it reads; a chain break is itself an incident (API_SPEC.md Section 4) and is escalated to the development lead before anything else.
 - Times are UTC. Party ids identify people in the KillSwitch and TradeAmend messages; the person who acts gives their own id.
 - The kill switch is the first action whenever the cause is not understood within the time the runbook allows. Pulling quotes costs a few minutes of business; quoting on a wrong state can cost far more.
-- Quoting is re-enabled only by the restart procedure (`RestartProcedure`, API_SPEC.md Section 17.9) or, after a kill, by the head of desk with the risk manager's agreement, recorded in the incident log.
+- Quoting is re-enabled only by the restart procedure (`RestartProcedure`, API_SPEC.md Section 17.9) or, after a kill, by the head of desk with the risk manager's agreement, recorded in the incident log. Since 1.1.0 a kill through the control endpoint halts the process for good, so quoting after it needs a restart (API_SPEC.md Section 18.9).
 - Roles named below (desk head, risk manager, compliance officer, development lead, operations) are the roles a regulated firm would staff. In this project they are all the owner; the separation is kept on paper so the procedures read as they would on a desk.
 
 ## Common journal queries

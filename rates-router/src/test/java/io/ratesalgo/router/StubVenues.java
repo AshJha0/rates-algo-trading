@@ -19,6 +19,7 @@ final class StubVenues implements BookView, OrderGateway {
   final long[] bidDepth;
   final long[] askDepth;
   final double[] rate;
+  final long[] updated;
   final List<Order> orders = new ArrayList<>();
   final List<long[]> cancels = new ArrayList<>();
 
@@ -30,6 +31,8 @@ final class StubVenues implements BookView, OrderGateway {
     bidDepth = new long[n];
     askDepth = new long[n];
     rate = new double[n];
+    updated = new long[n];
+    java.util.Arrays.fill(updated, BookView.AGE_UNKNOWN);
   }
 
   int index(final int venue) {
@@ -63,6 +66,11 @@ final class StubVenues implements BookView, OrderGateway {
   @Override
   public double tradeRatePerSecond(final int venueId) {
     return rate[index(venueId)];
+  }
+
+  @Override
+  public long lastUpdateNanos(final int venueId) {
+    return updated[index(venueId)];
   }
 
   @Override

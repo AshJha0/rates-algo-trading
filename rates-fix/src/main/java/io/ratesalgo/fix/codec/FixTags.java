@@ -87,6 +87,8 @@ public final class FixTags {
   public static final int PARTY_ID = 448;
   public static final int PARTY_ROLE = 452;
   public static final int NO_PARTY_IDS = 453;
+  public static final int USERNAME = 553;
+  public static final int PASSWORD = 554;
   public static final int QUOTE_STATUS_REQ_ID = 649;
   public static final int MASS_STATUS_REQ_ID = 584;
   public static final int MASS_STATUS_REQ_TYPE = 585;

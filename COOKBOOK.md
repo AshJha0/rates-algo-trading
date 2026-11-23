@@ -4,7 +4,7 @@
 
 Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/cookbook/`. `RecipesTest` runs it in CI and compares its output with the block under "Expected output"; `tools/check_cookbook.py` checks that this page quotes both verbatim. The outputs were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11 and reproduced on JDK 27; they do not depend on the machine. Recipes 4 to 8 (P1) print values rounded well above double-precision noise so that they are the same on every platform. Recipes 14 to 16 (P3) were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11. Recipes 23 to 34 (round 2) were recorded on 2026-10-31 with JDK 25.0.5 and Python 3.12 on Windows 11; the analytics recipes among them (23 to 26) round their output in the same way as recipes 4 to 8.
 
-## The planned recipes
+## The recipes
 
 1. How do I use the ManualClock and TimerWheel in a test? (P0, written below)
 2. How do I write frames to a journal and replay them? (P0, written below)
@@ -1871,7 +1871,7 @@ Expected output (recorded 2026-10-31 after the round 2 review merge, JDK 25.0.5,
 
 ```
 10 simulated minutes: 36 RFQs, 27 quotes, 16 RFQ fills, 210 hedge parents, 213 hedge fills
-after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":27,"fills":16,"hedgesRouted":210,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000}
+after the kill switch: {"quoting":false,"killSwitch":true,"liveQuotes":0,"quotesSent":27,"fills":16,"hedgesRouted":210,"liveChildOrders":0,"groups":1,"simulatedNanos":601000000000,"halted":true,"withdrawn":true,"haltReason":"kill switch, requested by 9001","recovered":false,"recoveredFrames":0,"journalTornTails":0,"outboundCompleted":0,"reconciling":false,"bookSynced":true,"ready":false}
   1/1/2001 net 1,000,000,000
   1/1/2002 net 7,500,000,000
   1/1/2003 net 10,000,000,000
@@ -1885,7 +1885,7 @@ reconciliation: 229 ours, 229 theirs, 229 matched, 0 breaks
 replay: 96864 inbound frames, 240 of 240 outbound messages, hash matches
 back-test: 36 RFQs, 14 client fills, 171 hedge fills
 # Daily back-test report, 2026-11-02
-| TOTAL | 54049.48 | -19345.88 | -45781.25 | 0 | 10.45 | -439.5 | 0 | -11506.7 |
+| TOTAL | 54049.14 | -19345.88 | -45781.25 | 0 | 10.45 | -439.5 | 0 | -11507.05 |
 ```
 
 ## 23. How do I fit a Nelson-Siegel-Svensson curve to Treasury yields and read rich and cheap bonds?

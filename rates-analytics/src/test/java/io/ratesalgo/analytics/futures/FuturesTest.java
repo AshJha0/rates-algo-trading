@@ -48,6 +48,44 @@ class FuturesTest {
         List.of()));
   }
 
+  /**
+   * Deliverable windows read from the exchange's rule text on 2026-11-23 (review A11). The review
+   * recalled a 10-year cap for TY; the rule says less than 8 years, and "less than" was the part
+   * the enum had wrong (it admitted exactly 8 years).
+   */
+  @Test
+  void deliverableWindowsFollowTheCbotRulebook() {
+    // TY, CBOT Rule 19101.A as amended by CBOT Submission 25-099 (contract months from March
+    // 2026; the window is the same for earlier months): original term not more than 10 years,
+    // remaining term "not less than 6 years 6 months and less than 8 years"
+    final TreasuryFutureContract ty = TreasuryFutureContract.TY;
+    assertFalse(ty.isDeliverable(77, 120));
+    assertTrue(ty.isDeliverable(78, 120));
+    assertTrue(ty.isDeliverable(95, 120));
+    assertFalse(ty.isDeliverable(96, 120), "exactly 8 years is not less than 8 years");
+    assertTrue(ty.isDeliverable(80, 84), "an original 7-year note");
+    assertFalse(ty.isDeliverable(90, 121));
+    // TN, CBOT Rule 26101.A (same submission): original not more than 10 years, remaining not
+    // less than 9 years 5 months
+    final TreasuryFutureContract tn = TreasuryFutureContract.TN;
+    assertFalse(tn.isDeliverable(112, 120));
+    assertTrue(tn.isDeliverable(113, 120));
+    assertTrue(tn.isDeliverable(120, 120));
+    // Z3N, CBOT Rule 39101.A as amended by CBOT Submission 20-119 (effective 2020-07-13):
+    // original not more than 7 years, remaining not less than 2 years 9 months and not more than
+    // 3 years
+    final TreasuryFutureContract z3n = TreasuryFutureContract.Z3N;
+    assertFalse(z3n.isDeliverable(32, 84));
+    assertTrue(z3n.isDeliverable(33, 84));
+    assertTrue(z3n.isDeliverable(36, 84));
+    assertFalse(z3n.isDeliverable(37, 84));
+    assertFalse(z3n.isDeliverable(34, 85));
+    // T-Bond: at least 15 years and less than 25 (the cap CBOT added from the March 2011 month)
+    assertTrue(TreasuryFutureContract.US.isDeliverable(299, 360));
+    assertFalse(TreasuryFutureContract.US.isDeliverable(300, 360));
+    assertTrue(TreasuryFutureContract.UB.isDeliverable(300, 360));
+  }
+
   @Test
   void futuresDv01IsCtdDv01OverConversionFactor() {
     final BondPricer p = new BondPricer();

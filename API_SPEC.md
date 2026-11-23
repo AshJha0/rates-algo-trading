@@ -87,7 +87,7 @@ A reader (`SegmentedJournalReader`) walks the segments in index order up to the 
 
 Source of truth: `rates-messages/src/main/resources/sbe/rates-schema-v1.xml`. Package `io.ratesalgo.messages.sbe`, schema id 1, version 0, semantic version 1.0.0, little-endian, all messages fixed length (no groups, no var-data) in v1. This section lists the messages so that other documents can refer to them; the XML wins on any difference.
 
-Shared types: `Decimal9` is a composite of `mantissa` int64 and a constant `exponent` of -9; `Ccy` is `char[3]` ASCII; `Tenor` is `char[4]` ASCII, space padded; `EpochNanos`, `Quantity` and `SeqNo` are int64; `InstrumentId`, `PartyId` and `VenueId` are int32. Enums are uint8: `Side` (Buy 1, Sell 2), `BookAction` (Add, Change, Delete, Clear), `QuoteStatus` (Done, TradedAway, Expired, Rejected, Passed), `OrdStatus` (New 0, PartiallyFilled 1, Filled 2, Cancelled 4, Rejected 8), `OrdType` (Market, Limit), `TimeInForce` (Day 0, ImmediateOrCancel 3, FillOrKill 4, GoodTillDate 6), `CurveInputKind` (Fixing, Future, ParSwap, Bond), `LimitKind` (Position, BucketDv01, NetDv01, GrossDv01, DailyLoss, OrderRate, QuoteRate, MaxOrderSize, PriceCollar), `KillReason` (Manual, LimitBreach, FeedGap, SessionLoss, StaleReference). P4 adds the enums `VenueKind` (Clob 1, Futures 2), `RouteReason` (Slice 1, Escalation 2, BookMove 3, Retry 4, Deadline 5, Reconcile 6), `VenueExclusion` (None 0, NoQuote 1, SelfCross 2, BelowMinimum 3, CapReached 4, LimitPrice 5), `ChildState` (New 1, Acknowledged 2, PartiallyFilled 3, Filled 4, CancelRequested 5, Cancelled 6, Replaced 7, Rejected 8) and `TransitionCause` (Sent 1, Ack 2, Fill 3, CancelSent 4, CancelConfirmed 5, Rejected 6, CancelRejected 7, Reconciled 8). Template ids 80 to 89 are reserved for the router. P3 added `LimitKind` values MessageRate (10) and FatFinger (11), and `CancelReason` (Expired 1, StaleInput 2, FeedGap 3, HeartbeatLoss 4, SessionLoss 5, KillSwitch 6, AdverseSignal 7, Requote 8, Manual 9) for QuoteWithdraw and OrderWithdraw (DECISIONS.md DR-P3-04). A Quote with `validUntilNanos` zero is subject, not firm (DR-P3-10).
+Shared types: `Decimal9` is a composite of `mantissa` int64 and a constant `exponent` of -9; `Ccy` is `char[3]` ASCII; `Tenor` is `char[4]` ASCII, space padded; `EpochNanos`, `Quantity` and `SeqNo` are int64; `InstrumentId`, `PartyId` and `VenueId` are int32. Enums are uint8: `Side` (Buy 1, Sell 2), `BookAction` (Add, Change, Delete, Clear), `QuoteStatus` (Done, TradedAway, Expired, Rejected, Passed), `OrdStatus` (New 0, PartiallyFilled 1, Filled 2, Cancelled 4, Rejected 8), `OrdType` (Market, Limit), `TimeInForce` (Day 0, ImmediateOrCancel 3, FillOrKill 4, GoodTillDate 6), `CurveInputKind` (Fixing, Future, ParSwap, Bond), `LimitKind` (Position, BucketDv01, NetDv01, GrossDv01, DailyLoss, OrderRate, QuoteRate, MaxOrderSize, PriceCollar), `KillReason` (Manual, LimitBreach, FeedGap, SessionLoss, StaleReference). P4 adds the enums `VenueKind` (Clob 1, Futures 2), `RouteReason` (Slice 1, Escalation 2, BookMove 3, Retry 4, Deadline 5, Reconcile 6), `VenueExclusion` (None 0, NoQuote 1, SelfCross 2, BelowMinimum 3, CapReached 4, LimitPrice 5, and from 1.1.0 Stale 6, Section 2.3), `ChildState` (New 1, Acknowledged 2, PartiallyFilled 3, Filled 4, CancelRequested 5, Cancelled 6, Replaced 7, Rejected 8) and `TransitionCause` (Sent 1, Ack 2, Fill 3, CancelSent 4, CancelConfirmed 5, Rejected 6, CancelRejected 7, Reconciled 8). Template ids 80 to 89 are reserved for the router. P3 added `LimitKind` values MessageRate (10) and FatFinger (11), and `CancelReason` (Expired 1, StaleInput 2, FeedGap 3, HeartbeatLoss 4, SessionLoss 5, KillSwitch 6, AdverseSignal 7, Requote 8, Manual 9) for QuoteWithdraw and OrderWithdraw (DECISIONS.md DR-P3-04). A Quote with `validUntilNanos` zero is subject, not firm (DR-P3-10).
 
 | Template id | Message | Fields (in order) |
 |---|---|---|
@@ -135,6 +135,16 @@ Added to `rates-schema-v1.xml` on 2026-10-31 without changing any existing field
 | 44 | TradeBust | `venueId`, `clOrdId`, `execId` (the busted execution), `instrumentId`, `side`, `price` Decimal9, `quantity`, `timestampNanos` |
 
 New enum `MdRejectReason` (uint8): CrossedQuote 1, LockedQuote 2, NonPositivePrice 3, Outlier 4, Stale 5, CrossedComposite 6, LockedComposite 7, FixingRepublicationLate 8, FixingRepublicationUnchanged 9, SequenceGap 10, OutOfOrder 11, UnknownInstrument 12 (meanings in Section 11.5). New value `QuoteStatus.DoneAway` 6: the client traded the RFQ elsewhere. Template ids 40 to 59 are reserved for the venue layer.
+
+### 2.3 Additions of the 1.1.0 fix round (2026-11-23)
+
+Added to `rates-schema-v1.xml` without a version bump (DECISIONS.md DR-RV-R01). Both additions are new: no existing message, field or enum value changes, so every recorded frame decodes as before. The schema version stays 0 because the header version is written into every journaled frame and the ledger records journal hashes; a bump made `FirstExperimentTest.ledgerRecordReproduces` fail.
+
+| Template id | Message | Fields (in order) |
+|---|---|---|
+| 45 | OrderCancelReject | `venueId`, `clOrdId` int64 (the refused cancel or replace request), `origClOrdId` int64 (the order it named), `instrumentId` (0 when the gateway could not tell), `ordStatus` (the venue's status of the order), `responseTo` uint8 (1 cancel request, 2 replace request), `timestampNanos` |
+
+New value `VenueExclusion.Stale` 6: the router left a venue out of a decision because its book or session could not be trusted (Section 15.0: `venueHealth` and `RouterTimeouts.maxBookAgeNanos`). It is journaled in RouteDecisionVenue like every other exclusion.
 
 ## Section 3. Clock and timer semantics
 
@@ -267,7 +277,7 @@ Diagram: [multi-curve bootstrap](docs/site/pages/diagrams.md#multi-curve-bootstr
 
 ### 7.2 Tolerances (asserted) and measured agreement with QuantLib 1.44
 
-Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on 2026-10-31, JDK 25.0.5 on Windows 11, against `data/golden/analytics_golden.json` (224 priced instruments).
+Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on 2026-10-31, JDK 25.0.5 on Windows 11, against `data/golden/analytics_golden.json`. The file now holds 225 priced instruments (`instrument_count`); it held 224 when the figures below were measured. The Java gate asserts at least 200.
 
 | Quantity | Asserted tolerance | Measured worst case | Test |
 |---|---|---|---|
@@ -285,9 +295,11 @@ Measured by `rates-analytics` `AnalyticsGoldenTest` and the other named tests on
 | Duration, convexity, DV01 | 1e-10 relative | 4.2e-15 | same |
 | SOFR futures price (10 contracts) | 1e-9 | 0 | `sofrFuturesMatchQuantLib` |
 | Conversion factors (38) | equal at published rounding | equal | `conversionFactorsMatchQuantLibExactly` |
-| Basis, carry, net basis, implied repo (5 baskets) | 1e-10 | 1.9e-14 | `basisImpliedRepoAndCtdMatch` |
+| Basis, carry, net basis, implied repo (5 baskets) | 1e-10 | 1.9e-14 | `basisImpliedRepoAndCtdAgreeWithThePythonRetyping` |
 | Treasury auctions 2024 (84 notes and bonds, 332 bills) | published digits | all equal | `PublishedExamplesTest` |
 | Compounded indices 2024 (SOFR, EUR STR, SONIA) | last published digit | all equal | `CompoundedIndexHoldoutTest` |
+
+The Hull-White convexity, basis and carry rows of `AnalyticsGoldenTest` compare Java with the project's own Python re-typing of the same formulas, not with an outside library. They are cross-language consistency checks, and since 1.1.0 the test names and comments say so. Bond accrual from a dated date that differs from the issue date is checked against QuantLib 1.44 in `DatedDateTest` (tolerance 1e-10).
 
 ## Section 8. Golden file and the risk interface
 
@@ -363,8 +375,11 @@ A payload that breaks a framing rule (length outside 8 to 1024, record type not 
 
 | Message | On a full ring |
 |---|---|
-| BookUpdate, CurveInput, Heartbeat | drop and count; a dropped BookUpdate leaves the book gapped, so the gateway marks the book stale and requests a snapshot through its venue session |
-| QuoteRequest, QuoteResponse, ExecutionReport, GatewayStatus | retry with the gateway's idle strategy until accepted; count the retries; never drop |
+| CurveInput, Heartbeat | drop and count: they are level messages, and the next one supersedes a lost one |
+| BookUpdate | not retried; refused and counted. A refused delta is a gap: the feed binding stops forwarding, publishes GatewayStatus DISCONNECTED for the feed, rebuilds the book from a snapshot and publishes CONNECTED (Section 18.5, DR-RV-R02) |
+| QuoteRequest, QuoteResponse, ExecutionReport, OrderCancelReject, TradeBust, GatewayStatus, KillSwitch | retry for at most `InboundRouter.DEFAULT_SPIN_LIMIT` (2^20) spins; then refuse, count in `undelivered()` and call the `UndeliveredHandler`. The wired process halts and logs out on that call (Section 18.9), because the loop's view of orders and quotes is then wrong |
+
+Before 1.1.0 session messages were retried without bound and a dropped BookUpdate was only counted. A gateway thread that spins for ever also stops sending heartbeats, logons and cancels, which is why the wait is bounded.
 
 A full inbound ring means the loop is behind. The counts belong in the gateway's monitoring and in the capacity review that sizes the ring.
 
@@ -385,6 +400,8 @@ Gateways must not publish a Heartbeat with `sourceId` 0; that value is the loop'
 
 When a gateway's outbound ring is full, `publish` drops the message, counts it (`LoopCounters.OUTBOUND_DROPPED`) and returns normally; a handler cannot see the ring state, so its control flow is the same live and in replay. After the handler, the timer poll or the agent that caused the drops returns, the loop appends one Backpressure control message per affected gateway to the inbound journal (gateway id, number dropped, template id of the first dropped message, latched time) and calls the `BackpressureListener` with a `BackpressureEvent` carrying the same values. The quoting layer registers the listener and is expected to pull its live quotes on that gateway, because a quote the venue did not receive cannot be relied on.
 
+Must-deliver messages (1.1.0, DR-RV-S04). `EventLoop.Builder.retryOnDrop(int... templateIds)` names templates that are not lost on a full outbound ring: a dropped one is queued and offered again on later duty cycles. The wired process names QuoteCancel, QuoteWithdraw, OrderCancel and OrderWithdraw. The retry touches only the ring, never the journal: the message was journaled once when it was published, so replay is unchanged. Counted in `outboundRetryQueued`, `outboundRetried` and `outboundRetryLost` (9.8).
+
 ### 9.6 Core control schema
 
 Schema id 100, version 0, little-endian, standard 8-byte SBE header. Fixed-length messages; offsets are from the start of the body.
@@ -393,7 +410,7 @@ Schema id 100, version 0, little-endian, standard 8-byte SBE header. Fixed-lengt
 |---|---|---|---|
 | 65001 | LoopError | the loop, into its inbound journal, when a duty cycle or hook throws | 0 `timestampNanos` int64, 8 `inboundCount` int64, 16 `textLength` uint16, 18 `text` char[238] ASCII (exception class and message, cut to 238); block length 256 |
 | 65002 | Backpressure | the loop, into its inbound journal (9.5) | 0 `timestampNanos` int64, 8 `droppedCount` int64, 16 `gatewayId` int32, 20 `firstTemplateId` uint16, 22 two zero bytes; block length 24 |
-| 65003 | GatewayStatus | a gateway, on the inbound ring, when its venue session connects (status 1), disconnects (status 2) or retries a Logon that was not accepted (status 3, DR-INT-09) | 0 `timestampNanos` int64, 8 `gatewayId` int32, 12 `status` uint8, 13 `attempt` uint8 (status 3 only, else 0), 14 two zero bytes; block length 16. A consumer treats every status other than 1 as down |
+| 65003 | GatewayStatus | a gateway, on the inbound ring, when its venue session connects (status 1), disconnects (status 2) or retries a Logon that was not accepted (status 3, DR-INT-09); from 1.1.0 a returning CLOB session reports RECONCILING (status 4) and then RECONCILED (status 5) (Section 18.5, DR-RV-X05) | 0 `timestampNanos` int64, 8 `gatewayId` int32, 12 `status` uint8, 13 `attempt` uint8 (status 3 only, else 0), 14 two zero bytes; block length 16. A consumer treats every status other than 1 as down |
 
 Template ids start at 65001 so that a journal frame's template id never collides with schema 1, whose ids are below 100. The loop refuses LoopError and Backpressure from a ring.
 
@@ -431,7 +448,7 @@ Diagram: [replay and determinism](docs/site/pages/diagrams.md#replay-and-determi
 
 ### 9.8 Counters
 
-`LoopCounters`, readable from any thread: inbound, outbound, outboundDropped, backpressureEvents, unhandled, timerTicks, errors. The loop writes them with release stores; readers use volatile loads.
+`LoopCounters`, readable from any thread: inbound, outbound, outboundDropped, backpressureEvents, unhandled, timerTicks, errors, and from 1.1.0 dutyCycles (7), outboundRetryQueued (8), outboundRetried (9) and outboundRetryLost (10); `COUNT` is 11. `dutyCycles` lets the supervisor tell a stalled loop from an idle one (Section 18.9). The loop writes them with release stores; readers use volatile loads.
 
 ## Section 10. FIX 4.4 layer and SBE book feed (P2 venues)
 
@@ -457,6 +474,10 @@ Code: `rates-fix` (package `io.ratesalgo.fix`, engine side, no QuickFIX/J) and `
 | BodyLength or CheckSum wrong, or a field is not tag=value | message dropped, sequence unchanged (`garbled`) |
 | A field cannot be read as its type | session Reject (35=3) with RefSeqNum, RefTagID and SessionRejectReason 5 |
 | SenderCompID or TargetCompID wrong | Reject, then Logout |
+| ResendRequest sent and the gap not closed within the resend timeout (default 5 s, `FixSessionConfig.DEFAULT_RESEND_TIMEOUT_NANOS`) | the ResendRequest is repeated, at most `DEFAULT_MAX_RESEND_RETRIES` (2) times; then Logout and disconnect (1.1.0, review L7) |
+| BodyLength above `FixFramer.MAX_BODY_LENGTH` (256 KiB) | treated as garbage, like a wrong BodyLength (1.1.0, review L7) |
+
+Socket bounds (1.1.0, review L5). `TcpInitiator` gives up a TCP connect after `DEFAULT_CONNECT_TIMEOUT_NANOS` (2 s). A write that makes no progress for `DEFAULT_MAX_WRITE_SPINS` (20,000) attempts closes the connection and is counted in `writeTimeouts`, so a session never blocks its thread on a dead peer. Another thread may only call `abort()` (close the socket), never drive the session (DR-RV-S03).
 
 `SessionStats.sequenceErrors()` is gaps plus too-low numbers; the synthetic day requires it to be zero (10.7).
 
@@ -582,6 +603,7 @@ One annotated incremental (`clob-market-data.json`):
 | NewOrder (20) | D | Market maps to 40=1, Limit to 40=2 with 44; TimeInForce value is written as the FIX character; GoodTillDate adds 126 |
 | OrderCancel (41) | F | |
 | OrderReplace (42) | G | |
+| OrderCancelReject 9 | OrderCancelReject (45) | clOrdId from 11, origClOrdId from 41, ordStatus from 39, responseTo from 434 (1 cancel, 2 replace); instrumentId from the gateway's record of the request, 0 if it has none (the engine then sends it to every group). Before 1.1.0 a 35=9 did not reach the router (review S3) |
 
 Units: FIX prices are decimal text parsed digit by digit into an int64 with exponent -9; a value with more than nine decimal places that are not zero is refused (`FixFormatException`). FIX quantities are face or notional in currency units and become minor units by an exact scale of 2. Times are UTCTimestamp with 0, 3, 6 or 9 decimals; the engine writes milliseconds.
 
@@ -599,7 +621,7 @@ Units: FIX prices are decimal text parsed digit by digit into an int64 with expo
 | PendingNew, PendingCancel, PendingReplace (150 = A, 6, E) | dropped |
 | Cancel ack (150=4 with 41) | the cancel's ClOrdID becomes a second name for the order |
 | Replace ack (150=5 with 41) | the order moves to the new ClOrdID |
-| Trade cancel (150=H, 19=ExecID) | the fill's quantity is removed and a TradeBust emitted; an unknown ExecID is counted and ignored |
+| Trade cancel (150=H, 19=ExecID) | the fill's quantity is removed and a TradeBust emitted; an unknown ExecID is counted and ignored. For an RFQ trade the TradeBust carries the quote id as `clOrdId` (Section 17.14) |
 
 ### 10.5 SBE book feed
 
@@ -610,7 +632,7 @@ Each CLOB (and the SEF order book) publishes `BookUpdate` (template 2) frames, S
 - `quantity` is visible face in minor units (currency units times 100), `orderCount` the orders at the price.
 - Snapshot service: a request returns, for each instrument, one Clear then one Add per level, every frame carrying the sequence number of the last incremental already published.
 
-Consumer rules (`BookFeedConsumer`): apply a frame whose sequence is the last plus one; ignore a frame at or below the last; on a frame above the last plus one, buffer it, mark the books stale, request a snapshot, apply it, then replay buffered frames above the snapshot's sequence in sequence order. Transport: in-process channel with fault injection for tests, one UDP datagram per frame for the standalone process.
+Consumer rules (`BookFeedConsumer`): apply a frame whose sequence is the last plus one; ignore a frame at or below the last; on a frame above the last plus one, buffer it, mark the books stale, request a snapshot, apply it, then replay buffered frames above the snapshot's sequence in sequence order. Transport: in-process channel with fault injection for tests, one UDP datagram per frame for the standalone process. The wired process does not use `BookFeedConsumer`'s buffering: its `FeedBinding` (Section 18.5) rebuilds from a snapshot on any gap. The feed has no heartbeat; the only liveness signal is the next frame.
 
 ### 10.6 Certification scripts
 
@@ -662,7 +684,7 @@ Scripts and what they certify (all green in `CertSuiteTest`, 2026-10-31):
 
 D2C RFQ (`D2cRfqSimulator`): each RFQ goes to the logged-on engine dealers and to simulated dealers (named DLR-A to DLR-E), 3 to 5 in total. An engine quote is rejected (AI 297=5) if the RFQ is unknown, closed, not addressed to that dealer, has no price on the client's side, or has bid not below offer; a new quote replaces the dealer's previous one. The client decides when the window closes, or as soon as every dealer has answered for model-driven RFQs. Scripted RFQs decide only on `decide` or at the window. Outcomes and disclosure: LEARN.md Section 6.
 
-D2D CLOB (`ClobSimulator`, `ClobBook`): limit orders only, day or immediate-or-cancel; quantity a positive multiple of the minimum size; price on the tick grid; iceberg display a multiple of the minimum size not above the quantity. Price-time priority; an iceberg slice refill goes to the back of its level. Self-match prevention: cancel the resting order (default) or the incoming one. Workup: a trade at P opens a workup at P for `workupMillis`; during the first `exclusiveMillis` only the opening trade's participants may trade, marketable orders from others are held; during workup a marketable order trades only at P and its remainder rests at P, and an order that would trade at another price is held until the workup ends; each workup trade restarts the timer when `extendOnTrade` is set; held orders are processed in arrival order when their window ends. A quantity reduction at the same price keeps priority; any other replace loses it.
+D2D CLOB (`ClobSimulator`, `ClobBook`): limit orders only, day or immediate-or-cancel; quantity a positive multiple of the minimum size; price on the tick grid; iceberg display a multiple of the minimum size not above the quantity. Price-time priority; an iceberg slice refill goes to the back of its level. Self-match prevention: cancel the resting order (default) or the incoming one. Workup: a trade at P opens a workup at P for `workupMillis`; during the first `exclusiveMillis` only the opening trade's participants may trade, marketable orders from others are held; during workup a marketable order trades only at P and its remainder rests at P, and an order that would trade at another price is held until the workup ends; each workup trade restarts the timer when `extendOnTrade` is set; held orders are processed in arrival order when their window ends. An immediate-or-cancel order is never held and never rests, in or out of a workup: what it cannot trade at once (it arrives in the exclusive window from a non-participant, it is not marketable at the workup price, or it leaves a remainder) is cancelled at once (`ClobBook`, 1.1.0, review S5, DR-RV-R05). A quantity reduction at the same price keeps priority; any other replace loses it.
 
 SEF (`SefSimulator`): the order book of the CLOB without workup, plus RFQ. An RFQ for a swap whose template is MAT and whose notional is below the template's block threshold must go to at least `requiredMinDealers` dealers or it is refused (`Outcome.REFUSED`); other RFQs may go to any number. Pre-execution check (`FcmLimitHub`): an order reserves its notional against its owner's FCM limit at entry and releases the unfilled part when it ends; an RFQ acceptance reserves the client's and the winning engine dealer's notional; any breach rejects the order or the acceptance. Simulated dealers are assumed to have clearing capacity.
 
@@ -701,14 +723,14 @@ SEF (`SefSimulator`): the order book of the CLOB without workup, plus RFQ. An RF
 
 | File | Columns |
 |---|---|
-| bonds.csv | id, isin, cusip, market (UST, GILT, BUND), currency, tenor, coupon (percent), frequency (1 or 2), maturity, firstCouponDate, issueDate, firstSettlementDate, calendar, announcementDate, auctionDate, onTheRunFromDate |
+| bonds.csv | id, isin, cusip, market (UST, GILT, BUND), currency, tenor, coupon (percent), frequency (1 or 2), maturity, firstCouponDate, datedDate (from 1.1.0), issueDate, firstSettlementDate, calendar, announcementDate, auctionDate, onTheRunFromDate |
 | swap_templates.csv | id, market, currency, index, tenor, fixedFrequency, fixedDayCount, floatFrequency, floatDayCount, paymentLagDays, calendar, spotLagDays, madeAvailableToTrade, blockThreshold (currency units) |
 | futures.csv | id, symbol, exchange, underlying, currency, contractSize, tickSize, notionalCoupon, deliveryMonth, firstDeliveryDate, lastTradingDate |
 | parties.csv | id, code, name, type (DEALER, CLIENT, VENUE, FCM), tier |
 | auctions.csv | market, tenor, isin, announcementDate, auctionDate, issueDate (must agree with bonds.csv) |
 | holidays.csv | calendar (US-GS, UK, TARGET), date, name |
 
-Rules: instrument ids are positive and unique across bonds, swaps and futures; ISIN and CUSIP check digits are validated and a CUSIP must equal ISIN characters 3 to 11; dates satisfy announcement before or on auction, auction before or on issue, issue before first coupon, first coupon before maturity. On-the-run: for a market and tenor, the bond with the latest `onTheRunFromDate` on or before the date (and not matured); a bond is when-issued from its announcement date until it is on the run, so the on-the-run rolls on the new issue's issue date. `CalendarSource` is the hook for `rates-analytics` calendars; `FixtureCalendarSource` reads `holidays.csv` and refuses unknown calendar names and dates outside the calendar years the file lists (2026 and 2027).
+Rules: instrument ids are positive and unique across bonds, swaps and futures; ISIN and CUSIP check digits are validated and a CUSIP must equal ISIN characters 3 to 11; dates satisfy announcement before or on auction, auction before or on issue, issue before first coupon, first coupon before maturity; the dated date (`Bond.datedDate`, the date interest starts to accrue) lies between announcement and issue. It is reference data, not derived (DR-RV-P02): a note whose issue falls on the business day after a weekend month end accrues from the month end. The on-the-run 2Y and 5Y fixtures are dated 2026-10-31 and issued 2026-11-02; the 10Y and 30Y are dated 2026-11-15 and issued 2026-11-16. On-the-run: for a market and tenor, the bond with the latest `onTheRunFromDate` on or before the date (and not matured); a bond is when-issued from its announcement date until it is on the run, so the on-the-run rolls on the new issue's issue date. `CalendarSource` is the hook for `rates-analytics` calendars; `FixtureCalendarSource` reads `holidays.csv` and refuses unknown calendar names and dates outside the calendar years the file lists (2026 and 2027). The US-GS calendar holds SIFMA full closes only; an early close is a business day (DR-RV-P01). 2026-04-03, Good Friday, is a 12:00 early close in the US government securities market and was removed from the US-GS fixture in 1.1.0; it stays a UK holiday. `CalendarConsistencyTest` checks every day of 2026 and 2027 on US-GS, UK and TARGET.
 
 ### 11.5 Market data quality and reject reason codes
 
@@ -771,6 +793,15 @@ Every default is a declared assumption, set in `QuotingConfig` and changed throu
 | `duplicateWindow` | 4,096 | | RFQ ids remembered for duplicate detection |
 | `markoutHorizonNanos` | 60,000,000,000 | ns | delay after a fill at which its markout is measured |
 | event windows | none | epoch ns, multiplier | half-spread multiplier during scheduled events (at most eight) |
+| `acceptPriceToleranceBp` | 0 | bp of value | largest gap between a Done's price and our quoted price before the Done is flagged as a price mismatch (1.1.0, review Q7) |
+| `rejectMismatchedDone` | off | | off: a mismatched Done is flagged, counted and booked at the venue's price; on: flagged and not booked (DR-RV-Q03) |
+| `fairMoveWithdrawFraction` | 0 (off) | fraction | opt-in: withdraw a live quote once fair value has moved against it by this fraction of the distance it was quoted at, floored at `minHalfSpreadBp`; 0 keeps the absolute `fairMoveWithdrawBp` (12.11) |
+| `coverLearning` | off | | opt-in (review Q3): feed each winning cover gap to `SpreadModel.observeCoverGap` (12.9) |
+| `widenAfterClamp` | off | | opt-in (review Q11): apply event, release and volatility widening after the half-spread clamp, so the quoted half-spread may exceed `maxHalfSpreadBp` by the widening and no more |
+| `volatilityReference(currency, instrumentId)` | instrument 0 (off) | | opt-in (review Q11): estimate the currency's daily realised volatility from that instrument's fair value; it scales the winner's-curse term and the volatility widening, floored at `baselineVolBp` |
+| `volatilitySampling(sampleNanos, dayNanos, decay, warmupSamples)` | 60 s, 8 h, 0.97, 30 | | how that estimate is sampled: one sample per interval from the engine's poll, an exponentially weighted variance, scaled to a trading day, reported after the warm-up |
+
+Every row added in 1.1.0 is off or neutral by default, so the back-tested desk and every ledger row reproduce. None is switched on in the wired process.
 
 The client tier table (`TierTable`, versioned, changed by proposal and second-person approval in `TierTableControl`) gives per tier a spread multiplier, a maximum quantity, firm or subject, and blocked. The toxicity table holds an exponentially weighted mean markout per client (weight 0.1) and charges `max(0, -mean) * n / (n + 5)` bp.
 
@@ -835,17 +866,17 @@ Bonds and futures: microprice of the composite book, \((b \cdot A + a \cdot B) /
 
 For each QuoteRequest, after `poll`: duplicate (venue, rfqId) within the window; kill switch ACTIVE; inputs healthy (heartbeats, sessions, feed sequence); instrument known and quantity positive; request not expired; client tier not blocked; re-quote throttle; fair value present; oldest input within `maxInputAgeNanos`; size reduced to `min(request, tier max, risk headroom)` rounded down to the step, pass if zero; capacity of the live book; expected adverse cost below `maxHalfSpreadBp`, else no spread up to the cap has positive expected value and the engine passes with `NEGATIVE_EDGE`; spread, skew, axe; risk pre-trade check (Section 13.2). A failure at any step is a PASS with the `PassReason` in `RfqOutcome`. Otherwise the quantity is reserved and a Quote sent: FIRM with `validUntilNanos = min(now + firmTtl, request expiry)`, or SUBJECT with `validUntilNanos = 0` (DR-P3-10). The diagram is docs/diagrams/rfq_decision.mmd.
 
-`poll(now)` expires quotes with `validUntilNanos <= now` and releases their reservation; sends QuoteWithdraw (reason StaleInput) for any live quote whose oldest input is older than `maxInputAgeNanos`; sends QuoteWithdraw for every live quote when inputs turn unhealthy (reasons HeartbeatLoss, SessionLoss, FeedGap); and measures due markouts. A withdrawn quote keeps its reservation until answered or expired. On QuoteResponse: Done books the fill at the traded price, teaches one win (a disclosed cover on the client's side of the trade adds to the mean cover distance and is not a second observation, DR-R2R-08); TradedAway teaches a loss; every status releases and frees the quote.
+`poll(now)` expires quotes with `validUntilNanos <= now` and releases their reservation; sends QuoteWithdraw (reason StaleInput) for any live quote whose oldest input is older than `maxInputAgeNanos`; sends QuoteWithdraw for every live quote when inputs turn unhealthy (reasons HeartbeatLoss, SessionLoss, FeedGap); and measures due markouts. A withdrawn quote keeps its reservation until answered or expired. On QuoteResponse: Done books the fill at the traded price, teaches one win (a disclosed cover on the client's side of the trade adds to the mean cover distance and is not a second observation, DR-R2R-08); TradedAway teaches a loss; every status releases and frees the quote. From 1.1.0 (review Q7): a Done whose price differs from our quoted price by more than `acceptPriceToleranceBp` is counted in `priceMismatches()` and reported to the recorder (`onPriceMismatch` on the recorder), and is booked unless `rejectMismatchedDone` is set (then counted in `rejectedDones()`); a Done for zero quantity books nothing, teaches no win and is counted in `emptyDones()`.
 
 Diagram: [RFQ end to end with timings](docs/site/pages/diagrams.md#rfq-end-to-end-with-timings).
 
 ### 12.7 Package RFQs
 
-`PackageQuoter` prices curves, butterflies, spread-overs, invoice spreads, IMM rolls and switches as one trade with DV01-neutral leg ratios (IMM rolls one for one). The charge is the sum of the legs' spread charges, minus the netted-hedge saving (sum of the legs' hedge costs minus the hedge cost of the net ladder's parallel PV01), plus the inventory charge on the net ladder; floored at `minHalfSpreadBp` times the largest leg PV01. The charge is applied as an equal bp distance on every leg. Each leg passes a one-sided quote check. Schema v1 has no package message; the wire form is P2's.
+`PackageQuoter` prices curves, butterflies, spread-overs, invoice spreads, IMM rolls and switches as one trade with DV01-neutral leg ratios (IMM rolls one for one). The charge is the sum of the legs' spread charges, minus the netted-hedge saving (sum of the legs' hedge costs minus the hedge cost of the net ladder's parallel PV01), plus the inventory charge on the net ladder; floored at `minHalfSpreadBp` times the largest leg PV01. The charge is applied as an equal bp distance on every leg. Each leg passes a one-sided quote check. Schema v1 has no package message; the wire form is P2's. From 1.1.0 (review 2026-11-23): `Desk` attaches `PackageQuoter.poll` to the quoting engine's poll, so an unanswered package is released at its time to live rather than when the next package request arrives; the inventory term is held within `maxSkewBp` of the legs' PV01; the same package from the same client is throttled for `packageThrottleNanos` (250 ms) whatever the single-RFQ throttle is (`throttledPackages()`); and every leg counts toward the client's DV01 limit (13.2).
 
 ### 12.8 CLOB quoting
 
-`ClobQuoter` rests a bid and an ask at fair plus or minus `halfSpreadBp` (default 0.25 bp), the bid rounded down and the ask up to the venue tick given to `enable(instrumentId, tickMantissa)` (DR-R2R-12; `enable(instrumentId)` keeps the Decimal9 grid). It keeps an order while the target is within `requoteThresholdBp` (0.10 bp) to keep queue priority, and tracks the quantity ahead from the displayed size at its level. It cancels both sides for `cooldownNanos` (1 s) when the futures signal moves more than `futuresJumpBp` (0.5 bp) between updates, and the threatened side when book imbalance \((B - A) / (B + A)\) exceeds 0.6 in absolute value. It replaces at most once per side per `minRequoteNanos` (50 ms), rests at most `participation` (0.25) of the displayed size at the best price and never more than the risk headroom, and never places a buy at or above its own resting sell or a sell at or below its own resting buy. Orders are NewOrder (20), Limit, Day; cancels are OrderWithdraw (61). Reservations are released on the venue's ExecutionReport.
+`ClobQuoter` rests a bid and an ask at fair plus or minus `halfSpreadBp` (default 0.25 bp), the bid rounded down and the ask up to the venue tick given to `enable(instrumentId, tickMantissa)` (DR-R2R-12; `enable(instrumentId)` keeps the Decimal9 grid). It keeps an order while the target is within `requoteThresholdBp` (0.10 bp) to keep queue priority, and tracks the quantity ahead from the displayed size at its level. It cancels both sides for `cooldownNanos` (1 s) when the futures signal moves more than `futuresJumpBp` (0.5 bp) between updates, and the threatened side when book imbalance \((B - A) / (B + A)\) exceeds 0.6 in absolute value. It replaces at most once per side per `minRequoteNanos` (50 ms), rests at most `participation` (0.25) of the displayed size at the best price and never more than the risk headroom, and never places a buy at or above its own resting sell or a sell at or below its own resting buy. Orders are NewOrder (20), Limit, Day; cancels are OrderWithdraw (61). Reservations are released on the venue's ExecutionReport. From 1.1.0 a cancel the venue does not answer is sent again every `cancelRetryNanos` (1 s) from `poll`; after `maxCancelRetries` (3) the `StuckCancelListener` is told once per order that an order we want gone may still be live (`cancelRetries()`, `stuckCancels()`). The order keeps its reservation until the venue reports it. A rejected cancel is reported through `onCancelRejected` (`cancelRejects()`). The wired process does not enable the CLOB quoter on any instrument (`DeskSettings`), so this handler has no caller there; `DeskGroup` sends only router children's cancel rejects on (18.4).
 
 ### 12.9 Learned hit rate, cover averaging and tier defaults (round 2 fix A1)
 
@@ -869,7 +900,7 @@ Client markouts are measured from the fair value at the trade, not from the trad
 
 Release calendar, on by default: `QuotingConfig.usReleaseSchedule(from, to)` returns the epoch nanos of 08:30 and 10:00 New York on weekdays in the range, and the default calendar covers 2026 and 2027. `releaseCalendar(releaseNanos)` replaces it, `releasePullNanos(before, after)` sets the pull window (default 60 s before, 30 s after) and `releaseWidening(afterNanos, multiplier)` sets the widening after it (default 5 minutes at 2.355, the E3 holdout). In the pull window live quotes are pulled and RFQs are passed with `PassReason.RELEASE_WINDOW`. `releases()` and `inReleasePull(nowNanos)` read the calendar.
 
-`PackageQuoter` (Section 12.7) applies the single-RFQ gates in the same order: kill switch, input health, release pull window, instrument and currency, client re-quote throttle, fair value with input age, and `RiskEngine.checkQuote` on every leg. `Desk` registers the package quoter with the kill switch, so a kill withdraws every live package (v1.0.0). A quoted package reserves every leg until answered or expired. `onResponse(packageId, done)` books a Done to risk, including one that arrives after expiry, `poll(nowNanos)` expires packages, and `onKill(reason, epochNanos)` withdraws them. The spread is charged on the net ladder's risk-equivalent PV01, `R = sqrt(L' Sigma L) * sum P_i / sum sqrt(d_i' Sigma d_i)`, so a DV01-neutral curve trade pays for its curve risk, not for the sum of its legs. `Result` exposes `reason()`, `packageId()`, `validUntilNanos()` and `netRiskPv01()`. Counters: `heldPackages()`, `packagesQuoted()`, `packageFills()`, `lateFills()`, `expiries()`, `unmatchedResponses()`. The desk does not register the quoter with the kill switch yet; until it does, `quote` reads the kill switch itself.
+`PackageQuoter` (Section 12.7) applies the single-RFQ gates in the same order: kill switch, input health, release pull window, instrument and currency, client re-quote throttle, fair value with input age, and `RiskEngine.checkQuote` on every leg. `Desk` registers the package quoter with the kill switch, after the quoting engine and the CLOB quoter (`Desk.java`, v1.0.0). A kill runs `onKill`, which marks every live package withdrawn on our side; no message goes to the venue, because schema v1 has no package withdraw, and each package keeps its reservation until the venue answers or its time to live passes. `quote` also reads the kill switch, so no new package is priced while the switch is not ACTIVE. A quoted package reserves every leg until answered or expired. `onResponse(packageId, done)` books a Done to risk, including one that arrives after expiry, `poll(nowNanos)` expires packages, and `onKill(reason, epochNanos)` withdraws them. The spread is charged on the net ladder's risk-equivalent PV01, `R = sqrt(L' Sigma L) * sum P_i / sum sqrt(d_i' Sigma d_i)`, so a DV01-neutral curve trade pays for its curve risk, not for the sum of its legs. `Result` exposes `reason()`, `packageId()`, `validUntilNanos()` and `netRiskPv01()`. Counters: `heldPackages()`, `packagesQuoted()`, `packageFills()`, `lateFills()`, `expiries()`, `unmatchedResponses()`, `throttledPackages()`. The wired process builds the package quoter inside `Desk` but routes no package RFQ to it, so none of this runs there. The class comment in `PackageQuoter.java` that says the desk registers nothing is out of date (1.1.0 review follow-up).
 
 ## Section 13. Risk limit semantics and check order (P3)
 
@@ -888,6 +919,7 @@ Per instrument: position (minor units), reserved buy and sell quantity, the PV01
 3. MaxOrderSize: quantity above `maxOrderSize`.
 4. FatFinger: quantity above `fatFingerQuantity`, or price more than `fatFingerFraction` (relative) from fair.
 5. PriceCollar: price more than `priceCollarBp` bp of value from the pricing source's fair.
+5a. Quotes only, from 1.1.0 (review Q9): per-RFQ and per-client DV01. The quote's parallel DV01 (the larger side) above `RiskLimits.rfqDv01` returns `REJECT_RFQ_DV01` (-5). For a quote to a known client (`checkQuote(clientId, ...)`), the client's DV01 dealt today plus its live quotes plus this quote above `clientDv01` returns `REJECT_CLIENT_DV01` (-6); a client the full table (`MAX_CLIENTS`, 4096) cannot take is refused. Both limits default to `Double.MAX_VALUE`, which skips the check. Neither sends a breach message, because the schema has no `LimitKind` for them; refusals are counted in `dv01Rejects()` (DR-RV-Q04).
 6. Position: position plus reserved plus requested beyond plus or minus `maxPosition` on either side.
 7. BucketDv01: on any pillar, the ladder plus the worst case of every reservation filling or not beyond plus or minus the pillar limit (scope is the pillar index).
 8. NetDv01: the same for parallel PV01 (scope is the currency index).
@@ -895,7 +927,7 @@ Per instrument: position (minor units), reserved buy and sell quantity, the PV01
 10. DailyLoss: P&L since `startOfDay` below minus `dailyLoss`.
 11. QuoteRate or OrderRate, then MessageRate: token buckets of `rate * burstSeconds` tokens.
 
-A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting, counting every other working reservation on the same side as filled, skip 7 to 10 (DR-P3-05, DR-R2R-09). Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
+A failure at 3 to 11 sends one RiskLimitBreach (30) to the control sink with the limit kind, scope (instrument id, pillar index or currency index), limit and observed values (Decimal9, saturated), the journal sequence of the rejected message and the time, and returns the `LimitKind` value. Orders whose parallel PV01 offsets the currency's net PV01 without overshooting, counting every other working reservation on the same side as filled, skip only 10, the daily-loss check (DR-RV-Q02). Before 1.1.0 they skipped 7 to 10 (DR-P3-05, DR-R2R-09), so a 30-year order against 2-year risk could push a pillar or gross PV01 past its limit while lowering net (review Q12). `RiskEngineTest.riskReducingHedgesPassWhenTheBookIsInBreach`: with a 50k pillar limit, a 100mm 7-year future against 10-year cash is refused with BucketDv01 and 70mm passes. Cancels and quote withdrawals are counted against the message rate but never refused. On success, one token is taken from each rate bucket involved.
 
 ### 13.3 Post-trade alerts
 
@@ -903,15 +935,17 @@ After every fill, curve move and re-mark the engine evaluates position, pillar, 
 
 ### 13.4 Kill switch
 
-`KillSwitchController`: ACTIVE, KILLED, RESET_PENDING (docs/diagrams/kill_switch_state.mmd). `trigger(reason, scope, requestedBy)` from ACTIVE or RESET_PENDING calls every registered listener in registration order (quoting engine: QuoteWithdraw for every live quote; CLOB quoter: OrderWithdraw for every resting order; hedgers: `HedgeOrderSink.cancelAll` and release of reservations) and then sends one KillSwitch (31); from KILLED it only counts. `requestReset(operator)` moves KILLED to RESET_PENDING; `approveReset(approver, inputsHealthy)` moves to ACTIVE only for a different person with healthy inputs.
+`KillSwitchController`: ACTIVE, KILLED, RESET_PENDING (docs/diagrams/kill_switch_state.mmd). `trigger(reason, scope, requestedBy)` from ACTIVE or RESET_PENDING calls every registered listener in registration order (quoting engine: QuoteWithdraw for every live quote; CLOB quoter: OrderWithdraw for every resting order; package quoter: marks live packages withdrawn, 12.11; hedgers: `HedgeOrderSink.cancelAll` and release of reservations) and then sends one KillSwitch (31); from KILLED it only counts. `requestReset(operator)` moves KILLED to RESET_PENDING; `approveReset(approver, inputsHealthy)` moves to ACTIVE only for a different person with healthy inputs.
+
+In the wired process this controller is the journaled path of the kill. The path that withdraws does not need the loop: see Section 18.9.
 
 ### 13.5 Breaches, flatten-only and basis limits (round 2 fix C)
 
-A PV01 limit that is already breached does not freeze the book. A quote or order passes the pillar, net and gross checks when none of those worst-case figures moves further past its limit (each may stay where it is, with a relative tolerance for rounding). Flow that reduces a breach is accepted; flow that adds to it, or overshoots through zero into a new breach, is refused. A one-sided quote whose fill offsets net PV01 skips only the daily-loss check.
+A PV01 limit that is already breached does not freeze the book. A quote or order passes the pillar, net and gross checks when none of those worst-case figures moves further past its limit (each may stay where it is, with a relative tolerance for rounding). Flow that reduces a breach is accepted; flow that adds to it, or overshoots through zero into a new breach, is refused. A one-sided quote whose fill offsets net PV01 skips only the daily-loss check, and since 1.1.0 so does a risk-reducing order (13.2).
 
 `flattenOnly()` is true while the kill switch is not ACTIVE because of this engine's own post-trade daily-loss breach (KILLED, or RESET_PENDING after it) and no other kill has happened since. In that state risk-reducing orders still pass `checkOrder`, so hedgers keep flattening, and every other order and every quote is refused with `REJECT_KILLED`.
 
-`RiskLimits.basisPv01(limit)` and `swapSpreadPv01(limit)` bound basis and swap-spread exposure on positions plus the checked quantity at either extreme (other reservations are left out). An exposure already past its limit may shrink but not grow. A refusal returns `REJECT_BASIS` (-3) or `REJECT_SWAP_SPREAD` (-4) without a breach message, since the schema has no limit kind for them; post-trade breaches are counted by `basisBreaches()`. Risk-reducing orders skip the PV01 envelope but not these two limits.
+`RiskLimits.basisPv01(limit)` and `swapSpreadPv01(limit)` bound basis and swap-spread exposure on positions plus the checked quantity at either extreme (other reservations are left out). An exposure already past its limit may shrink but not grow. A refusal returns `REJECT_BASIS` (-3) or `REJECT_SWAP_SPREAD` (-4) without a breach message, since the schema has no limit kind for them; post-trade breaches are counted by `basisBreaches()`. Since 1.1.0 risk-reducing orders pass the PV01 envelope like any other order, with these two limits inside it.
 
 ## Section 14. Hedger objective and solver tolerances (P3)
 
@@ -930,6 +964,16 @@ with \(a_j\) the half spread plus basis cost per lot and \(b_j\) the impact per 
 ### 14.2 Assumptions
 
 Default covariance: daily volatilities 6.0, 6.5, 6.8, 7.0, 7.0, 6.8, 6.2, 5.8 bp for 1Y to 30Y and correlation \(e^{-0.06 |t_i - t_j|}\). Default hedge risk aversion \(\kappa = 10^{-5}\) per currency unit (`Desk.DEFAULT_HEDGE_KAPPA`). Hedger defaults: first tranche 0.5 of the plan, half-life 30 s, trigger one-day residual standard deviation 10,000, axe at most 0.25 bp, parent limit 2 bp of value from arrival mid.
+
+Settings added in 1.1.0 (`Hedger.Config`, review Q10 and Q13, DR-RV-Q01):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `maxMidAgeNanos` | 5 s | no parent is priced off a mid older than this on the injected clock (`staleMidRefusals()`); none is sent while the `HedgeInputGate` reports unhealthy inputs (`unhealthyTimers()`) |
+| `parentTimeoutNanos` | 60 s | a parent still working this long after it was sent is cancelled and stops counting toward the residual; its reservation stays until the router reports it done, and a late fill is booked as usual (`stalledParents()`, `stalledWorking()`, `StallListener.onParentStalled`) |
+| `carryFractionalLots` | off | opt-in: carry the fractional part of each tranche per instrument until it adds up to a whole lot, so a small plan follows its half-life; off, a tranche that rounds to zero is sent as one lot |
+
+The wired process counts parents the hedger stopped waiting on in `DeskGroup.hedgesStalled()`.
 
 ### 14.3 Solver
 
@@ -956,11 +1000,26 @@ Module `rates-router`, package `io.ratesalgo.router`. Units follow Section 0: pr
 | Interface | Direction | Contract |
 |---|---|---|
 | `ParentOrderSink.submit(parentId, instrumentId, side, quantity, urgency, limitPrice)` | in | Parent orders. The P3 `HedgeOrderSink` (rates-api) is bound to it. `quantity` is a positive multiple of the largest venue lot; `urgency` in [0, 1]; `limitPrice` 0 for none. `SmartOrderRouter` implements it. |
-| `BookView` | in | `bestBid`, `bestAsk`, `depth(venue, side, level)`, `tradeRatePerSecond(venue)` per venue for the routed instrument. Bound to P2 market state. Must not allocate. |
+| `BookView` | in | `bestBid`, `bestAsk`, `depth(venue, side, level)`, `tradeRatePerSecond(venue)` per venue for the routed instrument; from 1.1.0 `lastUpdateNanos(venue)`, the epoch time the venue's book last showed it was alive (default `AGE_UNKNOWN`). Bound to P2 market state. Must not allocate. |
 | `OrderGateway` | out | `newOrder` (fields of NewOrder, template 20) and `cancel(venue, clOrdId)`. Bound to the P2 gateway. Must not call back into the router synchronously. |
 | `ExecutionListener` | in | `onExecutionReport` (fields of template 21), `onCancelReject`, `onBookUpdate`. Called on the router's thread. |
 | `FrameSink` | out | `append(templateId, schemaVersion, buffer, offset, length)`; bind to `JournalWriter::append`. |
 | `SmartOrderRouter.reconcile(venueId, statuses)` | in | Mass order status after a reconnect (15.4). |
+| `SmartOrderRouter.venueHealth(venueId, healthy)` | in | From 1.1.0. The owner says whether a venue's book and session can be trusted. An unhealthy venue is excluded from every decision with `VenueExclusion.Stale` (counted in `staleExclusions()`), and passive children resting there are cancelled so their quantity can go elsewhere. |
+| `ParentListener.onParentDone(parentId, outcome, quantity, filled, unresolved)` | out | From 1.1.0. Called once when a parent reaches a terminal `ParentOutcome`: Filled, Cancelled, Expired (the deadline passed and `maxDeadlineRetries` retries could not place the rest) or Failed (a child got no answer to the order or to `maxCancelAttempts` cancels; `unresolved` is the quantity that may or may not have traded). Set with `parentListener`; must not call back into the router. |
+
+`RouterTimeouts` (1.1.0, review S3 and S4, DR-RV-R03) are safety bounds, not cost-model inputs, so they sit outside `RouterParams` and the presets and are not journaled with a decision:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `ackNanos` | 2 s | a child the venue has not acknowledged is cancelled |
+| `iocNanos` | 2 s | an IOC child with no final report is cancelled |
+| `cancelNanos` | 2 s | a cancel with no answer is sent again |
+| `maxCancelAttempts` | 3 | cancels for one child before it is flagged unresolved and its parent ends Failed |
+| `maxDeadlineRetries` | 20 | retries after the parent's deadline before it ends Expired |
+| `maxBookAgeNanos` | 0 (off) | a venue whose `lastUpdateNanos` is older than this is excluded as Stale; the wired desk sets 10 s (`DeskGroup.MAX_BOOK_AGE_NANOS`) |
+
+Unresolved quantity stays reserved until a report or a reconciliation settles it. Counters: `parentsCompleted()`, `parentsExpired()`, `parentsFailed()`, `unresolvedChildren()`, `orphanFillQuantity()`, `staleExclusions()`.
 
 `io.ratesalgo.router.sim.SimMarket` implements `BookView` and `OrderGateway` for tests and the back-test until the P2 simulators are bound.
 
@@ -1027,12 +1086,13 @@ At submit, with patience \(p = 1 - u\): slices \(n = 1 + \mathrm{round}((N-1)p)\
 | IOC remainder cancelled, reject, or quantity unallocated | retry after the delay | Retry |
 | deadline | cancel every resting child, route everything aggressively from now on | Deadline |
 | reconciliation releases quantity | route it, passive allowed | Reconcile |
+| venue marked unhealthy (`venueHealth`) | cancel passive children resting there; exclude it with Stale until healthy | (exclusion Stale) |
 
 Quantity is re-routed only when the venue has confirmed it will not fill. Parent accounting: quantity = filled + outstanding (sum of child leaves) + unrouted, each non-negative, checked after every step by `RouterChaosPropertiesTest`.
 
 ### 15.4 Child order state machine
 
-`ChildOrderBook`. Quantities satisfy cum + leaves + cancelled = ordered after every report, where cancelled is quantity the venue has confirmed will never fill and leaves is quantity that may still fill (working, or filled at the venue with the report still in flight). This is the precise form of "leaves plus cumulative equals ordered": for a cancelled order the cancelled quantity is accounted for explicitly. Fills are counted once per (venueId, execId); a fill that would take cum above ordered is refused as an anomaly.
+`ChildOrderBook`. Quantities satisfy cum + leaves + cancelled = ordered after every report, where cancelled is quantity the venue has confirmed will never fill and leaves is quantity that may still fill (working, or filled at the venue with the report still in flight). This is the precise form of "leaves plus cumulative equals ordered": for a cancelled order the cancelled quantity is accounted for explicitly. Fills are counted once per (venueId, execId). A fill that would take cum above ordered is booked, not dropped (1.1.0, review S9): cum stops at ordered, the excess is kept per child and counted in `excessFills` and as an anomaly, so the position follows what the venue traded. A fill on quantity that a cancel had already freed is booked and counted in `overfills`.
 
 | From | Report or action | To | Effect |
 |---|---|---|---|
@@ -1043,13 +1103,13 @@ Quantity is re-routed only when the venue has confirmed it will not fill. Parent
 | New, Acknowledged, PartiallyFilled | router cancels | CancelRequested | remembers the prior state and whether to re-route |
 | CancelRequested | ER with a new fill | CancelRequested (Filled if complete) | the fill raced the cancel |
 | New, Acknowledged, PartiallyFilled, CancelRequested | ER Cancelled | Cancelled, or Replaced if the cancel was for re-routing | cancelled = ordered - max(cum, venueCum); no change if that is 0 |
-| CancelRequested | cancel reject | prior state (PartiallyFilled if anything filled) | |
+| CancelRequested | cancel reject (OrderCancelReject, template 45, from 1.1.0) | prior state (PartiallyFilled if anything filled) | the child gets one more `cancelNanos` wait for fills in flight, then is cancelled again or flagged unresolved |
 | New, Acknowledged | ER Rejected | Rejected | cancelled = ordered - max(cum, venueCum) |
 | Cancelled, Replaced | ER with a new fill | unchanged | late fill: cum grows, leaves shrinks |
 | any | duplicate fill (seen execId) | unchanged | counted as duplicate |
 | any | status that would move backwards (New after a fill, Cancelled after Filled) | unchanged | counted as stale |
 
-venueCum is the largest cumQuantity any report carried. A slot is released when the state is terminal and leaves is 0; later reports for it count as unknown. `reconcile(venueId, statuses)`: a live child the venue does not list is closed as cancelled; Cancelled or Rejected closes it; Filled raises venueCum to ordered (the fills are pending); orders the venue lists as working that we do not hold live are cancelled. Every state change and every applied fill writes a ChildOrderTransition (template 82).
+venueCum is the largest cumQuantity any report carried. A slot is released when the state is terminal and leaves is 0; later reports for it count as unknown. `reconcile(venueId, statuses)`: a live child the venue does not list frees nothing (1.1.0, review S8, DR-RV-R04). A mass status lists live orders, so an order that filled while the session was down is absent exactly as one the venue never received; the child keeps its quantity reserved and is sent a cancel, and the venue's answer for that order settles it, or with no answer it ends unresolved and fails its parent. Before 1.1.0 such a child was closed as cancelled with nothing filled, which could hedge the quantity twice. Cancelled or Rejected closes it; Filled raises venueCum to ordered (the fills are pending); orders the venue lists as working that we do not hold live are cancelled. Every state change and every applied fill writes a ChildOrderTransition (template 82).
 
 Properties (jqwik, `ChildOrderBookPropertiesTest`, 400 tries; `RouterChaosPropertiesTest`, 25 tries against `SimMarket` with delayed, duplicated and reordered reports): no lost quantity (final cum equals the venue's filled quantity), the identity above after every report, cum never above ordered, the venues never fill more than the parent, every parent completes, no anomaly and no self-cross.
 
@@ -1072,15 +1132,15 @@ Scenario `ust10y_three_venue_v1` (`BacktestScenario.ust10yThreeVenuesV1`, `SimCo
 - Baselines (`AggressiveBaseline`): single-venue aggressive sends the whole parent to venue 1 as an IOC at the far touch plus 8 ticks; even split sends equal lots to the three venues the same way; both resend any remainder after 0.5 s.
 - Block length 5 days, 2000 resamples.
 
-Result (`BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` (rates-router), run 2026-10-31 on JDK 25.0.5, Windows 11):
+Result (`BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` (rates-router), run 2026-10-31 on JDK 25.0.5, Windows 11). This is a regression check of the router against its own simulator and cost model, with single-shot baselines; it is not a market finding. Figures are rounded to 0.1 bp:
 
 | Strategy | Mean cost (bps of price) | Mean saving of the router (bps) | 95% block-bootstrap interval |
 |---|---|---|---|
-| router | -0.2565 | | |
-| single-venue aggressive | 2.6822 | 2.9388 | [2.7792, 3.0631] |
-| even split aggressive | 2.5108 | 2.7673 | [2.5802, 2.9026] |
+| router | -0.3 | | |
+| single-venue aggressive | 2.7 | 2.9 | [2.8, 3.1] |
+| even split aggressive | 2.5 | 2.8 | [2.6, 2.9] |
 
-Re-run 2026-10-31 after the venue offset of DR-R2R-04 was added to the cost model; the P4 gate run before it gave a router cost of -0.1957 and savings of 2.8780 [2.7210, 2.9855] and 2.7065 [2.5309, 2.8272] bps.
+Re-run 2026-10-31 after the venue offset of DR-R2R-04 was added to the cost model; the P4 gate run before it gave a router cost of -0.2 and savings of 2.9 [2.7, 3.0] and 2.7 [2.5, 2.8] bps. Whether the 1.1.0 router changes (timeouts, stale exclusion, the reconcile rule) moved these figures is not recorded here; the gate below still applies.
 
 The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_BPS`). The router's cost is below zero because most of its quantity rests and earns part of the spread in a market whose only adverse selection is the random walk; the number measures the router's logic in this declared world and is not a forecast of desk savings. Refitting the impact and queue parameters from P2 simulator data is deferred (DR-P4-03).
 
@@ -1092,7 +1152,9 @@ The gate: the lower end of each interval exceeds 1.0 bps (`BacktestTest.MARGIN_B
 | Parent quantity not a positive multiple of the largest lot, urgency outside [0, 1], negative limit, side not Buy or Sell, duplicate live parent id | `IllegalArgumentException` from `submit`; nothing is sent |
 | Parent or child capacity exhausted | `IllegalStateException` |
 | Report for an unknown clOrdId, duplicate fill, stale status | ignored and counted (`unknown`, `duplicates`, `stale`) |
-| Overfill, venue mismatch, execId at or above 2^43, venueId at or above 2^20, null status | refused and counted as an anomaly |
+| Overfill | booked and counted as an anomaly (15.4, from 1.1.0) |
+| Venue mismatch, execId at or above 2^43, venueId at or above 2^20, null status | refused and counted as an anomaly |
+| No acknowledgement, no IOC final report, or no cancel answer within `RouterTimeouts` | cancel, resend the cancel, then flag the child unresolved and end the parent Failed (15.0) |
 | RouteDecisionVenue out of sequence, or wrong schema id, on decode | `IllegalStateException` |
 
 ### 15.8 Filled-child adverse cost, message cost and per-instrument volatility (round 2 fix C)
@@ -1191,6 +1253,11 @@ Tolerance: \(|\text{residual}| < 0.01\) on every run, per instrument and in tota
 | `blockBootstrapMeanCi(x, L, B, level, seed)` | B resamples; each draws block starts uniformly from 0 to n - L with `nextInt(n - L + 1)` and concatenates blocks of L until n values; percentile interval of the B means, type 7 quantiles |
 | `welch(a, b)` | \(t = (\bar a - \bar b)/\sqrt{s_a^2/n_a + s_b^2/n_b}\), Welch-Satterthwaite df, two-sided p \(= I_{df/(df+t^2)}(df/2, 1/2)\) by Lentz's continued fraction and Lanczos log-gamma |
 | `holm(p)` | sort ascending, multiply the k-th smallest (0-based) by m - k, running maximum, cap at 1 |
+| `pairedT(a, b)` (1.1.0) | two-sided t-test of the mean of \(d_i = a_i - b_i\) against zero, \(t = \bar d / (s_d/\sqrt n)\), df \(n - 1\); `a[i]` and `b[i]` must come from the same session; refuses differences with zero variance. Returns `Paired(n, mean, standardError, t, df, p)` |
+| `pairedBlockBootstrapCi(a, b, L, B, level, seed)` (1.1.0) | `blockBootstrapMeanCi` applied to the per-session differences \(a_i - b_i\) |
+| `benjaminiHochberg(p)` (1.1.0) | sort ascending, multiply the i-th smallest (1-based) by m / i, running minimum from the largest down, cap at 1; returned in input order |
+
+Use (DR-RV-C03): an experiment that runs baseline and treatment on the same sessions with the same random numbers is a paired design; `pairedT` and `pairedBlockBootstrapCi` are its methods. Welch's test treats the two arms as independent and so overstates the variance of the difference. Benjamini-Hochberg is for many experiments across the ledger; Holm stays the rule within one pre-registered family. Verdicts already in the ledger stand as registered. Python twins: `ratesresearch.stats.paired_t`, `paired_block_bootstrap_ci` and `benjamini_hochberg`.
 
 Java and Python agree on `data/fixtures/backtest/stats_crosscheck.json`: exactly for the bootstrap and generator, to 1e-12 for Welch.
 
@@ -1204,7 +1271,7 @@ Java and Python agree on `data/fixtures/backtest/stats_crosscheck.json`: exactly
 
 ### 16.8 Pre-registration and ledger
 
-Pre-registration YAML, all keys required: `prereg_version` (1), `id`, `title`, `hypothesis`, `metric`, `baseline`, `treatments` (list), `period` and `fitting_period` (`{start, end}`), `holdout` (list of at least two dates), `success_threshold`, `assumption_band` (`{preset, parameter, points: [low, central, high]}`), `author`, `date`, `config` (path from the repository root), `config_sha256`. Optional: `limitations`. Validation (Java `PreRegistration.validate`, Python `ratesresearch.prereg.validate`) rejects: a missing or blank key; a non-ISO date; start after end; an evaluation period overlapping the fitting period or with fewer than two business days; a holdout date in the fitting or the evaluation period; band points other than exactly low, central, high; a config file that is missing or whose SHA-256 (text, CRLF normalised to LF) differs.
+Pre-registration YAML, all keys required: `prereg_version` (1), `id`, `title`, `hypothesis`, `metric`, `baseline`, `treatments` (list), `period` and `fitting_period` (`{start, end}`), `holdout` (list of at least two dates), `success_threshold`, `assumption_band` (`{preset, parameter, points: [low, central, high]}`), `author`, `date`, `config` (path from the repository root), `config_sha256`. Optional: `limitations`, and from 1.1.0 `prior_looks`, a list of pre-registration ids that have already read the same evaluation data. Validation (Java `PreRegistration.validate`, Python `ratesresearch.prereg.validate`) rejects: a missing or blank key; a non-ISO date; start after end; an evaluation period overlapping the fitting period or with fewer than two business days; a holdout date in the fitting or the evaluation period; band points other than exactly low, central, high; a config file that is missing or whose SHA-256 (text, CRLF normalised to LF) differs.
 
 Ledger `data/ledger/ledger.jsonl`, one canonical JSON object per line (sorted keys, no whitespace):
 
@@ -1216,12 +1283,15 @@ Ledger `data/ledger/ledger.jsonl`, one canonical JSON object per line (sorted ke
 | `prereg_id`, `prereg_sha256`, `config_sha256` | what was registered |
 | `journal_sha256`, `journals` | SHA-256 of the newline-joined per-session SHA-256 list, and per session `{date, seed, sha256, frames, rfqs}` |
 | `code_commit`, `code_dirty` | the commit the run used |
-| `scope`, `look` | `evaluation` or `holdout`, and the count of runs of that scope so far |
+| `scope`, `look` | `evaluation` or `holdout`, and the count of runs of that pre-registration and scope so far |
+| `data_set`, `data_set_look`, `prior_looks` | from 1.1.0, on new rows only: the key of the data read (below), the number of rows that have read it including this one, and the ids the pre-registration declared |
 | `recorded_utc` | wall-clock time of the record |
 | `results` | per band point: each strategy's `daily_pnl`, `mean`, bootstrap `ci_low`/`ci_high`, counts, `hit_rate`, `attribution_total`; each comparison's `mean_difference`, `paired_ci_low`/`paired_ci_high`, `welch_t`, `welch_df`, `welch_p`, `holm_p`, `verdict` |
 | `verdict` | `supported` or `not supported` |
 
-`ExperimentCli` exit codes: 0 recorded, 1 error, 2 refused (nothing run, nothing recorded).
+Looks per data set (1.1.0, DR-RV-C02). `look` counts runs of one pre-registration, so ten pre-registrations that each read the same sessions once all say look 1. `DataSets` (rates-backtest) gives each row a key: `sessions:` plus the first 16 hex digits of the SHA-256 of the sorted `date|seed` lines of its journals, or `data:` plus the first 16 hex digits of `data_sha256` for a row without journals. Two runs with the same dates and seeds share a key even when a model change altered the bytes, because their random draws are the same. Before a run, `DataSets.refusal` lists every earlier pre-registration id that read the same key and is not in `prior_looks`; if any is missing the run is refused. The ledger as of 2026-11-23 has 32 rows over 13 data sets; three were read more than once: 11 looks (AUDIT-01 to 04, R2B-001 to 007), 9 looks (AUDIT-11 to 14, AUDIT-21 to 25) and 2 looks (V1H-001, V1H-002). Each of those rows says look 1. History is reported, not rewritten. `LedgerCli [--ledger data/ledger/ledger.jsonl]` and `python -m ratesresearch.prereg LEDGER` verify the hash chain and print the looks per data set (exit 0 when the chain holds, 1 when it is broken or missing); CI runs the Python one.
+
+`ExperimentCli` exit codes: 0 recorded, 1 error, 2 refused (nothing run, nothing recorded), including a refusal for undeclared earlier looks.
 
 Diagram: [experiment lifecycle](docs/site/pages/diagrams.md#experiment-lifecycle).
 
@@ -1378,11 +1448,23 @@ Synthetic day (`SyntheticDay`, seed 20261030, `Params.DEFAULT`: 60 orders, 40 RF
 
 ### 17.11 Configuration
 
-Each process reads one YAML file under `deploy/config/` (schema version 1), validated at start against `deploy/config/schema/process-config.schema.json`; a process whose configuration does not validate exits with status 2 and lists every violation. Sections: `process` (name, role `trading` or `venue-sim`, colour `blue` or `green`), `http` (bind address, port, the environment variable holding the control token), `journal` (directory, capacity), `quoting` (enabled at start, instruments with venue and maximum quote size), `limits` (maximum order notional, maximum net DV01, maximum messages per second), `recon` (cut time UTC, timing tolerance), `retention` (years, 5 to 7). Environment overrides applied before validation: `RATES_HTTP_PORT`, `RATES_JOURNAL_DIR`. The Java validator (`JsonSchema`) supports the keywords type, properties, required, additionalProperties false, enum, const, minimum, maximum, minLength, pattern, items, minItems and maxItems, and refuses a schema that uses any other; CI also validates the files with the Python `jsonschema` package (`tools/validate_config.py`) and checks that a known-bad fixture is refused.
+Each process reads one YAML file under `deploy/config/` (schema version 1), validated at start against `deploy/config/schema/process-config.schema.json`; a process whose configuration does not validate exits with status 2 and lists every violation. Sections: `process` (name, role `trading` or `venue-sim`, colour `blue` or `green`), `http` (bind address, port, the environment variable holding the control token), `journal` (directory, capacity), `quoting` (enabled at start, instruments with venue and maximum quote size), `limits` (maximum order notional, maximum net DV01, maximum messages per second), `recon` (cut time UTC, timing tolerance), `retention` (years, 5 to 7), and from 1.1.0 the optional `runtime` (`loopIdleStrategy`: `busy-spin`, `yield` or `backoff`, default `backoff`; `loopCpu`: -1 to 4095, default -1 for no pinning, group g pinned to `loopCpu + g`). Environment overrides applied before validation: `RATES_HTTP_PORT`, `RATES_HTTP_BIND` (from 1.1.0) and `RATES_JOURNAL_DIR`. The shipped files bind `127.0.0.1`; `deploy/compose.yaml` sets `RATES_HTTP_BIND=0.0.0.0`, and the server then requires a control token (17.12).
+
+
+From 1.1.0 (review L6 and L12), two more optional sections; the meaning and default of every key is tabled in `deploy/README.md`, and the schema refuses a password or key-store password written as a value:
+
+- `fix`: `resetOnLogon` (default `true`; `false` keeps sequence numbers in `<journalDir>/fix/d2c.seq` and `clob.seq` and resumes them); `transport` (`tls` or `plain-loopback`, default `plain-loopback`); `tls.*` for the initiators (`trustStorePath`, `trustStorePasswordEnv` or `trustStorePasswordFile`, `keyStorePath`, `keyStorePasswordEnv` or `keyStorePasswordFile`, `verifyHostname` default `true`, `handshakeTimeoutMillis` default 5000); `acceptor.*` for the in-process simulators (`keyStorePath`, `keyStorePasswordEnv` or `keyStorePasswordFile`, `requireClientCertificate` default `false`, `trustStorePath`, `trustStorePasswordEnv` or `trustStorePasswordFile`); `credentials.{username, passwordEnv | passwordFile}` for Username (553) and Password (554); `reconnect.{maxAttempts, initialBackoffMillis, maxBackoffMillis}` (default 5, 100, 2000). A file with no `fix` section runs the simulator preset: plain loopback, no credentials, reset on logon (`TradingProcess.Fix.SIMULATOR`). The committed trading files resume over TLS with credentials.
+- `http.tls`: `keyStorePath`, `keyStorePasswordEnv` or `keyStorePasswordFile`. With it the endpoints are HTTPS, TLS 1.3. A bind address that is not loopback needs both the control token and `http.tls`, or the process refuses to start.
+
+Each secret is named by exactly one of an environment variable (`...Env`) or a file (`...File`); a variable that is unset or a file that cannot be read stops the process with a message that names the source, never the value (`Secret`, `SecurityConfigTest`). `tools/validate_config.py` checks that each `tools/fixtures/invalid-security-*.yaml` is refused with the message its first line names.
+
+The Java validator (`JsonSchema`) supports the keywords type, properties, required, additionalProperties false, enum, const, minimum, maximum, minLength, pattern, items, minItems and maxItems, and refuses a schema that uses any other; CI also validates the files with the Python `jsonschema` package (`tools/validate_config.py`) and checks that a known-bad fixture is refused.
 
 ### 17.12 Operations endpoints and metrics
 
-`OpsHttpServer` on the JDK HTTP server: `GET /health/live`, `GET /health/ready` (503 with the reason when not ready), `GET /metrics` (Prometheus text format 0.0.4), `GET /control/status` (JSON), `POST /control/kill` (requires header `X-Control-Token` when a token is configured; `X-Requested-By` carries the party id journaled with the KillSwitch; 405 for other methods, 403 without the token).
+`OpsHttpServer` on the JDK HTTP server: `GET /health/live`, `GET /health/ready` (503 with the reason when not ready), `GET /metrics` (Prometheus text format 0.0.4), `GET /control/status` (JSON), `POST /control/kill`.
+
+From 1.1.0 (review L2 and L12): every `/control/*` request, status included, must carry `X-Control-Token` equal to the configured token, or it gets 403 `{"error":"control token required"}`. With no token configured the control endpoints answer 403 to everyone, and the server refuses to start on an address that is not loopback (`OpsHttpServer`, `ProcessConfig.controlBindProblem`, `TradingProcessMain`). Health and metrics need no token. With `http.tls` (17.11) the endpoints are HTTPS, TLS 1.3; plain HTTP is served on loopback only, and a non-loopback bind without both the token and TLS refuses to start (`HttpsEndpointTest.beyondLoopbackNeedsBothTheTokenAndTls`, `loopbackStillServesPlainHttp`). `X-Requested-By` carries the party id journaled with the KillSwitch (400 if it is not an integer). `POST /control/kill` answers 405 for other methods, 200 with the status JSON once the withdrawal is confirmed, and 503 with `{"confirmed":false,"reason":"..."}` when it is not; a caller must not read a 503 as done. `OpsHttpServer.Control.kill(int requestedBy)` returns a `String`: null when the withdrawal is confirmed, otherwise the reason. Before 1.1.0 kill answered 200 whatever happened and status needed no token.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
@@ -1417,6 +1499,8 @@ The list is pinned in `deploy/prometheus/metrics.txt`; `MetricsRegistryTest` che
 | P2 `TradeBust` (44) | rates-posttrade | A case in `PositionKeeper.onFrame` that applies it as a PostTradeBust with reason VenueError |
 
 The 17.14 bindings stand as follows after round 2 (Section 18): `TradeBust` (44) is applied by `PositionKeeper.onFrame` (DR-R2W-06 for the RFQ case); `BookMapper`, `InstrumentCatalogue` and `ValuationConvention` are bound by `io.ratesalgo.app.posttrade.JournalFeed` (catalogue from the pricing binding's directory, books by product); `OpsHttpServer.Control` is bound to `TradingProcess.kill` and `statusJson` (DR-R2W-10); `MessageSink` (stress harness) takes `InboundRouter::offer`. `MarkSource`, `CarrySource`, `BusinessCalendar`, `VenueStatusPort`, `QuotingControl` and the attribution file stay on their fixtures (deferred, STATUS.md).
+
+Bust rule (1.1.0, review Q14, DR-RV-Q06). `PositionKeeper` applies a venue `TradeBust` (44) to the Execution trade `(venueId, execId)`. When no execution matches and `clOrdId` is not 0, it applies it to the Rfq trade `(venueId, clOrdId)` on the same instrument, because an RFQ trade is keyed by our quote id and the venue's bust carries that id as `clOrdId`. A bust that arrives before either trade is held for whichever is booked first. On the loop, `DeskGroup` reverses a busted fill in the risk engine once, and only for an execution it booked: an unknown execution is counted in `unknownBusts`, a repeat in `duplicateBusts`. A bust does not reduce the router parent's filled quantity.
 
 ### 17.15 Message and cancel counts (round 2 fix C)
 
@@ -1454,9 +1538,15 @@ Module `rates-app`, package `io.ratesalgo.app`. It wires the phase modules into 
 - Unit ladder: value change of one major unit (one currency unit of notional or face) for a one basis point rise in each curve quote, mapped onto the eight `KeyRateTenors` by `Dv01Adapter` (DR-R2W-01). `pv01(id, quantityMinor, out)` scales it by `quantityMinor / 100`.
 - Tolerance: par rates and PVs equal a fresh bootstrap of the same quotes to 1e-12; tenor DV01s equal `KeyRateRisk.fromGradient` mapped by the adapter to 1e-12 of the parallel DV01 (`PricingBindingTest`).
 
+From 1.1.0 (review A3, A5, DR-RV-P03, DR-RV-P04), `AnalyticsPricing.Options(boolean bondRiskAtMarket, double maxQuoteMove)`, `Options.defaults()` = `(false, 0.01)`:
+
+- A pillar quote that moves more than `maxQuoteMove` (decimal rate; default 0.01, 100 bp) from its previous value, or whose rebuild fails, is rejected and counted in `rejectedInputs()`; the curve keeps its last good state, and a rejected quote does not refresh the reference time. A quote equal to the previous one only refreshes the reference time and skips the rebuild.
+- `bondRiskAtMarket` (off by default): take bond ladders at the z-spread that reprices the market dirty price (`BondPricer.marketGradient`), instead of at zero spread to the OIS curve. A bond with no z-spread within 500 bp falls back to zero spread that time and is counted in `failedSpreadSolves()`. `bondSpread(id)` reads the spread (NaN for swaps). It is off because it changes every bond DV01 and every recorded simulation figure; it waits for a pre-registered run.
+- `OisSwap.withFixedRate` rebuilds the swap from its unadjusted dates.
+
 ### 18.4 The desk on the loop and agent registration order
 
-`DeskLoopFactory` is the `LoopFactory` of the live loop and of `LoopReplay`. It sets the timer wheel to 1 ms ticks, 1024 slots, 4096 timers, builds the loop and one `DeskGroup`, which constructs, in this order: `AnalyticsPricing`; `LoopBook` (composite book over the CLOB); one `SmartOrderRouter` per hedge instrument with its `LoopOrderGateway`; `RouterHedgeSink`; P3's `Desk` (kill switch, risk engine, a hedger per currency, fair value, quoting engine, package and CLOB quoters; DR-P3 order of kill-switch listeners: quoting, CLOB quoter, hedgers). The desk's input health tracks venues 101 and 102.
+`DeskLoopFactory` is the `LoopFactory` of the live loop and of `LoopReplay`. It sets the timer wheel to 1 ms ticks, 1024 slots, 4096 timers, builds the loop and one `DeskGroup`, which constructs, in this order: `AnalyticsPricing`; `LoopBook` (composite book over the CLOB); one `SmartOrderRouter` per hedge instrument with its `LoopOrderGateway`; `RouterHedgeSink`; P3's `Desk` (kill switch, risk engine, a hedger per currency, fair value, quoting engine, package and CLOB quoters; order of kill-switch listeners: quoting, CLOB quoter, package quoter, hedgers). The desk's input health tracks venues 101 and 102.
 
 Handlers, registered in this order:
 
@@ -1467,20 +1557,38 @@ Handlers, registered in this order:
 | 3 CurveInput | `AnalyticsPricing.onCurveInput`; on a moved pillar `RiskEngine.onCurveMove(USD)` and `onFairValue` |
 | 21 ExecutionReport | from the RFQ venue: counted, not booked (DR-R2W-06); router child ids: the router, then the hedger (`onHedgeFill`, `onParentDone`); other ids: the CLOB quoter |
 | 31 KillSwitch | `KillSwitchController.trigger(reason, scope, requestedBy)` |
-| 44 TradeBust | reverses the fill in the risk engine |
-| 65003 GatewayStatus | input health `onSession` (ids 0, 1) or `onFeedRecovered` (id 3), then a quoting poll |
+| 44 TradeBust | reverses the fill in the risk engine, once and only for a booked execution (17.14) |
+| 45 OrderCancelReject (1.1.0) | counted; router child ids go to the router's `onCancelReject`; any other cancel reject is not passed on (the CLOB quoter, the only other sender of cancels, is not enabled) |
+| 65003 GatewayStatus | input health `onSession` (ids 0, 1) or `onFeedRecovered` (id 3), then a quoting poll; from 1.1.0 a feed DISCONNECTED (id 3) or a lost CLOB session also marks the CLOB unhealthy to every router (`venueHealth`) until CONNECTED |
 
-The first dispatched message of any template starts the desk: it requires the curve heartbeat, calls `RiskEngine.startOfDay` and schedules the housekeeping timer, which every 10 ms polls the quoting engine and each router and every 250 ms calls `Hedger.onTimer`, then reschedules itself from the timer's own deadline. Starting on the first message, not at construction, makes every deadline relative to an input, so live and replay agree. The only agent is the status agent the process adds (`TradingProcess.Group.publishStatus`), which copies counters into volatile fields; agents do not run in replay (DR-P2C-04).
+The first dispatched message of any template starts the desk: it requires the curve heartbeat, calls `RiskEngine.startOfDay` and schedules the housekeeping timer, which every 10 ms polls the quoting engine and each router and every 250 ms calls `Hedger.onTimer`, then reschedules itself from the timer's own deadline. Starting on the first message, not at construction, makes every deadline relative to an input, so live and replay agree. The only agent is the status agent the process adds (`TradingProcess.Group.publishStatus`), which copies counters into volatile fields, from 1.1.0 only when a value changed; agents do not run in replay (DR-P2C-04).
+
+CLOB gating (1.1.0, review S2): the desk marks the CLOB unhealthy to its routers on a feed DISCONNECTED, a jump in the CLOB book's venue sequence, or a lost CLOB session; while it is unusable the routers exclude it, their resting children there are cancelled and book updates are not passed to them, and the input health keeps quoting pulled. The routers' `maxBookAgeNanos` of 10 s also excludes it after 10 s with no book update; that rule acts on routing only and does not pull quotes.
 
 `OutboundSink` (gateway) publishes to the gateway id of the message's venue (its first field); `OutboundSink` (control) publishes to gateway 2.
 
 ### 18.5 Venue binding and instrument-group partitioning
 
-`VenueSession` owns a `TcpInitiator`, a `FixSession` (heartbeat 30 s, reset on logon) and P2's `VenueGateway`, whose inbound sink is an `InboundRouter`. Its duty cycle reads the socket, runs the session timers and drains this venue's outbound ring in every group into `VenueGateway.offer`. Logon and disconnect publish GatewayStatus with the session's id. A connection that ends, or whose TCP connect is refused, before the venue accepts our Logon is retried under the session's `ReconnectPolicy` (default 5 retries from 100 ms, doubling, capped at 2 s; `NONE` disables it). Each retry publishes GatewayStatus RECONNECTING with its attempt number. An active session that drops, and any session after `disconnect()`, is not retried (DR-INT-09).
+`VenueSession` owns a `TcpInitiator`, a `FixSession` (heartbeat 30 s) and P2's `VenueGateway`, whose inbound sink is an `InboundRouter`. Its duty cycle reads the socket, runs the session timers and drains this venue's outbound ring in every group into `VenueGateway.offer`. Logon and disconnect publish GatewayStatus with the session's id. A connection that ends, or whose TCP connect is refused, before the venue accepts our Logon is retried under the session's `ReconnectPolicy` (default 5 retries from 100 ms, doubling, capped at 2 s; `NONE` disables it). Each retry publishes GatewayStatus RECONNECTING with its attempt number (DR-INT-09).
 
-`InboundRouter` (one per publishing thread) sends a message naming an instrument (BookUpdate, CurveInput, QuoteRequest, ExecutionReport, TradeBust) to that instrument's group; a QuoteResponse to the group that received the QuoteRequest with the same venue and RFQ id, forgotten at the first final response that is not Rejected; everything else (Heartbeat, GatewayStatus, KillSwitch) to every group. A full ring drops and counts BookUpdate, CurveInput and Heartbeat and retries every other message until the loop takes it (Section 9.3). An instrument group is a currency (DR-R2W-03).
+From 1.1.0 (review L6, DR-RV-X03 to X05):
 
-`FeedBinding` forwards every BookUpdate from the venue's feed channel, including the first after a sequence gap; on a gap it requests the venue's snapshot, forwards its frames, skips buffered frames the snapshot covers and publishes GatewayStatus CONNECTED with id 3 (DR-R2W-05).
+- **Sequence numbers.** With `fix.resetOnLogon` on (the simulator preset) both numbers restart at every Logon. With it off the session keeps them in a `MappedSequenceStore` (one 4 KiB mapped page, two slots each with a CRC32C, the newer good slot wins) and resumes them at every Logon, so the venue resends what we missed. After an unclean stop the inbound number resumes from the last one the loops had journaled (`resumeInSeq`), so anything received but perhaps not processed is asked for again; `DeskGroup` books a repeated ExecID once. A ResendRequest from the venue is answered with one SequenceReset-GapFill; our own messages are never resent (DR-P2V-03, `SessionRecoveryTest.ourOwnMessagesAreGapFilledNeverResent`).
+- **Reconnect.** An active session that drops reconnects under the same `ReconnectPolicy` and stops after `maxAttempts` failed attempts. A halted session and one disconnected on purpose do not reconnect (`VenueSessionReconnectTest`).
+- **Reconcile.** A CLOB session that logs on again, after a drop or a restart, publishes GatewayStatus RECONCILING (4), sends an OrderMassStatusRequest, passes the answers to the loop and then publishes RECONCILED (5). An unanswered request is sent again after 5 s, twice; then the connection is dropped and made again. The loop keeps the venue down, and its quotes withdrawn, until RECONCILED (`DeskGroupTest.aReturningClobSessionStaysDownUntilItsOrdersAreReconciled`). Both statuses are journaled inputs.
+- **Transport.** `TcpInitiator` takes a `TlsConfig` (TLS 1.3 by default, host-name verification on, handshake deadline) or none; none is allowed to a loopback address only. Logon carries Username (553) and Password (554) when configured.
+
+`InboundRouter` (one per publishing thread) sends a message naming an instrument (BookUpdate, CurveInput, QuoteRequest, ExecutionReport, TradeBust) to that instrument's group; a QuoteResponse to the group that received the QuoteRequest with the same venue and RFQ id, forgotten at the first final response that is not Rejected; everything else (Heartbeat, GatewayStatus, KillSwitch) to every group. A full ring drops and counts CurveInput and Heartbeat, refuses BookUpdate (the feed binding then resynchronises), and retries every other message for at most 2^20 spins before refusing it and calling the `UndeliveredHandler` (Section 9.3). An instrument group is a currency (DR-R2W-03).
+
+`FeedBinding` protocol (1.1.0, review S1, DR-RV-R02, superseding the forwarding rule of DR-R2W-05):
+
+1. It starts unsynchronised and takes a snapshot from the venue's `SnapshotService` before it forwards any live frame; frames at or below the snapshot's sequence are dropped as already covered. No first sequence number is taken on trust.
+2. A live frame is forwarded only if it is the next in sequence, and the sequence advances only when the inbound side took it.
+3. A gap on the wire and a frame the inbound ring refused are the same event. The binding stops forwarding and publishes GatewayStatus DISCONNECTED with id 3: the loop pulls its quotes and the routers stop using the venue.
+4. It delivers a whole snapshot, a Clear and the levels per instrument, each stamped with the snapshot's sequence, then publishes GatewayStatus CONNECTED with id 3: the book is whole again.
+5. If the inbound side refuses any step, the binding stays unsynchronised and tries the whole rebuild again on its next duty cycle. The book is declared whole only after every snapshot frame was taken.
+
+The venue sequence is per venue and the loop checks it per group, so a second instrument group on the same venue would see false gaps (README Limits).
 
 ### 18.6 Post-trade binding
 
@@ -1499,6 +1607,19 @@ The first dispatched message of any template starts the desk: it requires the cu
 | `PricingBindingTest` | Section 18.3 tolerances |
 | `VenueBindingTest` | a feed gap and a lost session pull quotes through the loop and the venue; quoting resumes after the snapshot and after logon; injected GatewayStatus faults |
 | `WiredLoopAllocationTest`, `AppHotPathRulesTest` | DR-R2W-12 |
+
+### 18.9 Halt, kill and supervision (1.1.0)
+
+Review findings L1 and L2 showed that the kill went only through the loop and that a dead loop left quotes live. From 1.1.0 (DR-RV-S01 to S04):
+
+- **Halt.** `TradingProcess.requestHalt(reason, logout)` sets a halt flag once; it is never cleared (a halt is final for the process; restart to quote again). Each `VenueSession` reads it on its next duty cycle (`halt(boolean logout)`, states RUNNING 0, HALTING 1, WITHDRAWN 2). A halted session lets nothing from the loops out and cancels every quote and order in its own record of what is live at the venue (`LiveSet`, 8,192 quotes and 8,192 orders). Cancels the venue does not answer are repeated (`WithdrawPolicy.DEFAULT`: every 250 ms, three rounds), then the session logs out so the venue's cancel-on-disconnect applies, with 1 s for the venue's Logout before the socket closes. A live set that overflowed logs out at once.
+- **Kill.** `TradingProcess.kill(requestedBy)` returns `KillResult(boolean confirmed, String reason)` (`KillResult.CONFIRMED` = true, null). It sets the halt flag first, so the withdrawal needs neither a live loop nor room in a ring. It also offers a KillSwitch (31, reason Manual, scope 0) to every group's inbound ring; that journaled copy keeps replay honest, and if a ring is full the offer is repeated by the supervisor. The call waits up to the kill deadline for both venues to confirm; if they do not, the sessions log out and it waits once more; if they are still up, the sockets are closed and the reason says so. Only a confirmed withdrawal is `confirmed`.
+- **Supervisor.** A `rates-supervisor` thread checks every `supervisorPeriodNanos`. A loop that stopped, or whose `dutyCycles` has not moved for `stallNanos`, causes a halt with logout. A gateway thread that died withdraws on its way down; if it cannot, or if it stalls, the supervisor halts and closes the sockets (cancel-on-disconnect). A halt not confirmed within twice the kill deadline also closes the sockets.
+- **Undelivered session messages.** The process installs an `InboundRouter.UndeliveredHandler` that halts with logout when a session message cannot be delivered to a loop (9.3).
+- **`TradingProcess.Tuning`**: `loopIdleStrategy`, `loopCpu`, `killDeadlineNanos`, `stallNanos`, `supervisorPeriodNanos`; `DEFAULT` = (`backoff`, -1, 2 s, 10 s, 5 ms). The first two come from the `runtime` configuration section (17.11).
+- **Status keys** of `statusJson`: `quoting`, `killSwitch`, `liveQuotes`, `quotesSent`, `fills`, `hedgesRouted`, `liveChildOrders`, `groups`, `simulatedNanos`, and from 1.1.0 `halted`, `withdrawn`, `haltReason`, `recovered` (the process started on existing journals), `recoveredFrames` (inbound frames replayed), `journalTornTails` (torn tails cut), `outboundCompleted` (messages replay produced past the end of the recorded outbound journal, journaled and not sent), `reconciling` (a session is reconciling orders), `bookSynced` (the CLOB book holds a whole snapshot) and `ready` (no not-ready reason; the same test as `/health/ready`).
+- **Restart (1.1.0, review L6).** `TradingProcess` started on a journal directory that holds journals repairs them (`JournalRecovery.repair`), replays each group's inbound journal through its live loop (`LoopRecovery.run`, with a `RecoveryClock`), tells each loop as journaled inputs that both sessions are down, makes the feed rebuild, and only then logs on. `TradingProcessMain` prints one `recovery: ` line per step; on refusal it prints `restart refused, process not started:` with the reason and exits non-zero. DR-RV-X01, X02.
+- **Blue/green.** `deploy/bluegreen.sh` records a colour switch only after the old colour's kill answered 200 with `"liveQuotes":0`. Otherwise it exits 1, unless the operator sets `RATES_OLD_COLOUR_CONFIRMED_DOWN=1`, in which case the state line records `old-colour-kill-unconfirmed=operator-override` (review E8).
 
 ## Section 19. Desk features (rates-strategy, R2)
 

@@ -15,7 +15,10 @@ import java.time.LocalDate;
  * @param frequency coupons per year
  * @param maturity maturity date
  * @param firstCouponDate first coupon payment date
- * @param issueDate issue (dated) date
+ * @param datedDate date interest accrues from. The Treasury dates a note on its nominal date and
+ *     issues it on the next business day when that date is not one, so this can be a day or two
+ *     before {@code issueDate}; the first coupon is then a full one and the buyer pays the accrued
+ * @param issueDate issue date: the first settlement of the auction
  * @param firstSettlementDate first date a trade may settle
  * @param calendar holiday calendar name for {@link CalendarSource}
  * @param announcementDate auction announcement; when-issued trading starts here
@@ -33,6 +36,7 @@ public record Bond(
     int frequency,
     LocalDate maturity,
     LocalDate firstCouponDate,
+    LocalDate datedDate,
     LocalDate issueDate,
     LocalDate firstSettlementDate,
     String calendar,

@@ -8,8 +8,9 @@ package io.ratesalgo.app.gateway;
  * when the Logon times out. After the n-th failed attempt the session waits {@code
  * min(initialBackoffNanos * 2^(n-1), maxBackoffNanos)} and tries again, at most {@code maxAttempts}
  * times after the first; then it stays down and counts the give-up. An accepted Logon resets the
- * count. A session that was active and then dropped is not retried here: the loop has pulled its
- * quotes, and reconnecting a live session is an operator decision ({@link VenueSession#connect}).
+ * count. A session that was active and then dropped is retried the same way, starting with the
+ * first backoff; one that was halted, disconnected on purpose or refused for its credentials is
+ * not.
  *
  * @param maxAttempts retries after the first attempt, at least 0 (0 disables retries)
  * @param initialBackoffNanos wait before the first retry, positive

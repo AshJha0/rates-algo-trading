@@ -1,11 +1,26 @@
 """Golden values from QuantLib for the Java analytics module (API_SPEC.md Section 8).
 
-Every number in the golden file is computed by QuantLib. The curves are bootstrapped here by a
-sequential root search (QuantLib's Brent solver) in which each instrument is priced by QuantLib
-objects built with the same explicit schedules, calendars and conventions as the Java side, so a
-difference between the two implementations shows up as a repricing difference rather than being
-hidden by matching helper defaults. Market quotes are declared, realistic values for the
-valuation date (DECISIONS.md DR-P1-08); past overnight fixings come from the committed fixtures.
+Most numbers in the golden file are computed by QuantLib objects: calendars, schedules, swap and
+bond prices, yields, accrued, risk by bumping. The curves are bootstrapped here by a sequential
+root search (QuantLib's Brent solver) in which each instrument is priced by QuantLib objects built
+with the same explicit schedules, calendars and conventions as the Java side, so a difference
+between the two implementations shows up as a repricing difference rather than being hidden by
+matching helper defaults. Market quotes are declared, realistic values for the valuation date
+(DECISIONS.md DR-P1-08); past overnight fixings come from the committed fixtures.
+
+Three parts are not independent of the Java code and must not be read as QuantLib goldens. They
+are the same formula typed a second time in Python, so they catch a slip in one language but not
+a formula that is wrong in both:
+
+- the Hull-White futures convexity adjustment (``hull_white_ca``), used in every SOFR futures
+  quote and so in the futures pillars of the curves;
+- gross basis, carry, net basis and implied repo (``basis_rows``): QuantLib supplies the clean
+  prices and accrued interest, the arithmetic on top of them is written out here;
+- the bootstrap loop itself (``bootstrap``): pillar by pillar with Brent, as the Java sequential
+  solver does it. The instruments inside the loop are QuantLib's.
+
+The CME conversion factor is the definition (the 6 percent price of the truncated bond, priced
+by QuantLib) against the exchange's closed formula in Java, which is an independent check.
 
 The output is deterministic given the QuantLib version, which is recorded in the file.
 """
@@ -85,7 +100,10 @@ def holidays(cal: Any, first_year: int, last_year: int) -> list[str]:
 
 
 def hull_white_ca(t1: float, t2: float) -> float:
-    """Mirror of HullWhite.futuresConvexity with the default parameters."""
+    """HullWhite.futuresConvexity typed again in Python, default parameters.
+
+    Not an independent value: a cross-language consistency check only (QuantLib is not involved).
+    """
     a, s = HW_A, HW_SIGMA
     b12 = (1.0 - math.exp(-a * (t2 - t1))) / a
     b01 = (1.0 - math.exp(-a * t1)) / a
@@ -745,6 +763,19 @@ def bond_cases() -> list[BondCase]:
             "2025-01-27",
         )
     )
+    # Dated on a Saturday and issued on the Monday: the Treasury dates a note on its nominal date,
+    # so the first coupon is a full one and accrued runs from the Saturday (review 2026-11-23, A5).
+    out.append(
+        BondCase(
+            "UST-3.375-2028-10-31-DATED-SATURDAY",
+            "UST",
+            0.03375,
+            "2026-10-31",
+            "2028-10-31",
+            0.0340,
+            "2026-11-02",
+        )
+    )
     return out
 
 
@@ -974,6 +1005,10 @@ def bond_clean_at(market: str, coupon: float, dated: str, mat: str, y: float, se
 
 def basis_rows(contract: str, year: int, month: int, repo: float, today: Any) -> JsonDict:
     """Implied repo, net basis and CTD for a CME basket with yields from a smooth curve.
+
+    Clean prices and accrued interest are QuantLib's; the basis, carry and implied repo arithmetic
+    is the same formula as BasisAnalytics typed again here, so these rows are a cross-language
+    consistency check, not an independent golden.
 
     The futures price is set 1/64 below the lowest repo-implied forward price divided by the
     conversion factor, so the CTD's implied repo sits just below the repo rate.

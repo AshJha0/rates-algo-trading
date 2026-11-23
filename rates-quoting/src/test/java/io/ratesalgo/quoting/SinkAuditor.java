@@ -119,9 +119,8 @@ final class SinkAuditor implements HedgeOrderSink {
     if (!m.desk.killSwitch().isActive() && !(m.desk.risk().flattenOnly() && reducing)) {
       fail("parent " + parentId + " while killed");
     }
-    if (!reducing) {
-      envelope(inst.currency(), "parent " + parentId, instrumentId, own);
-    }
+    // review 2026-11-23 Q12: lowering net PV01 excuses a parent from the kill, not from the envelope
+    envelope(inst.currency(), "parent " + parentId, instrumentId, own);
     collar("parent " + parentId, instrumentId, limitPrice);
     parents.add(new long[] {parentId, instrumentId, side == Side.Buy ? quantityMinor : -quantityMinor, limitPrice});
     return true;

@@ -1,19 +1,19 @@
 # Runbook: market data feed gap
 
-A feed gap is a break in a venue's book feed sequence (`BookUpdate.venueSeqNo` not one more than the last), or silence on a feed longer than its heartbeat interval. Quotes priced off a book with a gap are priced off a state that may no longer exist.
+A feed gap is a break in a venue's book feed sequence (`BookUpdate.venueSeqNo` not one more than the last), or a book delta the loop's inbound ring refused. Since 1.1.0 the two are the same event (DECISIONS.md DR-RV-R02): either way the loop's book may hold a level that no longer exists. The feed has no heartbeat; a silent feed shows only as 10 s without a book update, which stops routing to the venue but does not pull quotes.
 
 ## Detection
 
-- The venue gateway (P2) detects the sequence gap and, by design, the event loop engages the kill switch for the affected instrument group with reason `FeedGap` (API_SPEC.md Section 2, `KillReason`).
-- Alert `InboundQueueBacklog` when the inbound ring buffer backs up behind a slow or stuttering feed.
-- Alert `KillSwitchEngaged` follows from the automatic kill.
+- The feed binding (`FeedBinding`, API_SPEC.md Section 18.5) stops forwarding and publishes GatewayStatus DISCONNECTED for the feed (status id 3). The desk's input health pulls every live quote with reason `FeedGap`, and the routers exclude the venue (`VenueExclusion.Stale`) and cancel children resting there. No KillSwitch is engaged for a gap.
+- The binding then delivers a full snapshot and publishes GatewayStatus CONNECTED; quoting resumes on its own once the inputs are healthy again. A gap that keeps recurring shows as repeated DISCONNECTED and CONNECTED pairs.
+- Alert `InboundQueueBacklog` when the inbound ring buffer backs up behind a slow loop; a full ring is now a cause of gaps, not only a symptom.
 
 ## Immediate action
 
-1. Confirm the kill switch has pulled quotes for the group: `GET /control/status` shows `liveQuotes` 0, and alert `QuotesLiveAfterKill` is not firing.
+1. Confirm quotes were pulled: `GET /control/status` with the `X-Control-Token` header shows `liveQuotes` 0 while the feed is down. If it does not, engage the kill switch (`POST /control/kill` with the token and your party id in `X-Requested-By`) and check that it answered 200, not 503.
 2. Identify the feed and the gap from the journal (queries below).
-3. Request a snapshot or replay from the venue through the gateway's recovery channel; the book is rebuilt from the snapshot, never patched.
-4. Do not re-enable quoting until the book has been rebuilt and the gateway reports the feed in sequence for at least one heartbeat interval.
+3. Watch for the CONNECTED that ends the rebuild. If it does not come within a few seconds, the binding is retrying a snapshot the ring keeps refusing: the loop is behind, so treat it as a capacity problem, not a venue problem.
+4. Do not override the binding: the book is rebuilt from a snapshot, never patched.
 
 ## Journal queries
 
@@ -23,7 +23,7 @@ python tools/journal_query.py JOURNAL --template BookUpdate --since START --unti
 python tools/journal_query.py JOURNAL --template Heartbeat --since START --until END
 ```
 
-Look for the last `BookUpdate` before the gap and the first after it, and for any `Quote` sent between the gap and the kill.
+Look for the last `BookUpdate` before the gap and the first after it, the GatewayStatus frames with id 3, and any `Quote` sent between the gap and the pull.
 
 ## Escalation
 
@@ -33,4 +33,4 @@ Look for the last `BookUpdate` before the gap and the first after it, and for an
 
 ## Post-incident
 
-Complete [post-incident-template.md](post-incident-template.md). Record the gap's sequence numbers, the time to kill, the time to rebuild, and any trades executed on quotes sent after the gap.
+Complete [post-incident-template.md](post-incident-template.md). Record the gap's sequence numbers, the time to the quote pull, the time to rebuild, and any trades executed on quotes sent after the gap.

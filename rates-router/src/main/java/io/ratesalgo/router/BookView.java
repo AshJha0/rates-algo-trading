@@ -23,4 +23,16 @@ public interface BookView {
 
   /** Recent traded quantity per second on the venue (both sides), for example an EWMA. */
   double tradeRatePerSecond(int venueId);
+
+  /** {@link #lastUpdateNanos} of a view that does not track book age. */
+  long AGE_UNKNOWN = Long.MIN_VALUE;
+
+  /**
+   * Epoch nanoseconds at which the venue's book last showed it was alive (an update, or a
+   * heartbeat of its feed), or {@link #AGE_UNKNOWN} if the view does not track it. The router
+   * compares it with {@link RouterTimeouts#maxBookAgeNanos()}.
+   */
+  default long lastUpdateNanos(final int venueId) {
+    return AGE_UNKNOWN;
+  }
 }

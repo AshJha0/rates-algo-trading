@@ -13,11 +13,17 @@ import java.util.Map;
 /**
  * Markdown reports of the forward log: one per marked session and a rolling {@code SUMMARY.md}.
  * Both are rebuilt from ledger lines only, so anyone can regenerate them from the ledger.
+ *
+ * <p>The summary keeps the two parts of the P&amp;L apart. The session P&amp;L is income from
+ * synthetic client flow against a market with its intraday moves switched off, so it carries
+ * almost no market risk and its mean is many times its day-to-day variation by construction. A
+ * mean over its standard deviation would be very large and would say nothing about a real desk,
+ * so no such ratio is printed, at any sample size. The close mark is
+ * the one real number: the end-of-session position times the real move to the marking close. It
+ * is reported with its mean and standard error and nothing else. Its expected value is zero (the
+ * desk takes no view on direction), so it measures the exposure left overnight, not skill.
  */
 public final class ForwardReport {
-
-  /** No ratio of mean to standard deviation is printed before this many marked sessions. */
-  public static final int MIN_DAYS_FOR_RATIO = 60;
 
   private static final String LABEL =
       "Client RFQs, fills and hedge fills are synthetic (fitted models). Rates and the close mark are real "
@@ -41,9 +47,10 @@ public final class ForwardReport {
     for (final String k : new String[] {"spread_capture", "hedge_cost", "inventory_mtm", "carry_roll", "funding", "fees"}) {
       b.append("| ").append(k).append(" (session, synthetic flow) | ").append(ForwardCycle.money(num(s, k))).append(" |\n");
     }
-    b.append("| session P&L | ").append(ForwardCycle.money(num(s, "position_pnl"))).append(" |\n");
+    b.append("| session P&L (synthetic flow) | ").append(ForwardCycle.money(num(s, "position_pnl"))).append(" |\n");
     b.append("| close mark (real move) | ").append(ForwardCycle.money(num(o, "close_mark"))).append(" |\n");
-    b.append("| **total** | **").append(ForwardCycle.money(num(o, "pnl_total"))).append("** |\n\n");
+    b.append("| total (synthetic session P&L + real close mark) | ").append(ForwardCycle.money(num(o, "pnl_total")))
+        .append(" |\n\n");
     b.append(String.format(Locale.ROOT, "RFQs %d, declined %d, client fills %d, hedge fills %d; max |net DV01| %s; "
             + "end net DV01 %s USD/bp.%n%n",
         ((Number) s.get("rfqs")).longValue(), ((Number) s.get("declines")).longValue(),
@@ -59,17 +66,15 @@ public final class ForwardReport {
     return b.toString();
   }
 
-  /** Rebuilds {@code SUMMARY.md} in {@code dir} from every ledger line. */
-  public static Path writeSummary(final List<Map<String, Object>> entries, final Path dir) {
+  /** The text of {@code SUMMARY.md} for {@code entries}, every ledger line in order. */
+  public static String summary(final List<Map<String, Object>> entries) {
     final StringBuilder rows = new StringBuilder(4096);
     int days = 0;
     int skipped = 0;
     int decisions = 0;
-    double cum = 0;
-    double peak = 0;
-    double maxDd = 0;
-    double sum = 0;
-    double sumSq = 0;
+    double cumSession = 0;
+    double cumMark = 0;
+    double sumSqMark = 0;
     for (final Map<String, Object> e : entries) {
       final Object kind = e.get("kind");
       if ("decision".equals(kind)) {
@@ -80,43 +85,52 @@ public final class ForwardReport {
       } else if ("outcome".equals(kind)) {
         days++;
         final Map<String, Object> s = Yaml.asMap(e.get("session_result"), "session_result");
-        final double total = num(e, "pnl_total");
-        cum += total;
-        peak = Math.max(peak, cum);
-        maxDd = Math.max(maxDd, peak - cum);
-        sum += total;
-        sumSq += total * total;
+        final double session = num(s, "position_pnl");
+        final double mark = num(e, "close_mark");
+        cumSession += session;
+        cumMark += mark;
+        sumSqMark += mark * mark;
         rows.append(String.format(Locale.ROOT, "| %s | %s | %s | %s | %s | %s | %s |%n", e.get("session"),
-            e.get("marked_on"), ForwardCycle.money(num(s, "position_pnl")), ForwardCycle.money(num(e, "close_mark")),
-            ForwardCycle.money(total), ForwardCycle.money(cum), ForwardCycle.money(num(e, "end_net_dv01"))));
+            e.get("marked_on"), ForwardCycle.money(session), ForwardCycle.money(cumSession), ForwardCycle.money(mark),
+            ForwardCycle.money(cumMark), ForwardCycle.money(num(e, "end_net_dv01"))));
       }
     }
     final StringBuilder b = new StringBuilder(4096 + rows.length());
     b.append("# Forward log summary\n\n").append(LABEL).append("\n\n");
-    b.append(String.format(Locale.ROOT, "Decisions %d, marked sessions %d, skipped %d. Cumulative P&L %s USD, "
-        + "largest drawdown %s USD.%n%n", decisions, days, skipped, ForwardCycle.money(cum), ForwardCycle.money(maxDd)));
+    b.append(String.format(Locale.ROOT, "Decisions %d, marked sessions %d, skipped %d.%n%n", decisions, days, skipped));
+    b.append("## Real component: close mark on the residual position\n\n");
+    b.append("The end-of-session position times the real move from the committed close to the marking close. ");
+    b.append("The desk takes no view on direction, so the expected value is zero: this line measures the exposure ");
+    b.append("left overnight, not skill.\n\n");
+    b.append(String.format(Locale.ROOT, "Cumulative %s USD over %d sessions.", ForwardCycle.money(cumMark), days));
     if (days >= 2) {
-      final double mean = sum / days;
-      final double sd = Math.sqrt(Math.max(0, (sumSq - days * mean * mean) / (days - 1)));
-      b.append(String.format(Locale.ROOT, "Mean daily P&L %s USD, standard error %s USD (%d sessions).", ForwardCycle.money(mean),
-          ForwardCycle.money(sd / Math.sqrt(days)), days));
-      if (days >= MIN_DAYS_FOR_RATIO && sd > 0) {
-        final double ratio = mean / sd * Math.sqrt(252);
-        b.append(String.format(Locale.ROOT, " Annualised mean over standard deviation %.2f, standard error about %.2f.",
-            ratio, Math.sqrt((1 + ratio * ratio / 2 / 252) * 252.0 / days)));
-      } else {
-        b.append(" No ratio is printed before ").append(MIN_DAYS_FOR_RATIO).append(" marked sessions.");
-      }
-      b.append("\n\n");
+      final double mean = cumMark / days;
+      final double sd = Math.sqrt(Math.max(0, (sumSqMark - days * mean * mean) / (days - 1)));
+      b.append(String.format(Locale.ROOT, " Mean %s USD a session, standard error %s USD.", ForwardCycle.money(mean),
+          ForwardCycle.money(sd / Math.sqrt(days))));
     } else {
-      b.append("No ratio is printed before ").append(MIN_DAYS_FOR_RATIO).append(" marked sessions.\n\n");
+      b.append(" A mean and standard error need two marked sessions.");
     }
-    b.append("| Session | Marked on | Session P&L | Close mark | Total | Cumulative | End net DV01 |\n");
+    b.append("\n\n## Synthetic component: session P&L\n\n");
+    b.append("Synthetic. Spread income, hedge cost, carry, funding and fees from model-generated client flow against ");
+    b.append("a market with no intraday moves. With the market held still the income carries almost no market risk, ");
+    b.append("so its mean is many times its day-to-day variation by construction. That is a property of the set-up, ");
+    b.append("not a track record, and no ratio of mean to standard deviation is printed for it or for any total that ");
+    b.append("contains it.\n\n");
+    b.append(String.format(Locale.ROOT, "Cumulative %s USD (synthetic) over %d sessions.%n%n", ForwardCycle.money(cumSession),
+        days));
+    b.append("| Session | Marked on | Session P&L (synthetic) | Cumulative (synthetic) | Close mark (real) "
+        + "| Cumulative close mark (real) | End net DV01 |\n");
     b.append("|---|---|---:|---:|---:|---:|---:|\n").append(rows);
+    return b.toString();
+  }
+
+  /** Rebuilds {@code SUMMARY.md} in {@code dir} from every ledger line. */
+  public static Path writeSummary(final List<Map<String, Object>> entries, final Path dir) {
     try {
       Files.createDirectories(dir);
       final Path p = dir.resolve("SUMMARY.md");
-      Files.writeString(p, b.toString(), StandardCharsets.UTF_8);
+      Files.writeString(p, summary(entries), StandardCharsets.UTF_8);
       return p;
     } catch (final IOException e) {
       throw new UncheckedIOException(e);

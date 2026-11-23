@@ -12,3 +12,9 @@ stateDiagram-v2
     Post-trade daily-loss breach triggers with
     reason LimitBreach when configured.
   end note
+  note left of ACTIVE
+    Wired process, 1.1.0: POST /control/kill first sets a
+    halt flag; the venue sessions withdraw from their own
+    live sets without the loop. This message is journaled
+    so replay reproduces the pull. A halt is final.
+  end note

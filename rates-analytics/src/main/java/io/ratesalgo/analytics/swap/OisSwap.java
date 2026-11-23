@@ -31,6 +31,8 @@ public final class OisSwap {
   private final SwapConvention convention;
   private final int startDate;
   private final int endDate;
+  private final int unadjustedStart;
+  private final int unadjustedEnd;
   private final double notional;
   private final double fixedRate;
   private final boolean payer;
@@ -66,6 +68,8 @@ public final class OisSwap {
       final double fixedRate,
       final boolean payer) {
     this.convention = convention;
+    this.unadjustedStart = start;
+    this.unadjustedEnd = end;
     this.notional = notional;
     this.fixedRate = fixedRate;
     this.payer = payer;
@@ -254,9 +258,13 @@ public final class OisSwap {
     return of(convention, start, end, notional, fixedRate, payer);
   }
 
-  /** The same swap with another fixed rate. */
+  /**
+   * The same swap with another fixed rate. Rebuilt from the unadjusted dates: the schedule rolls
+   * back from the termination date, so starting from the adjusted end (a Monday when the end is a
+   * Saturday) would shift every period by the adjustment and leave a two-day stub at the front.
+   */
   public OisSwap withFixedRate(final double rate) {
-    return new OisSwap(convention, startDate, endDate, notional, rate, payer);
+    return new OisSwap(convention, unadjustedStart, unadjustedEnd, notional, rate, payer);
   }
 
   public SwapConvention convention() {

@@ -72,6 +72,9 @@ public final class RingJournal implements AutoCloseable {
   /** Written by {@link #close()}, which may run on another thread once the producer has stopped. */
   private volatile boolean closed;
 
+  /** True once the segmented journal has been closed; a close that gave up before that can be retried. */
+  private volatile boolean journalClosed;
+
   private volatile boolean stopping;
   private volatile Throwable failure;
   /** Written by the producer only; read from any thread. */
@@ -198,6 +201,9 @@ public final class RingJournal implements AutoCloseable {
    * background thread works on the segment a waiting roll needs (pages touched, segments created).
    * Gives up only after {@link #CLOSE_STALL_NANOS} with neither (DR-INT-10).
    *
+   * <p>A close that gave up has not closed the files. Calling close again waits again, so a caller
+   * can retry once whatever held the journal thread has cleared; appends stay refused meanwhile.
+   *
    * @throws IllegalStateException if the journal thread failed, made no progress for the stall
    *     limit (the message gives the backlog, both ring positions, roll waits and preparer
    *     progress), or the closing thread was
@@ -210,7 +216,7 @@ public final class RingJournal implements AutoCloseable {
 
   /** {@link #close()} with a given stall limit; package-private for tests. */
   void closeWithin(final long stallNanos) {
-    if (closed) {
+    if (journalClosed) {
       return;
     }
     closed = true;
@@ -243,6 +249,7 @@ public final class RingJournal implements AutoCloseable {
     } finally {
       // the segmented journal is closed only once its single writer, the journal thread, has stopped
       if (!drainer.isAlive()) {
+        journalClosed = true;
         journal.close();
       }
       if (interrupted) {

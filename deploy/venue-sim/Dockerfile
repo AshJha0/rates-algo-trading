@@ -5,6 +5,9 @@
 #   mvn -B -ntp -DskipTests package -pl rates-app -am
 #   docker build -f deploy/venue-sim/Dockerfile -t rates-venue-sim:dev .
 # The process validates its configuration at start and exits 2 if it is invalid.
+# The image holds no key store and no password. The stores are mounted at /run/rates/certs when
+# the container starts and the passwords arrive in the environment (deploy/compose.yaml). The
+# health check uses HTTPS when the mounted directory has ca.pem, and plain HTTP on loopback otherwise.
 FROM eclipse-temurin:25-jre
 
 RUN apt-get update \
@@ -25,7 +28,11 @@ EXPOSE 8090
 VOLUME ["/var/lib/rates"]
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:${RATES_HTTP_PORT:-8090}/health/ready || exit 1
+  CMD if [ -f /run/rates/certs/ca.pem ]; then \
+        curl -fsS --cacert /run/rates/certs/ca.pem https://127.0.0.1:${RATES_HTTP_PORT:-8090}/health/ready; \
+      else \
+        curl -fsS http://127.0.0.1:${RATES_HTTP_PORT:-8090}/health/ready; \
+      fi || exit 1
 
 # Agrona 2.x needs these opens on every JVM that runs the platform (docs/ARCHITECTURE.md).
 ENTRYPOINT ["java", \

@@ -33,8 +33,20 @@ public final class LoopCounters {
   /** Errors recorded by the runner. */
   public static final int ERRORS = 6;
 
+  /** Duty cycles run: a heartbeat a supervisor on another thread reads to see the loop is alive. */
+  public static final int DUTY_CYCLES = 7;
+
+  /** Must-deliver outbound messages (cancels, withdrawals) held for retry after a full ring. */
+  public static final int OUTBOUND_RETRY_QUEUED = 8;
+
+  /** Held messages delivered to their gateway ring on a later duty cycle. */
+  public static final int OUTBOUND_RETRIED = 9;
+
+  /** Must-deliver messages lost because the retry buffer was full as well. */
+  public static final int OUTBOUND_RETRY_LOST = 10;
+
   /** Number of counters. */
-  public static final int COUNT = 7;
+  public static final int COUNT = 11;
 
   private static final int STRIDE = 64;
 
@@ -60,6 +72,10 @@ public final class LoopCounters {
       case UNHANDLED -> "unhandled";
       case TIMER_TICKS -> "timerTicks";
       case ERRORS -> "errors";
+      case DUTY_CYCLES -> "dutyCycles";
+      case OUTBOUND_RETRY_QUEUED -> "outboundRetryQueued";
+      case OUTBOUND_RETRIED -> "outboundRetried";
+      case OUTBOUND_RETRY_LOST -> "outboundRetryLost";
       default -> throw new IllegalArgumentException("no counter " + id);
     };
   }

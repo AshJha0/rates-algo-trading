@@ -93,6 +93,16 @@ class VenueSessionReconnectTest {
       }
     }
 
+    /** Drops every connection the venue holds, as a venue or a network that fails does. */
+    void drop() throws IOException {
+      synchronized (open) {
+        for (final Socket s : open) {
+          s.close();
+        }
+        open.clear();
+      }
+    }
+
     @Override
     public void close() throws IOException {
       server.close();
@@ -106,6 +116,10 @@ class VenueSessionReconnectTest {
   private final List<int[]> statuses = Collections.synchronizedList(new ArrayList<>());
 
   private VenueSession session(final int port, final ReconnectPolicy policy) {
+    return session(port, policy, VenueSession.Link.SIMULATOR);
+  }
+
+  private VenueSession session(final int port, final ReconnectPolicy policy, final VenueSession.Link link) {
     return new VenueSession(
         101,
         GATEWAY,
@@ -121,7 +135,114 @@ class VenueSessionReconnectTest {
         },
         clock,
         new RingBuffer[0],
-        policy);
+        policy,
+        VenueSession.WithdrawPolicy.DEFAULT,
+        link);
+  }
+
+  @Test
+  void anActiveSessionThatIsDroppedReconnectsAfterTheBackoff() throws IOException {
+    try (FakeVenue venue = new FakeVenue(0)) {
+      final VenueSession s = session(venue.port(), ReconnectPolicy.DEFAULT);
+      s.connect();
+      assertTrue(drive(s, s::isActive), "logged on: " + diagnostics(s, venue));
+      assertEquals(0, s.drops());
+      venue.drop();
+      assertTrue(drive(s, () -> s.drops() == 1), "saw the drop: " + diagnostics(s, venue));
+      assertTrue(s.reconnectPending(), "a reconnect is scheduled, not made at once");
+      assertEquals(1, venue.connections(), "nothing before the backoff has passed");
+      assertTrue(drive(s, () -> s.logons() == 2), "logged on again: " + diagnostics(s, venue));
+      assertEquals(2, venue.connections());
+      assertEquals(1, s.reconnectAttempts());
+      assertEquals(
+          List.of((int) ControlMessages.STATUS_CONNECTED, (int) ControlMessages.STATUS_DISCONNECTED,
+              (int) ControlMessages.STATUS_RECONNECTING, (int) ControlMessages.STATUS_CONNECTED),
+          statusCodes());
+      assertFalse(s.isReconciling(), "a venue that holds no orders for us has nothing to reconcile");
+
+      // a second drop is retried from the first backoff again, not from where the last one ended
+      venue.drop();
+      assertTrue(drive(s, () -> s.logons() == 3), "logged on a third time: " + diagnostics(s, venue));
+      assertEquals(2, s.drops());
+      assertEquals(0, s.reconnectGiveUps());
+      s.disconnect();
+    }
+  }
+
+  @Test
+  void aHaltedOrDeliberatelyDisconnectedSessionDoesNotReconnect() throws IOException {
+    try (FakeVenue venue = new FakeVenue(0)) {
+      final VenueSession halted = session(venue.port(), ReconnectPolicy.DEFAULT);
+      halted.connect();
+      assertTrue(drive(halted, halted::isActive), diagnostics(halted, venue));
+      halted.halt(false);
+      venue.drop();
+      assertTrue(drive(halted, () -> halted.disconnects() == 1), diagnostics(halted, venue));
+      assertFalse(halted.reconnectPending(), "a halt is final: no way back short of a restart");
+      assertEquals(0, halted.drops());
+      for (int i = 0; i < 50; i++) {
+        clock.advance(100_000_000L);
+        halted.doWork();
+      }
+      assertEquals(1, venue.connections());
+      halted.connect();
+      assertEquals(1, venue.connections(), "connect() on a halted session does nothing");
+
+      final VenueSession none = session(venue.port(), ReconnectPolicy.NONE);
+      none.connect();
+      assertTrue(drive(none, none::isActive), diagnostics(none, venue));
+      venue.drop();
+      assertTrue(drive(none, () -> none.disconnects() == 1), diagnostics(none, venue));
+      assertFalse(none.reconnectPending(), "no retries means none after a drop either");
+    }
+  }
+
+  @Test
+  void aReturningSessionReconcilesAndAVenueThatNeverAnswersIsDroppedAndTriedAgain() throws IOException {
+    try (FakeVenue venue = new FakeVenue(0)) {
+      final VenueSession s =
+          session(venue.port(), ReconnectPolicy.DEFAULT, VenueSession.Link.SIMULATOR.withReconcileOrders(true));
+      s.recovered(); // the process restarted: this Logon is a return
+      s.connect();
+      assertTrue(drive(s, s::isActive), diagnostics(s, venue));
+      assertTrue(s.isReconciling());
+      assertEquals(List.of((int) ControlMessages.STATUS_RECONCILING), statusCodes(),
+          "the loop is told the venue is being reconciled, not that it is up");
+      assertEquals(3, s.session().nextOutSeq(), "the Logon and one OrderMassStatusRequest");
+
+      // the fake venue never answers: two more requests, then the connection is dropped
+      clock.advance(VenueSession.RECONCILE_TIMEOUT_NANOS);
+      s.doWork();
+      assertEquals(4, s.session().nextOutSeq());
+      clock.advance(VenueSession.RECONCILE_TIMEOUT_NANOS);
+      s.doWork();
+      assertEquals(5, s.session().nextOutSeq());
+      assertTrue(s.isReconciling() && s.isActive());
+      clock.advance(VenueSession.RECONCILE_TIMEOUT_NANOS);
+      s.doWork();
+      assertFalse(s.isReconciling());
+      assertFalse(s.isActive());
+      assertEquals(0, s.reconciliations());
+      assertEquals(1, s.drops());
+      assertTrue(s.reconnectPending(), "the reconnect brings another attempt at reconciling");
+      assertEquals(
+          List.of((int) ControlMessages.STATUS_RECONCILING, (int) ControlMessages.STATUS_DISCONNECTED), statusCodes());
+      assertTrue(drive(s, () -> s.logons() == 2), diagnostics(s, venue));
+      assertTrue(s.isReconciling());
+      s.disconnect();
+      assertFalse(s.isReconciling());
+    }
+  }
+
+  @Test
+  void aLinkSaysWhatItNeeds() {
+    assertThrows(IllegalArgumentException.class,
+        () -> new VenueSession.Link(null, null, null, false, null, false));
+    assertThrows(IllegalArgumentException.class,
+        () -> new VenueSession.Link(null, "user", null, true, null, false));
+    final VenueSession.Link link = VenueSession.Link.SIMULATOR.withReconcileOrders(true);
+    assertTrue(link.reconcileOrders() && link.resetOnLogon());
+    assertFalse(VenueSession.InboundDrained.NEVER.drained());
   }
 
   /**

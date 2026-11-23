@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
-STATUSES = ("implemented", "evidenced", "planned", "out of scope")
+STATUSES = ("illustrated in simulation", "document only", "absent", "out of scope")
 
 
 def main(root: Path) -> int:

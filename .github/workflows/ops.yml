@@ -26,8 +26,8 @@ jobs:
     name: Config schema, dashboards and alert rules
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - run: python -m pip install "jsonschema==4.26.0" "pyyaml==6.0.3"
@@ -42,20 +42,20 @@ jobs:
     name: Deployment rehearsal (process mode)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: "25"
           cache: maven
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
       - name: Package the process jars
         run: mvn -B -ntp -DskipTests package -pl rates-app,rates-ops,rates-posttrade -am
       - name: Validate configuration with the Java validator the processes use
         run: |
-          java -cp "rates-ops/target/rates-ops-1.0.0.jar:rates-ops/target/lib/*" \
+          java -cp "rates-ops/target/rates-ops-1.1.0.jar:rates-ops/target/lib/*" \
             io.ratesalgo.ops.config.ConfigValidatorMain \
             deploy/config/schema/process-config.schema.json deploy/config/*.yaml
       - name: Rehearsal with the kill switch
@@ -68,8 +68,8 @@ jobs:
     # (DR-V1G-03), so a missing jar, a wrong entrypoint or a JRE gap fails here.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: "25"
@@ -86,9 +86,16 @@ jobs:
           done
           docker image ls 'rates-*'
       - name: Compose file resolves
+        # The file refuses to resolve without the key-store directory and the passwords; the
+        # values here only let it resolve, nothing is started with them.
         run: docker compose -f deploy/compose.yaml config --quiet
         env:
           RATES_CONTROL_TOKEN: ci-only-not-a-secret
+          RATES_CERTS_DIR: ${{ runner.temp }}/certs
+          RATES_FIX_PASSWORD: ci-only-not-a-secret
+          RATES_FIX_TRUSTSTORE_PASSWORD: ci-only-not-a-secret
+          RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD: ci-only-not-a-secret
+          RATES_HTTP_KEYSTORE_PASSWORD: ci-only-not-a-secret
       - name: Report image starts and checks its arguments
         # With no arguments EodReportMain prints "missing --journal" and exits 2, which proves
         # the JRE, the class path and the main class inside the image.

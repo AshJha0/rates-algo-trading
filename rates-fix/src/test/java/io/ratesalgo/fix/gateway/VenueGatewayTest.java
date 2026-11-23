@@ -332,6 +332,58 @@ class VenueGatewayTest {
     assertEquals(0L, gateway.orders().orderQuantity(99));
   }
 
+  private io.ratesalgo.messages.sbe.OrderCancelRejectDecoder lastCancelReject() {
+    final UnsafeBuffer b = received.get(received.size() - 1);
+    assertEquals(io.ratesalgo.messages.sbe.OrderCancelRejectDecoder.TEMPLATE_ID, templateOf(b));
+    final io.ratesalgo.messages.sbe.OrderCancelRejectDecoder d = new io.ratesalgo.messages.sbe.OrderCancelRejectDecoder();
+    d.wrapAndApplyHeader(b, 0, header);
+    return d;
+  }
+
+  private void sendCancel(final long cancelId, final long origId) {
+    final OrderCancelEncoder oc = new OrderCancelEncoder();
+    oc.wrapAndApplyHeader(out, 0, headerEncoder).venueId(101).clOrdId(cancelId).origClOrdId(origId).instrumentId(1008)
+        .side(Side.Buy).quantity(100_000_000L).sentNanos(clock.epochNanos());
+    assertTrue(gateway.offer(out, 0, MessageHeaderEncoder.ENCODED_LENGTH + oc.encodedLength()));
+  }
+
+  @Test
+  void orderCancelRejectReachesTheEngineWithItsInstrument() {
+    sendCancel(9_001, 77);
+    final int before = received.size();
+    venue.begin(MsgType.ORDER_CANCEL_REJECT).putText(37, "NONE").put(11, 9_001).put(41, 77).putChar(39, (byte) '8')
+        .put(434, 1).put(102, 1).putText(58, "unknown or finished order");
+    venue.deliver(session);
+    assertEquals(before + 1, received.size(), "a cancel reject must be delivered, not only counted");
+    io.ratesalgo.messages.sbe.OrderCancelRejectDecoder d = lastCancelReject();
+    assertEquals(101, d.venueId());
+    assertEquals(9_001, d.clOrdId());
+    assertEquals(77, d.origClOrdId());
+    assertEquals(1008, d.instrumentId(), "35=9 names no instrument: the gateway remembers the request's");
+    assertEquals(OrdStatus.Rejected, d.ordStatus());
+    assertEquals(1, d.responseTo());
+    assertEquals(clock.epochNanos(), d.timestampNanos());
+    assertEquals(1, gateway.stats().cancelRejects());
+
+    // the same reject again: the request is no longer pending, so no instrument is known
+    venue.begin(MsgType.ORDER_CANCEL_REJECT).put(11, 9_001).put(41, 77).putChar(39, (byte) '1').put(434, 2);
+    venue.deliver(session);
+    d = lastCancelReject();
+    assertEquals(0, d.instrumentId());
+    assertEquals(OrdStatus.PartiallyFilled, d.ordStatus());
+    assertEquals(2, d.responseTo());
+
+    // a cancel the venue confirms is forgotten too
+    sendCancel(9_002, 78);
+    venue.begin(MsgType.EXECUTION_REPORT).put(37, 978).put(11, 9_002).put(41, 78).put(17, 5_000).putChar(150, (byte) '4')
+        .putChar(39, (byte) '4').putText(48, ISIN).putChar(54, (byte) '1').put(38, 1_000_000).put(151, 0).put(14, 0);
+    venue.deliver(session);
+    venue.begin(MsgType.ORDER_CANCEL_REJECT).put(11, 9_002).put(41, 78);
+    venue.deliver(session);
+    assertEquals(0, lastCancelReject().instrumentId());
+    assertEquals(3, gateway.stats().cancelRejects());
+  }
+
   @Test
   void outboundSbeBecomesFix() {
     final QuoteEncoder q = new QuoteEncoder();

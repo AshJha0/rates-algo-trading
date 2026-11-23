@@ -9,6 +9,7 @@ import io.ratesalgo.core.RingBufferContract;
 import io.ratesalgo.messages.sbe.BookUpdateEncoder;
 import io.ratesalgo.messages.sbe.HeartbeatEncoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
+import io.ratesalgo.messages.sbe.OrderCancelRejectEncoder;
 import io.ratesalgo.messages.sbe.QuoteRequestEncoder;
 import io.ratesalgo.messages.sbe.QuoteResponseEncoder;
 import io.ratesalgo.messages.sbe.QuoteStatus;
@@ -72,32 +73,101 @@ class InboundRouterTest {
     assertEquals(9, router.published());
   }
 
-  @Test
-  void aFullRingDropsMarketDataAndRetriesSessionMessages() throws Exception {
-    final ManyToOneRingBuffer ring = RingBufferContract.newInbound(RingBufferContract.MIN_CAPACITY);
+  /** A router over one MIN_CAPACITY ring owning instrument 1008, filled with BookUpdates. */
+  private InboundRouter fullRing(final ManyToOneRingBuffer ring, final int spinLimit, final Runnable onSpin) {
     final Int2IntHashMap groupOf = new Int2IntHashMap(-1);
     groupOf.put(1008, 0);
-    final InboundRouter router = new InboundRouter(new RingBuffer[] {ring}, groupOf);
-    final BookUpdateEncoder e = new BookUpdateEncoder();
-    e.wrapAndApplyHeader(b, 0, h).venueId(102).instrumentId(1008);
-    final int length = MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength();
+    final InboundRouter router = new InboundRouter(new RingBuffer[] {ring}, groupOf, spinLimit, onSpin);
     int accepted = 0;
-    while (router.offer(b, 0, length)) {
+    while (router.route(b, 0, bookUpdate(1008)) == InboundRouter.DELIVERED) {
       accepted++;
     }
     assertTrue(accepted > 0);
+    return router;
+  }
+
+  private int bookUpdate(final int instrumentId) {
+    final BookUpdateEncoder e = new BookUpdateEncoder();
+    e.wrapAndApplyHeader(b, 0, h).venueId(102).instrumentId(instrumentId);
+    return MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength();
+  }
+
+  @Test
+  void aBookDeltaRefusedByAFullRingIsReportedToTheCallerNotSilentlyDropped() {
+    final ManyToOneRingBuffer ring = RingBufferContract.newInbound(RingBufferContract.MIN_CAPACITY);
+    final InboundRouter router = fullRing(ring, 4, () -> {});
     assertEquals(1, router.dropped());
-    final Thread reader = new Thread(() -> {
-      try {
-        Thread.sleep(50);
-      } catch (final InterruptedException ex) {
-        Thread.currentThread().interrupt();
-      }
-      ring.read((t, buf, i, l) -> {}, 10);
-    });
-    reader.start();
+    assertEquals(InboundRouter.FULL, router.route(b, 0, bookUpdate(1008)), "the feed binding acts on this");
+    assertFalse(router.offer(b, 0, bookUpdate(1008)));
+    assertEquals(3, router.dropped());
+    assertEquals(0, router.retries(), "a delta is not retried here: the feed recovers by snapshot");
+    assertEquals(InboundRouter.UNROUTED, router.route(b, 0, bookUpdate(55)), "not a loss: no group owns it");
+    assertEquals(1, router.unrouted());
+    assertEquals(0, router.undelivered());
+  }
+
+  @Test
+  void aSessionMessageWaitsForRoomAndIsDeliveredWhenTheLoopReads() {
+    final ManyToOneRingBuffer ring = RingBufferContract.newInbound(RingBufferContract.MIN_CAPACITY);
+    final int[] spins = {0};
+    // the loop reads on the third spin
+    final InboundRouter router =
+        fullRing(
+            ring,
+            1_000,
+            () -> {
+              if (++spins[0] == 3) {
+                ring.read((t, buf, i, l) -> {}, 10);
+              }
+            });
     assertTrue(router.offer(b, 0, quoteRequest(1008, 1)), "a session message waits for room");
-    reader.join();
-    assertTrue(router.retries() > 0);
+    assertEquals(3, router.retries());
+    assertEquals(0, router.undelivered());
+  }
+
+  @Test
+  void aSessionMessageIsRefusedAfterABoundedWaitInsteadOfHangingTheGatewayThread() {
+    final ManyToOneRingBuffer ring = RingBufferContract.newInbound(RingBufferContract.MIN_CAPACITY);
+    final InboundRouter router = fullRing(ring, 50, () -> {});
+    final List<String> told = new ArrayList<>();
+    router.undeliveredHandler((templateId, group) -> told.add(templateId + " group " + group));
+    // nobody reads the ring: the old code spun here for ever
+    assertEquals(InboundRouter.FULL, router.route(b, 0, quoteRequest(1008, 1)));
+    assertEquals(50, router.retries());
+    assertEquals(1, router.undelivered());
+    assertEquals(List.of("10 group 0"), told);
+    final int status = ControlMessages.encodeGatewayStatus(b, 0, 1L, 0, ControlMessages.STATUS_CONNECTED);
+    assertFalse(router.offer(b, 0, status), "a control message is bounded the same way");
+    assertEquals(2, router.undelivered());
+    // once the loop reads, delivery resumes
+    ring.read((t, buf, i, l) -> {}, 1_000);
+    assertTrue(router.offer(b, 0, quoteRequest(1008, 2)));
+    assertEquals(2, router.undelivered());
+    assertEquals(
+        "spinLimit must be >= 0: -1",
+        org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> new InboundRouter(new RingBuffer[] {ring}, new Int2IntHashMap(-1), -1, () -> {}))
+            .getMessage());
+  }
+
+  @Test
+  void anOrderCancelRejectGoesToItsInstrumentsGroupOrToEveryGroupWhenItNamesNone() {
+    final ManyToOneRingBuffer swaps = RingBufferContract.newInbound(RingBufferContract.MIN_CAPACITY);
+    final ManyToOneRingBuffer bonds = RingBufferContract.newInbound(RingBufferContract.MIN_CAPACITY);
+    final Int2IntHashMap groupOf = new Int2IntHashMap(-1);
+    groupOf.put(2003, 0);
+    groupOf.put(1008, 1);
+    final InboundRouter router = new InboundRouter(new RingBuffer[] {swaps, bonds}, groupOf);
+    final OrderCancelRejectEncoder e = new OrderCancelRejectEncoder();
+    e.wrapAndApplyHeader(b, 0, h).venueId(102).clOrdId(9).origClOrdId(8).instrumentId(1008);
+    final int length = MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength();
+    assertTrue(router.offer(b, 0, length));
+    assertEquals(List.of(), drain(swaps));
+    assertEquals(List.of(45), drain(bonds));
+    e.instrumentId(0);
+    assertTrue(router.offer(b, 0, length));
+    assertEquals(List.of(45), drain(swaps));
+    assertEquals(List.of(45), drain(bonds));
   }
 }

@@ -95,6 +95,12 @@ class AnalyticsGoldenTest {
     report("calendar weekdays checked", checked);
   }
 
+  /**
+   * The generator's bootstrap is the same pillar-by-pillar Brent loop as the Java sequential
+   * solver, written in Python; what is independent is the pricing of every instrument inside it,
+   * which is QuantLib's (review 2026-11-23, A10). Equal discount factors therefore show that the
+   * Java instruments price as QuantLib's do, not that the bootstrap method is checked twice.
+   */
   @Test
   void javaBootstrapMatchesQuantLibCurvesAndRepricesInstruments() {
     double maxDf = 0.0;
@@ -244,7 +250,9 @@ class AnalyticsGoldenTest {
           HullWhite.futuresConvexity(
               HullWhite.DEFAULT_A, HullWhite.DEFAULT_SIGMA, (start - today) / 365.0,
               (end - today) / 365.0);
-      assertEquals(num(r, "convexity"), ca, 1e-15, "convexity " + str(r, "code"));
+      // consistency only: the generator's convexity is HullWhite.futuresConvexity typed again in
+      // Python, not a QuantLib value (review 2026-11-23, A10). The forward rate below is QuantLib's.
+      assertEquals(num(r, "convexity"), ca, 1e-15, "convexity (python retyping) " + str(r, "code"));
       final OisFutureInstrument f =
           three
               ? OisFutureInstrument.threeMonth(str(r, "code"), integer(r, "year"),
@@ -351,8 +359,15 @@ class AnalyticsGoldenTest {
     report("conversion factors equal to the published rounding", n);
   }
 
+  /**
+   * A cross-language consistency check, not an independent golden: QuantLib supplies the clean
+   * prices and accrued interest, but the basis, carry and implied repo arithmetic in the generator
+   * is the formula of {@code BasisAnalytics} typed again in Python (review 2026-11-23, A10). It
+   * catches a slip in either language, not a formula wrong in both. The conversion factors in the
+   * same rows are independent (QuantLib's price of the truncated bond against the CBOT formula).
+   */
   @Test
-  void basisImpliedRepoAndCtdMatch() {
+  void basisImpliedRepoAndCtdAgreeWithThePythonRetyping() {
     final BasisAnalytics a = new BasisAnalytics();
     double max = 0.0;
     for (final Map<String, Object> basket : list(Golden.load(), "basis")) {
@@ -386,7 +401,7 @@ class AnalyticsGoldenTest {
       assertEquals(integer(basket, "ctd_index"), BasisAnalytics.cheapestToDeliver(results),
           k + " CTD");
     }
-    report("max |basis, carry or implied repo java - quantlib|", max);
+    report("max |basis, carry or implied repo java - python retyping| (consistency, not a golden)", max);
   }
 
   @Test

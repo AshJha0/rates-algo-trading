@@ -31,6 +31,8 @@ public final class RiskLimits {
   private long fatFingerQuantity = Long.MAX_VALUE;
   private double fatFingerFraction = 0.10;
   private boolean killOnDailyLoss = true;
+  private double rfqDv01 = Double.MAX_VALUE;
+  private double clientDv01 = Double.MAX_VALUE;
 
   /** Limits that block nothing except fat-finger prices more than 10% from fair. */
   public RiskLimits() {
@@ -202,6 +204,29 @@ public final class RiskLimits {
   /** Relative price distance from fair beyond which a price is treated as a keying error. */
   public RiskLimits fatFingerFraction(final double fraction) {
     fatFingerFraction = positive(fraction, "fatFingerFraction");
+    return this;
+  }
+
+  /** Largest parallel DV01 of one quote (one RFQ, or one leg of a package), currency per bp. */
+  public double rfqDv01() {
+    return rfqDv01;
+  }
+
+  public RiskLimits rfqDv01(final double limit) {
+    rfqDv01 = positive(limit, "rfqDv01");
+    return this;
+  }
+
+  /**
+   * Largest parallel DV01 dealt with one client since the start of day plus the DV01 of the quotes
+   * live to that client, currency per bp. Gross: a client's buys and sells both count.
+   */
+  public double clientDv01() {
+    return clientDv01;
+  }
+
+  public RiskLimits clientDv01(final double limit) {
+    clientDv01 = positive(limit, "clientDv01");
     return this;
   }
 

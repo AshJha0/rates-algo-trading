@@ -123,6 +123,11 @@ public final class HedgeExperiment {
     return Math.abs(ty.priceChangePerBp());
   }
 
+  /** Seed of a day's journal, the desk experiment's. */
+  public long daySeed(final LocalDate day) {
+    return desk.daySeed(day);
+  }
+
   /** The slicing of the {@value #SLICED} treatment. */
   public HedgeSlicing slicing() {
     return new HedgeSlicing(

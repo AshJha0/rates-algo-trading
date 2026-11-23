@@ -24,8 +24,9 @@ Phase 5 (back-testing and research, `API_SPEC.md` Section 16):
 - `data/dtcc.py`, `data/finra.py`: downloader and loader for DTCC end-of-day rates files; loader for the FINRA Treasury layout and its synthetic fixture (FINRA needs an account, see `data/SOURCES.md`).
 - `markouts.py`: markout curves by tier, size and product; informed-flow share; toxicity table for tiering.
 - `spread.py`: expected edge and optimal half-spread per product across the band; sensitivity to volatility and dealer count (the same rule as the Java `ModelSpreadStrategy`).
-- `stats.py`: SplitMix64, moving-block bootstrap, Welch, Holm, identical to the Java `Stats` on the shared fixture.
-- `prereg.py`: pre-registration validator and ledger reader.
+- `stats.py`: SplitMix64, moving-block bootstrap, Welch, Holm, identical to the Java `Stats` on the shared fixture; `paired_t` and `paired_block_bootstrap_ci` for designs where treatment and baseline replay the same sessions, and `benjamini_hochberg` across experiments.
+- `prereg.py`: pre-registration validator and ledger reader. `python -m ratesresearch.prereg data/ledger/ledger.jsonl` verifies the hash chain and prints the looks per evaluation data set across pre-registration ids (CI runs it).
+- `forward/`: `fetch` downloads a day's real rates, `check` re-derives the forward ledger's arithmetic, `health` reports a business day without a decision (the forward-log workflow opens an issue from it).
 - `backtest_analysis.py`: reads the Java runner's tables, reconciles attribution, recomputes experiment statistics, renders tables.
 - `notebooks/`: thin wrappers over the modules, executed by `tools/run_notebooks.py` in CI and rendered into the site.
 - `recipes/`: Python cookbook recipes, run by `tools/check_cookbook.py`.
@@ -37,13 +38,15 @@ How a fitted preset reaches the quoting engine is drawn in [research to producti
 From the repository root:
 
 ```bash
-python -m pip install -e "research[dev,notebooks]"
+python -m pip install -c research/requirements-lock.txt -e "research[dev,notebooks]"
 ruff check research
 ruff format --check research
 (cd research && mypy)
 pytest -q research
 python tools/run_notebooks.py
 ```
+
+`requirements-lock.txt` pins every dependency, for all platforms; CI and the forward-log job install with it as a constraints file, and its header says how to regenerate it. `pyproject.toml` keeps the supported ranges.
 
 Refit the presets (the DTCC step needs the downloaded files outside the repository):
 

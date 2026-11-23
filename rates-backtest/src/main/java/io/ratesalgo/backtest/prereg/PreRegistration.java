@@ -23,7 +23,10 @@ import java.util.Set;
  * {@code period} and {@code fitting_period} (each {@code start}, {@code end}), {@code holdout}
  * (list of dates), {@code success_threshold}, {@code assumption_band} ({@code preset},
  * {@code parameter}, {@code points}), {@code author}, {@code date}, {@code config} (path relative
- * to the repository root) and {@code config_sha256}.
+ * to the repository root) and {@code config_sha256}. One key is optional: {@code prior_looks}, the
+ * list of pre-registration ids that have already read the same evaluation sessions. A run is
+ * refused while the ledger shows a look at its data set that this list does not name
+ * ({@link DataSets}), so the author has to state the earlier looks before taking another.
  *
  * <p>{@link #validate} returns every problem it finds rather than the first, so one review fixes
  * them all. The rules: every key present and non-blank; dates in ISO form with start not after
@@ -119,6 +122,9 @@ public final class PreRegistration {
       problems.add("treatments must be a non-empty list");
     }
     checkBand(problems);
+    if (raw.get("prior_looks") != null && !(raw.get("prior_looks") instanceof List<?>)) {
+      problems.add("prior_looks must be a list of pre-registration ids");
+    }
     final Path config = repoRoot.resolve(String.valueOf(raw.get("config")));
     if (!Files.isRegularFile(config)) {
       problems.add("config file not found: " + raw.get("config"));
@@ -260,6 +266,17 @@ public final class PreRegistration {
     final List<LocalDate> out = new ArrayList<>();
     for (final Object o : Yaml.asList(raw.get("holdout"), "holdout")) {
       out.add(LocalDate.parse(String.valueOf(o)));
+    }
+    return out;
+  }
+
+  /** Pre-registration ids declared as earlier looks at the same data; empty when none is declared. */
+  public List<String> priorLooks() {
+    final List<String> out = new ArrayList<>();
+    if (raw.get("prior_looks") instanceof List<?> list) {
+      for (final Object o : list) {
+        out.add(String.valueOf(o));
+      }
     }
     return out;
   }

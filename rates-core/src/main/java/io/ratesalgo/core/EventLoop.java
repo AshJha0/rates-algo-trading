@@ -30,7 +30,10 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  * <p>Handlers send with {@link #publish}: the loop appends the message to the outbound journal and
  * writes it to the gateway's ring. A full ring drops the message, counts it and raises a {@link
  * BackpressureEvent} after the handler returns; the event is journaled as an input so replay raises
- * it at the same point.
+ * it at the same point. Template ids named to {@link Builder#retryOnDrop} (cancels and withdrawals)
+ * are not lost with the drop: the loop keeps a copy and writes it to the ring at the start of later
+ * duty cycles until the gateway has room. The retry touches the ring only, never the journals or a
+ * handler, so replay is unaffected.
  *
  * <p>In replay ({@link LoopReplay}) the same handlers receive the journaled inbound frames, clock
  * ticks poll the timers, backpressure frames reach the listener, and outbound messages go to a sink
@@ -57,7 +60,8 @@ public final class EventLoop {
   private final RingBuffer[] inbound;
   private final RingBuffer[] outbound;
   private final JournalSink inboundJournal;
-  private final JournalSink outboundJournal;
+  /** The outbound journal; during {@link LoopRecovery} the sink that checks what replay produces. */
+  private JournalSink outboundJournal;
   private final int readLimit;
   private final boolean replay;
   private final MessageHandler[] handlers = new MessageHandler[TEMPLATE_IDS];
@@ -69,11 +73,21 @@ public final class EventLoop {
   private final MessageHeaderEncoder headerEncoder = new MessageHeaderEncoder();
   private final HeartbeatEncoder heartbeatEncoder = new HeartbeatEncoder();
   private final org.agrona.concurrent.MessageHandler ringHandler = this::onRingMessage;
+  /** Template ids kept for retry when their ring is full, or null if none. */
+  private final boolean[] retryTemplates;
+  /** Per gateway: held messages as [int length][int templateId][bytes], 8-byte aligned. */
+  private final UnsafeBuffer[] retryBuffers;
+  private final int[] retryHead;
+  private final int[] retryTail;
+  private int retryGateways;
 
   private Agent[] agents = new Agent[0];
   private BackpressureListener backpressureListener = event -> {};
   private int pendingCount;
   private boolean stopped;
+  /** True while a live loop replays its own journals before it goes live. */
+  private boolean recovering;
+  private JournalSink liveOutboundJournal;
 
   private EventLoop(final Builder b) {
     this.clock = b.clock;
@@ -86,6 +100,15 @@ public final class EventLoop {
     this.replay = b.replay;
     this.pendingDropped = new long[outbound.length];
     this.pendingFirstTemplate = new int[outbound.length];
+    this.retryTemplates = b.retryTemplates == null ? null : b.retryTemplates.clone();
+    this.retryBuffers = new UnsafeBuffer[outbound.length];
+    this.retryHead = new int[outbound.length];
+    this.retryTail = new int[outbound.length];
+    if (retryTemplates != null) {
+      for (int g = 0; g < outbound.length; g++) {
+        retryBuffers[g] = new UnsafeBuffer(ByteBuffer.allocateDirect(b.retryCapacityBytes));
+      }
+    }
     // Load and initialise the backpressure path's classes now, on the building thread. The loop
     // reads ControlMessages only through compile-time constants until the first dropped message,
     // so without this the first backpressure event of a run loads the class on the loop thread,
@@ -165,7 +188,8 @@ public final class EventLoop {
    */
   public int doWork() {
     clock.latch();
-    int work = 0;
+    counters.increment(LoopCounters.DUTY_CYCLES);
+    int work = retryGateways == 0 ? 0 : flushRetries();
     for (final RingBuffer ring : inbound) {
       work += ring.read(ringHandler, readLimit);
     }
@@ -244,7 +268,13 @@ public final class EventLoop {
     final int templateId = RingBufferContract.templateId(buffer, offset);
     outboundJournal.append(templateId, RingBufferContract.version(buffer, offset), buffer, offset, length);
     counters.increment(LoopCounters.OUTBOUND);
-    if (replay) {
+    if (replay || recovering) {
+      return;
+    }
+    final boolean retry = retryTemplates != null && retryTemplates[templateId];
+    if (retry && retryTail[gatewayId] != 0) {
+      // older cancels are still waiting for this ring: keep their order
+      hold(gatewayId, templateId, buffer, offset, length);
       return;
     }
     if (!outbound[gatewayId].write(templateId, buffer, offset, length)) {
@@ -253,7 +283,64 @@ public final class EventLoop {
         pendingFirstTemplate[gatewayId] = templateId;
         pendingCount++;
       }
+      if (retry) {
+        hold(gatewayId, templateId, buffer, offset, length);
+      }
     }
+  }
+
+  private void hold(
+      final int gatewayId, final int templateId, final DirectBuffer buffer, final int offset, final int length) {
+    final UnsafeBuffer held = retryBuffers[gatewayId];
+    final int tail = retryTail[gatewayId];
+    final int record = (2 * Integer.BYTES + length + 7) & ~7;
+    if (tail + record > held.capacity()) {
+      counters.increment(LoopCounters.OUTBOUND_RETRY_LOST);
+      return;
+    }
+    if (tail == 0) {
+      retryGateways++;
+    }
+    held.putInt(tail, length);
+    held.putInt(tail + Integer.BYTES, templateId);
+    held.putBytes(tail + 2 * Integer.BYTES, buffer, offset, length);
+    retryTail[gatewayId] = tail + record;
+    counters.increment(LoopCounters.OUTBOUND_RETRY_QUEUED);
+  }
+
+  /** Writes held must-deliver messages to their rings, oldest first, as far as the rings allow. */
+  private int flushRetries() {
+    int delivered = 0;
+    for (int g = 0; g < retryBuffers.length; g++) {
+      final int tail = retryTail[g];
+      if (tail == 0) {
+        continue;
+      }
+      final UnsafeBuffer held = retryBuffers[g];
+      int head = retryHead[g];
+      while (head < tail) {
+        final int length = held.getInt(head);
+        if (!outbound[g].write(held.getInt(head + Integer.BYTES), held, head + 2 * Integer.BYTES, length)) {
+          break;
+        }
+        head += (2 * Integer.BYTES + length + 7) & ~7;
+        counters.increment(LoopCounters.OUTBOUND_RETRIED);
+        delivered++;
+      }
+      if (head == tail) {
+        retryHead[g] = 0;
+        retryTail[g] = 0;
+        retryGateways--;
+      } else {
+        retryHead[g] = head;
+      }
+    }
+    return delivered;
+  }
+
+  /** Must-deliver messages waiting for room in a gateway ring. Loop thread only. */
+  public boolean hasHeldOutbound() {
+    return retryGateways != 0;
   }
 
   private void flushBackpressure() {
@@ -322,6 +409,36 @@ public final class EventLoop {
   }
 
   /**
+   * Puts a live loop into recovery: until {@link #endRecovery} every published message goes to
+   * {@code produced} instead of the outbound journal and no ring is written, exactly as in replay.
+   * {@link LoopRecovery} then feeds the loop its own inbound journal through {@link
+   * #onReplayFrame}, so the handlers rebuild their state by the same path that replay checks.
+   */
+  void beginRecovery(final JournalSink produced) {
+    if (replay || recovering) {
+      throw new IllegalStateException("recovery starts once, on a live loop");
+    }
+    recovering = true;
+    liveOutboundJournal = outboundJournal;
+    outboundJournal = produced;
+  }
+
+  /** Ends recovery: publishes are journaled and written to the rings again. */
+  void endRecovery() {
+    if (!recovering) {
+      throw new IllegalStateException("the loop is not recovering");
+    }
+    recovering = false;
+    outboundJournal = liveOutboundJournal;
+    liveOutboundJournal = null;
+  }
+
+  /** True between the start of a recovery and its end. */
+  public boolean isRecovering() {
+    return recovering;
+  }
+
+  /**
    * Journals a LoopError for {@code failure}. Called by {@link LoopRunner} on the loop thread when
    * a duty cycle throws; allocates, which is acceptable because the loop is stopping.
    */
@@ -349,6 +466,8 @@ public final class EventLoop {
     private int timerWheelSize = 1024;
     private int timerCapacity = 1024;
     private int readLimit = DEFAULT_READ_LIMIT;
+    private boolean[] retryTemplates;
+    private int retryCapacityBytes = 64 * 1024;
 
     Builder(final EventClock clock, final boolean replay) {
       this.clock = clock;
@@ -413,6 +532,35 @@ public final class EventLoop {
         throw new IllegalArgumentException("read limit must be positive: " + limit);
       }
       readLimit = limit;
+      return this;
+    }
+
+    /**
+     * Names outbound template ids that must reach their gateway: when the ring is full the loop
+     * keeps the message and writes it on later duty cycles instead of only counting the drop. Meant
+     * for cancels and withdrawals, where a lost message leaves a quote or an order working at the
+     * venue. Each gateway holds up to {@link #retryCapacity} bytes; beyond that a message is lost
+     * and counted in {@link LoopCounters#OUTBOUND_RETRY_LOST}. Ignored in replay.
+     */
+    public Builder retryOnDrop(final int... templateIds) {
+      if (retryTemplates == null) {
+        retryTemplates = new boolean[TEMPLATE_IDS];
+      }
+      for (final int id : templateIds) {
+        if (id < 1 || id >= TEMPLATE_IDS) {
+          throw new IllegalArgumentException("template id out of range: " + id);
+        }
+        retryTemplates[id] = true;
+      }
+      return this;
+    }
+
+    /** Bytes of held must-deliver messages per gateway; 64 KiB by default. */
+    public Builder retryCapacity(final int bytes) {
+      if (bytes < 64) {
+        throw new IllegalArgumentException("retry capacity too small: " + bytes);
+      }
+      retryCapacityBytes = bytes;
       return this;
     }
 

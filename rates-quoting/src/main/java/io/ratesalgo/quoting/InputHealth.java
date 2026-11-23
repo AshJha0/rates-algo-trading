@@ -76,6 +76,18 @@ public final class InputHealth {
     lastSeq[v] = seq;
   }
 
+  /**
+   * The feed for this venue starts a new run of sequence numbers: the next one seen is taken as it
+   * comes. For a rebuild that delivered no frame to seat the sequence on (an empty book), and for
+   * a venue that restarted and counts from the beginning again.
+   */
+  public void onFeedRestart(final int venueId) {
+    final int v = venue(venueId);
+    if (v >= 0) {
+      lastSeq[v] = 0;
+    }
+  }
+
   /** The book for this venue was rebuilt from a snapshot; clears the gap. */
   public void onFeedRecovered(final int venueId) {
     final int v = venue(venueId);

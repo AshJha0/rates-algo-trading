@@ -147,6 +147,13 @@ class JournalCorruptionTest {
     Files.write(bad, bytes);
     assertThrows(
         JournalCorruptionException.class, () -> JournalWriter.open(bad, new ManualClock()));
+    // The failed open released its mapping, so the file can be repaired in place and opened. With
+    // the mapping leaked, Windows refuses the rewrite ("user-mapped section open").
+    bytes[frameOffset(0) + JournalFormat.FRAME_HEADER_LENGTH] ^= 0x10;
+    Files.write(bad, bytes);
+    try (JournalWriter w = JournalWriter.open(bad, new ManualClock())) {
+      assertEquals(4L, w.nextSequence());
+    }
   }
 
   @Test

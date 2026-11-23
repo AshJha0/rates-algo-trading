@@ -46,6 +46,70 @@ class ClobBookTest {
     assertTrue(b.levels(true, 5).isEmpty());
   }
 
+  private ClobOrder ioc(final String owner, final boolean buy, final long price, final long qty) {
+    return new ClobOrder(++ids, owner, ids, buy, price, qty, 0, true);
+  }
+
+  /** A book in workup at 100 between A (seller) and B (buyer), with A still offering at 100. */
+  private ClobBook inWorkupAt100() {
+    final ClobBook b = new ClobBook(1, ClobConfig.defaults(), listener);
+    b.submit(order("A", false, 100, 3_000_000), 0);
+    b.submit(order("B", true, 100, 1_000_000), 0);
+    assertTrue(b.inWorkup());
+    events.clear();
+    return b;
+  }
+
+  private static void assertNothingRestsFor(final ClobBook b, final String owner) {
+    for (final ClobOrder o : b.liveOrders()) {
+      assertFalse(o.owner().equals(owner), owner + " has an order resting or held");
+    }
+  }
+
+  @Test
+  void anIocFromANonParticipantInTheExclusiveWindowIsCancelledNotHeld() {
+    final ClobBook b = inWorkupAt100();
+    final ClobOrder o = ioc("C", true, 100, 1_000_000);
+    b.submit(o, 1);
+    assertEquals(List.of("cancel C immediate-or-cancel in the exclusive workup window"), events);
+    assertTrue(o.isDone());
+    assertEquals(0, o.cumQty());
+    assertTrue(b.held().isEmpty());
+    // and it does not come back to life when the window and the workup end
+    b.onTime(ClobConfig.defaults().workupNanos() + 1);
+    assertNothingRestsFor(b, "C");
+    assertEquals(1, events.size());
+  }
+
+  @Test
+  void anIocRemainderInWorkupIsCancelledNotRested() {
+    final ClobBook b = inWorkupAt100();
+    // B took part in the opening trade, so it may trade in the exclusive window
+    final ClobOrder o = ioc("B", true, 100, 5_000_000);
+    b.submit(o, 1);
+    assertEquals(
+        List.of("fill B/A 2000000@100 X", "cancel B immediate-or-cancel remainder"), events);
+    assertTrue(o.isDone());
+    assertEquals(2_000_000, o.cumQty());
+    assertNothingRestsFor(b, "B");
+    assertTrue(b.levels(true, 5).isEmpty(), "no IOC remainder may show as a bid");
+  }
+
+  @Test
+  void anIocNotMarketableAtTheWorkupPriceIsCancelledNotRested() {
+    final ClobBook b = inWorkupAt100();
+    final ClobOrder o = ioc("E", false, 101, 1_000_000);
+    b.submit(o, 2);
+    assertEquals(List.of("cancel E immediate-or-cancel not marketable at the workup price"), events);
+    assertTrue(o.isDone());
+    assertTrue(b.held().isEmpty());
+    assertNothingRestsFor(b, "E");
+    // a day order in the same place still rests, as before
+    b.submit(order("G", false, 101, 1_000_000), 2);
+    assertEquals(101L, b.levels(false, 5).get(1)[0]);
+    assertEquals(1, events.size());
+  }
+
   @Test
   void validationRules() {
     final ClobBook b = new ClobBook(1, ClobConfig.defaults(), listener);

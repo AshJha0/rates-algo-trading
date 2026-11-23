@@ -3,7 +3,7 @@ flowchart LR
   pr["Pull request or push to main"]
   subgraph ci["ci.yml"]
     java["java: Java 25 on ubuntu and windows<br/>mvn verify, coverage, SpotBugs"]
-    python["python: Python 3.12 on ubuntu and windows<br/>ruff, mypy, pytest, check_cookbook.py,<br/>run_notebooks.py"]
+    python["python: Python 3.12 on ubuntu and windows<br/>lock as constraints, ruff, mypy, pytest,<br/>ledger chain and looks, check_cookbook.py,<br/>run_notebooks.py"]
     policy["policy: word policy DR-007,<br/>no file over 2 MB DR-006"]
     fwd["java-forward: Java 27<br/>informational, DR-003"]
     lat["latency: rates-bench harness<br/>informational, DR-005"]
@@ -16,14 +16,19 @@ flowchart LR
     cfg["config-and-dashboards: validate_config.py,<br/>lint_dashboards.py, bash -n bluegreen.sh"]
     reh["rehearsal: ConfigValidatorMain,<br/>deploy/rehearsal.py with the kill switch,<br/>images when Docker is available"]
   end
-  gate{"Gating jobs pass<br/>and one approving review"}
+  subgraph info["informational, not gating (1.1.0)"]
+    codeql["codeql.yml: Java and Python"]
+    pit["mutation.yml: PIT, weekly"]
+  end
+  gate{"Required checks pass<br/>main ruleset, no approval required"}
   merge["Merge to main"]
   report["latency-report artifact<br/>compared by hand"]
-  release["Release v1.0.0"]
+  release["Release tag<br/>(v1.0.0, then v1.1.0)"]
 
   pr -->|triggers| ci
   pr -->|triggers| docs
   pr -->|triggers| ops
+  pr -->|triggers| codeql
   java -->|gates| gate
   python -->|gates| gate
   policy -->|gates| gate
@@ -31,7 +36,4 @@ flowchart LR
   gate -->|required| merge
   merge -->|push to main| build
   build -->|main only| deploy
-  merge -.->|planned| release
-
-  classDef planned stroke-dasharray: 5 5
-  class release planned
+  merge -->|tag by hand| release

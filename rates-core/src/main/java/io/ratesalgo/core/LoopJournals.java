@@ -90,6 +90,47 @@ public final class LoopJournals implements AutoCloseable {
     return create(dir, inboundName, outboundName, segmentBytes, clock, mode, RingJournal.DEFAULT_RING_CAPACITY);
   }
 
+  /**
+   * Opens journals {@code inboundName} and {@code outboundName} that already exist in {@code dir}
+   * and continues them after their last frames, for a process that restarts where it stopped. Both
+   * chains are verified on the way. A journal left by a crash is repaired first with {@code
+   * JournalRecovery.repair}; this method refuses a torn tail.
+   *
+   * @throws IllegalArgumentException if either journal does not exist
+   * @throws io.ratesalgo.journal.JournalCorruptionException if a chain is broken
+   */
+  public static LoopJournals open(
+      final Path dir,
+      final String inboundName,
+      final String outboundName,
+      final int segmentBytes,
+      final EventClock clock,
+      final JournalMode mode,
+      final int ringCapacity) {
+    final Sink in = Sink.open(dir, inboundName, segmentBytes, clock, mode, ringCapacity);
+    boolean opened = false;
+    try {
+      final LoopJournals journals =
+          new LoopJournals(mode, in, Sink.open(dir, outboundName, segmentBytes, clock, mode, ringCapacity));
+      opened = true;
+      return journals;
+    } finally {
+      if (!opened) {
+        in.close();
+      }
+    }
+  }
+
+  /** Opens existing journals in {@link #DEFAULT_MODE}. */
+  public static LoopJournals open(
+      final Path dir,
+      final String inboundName,
+      final String outboundName,
+      final int segmentBytes,
+      final EventClock clock) {
+    return open(dir, inboundName, outboundName, segmentBytes, clock, DEFAULT_MODE, RingJournal.DEFAULT_RING_CAPACITY);
+  }
+
   /** The mode both journals run in. */
   public JournalMode mode() {
     return mode;
@@ -146,7 +187,25 @@ public final class LoopJournals implements AutoCloseable {
         final EventClock clock,
         final JournalMode mode,
         final int ringCapacity) {
-      final SegmentedJournal journal = SegmentedJournal.create(dir, name, segmentBytes, clock, true);
+      return wrap(name, SegmentedJournal.create(dir, name, segmentBytes, clock, true), clock, mode, ringCapacity);
+    }
+
+    static Sink open(
+        final Path dir,
+        final String name,
+        final int segmentBytes,
+        final EventClock clock,
+        final JournalMode mode,
+        final int ringCapacity) {
+      return wrap(name, SegmentedJournal.open(dir, name, segmentBytes, clock, true), clock, mode, ringCapacity);
+    }
+
+    private static Sink wrap(
+        final String name,
+        final SegmentedJournal journal,
+        final EventClock clock,
+        final JournalMode mode,
+        final int ringCapacity) {
       if (mode == JournalMode.DIRECT) {
         return new Sink(journal, null);
       }

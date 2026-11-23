@@ -7,9 +7,16 @@ process:
   role: trading
   colour: blue
 http:
-  bindAddress: 0.0.0.0
+  # Loopback by default. A container sets RATES_HTTP_BIND=0.0.0.0 (deploy/compose.yaml); the
+  # process then refuses to start unless the control token is set and http.tls is configured.
+  bindAddress: 127.0.0.1
   port: 8081
   controlTokenEnv: RATES_CONTROL_TOKEN
+  # HTTPS for health, metrics and control. The key store is provided at deploy time (a mounted
+  # directory or a secret mount) and is never committed; its password is named, not written.
+  tls:
+    keyStorePath: /run/rates/certs/server-keystore.p12
+    keyStorePasswordEnv: RATES_HTTP_KEYSTORE_PASSWORD
 journal:
   directory: /var/lib/rates/journal
   capacityBytes: 67108864
@@ -31,3 +38,25 @@ recon:
   timingToleranceMillis: 1000
 retention:
   years: 5
+# FIX sessions to the venue simulators, which run inside this process. Sequence numbers resume
+# after a restart. Every store below is provided at deploy time and never committed; every
+# password is named by an environment variable (or a ...File path), never written here.
+fix:
+  resetOnLogon: false
+  transport: tls
+  tls:
+    trustStorePath: /run/rates/certs/truststore.p12
+    trustStorePasswordEnv: RATES_FIX_TRUSTSTORE_PASSWORD
+    verifyHostname: true
+    handshakeTimeoutMillis: 5000
+  acceptor:
+    keyStorePath: /run/rates/certs/server-keystore.p12
+    keyStorePasswordEnv: RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD
+    requireClientCertificate: false
+  credentials:
+    username: RATESMM
+    passwordEnv: RATES_FIX_PASSWORD
+  reconnect:
+    maxAttempts: 5
+    initialBackoffMillis: 100
+    maxBackoffMillis: 2000

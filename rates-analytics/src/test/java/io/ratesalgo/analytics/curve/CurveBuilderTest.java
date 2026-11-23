@@ -71,6 +71,48 @@ class CurveBuilderTest {
     assertTrue(max <= 1e-10, "incremental differs by " + max);
   }
 
+  /**
+   * A failed solve must leave the builder as it was (review 2026-11-23, A8). Before the fix the bad
+   * quote stayed on the instrument and the pillars after it were left wherever Brent stopped.
+   */
+  @ParameterizedTest
+  @EnumSource(Interpolation.class)
+  void aFailedRebuildLeavesThePreviousCurveAndQuotes(final Interpolation interpolation) {
+    final CurveBuilder b = usd(interpolation);
+    b.build(CurveBuilder.Method.AUTO);
+    final int n = b.curve().pillarCount();
+    final int changed = n / 2;
+    final double[] before = new double[n];
+    final double[] quotes = new double[n];
+    for (int i = 0; i < n; i++) {
+      before[i] = b.curve().pillarLogDf(i);
+      quotes[i] = b.instruments().get(i).quote();
+    }
+    final int probe = b.curve().pillarDate(n - 1) - 400;
+    final double dfBefore = b.curve().df(probe);
+    // not a number: no bracket has a root and the residual check cannot pass
+    for (final double bad : new double[] {Double.NaN, Double.POSITIVE_INFINITY}) {
+      assertThrows(IllegalStateException.class, () -> b.rebuild(changed, bad), "quote " + bad);
+      for (int i = 0; i < n; i++) {
+        // restored from a saved copy, so equal to the bit
+        assertEquals(before[i], b.curve().pillarLogDf(i), 0.0, "pillar " + i);
+        assertEquals(quotes[i], b.instruments().get(i).quote(), 0.0, "quote " + i);
+      }
+      assertEquals(dfBefore, b.curve().df(probe), 0.0, "interpolated values are refreshed too");
+      assertTrue(b.maxRepricingError() <= CurveBuilder.SOLVER_TOLERANCE);
+    }
+    // and the builder still works: the next good quote gives the same curve as a fresh build
+    final double good = quotes[changed] + 0.0003;
+    b.rebuild(changed, good);
+    final CurveBuilder fresh = usd(interpolation);
+    fresh.instruments().get(changed).setQuote(good);
+    fresh.build(CurveBuilder.Method.AUTO);
+    for (int i = 0; i < n; i++) {
+      // same bound as incrementalRebuildEqualsFullRebuild: two solves to 1e-12 in the quotes
+      assertEquals(fresh.curve().pillarLogDf(i), b.curve().pillarLogDf(i), 1e-10, "pillar " + i);
+    }
+  }
+
   @Test
   void globalAndSequentialAgreeOnLocalInterpolation() {
     final CurveBuilder seq = usd(Interpolation.LINEAR_LOG_DF);

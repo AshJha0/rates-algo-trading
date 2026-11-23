@@ -133,6 +133,7 @@
       <validValue name="BelowMinimum">3</validValue>
       <validValue name="CapReached">4</validValue>
       <validValue name="LimitPrice">5</validValue>
+      <validValue name="Stale" description="The venue's book is gapped, too old, or its session is down">6</validValue>
     </enum>
 
     <enum name="ChildState" encodingType="uint8" description="Router child order state (API_SPEC.md Section 15.4)">
@@ -452,6 +453,20 @@
     <field name="price" id="6" type="Decimal9"/>
     <field name="quantity" id="7" type="Quantity"/>
     <field name="timestampNanos" id="8" type="EpochNanos"/>
+  </sbe:message>
+
+  <!-- Added 2026-11-23 without a version bump: OrderCancelReject and VenueExclusion.Stale. Both
+       are additive (no existing message, field or value changes, so every recorded frame decodes
+       as before). The header version is part of every journaled frame, and the experiment ledger
+       records journal hashes (FirstExperimentTest), so a bump would break their reproduction. -->
+  <sbe:message name="OrderCancelReject" id="45" description="Venue refused a cancel or replace request (FIX 35=9)">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64" description="ClOrdID of the refused request"/>
+    <field name="origClOrdId" id="3" type="int64" description="The order the request named"/>
+    <field name="instrumentId" id="4" type="InstrumentId" description="0 when the gateway could not tell"/>
+    <field name="ordStatus" id="5" type="OrdStatus" description="The venue's status of the order"/>
+    <field name="responseTo" id="6" type="uint8" description="1 cancel request, 2 replace request"/>
+    <field name="timestampNanos" id="7" type="EpochNanos"/>
   </sbe:message>
 
   <!-- P3 quoting engine withdrawals, template ids 60 to 79 (API_SPEC.md Sections 2 and 12). Named
