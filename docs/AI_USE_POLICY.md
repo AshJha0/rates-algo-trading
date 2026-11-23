@@ -1,36 +1,34 @@
 # AI use policy
 
-This repository is built with help from AI coding assistants. This policy says what they may do, what they may never do, and how every assisted change is recorded and checked. It is modelled on the change-management expectations a UK firm running algorithmic trading would apply under RTS 6 (as applied by FCA MAR 7A): documented change, testing before deployment, approval by a named person, and a record that can be audited after the fact.
+This repository is built mostly by AI coding assistants. One engineer, the owner, directs parallel assistant sessions, reads their reports and merges their pull requests. This page says what the assistants do, what is actually checked, and what is not. It was rewritten on 2026-11-23 after the review of that date (docs/reviews/REVIEW_2026-11-23.md, finding E2) found that the earlier version described a label, a change log and approvals that were not in use.
 
-## What assistants may do
+## What assistants do here
 
-- Draft code, tests and documentation for a human to review.
-- Review a change. A review by an assistant must run the tests and cite the results (command, pass or fail, date) in the review; a review that did not run anything says so and carries no weight on its own.
-- Summarise incidents from the journal: read frames, reconstruct the sequence of events, propose causes. The summary names the journal file and frame sequence range it used.
+- Write code, tests and documentation, usually in parallel sessions on separate branches, one combined pull request per round.
+- Run the tests and report the commands and results. A number an assistant reports is checked against the file, test or ledger row it names before it goes into a document (CONTRIBUTING.md, "No measured number appears in a document without the file, job and date it came from").
+- Review code. The six reviews behind docs/reviews/REVIEW_2026-11-23.md were assistant sessions that read the code without running it. An assistant review is not an independent review: it is produced by the same kind of system that wrote the code.
 - Draft decision records, status entries and changelog lines.
 
-## What assistants may never do
+## What is checked, and by what
 
-- Change a risk limit, a quoting parameter, a kill-switch setting or any other production control, by any route.
-- Merge or push to `main`.
-- Change production code without a pull request that a human has approved and that has the validation (test output, benchmark report where relevant) attached.
-- Regenerate golden files.
-- Sign a pre-registration.
+- **The nine required CI checks on the `main` ruleset** are the only merge gate (CONTRIBUTING.md). They run the Java and Python suites on Linux and Windows, the site build, the config lint, the two deployment rehearsals and the repository policy.
+- **External goldens** check the pricing library against things the project did not write: QuantLib 1.44, the published 2024 Treasury auction results and the published 2024 SOFR, EUR STR and SONIA indices (README "Measured results").
+- **Nothing else.** There is no independent human review. The `main` ruleset requires 0 approving reviews, and pull requests #1 to #9 were merged by the owner with none.
 
-These apply whether the assistant is working interactively or in an automated job.
+## How assisted work is identified
 
-## Recording
+Each commit written with an assistant ends with a `Co-Authored-By:` trailer naming the model. On 2026-11-23 every non-merge commit on `main` carried one (`git log --no-merges`). That trailer replaces the `ai-assisted` pull request label described in earlier versions of this page; the label was never applied. docs/ai_change_log.md is kept as a historical record and is no longer extended.
 
-Every pull request with assisted content:
+## Rules the owner keeps
 
-1. Carries the GitHub label `ai-assisted`.
-2. Adds a line to `docs/ai_change_log.md`: date, what was assisted, which assistant, how it was validated, who approved.
-3. Says in its description which parts were drafted by an assistant and which were written by a person, so a reviewer knows where to look hardest.
+These are the owner's own practice, not controls enforced by the repository:
 
-## Validation, not trust
+- Assistants do not change a risk limit, a quoting parameter or a kill-switch setting without a decision record or a pre-registered experiment.
+- Golden files are regenerated only on Linux, by the generator in `research/ratesresearch/goldens`.
+- A pre-registration is committed before its evaluation data is read; the ledger records every run whatever its verdict.
 
-Assistant output is treated as a draft from a capable but unaccountable colleague. It is validated by the same means as any other change: the tests run, the numbers are reproduced, the documents are read against the code. A claim an assistant makes about a result is not evidence; the test output is. Where an assistant cites a number, the citation is checked against the named file or job before merge.
+The repository does not stop an assistant session from pushing to a branch or from opening and merging a pull request when the owner runs it with that permission.
 
 ## Relation to regulation
 
-RTS 6 Article 5 (as retained in UK law and applied through FCA MAR 7A) requires that changes to trading algorithms are tested, approved and recorded. This policy applies the same discipline to assisted changes in a project that is not itself a regulated firm: documented change (the PR), testing (CI and attached validation), approval (human review), record (label and change log). LEARN.md Section 12 explains the regulation, and docs/compliance/RTS6_INVENTORY.md maps each control, this policy included (RTS 6 Articles 5 and 11), to the regulatory text and to its evidence.
+RTS 6 Article 5 (as retained in UK law and applied through FCA MAR 7A) expects changes to trading algorithms to be tested, approved by a named person and recorded. This project is not a regulated firm and does not meet that expectation: testing is CI, approval is the owner's merge without a second person, and the record is the git history and its trailers. docs/compliance/RTS6_INVENTORY.md rates the change-management rows accordingly. LEARN.md Section 12 explains the regulation.

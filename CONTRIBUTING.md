@@ -2,11 +2,13 @@
 
 ## Workflow
 
-Trunk-based. `main` is protected: no direct pushes, required CI, one approving review. Work happens on short-lived branches named `<area>/<short-description>`.
+This is a solo project. One engineer directs parallel AI coding sessions, which write most of the code, tests and documents; the same engineer merges. There is no independent reviewer, human or otherwise, and pull requests #1 to #9 were merged with no approving review.
+
+`main` is protected by the repository ruleset `main` (checked 2026-11-23 with `gh api`): no deletion, no force push, changes through a pull request, and nine required status checks (the Java and Python jobs on Linux and Windows, the site build, the config and dashboard lint, the two deployment rehearsals and the repository policy). It requires 0 approving reviews, and strict status checks are off, so a branch need not be up to date with `main` before it merges. Those nine checks are the only merge gate. Work happens on short-lived branches.
 
 Commits follow Conventional Commits: `feat(journal): ...`, `fix(common): ...`, `docs: ...`, `test: ...`, `ci: ...`, `chore: ...`. The body says why, not what; the diff says what.
 
-One combined pull request per round of work. The PR description lists its slices (for example "slice 1: TimerWheel", "slice 2: journal reader") and reviewers review slice by slice, commenting with the slice name. Exceptions: a signed pre-registration (P5) or a change to a frozen contract gets its own PR so the review record is clean.
+One combined pull request per round of work. The PR description lists its slices (for example "slice 1: TimerWheel", "slice 2: journal reader"). Exceptions: a signed pre-registration (P5) or a change to a frozen contract gets its own PR so its record is clean.
 
 The workflows and the jobs that gate a merge are drawn in [CI and release pipeline](docs/site/pages/diagrams.md#ci-and-release-pipeline).
 
@@ -56,4 +58,4 @@ Local tests must finish before a push. A test run that stalls is treated as a ha
 
 ## AI assistance
 
-Assistants may draft code and documents and review changes under the rules in docs/AI_USE_POLICY.md. A pull request with assisted content carries the `ai-assisted` label and a line in docs/ai_change_log.md.
+Assistants draft code, tests and documents under docs/AI_USE_POLICY.md. A commit written with an assistant carries a `Co-Authored-By:` trailer naming the model; that trailer, not a label, is how assisted work is identified. On 2026-11-23 every non-merge commit on `main` carried one. The `ai-assisted` label described in earlier versions of this file was never applied, and docs/ai_change_log.md stopped at 2026-10-31.

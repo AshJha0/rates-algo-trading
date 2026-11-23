@@ -1,6 +1,10 @@
 # AI-assisted change log
 
-One line per pull request that carries the `ai-assisted` label (docs/AI_USE_POLICY.md).
+Historical record, closed on 2026-11-23. It was meant to hold one line per pull request with the `ai-assisted` label. The label was never applied, the five rows below were all written on 2026-10-31, and none was extended after that. Four rows say "pending owner review"; no such review took place, and those branches were merged in pull request #1 on 2026-10-31 with no approving review.
+
+Assisted work is now identified by the `Co-Authored-By:` trailer on each commit (docs/AI_USE_POLICY.md). To list it: `git log --format='%h %s %(trailers:key=Co-Authored-By,valueonly)'`.
+
+The rows are kept as written.
 
 | Date | PR | What was assisted | Assistant | Validation | Approved by |
 |---|---|---|---|---|---|
