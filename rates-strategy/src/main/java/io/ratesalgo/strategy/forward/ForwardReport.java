@@ -15,9 +15,10 @@ import java.util.Map;
  * Both are rebuilt from ledger lines only, so anyone can regenerate them from the ledger.
  *
  * <p>The summary keeps the two parts of the P&amp;L apart. The session P&amp;L is income from
- * synthetic client flow against a market with its intraday moves switched off, so it is close to
- * a fixed amount per day; a mean over its standard deviation would be very large and would say
- * nothing about a real desk, so no such ratio is printed, at any sample size. The close mark is
+ * synthetic client flow against a market with its intraday moves switched off, so it carries
+ * almost no market risk and its mean is many times its day-to-day variation by construction. A
+ * mean over its standard deviation would be very large and would say nothing about a real desk,
+ * so no such ratio is printed, at any sample size. The close mark is
  * the one real number: the end-of-session position times the real move to the marking close. It
  * is reported with its mean and standard error and nothing else. Its expected value is zero (the
  * desk takes no view on direction), so it measures the exposure left overnight, not skill.
@@ -112,8 +113,9 @@ public final class ForwardReport {
     }
     b.append("\n\n## Synthetic component: session P&L\n\n");
     b.append("Synthetic. Spread income, hedge cost, carry, funding and fees from model-generated client flow against ");
-    b.append("a market with no intraday moves. It is close to a fixed amount per session by construction, so it is not ");
-    b.append("a track record, and no ratio of mean to standard deviation is printed for it or for any total that ");
+    b.append("a market with no intraday moves. With the market held still the income carries almost no market risk, ");
+    b.append("so its mean is many times its day-to-day variation by construction. That is a property of the set-up, ");
+    b.append("not a track record, and no ratio of mean to standard deviation is printed for it or for any total that ");
     b.append("contains it.\n\n");
     b.append(String.format(Locale.ROOT, "Cumulative %s USD (synthetic) over %d sessions.%n%n", ForwardCycle.money(cumSession),
         days));
