@@ -1,5 +1,6 @@
 package io.ratesalgo.quoting;
 
+import io.ratesalgo.api.CurrencyCode;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -48,6 +49,16 @@ public final class QuotingConfig {
   long releaseWidenAfterNanos = 300_000_000_000L;
   double releaseMultiplier = E3_RELEASE_MULTIPLIER;
   double fairMoveWithdrawBp = 0.25;
+  double fairMoveWithdrawFraction;
+  double acceptPriceToleranceBp;
+  boolean rejectMismatchedDone;
+  boolean coverLearning;
+  boolean widenAfterClamp;
+  final int[] volReference = new int[CurrencyCode.COUNT];
+  long volSampleNanos = 60_000_000_000L;
+  long volDayNanos = 8L * 3_600_000_000_000L;
+  double volDecay = 0.97;
+  int volWarmupSamples = 30;
 
   /**
    * The default release calendar: 08:30 and 10:00 New York on every weekday from {@code from} to
@@ -241,6 +252,100 @@ public final class QuotingConfig {
     return this;
   }
 
+  /**
+   * Opt-in (review 2026-11-23, Q7): withdraw a live quote once fair value has moved against it by
+   * this fraction of the distance it was quoted at, in place of the absolute {@link
+   * #fairMoveWithdrawBp}. 0.5 pulls a quote when half its edge is gone. The distance is floored at
+   * {@code minHalfSpreadBp}, so a quote skewed through fair is not pulled on the first tick. 0, the
+   * default, keeps the absolute threshold.
+   */
+  public QuotingConfig fairMoveWithdrawFraction(final double v) {
+    fairMoveWithdrawFraction = nonNegative(v, "fairMoveWithdrawFraction");
+    return this;
+  }
+
+  /**
+   * Largest difference, bp of value, between the price a Done reports and the price we quoted
+   * before the Done is flagged as a price mismatch. 0, the default, flags any difference: a venue
+   * trades an RFQ at the quoted price or not at all.
+   */
+  public QuotingConfig acceptPriceToleranceBp(final double v) {
+    acceptPriceToleranceBp = nonNegative(v, "acceptPriceToleranceBp");
+    return this;
+  }
+
+  /**
+   * What a mismatched Done does. Off (default): it is flagged and counted, and booked at the
+   * venue's price so the risk engine is not blind to a position the venue believes we have. On: it
+   * is flagged and not booked, for a desk that disputes such a trade with the venue at once.
+   */
+  public QuotingConfig rejectMismatchedDone(final boolean v) {
+    rejectMismatchedDone = v;
+    return this;
+  }
+
+  /**
+   * Opt-in (review Q3): feed the gap between our winning price and the disclosed cover to {@link
+   * SpreadModel#observeCoverGap}, so the optimiser averages over the learned cover spread. Off by
+   * default: it changes the spread the back-tested desk quotes.
+   */
+  public QuotingConfig coverLearning(final boolean v) {
+    coverLearning = v;
+    return this;
+  }
+
+  /**
+   * Opt-in (review Q11): apply the event, release and volatility widening after the half-spread
+   * clamp instead of before it, so a cap set for a quiet market does not cancel the widening. The
+   * quoted half-spread can then exceed {@code maxHalfSpreadBp} by the widening and no more. Off by
+   * default: it changes what the back-tested desk quotes around releases.
+   */
+  public QuotingConfig widenAfterClamp(final boolean v) {
+    widenAfterClamp = v;
+    return this;
+  }
+
+  /**
+   * Opt-in (review Q11): estimate a currency's daily realised volatility from the fair value of
+   * {@code instrumentId} and feed it to the engine, which scales the winner's-curse term and the
+   * volatility widening by it. The engine samples the fair value every {@link
+   * #volatilitySampling sample interval} from its poll. Instrument 0 (the default) turns it off
+   * and leaves volatility at the baseline.
+   */
+  public QuotingConfig volatilityReference(final CurrencyCode currency, final int instrumentId) {
+    volReference[currency.index()] = instrumentId;
+    return this;
+  }
+
+  /**
+   * How realised volatility is estimated: a sample every {@code sampleNanos}, an exponentially
+   * weighted variance with weight {@code decay} on the past, scaled to a trading day of {@code
+   * dayNanos}, and reported only after {@code warmupSamples} samples. The estimate is floored at
+   * the baseline, so a quiet market never tightens a quote.
+   */
+  public QuotingConfig volatilitySampling(
+      final long sampleNanos, final long dayNanos, final double decay, final int warmupSamples) {
+    if (sampleNanos <= 0 || dayNanos < sampleNanos || !(decay > 0.0 && decay < 1.0) || warmupSamples < 1) {
+      throw new IllegalArgumentException(
+          "volatility sampling " + sampleNanos + ", " + dayNanos + ", " + decay + ", " + warmupSamples);
+    }
+    volSampleNanos = sampleNanos;
+    volDayNanos = dayNanos;
+    volDecay = decay;
+    volWarmupSamples = warmupSamples;
+    return this;
+  }
+
+  /** Whether any currency has a volatility reference instrument. */
+  boolean volatilityEstimated() {
+    for (final int id : volReference) {
+      if (id != 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Number of scheduled releases held. */
   public int releases() {
     return releases.length;
@@ -296,6 +401,14 @@ public final class QuotingConfig {
 
   public double maxImproveBp() {
     return maxImproveBp;
+  }
+
+  public double minHalfSpreadBp() {
+    return minHalfSpreadBp;
+  }
+
+  public double maxHalfSpreadBp() {
+    return maxHalfSpreadBp;
   }
 
   private static long positive(final long v, final String name) {

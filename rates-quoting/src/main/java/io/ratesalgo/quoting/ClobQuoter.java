@@ -52,7 +52,13 @@ import org.agrona.concurrent.UnsafeBuffer;
  *       rounding, so the prices stay on the tick.
  * </ul>
  *
- * Allocation-free after construction; up to 32 instruments.
+ * <p>A cancel the venue never answers is sent again: {@link #poll} resends it every {@code
+ * cancelRetryNanos}, and after {@code maxCancelRetries} tells the {@link StuckCancelListener}, once
+ * per order, that an order we want gone may still be live (review 2026-11-23). The order keeps its
+ * reservation until the venue reports it, so the risk engine goes on counting it. A cancel the
+ * venue rejects is reported with {@link #onCancelRejected} and the next update decides again.
+ *
+ * <p>Allocation-free after construction; up to 32 instruments.
  */
 public final class ClobQuoter implements KillSwitchListener {
 
@@ -71,6 +77,26 @@ public final class ClobQuoter implements KillSwitchListener {
     long baseQuantity = 1_000_000_000L;
     long minQuantity = 100_000_000L;
     long clOrdIdBase = 1L << 50;
+    long cancelRetryNanos = 1_000_000_000L;
+    int maxCancelRetries = 3;
+
+    /** How long a cancel may go unanswered before it is sent again. */
+    public Config cancelRetryNanos(final long v) {
+      if (v <= 0) {
+        throw new IllegalArgumentException("cancel retry " + v);
+      }
+      cancelRetryNanos = v;
+      return this;
+    }
+
+    /** Resends after which an unanswered cancel is escalated to the listener. */
+    public Config maxCancelRetries(final int v) {
+      if (v < 0) {
+        throw new IllegalArgumentException("cancel retries " + v);
+      }
+      maxCancelRetries = v;
+      return this;
+    }
 
     public Config venueId(final int v) {
       venueId = v;
@@ -149,6 +175,13 @@ public final class ClobQuoter implements KillSwitchListener {
   private final long[] leaves = new long[2 * MAX];
   private final long[] reserved = new long[2 * MAX];
   private final boolean[] cancelPending = new boolean[2 * MAX];
+  private final long[] cancelSentAt = new long[2 * MAX];
+  private final int[] cancelResends = new int[2 * MAX];
+  private final CancelReason[] cancelReason = new CancelReason[2 * MAX];
+  private StuckCancelListener stuckListener = StuckCancelListener.NONE;
+  private long cancelRetries;
+  private long stuckCancels;
+  private long cancelRejects;
   private final long[] queueAhead = new long[2 * MAX];
   private final long[] lastAmend = new long[2 * MAX];
   private final long[] pulledUntil = new long[MAX];
@@ -184,6 +217,69 @@ public final class ClobQuoter implements KillSwitchListener {
     this.config = config;
     this.maxInputAgeNanos = maxInputAgeNanos;
     this.nextClOrdId = config.clOrdIdBase;
+  }
+
+  /** Told once per order when its cancel has gone unanswered through every resend. */
+  @FunctionalInterface
+  public interface StuckCancelListener {
+    /** No listener. */
+    StuckCancelListener NONE = (instrumentId, clOrdId, bid, leavesMinor) -> {};
+
+    void onStuckCancel(int instrumentId, long clOrdId, boolean bid, long leavesMinor);
+  }
+
+  /** Sets the listener for cancels the venue does not answer; {@code null} removes it. */
+  public void stuckCancelListener(final StuckCancelListener listener) {
+    stuckListener = listener == null ? StuckCancelListener.NONE : listener;
+  }
+
+  /**
+   * Resends every cancel that has gone unanswered for the retry interval. Runs whatever the kill
+   * switch says: a cancel lost during a kill is the one that matters most.
+   */
+  public void poll(final long nowNanos) {
+    for (int s = 0; s < 2 * count; s++) {
+      if (!cancelPending[s] || clOrdId[s] == 0L || nowNanos - cancelSentAt[s] < config.cancelRetryNanos) {
+        continue;
+      }
+      if (cancelResends[s] == config.maxCancelRetries) {
+        stuckCancels++;
+        stuckListener.onStuckCancel(ids[s / 2], clOrdId[s], (s & 1) == 0, leaves[s]);
+      }
+      cancelResends[s]++;
+      cancelRetries++;
+      sendCancel(s, cancelReason[s], nowNanos);
+    }
+  }
+
+  /**
+   * The venue refused to cancel {@code origClOrdId} (unknown order, too late to cancel). The order
+   * is treated as live again; the next update cancels it once more if it is still unwanted. A
+   * refusal because the order has already traded arrives with its fill, which clears the order.
+   */
+  public void onCancelRejected(final long origClOrdId) {
+    final int s = (int) orders.get(origClOrdId);
+    if (s < 0 || !cancelPending[s]) {
+      return;
+    }
+    cancelRejects++;
+    cancelPending[s] = false;
+    cancelResends[s] = 0;
+  }
+
+  /** Cancels sent again because the venue had not answered. */
+  public long cancelRetries() {
+    return cancelRetries;
+  }
+
+  /** Orders whose cancel went unanswered through every resend. */
+  public long stuckCancels() {
+    return stuckCancels;
+  }
+
+  /** Cancels the venue refused. */
+  public long cancelRejects() {
+    return cancelRejects;
   }
 
   /** Default settings. */
@@ -231,6 +327,7 @@ public final class ClobQuoter implements KillSwitchListener {
 
   /** Re-evaluates one instrument: pulls, keeps, re-quotes or places. */
   public void update(final int instrumentId, final long nowNanos) {
+    poll(nowNanos);
     final int i = slot(instrumentId);
     if (i < 0) {
       return;
@@ -311,6 +408,7 @@ public final class ClobQuoter implements KillSwitchListener {
       clOrdId[s] = 0L;
       leaves[s] = 0L;
       cancelPending[s] = false;
+      cancelResends[s] = 0;
     }
   }
 
@@ -459,22 +557,28 @@ public final class ClobQuoter implements KillSwitchListener {
     if (clOrdId[s] == 0L || cancelPending[s]) {
       return false;
     }
-    final int instrumentId = ids[s / 2];
+    cancelResends[s] = 0;
+    cancelReason[s] = reason;
+    sendCancel(s, reason, now);
+    cancelPending[s] = true;
+    lastAmend[s] = now;
+    return true;
+  }
+
+  private void sendCancel(final int s, final CancelReason reason, final long now) {
     cancel
         .wrapAndApplyHeader(buffer, 0, header)
         .venueId(config.venueId)
         .clOrdId(++nextClOrdId)
         .origClOrdId(clOrdId[s])
-        .instrumentId(instrumentId)
+        .instrumentId(ids[s / 2])
         .side((s & 1) == 0 ? Side.Buy : Side.Sell)
         .reason(reason)
         .sentNanos(now);
     risk.countExemptMessage();
     gateway.send(buffer, 0, MessageHeaderEncoder.ENCODED_LENGTH + cancel.encodedLength());
     cancelsSent++;
-    cancelPending[s] = true;
-    lastAmend[s] = now;
-    return true;
+    cancelSentAt[s] = now;
   }
 
   private void unreserve(final int s, final int instrumentId, final boolean buy, final long q) {

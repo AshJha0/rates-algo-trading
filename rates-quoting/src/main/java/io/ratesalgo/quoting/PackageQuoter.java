@@ -47,6 +47,14 @@ import org.agrona.collections.Long2LongHashMap;
  * + kappa (d_i' Sigma p + 0.5 d_i' Sigma d_i))}. The charge is spread over the legs as an equal bp
  * distance on each, in the client-worse direction.
  *
+ * <p>Holes closed after the 2026-11-23 review. Reservations expire on time: the desk attaches
+ * {@link #poll} to the engine's poll, so a package nobody answers is released at its time to live
+ * and not when the next package request happens to arrive. The inventory term is held within
+ * {@code maxSkewBp} of the legs' PV01 either way, as the engine's skew is, so a large book can
+ * neither give the spread away nor price the package out of reach. The same package from the same
+ * client is throttled for {@link #packageThrottleNanos} whatever the single-RFQ throttle is set
+ * to. Every leg counts toward the client's DV01 limit (RiskLimits.clientDv01).
+ *
  * <p>There is no package message in SBE schema v1; P2's D2C venue carries package RFQs, and the
  * coordinator maps its legs to {@link PackageRequest} and the venue's answer to {@link
  * #onResponse}. The Desk registers nothing here yet: the kill switch reaches {@link #onKill} once
@@ -206,6 +214,9 @@ public final class PackageQuoter implements KillSwitchListener {
   private final double[] p = new double[K];
   private final Dv01Vector book = new Dv01Vector(CurrencyCode.USD);
   private final Long2LongHashMap lastQuote = new Long2LongHashMap(256, 0.5f, Long.MIN_VALUE);
+  private final Long2LongHashMap lastPackage = new Long2LongHashMap(256, 0.5f, Long.MIN_VALUE);
+  private long packageThrottleNanos = 250_000_000L;
+  private long throttledPackages;
 
   // live packages
   private final byte[] state = new byte[MAX_LIVE];
@@ -215,6 +226,8 @@ public final class PackageQuoter implements KillSwitchListener {
   private final long[][] pDealerQty = new long[MAX_LIVE][LEGS];
   private final long[][] pPrice = new long[MAX_LIVE][LEGS];
   private final long[] pValidUntil = new long[MAX_LIVE];
+  private final int[] pClient = new int[MAX_LIVE];
+  private final double[] pClientDv01 = new double[MAX_LIVE];
   private long nextPackageId;
   private long packagesQuoted;
   private long packageFills;
@@ -233,6 +246,24 @@ public final class PackageQuoter implements KillSwitchListener {
     this.fairValue = fairValue;
     this.engine = engine;
     this.covariance = covariance;
+  }
+
+  /**
+   * Minimum interval between quotes for the same package (same legs, same directions) to the same
+   * client; 0 turns it off. Separate from the engine's re-quote throttle, which a desk may set to
+   * zero for single RFQs: a package holds a reservation on every leg, and a client asking for the
+   * same one again and again would stack them.
+   */
+  public void packageThrottleNanos(final long nanos) {
+    if (nanos < 0) {
+      throw new IllegalArgumentException("package throttle " + nanos);
+    }
+    packageThrottleNanos = nanos;
+  }
+
+  /** Requests passed by the per-package throttle. */
+  public long throttledPackages() {
+    return throttledPackages;
   }
 
   /** A DV01-neutral pair: the client trades {@code quantity1} of the first leg. */
@@ -284,6 +315,12 @@ public final class PackageQuoter implements KillSwitchListener {
     }
     final long last = lastQuote.get(clientId);
     if (last != Long.MIN_VALUE && now - last < cfg.requoteThrottleNanos) {
+      return pass(out, PassReason.THROTTLED);
+    }
+    final long signature = signature(pkg, clientId);
+    final long lastSame = lastPackage.get(signature);
+    if (lastSame != Long.MIN_VALUE && now - lastSame < packageThrottleNanos) {
+      throttledPackages++;
       return pass(out, PassReason.THROTTLED);
     }
     if (freeSlot() < 0) {
@@ -341,7 +378,10 @@ public final class PackageQuoter implements KillSwitchListener {
     final double saving = Math.max(0.0, standaloneHedge - netHedge);
     risk.ladder(first.currency(), book);
     book.copyTo(p);
-    final double inventory = cfg.kappa() * (covariance.quadratic(l, p) + 0.5 * covariance.quadratic(l, l));
+    // bounded like the engine's skew: at most maxSkewBp on the legs' PV01, in either direction
+    final double inventoryBound = cfg.maxSkewBp() * totalPv01;
+    final double inventory =
+        clamp(cfg.kappa() * (covariance.quadratic(l, p) + 0.5 * covariance.quadratic(l, l)), -inventoryBound, inventoryBound);
     double standaloneInventory = 0.0;
     for (int i = 0; i < pkg.legs(); i++) {
       standaloneInventory +=
@@ -357,7 +397,9 @@ public final class PackageQuoter implements KillSwitchListener {
       final long px = clientBuys ? Decimal9.ceil(fair[i] + distance * qpb) : Decimal9.floor(fair[i] - distance * qpb);
       final long qty = Math.abs(pkg.clientQuantity(i));
       final int r =
-          clientBuys ? risk.checkQuote(id, 0L, 0L, px, qty, 0L) : risk.checkQuote(id, px, qty, 0L, 0L, 0L);
+          clientBuys
+              ? risk.checkQuote(clientId, id, 0L, 0L, px, qty, 0L)
+              : risk.checkQuote(clientId, id, px, qty, 0L, 0L, 0L);
       if (r != RiskEngine.OK) {
         out.rejection = r;
         return pass(out, PassReason.RISK_REJECT);
@@ -378,7 +420,11 @@ public final class PackageQuoter implements KillSwitchListener {
       pPrice[s][i] = out.legPrice[i];
       risk.reserve(pkg.instrumentId(i), dealerQty > 0 ? dealerQty : 0L, dealerQty > 0 ? 0L : -dealerQty);
     }
+    pClient[s] = clientId;
+    pClientDv01[s] = totalPv01;
+    risk.reserveClient(clientId, totalPv01);
     lastQuote.put(clientId, now);
+    lastPackage.put(signature, now);
     packagesQuoted++;
     out.netLadder.currency(first.currency());
     for (int k = 0; k < K; k++) {
@@ -418,6 +464,7 @@ public final class PackageQuoter implements KillSwitchListener {
         for (int i = 0; i < pLegs[s]; i++) {
           risk.onFill(pInstrument[s][i], pDealerQty[s][i], pPrice[s][i]);
         }
+        risk.onClientFill(pClient[s], pClientDv01[s]);
       }
       state[s] = FREE;
       return true;
@@ -515,6 +562,17 @@ public final class PackageQuoter implements KillSwitchListener {
       final long q = pDealerQty[s][i];
       risk.release(pInstrument[s][i], q > 0 ? q : 0L, q > 0 ? 0L : -q);
     }
+    risk.releaseClient(pClient[s], pClientDv01[s]);
+  }
+
+  /** Identifies a client's package by its legs and directions; the leg order does not matter. */
+  private static long signature(final PackageRequest pkg, final int clientId) {
+    long h = 0L;
+    for (int i = 0; i < pkg.legs(); i++) {
+      final long leg = ((long) pkg.instrumentId(i) << 1) | (pkg.clientQuantity(i) > 0 ? 1L : 0L);
+      h += leg * 0x9E3779B97F4A7C15L ^ (leg >>> 7);
+    }
+    return h * 31L + clientId;
   }
 
   private static Result pass(final Result out, final PassReason reason) {

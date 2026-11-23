@@ -121,6 +121,10 @@ public final class Desk {
             in.directory(), risk, fairValue, in.book(), in.gateway(), in.clock(), in.clobConfig(),
             in.quotingConfig().maxInputAgeNanos());
     handler = new QuotingEventHandler(quoting, clob, health);
+    // both hold reservations against a clock: the engine's poll expires packages and resends
+    // unanswered CLOB cancels, so neither waits for its own next message
+    quoting.attach(packages::poll);
+    quoting.attach(clob::poll);
     killSwitch.register(quoting);
     killSwitch.register(clob);
     killSwitch.register(packages);
