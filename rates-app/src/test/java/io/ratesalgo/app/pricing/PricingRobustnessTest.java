@@ -249,6 +249,39 @@ class PricingRobustnessTest {
     }
   }
 
+  /**
+   * Which key-rate buckets the five curve pillars can reach (review A4; a record of a known limit,
+   * to be rewritten when the curve gets a pillar at every risk tenor). A pillar sits at its swap's
+   * last payment date, a few days past the tenor, and is split linearly onto the two neighbouring
+   * tenors. So the 1Y bucket is exactly empty for every instrument, 3Y and 7Y hold only the
+   * spill of the 2Y and 5Y pillars (about 1 percent of each), and 20Y holds a fifth of the 12Y
+   * pillar and nothing of its own.
+   */
+  @Test
+  void theFivePillarsLeaveTheOneYearBucketEmptyAndThreeAndSevenNearlySo() {
+    final AnalyticsPricing p = new AnalyticsPricing(UNIVERSE, T0);
+    assertEquals(5, p.adapter().pillars());
+    final double[] gross = new double[KeyRateTenors.COUNT];
+    final Dv01Vector v = new Dv01Vector(CurrencyCode.USD);
+    double total = 0.0;
+    for (final int id : UNIVERSE.instrumentIds()) {
+      p.pv01(id, ONE_MILLION, v);
+      for (int k = 0; k < KeyRateTenors.COUNT; k++) {
+        gross[k] += Math.abs(v.get(k));
+        total += Math.abs(v.get(k));
+      }
+    }
+    final StringBuilder line = new StringBuilder("A4 share of gross DV01 by bucket over the universe:");
+    for (int k = 0; k < KeyRateTenors.COUNT; k++) {
+      line.append(String.format(" %s %.4f", KeyRateTenors.label(k), gross[k] / total));
+    }
+    System.out.println(line);
+    assertEquals(0.0, gross[0], 0.0, "1Y: no pillar at or before two years");
+    assertTrue(gross[2] / total < 0.002, "3Y holds only the 2Y pillar's spill: " + gross[2] / total);
+    assertTrue(gross[4] / total < 0.002, "7Y holds only the 5Y pillar's spill: " + gross[4] / total);
+    assertTrue(gross[6] > 0.0, "20Y is fed by the 12Y pillar only");
+  }
+
   @Test
   void bondRiskAtMarketFollowsTheBookAndSurvivesABrokenOne() {
     final AnalyticsPricing p = new AnalyticsPricing(UNIVERSE, T0, new AnalyticsPricing.Options(true, 0.01));

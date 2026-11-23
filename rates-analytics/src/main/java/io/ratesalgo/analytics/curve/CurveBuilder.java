@@ -177,6 +177,7 @@ public final class CurveBuilder {
     for (int i = 0; i < n; i++) {
       saved[i] = curve.pillarLogDf(i);
     }
+    boolean solved = false;
     try {
       inst.setQuote(newQuote);
       if (lastMethod == Method.SEQUENTIAL) {
@@ -187,15 +188,18 @@ public final class CurveBuilder {
       }
       jacobianValid = false;
       checkResiduals();
-    } catch (final IllegalStateException | ArithmeticException e) {
-      inst.setQuote(oldQuote);
-      curve.setActivePillars(n);
-      for (int i = 0; i < n; i++) {
-        curve.setPillarLogDf(i, saved[i]);
+      solved = true;
+    } finally {
+      if (!solved) {
+        // whatever the solver threw, hand back the curve as it was
+        inst.setQuote(oldQuote);
+        curve.setActivePillars(n);
+        for (int i = 0; i < n; i++) {
+          curve.setPillarLogDf(i, saved[i]);
+        }
+        curve.update();
+        jacobianValid = false;
       }
-      curve.update();
-      jacobianValid = false;
-      throw e;
     }
   }
 
