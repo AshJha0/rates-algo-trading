@@ -28,7 +28,11 @@ public final class Venues {
   /** Trading date of the fixtures used by the simulators: 2026-11-02. */
   public static final LocalDate TRADE_DATE = LocalDate.of(2026, 11, 2);
 
-  /** 2026-11-02T13:30:00Z, which is 08:30 in New York: the start time the scripts use. */
+  /**
+   * The start time the scripts use: 2026-11-02T14:30:00Z, which is 09:30 in New York. Daylight
+   * saving ended on 1 November 2026, so New York is five hours behind UTC on this date; earlier
+   * comments read this value as 13:30Z and 08:30. The value is unchanged.
+   */
   public static final long T0 = 1_793_629_800_000_000_000L;
 
   private Venues() {}

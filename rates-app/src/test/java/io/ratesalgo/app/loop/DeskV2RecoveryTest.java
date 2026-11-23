@@ -59,7 +59,8 @@ import org.junit.jupiter.api.io.TempDir;
 class DeskV2RecoveryTest {
 
   private static final UsdUniverse UNIVERSE = UsdUniverse.simV2();
-  private static final long START = V2DeskProcess.SESSION_OPEN_EPOCH_NANOS + 5_400_000_000_000L;
+  /** 09:00 New York: clear of the 08:30 and 10:00 release windows, in which the desk declines every RFQ. */
+  private static final long START = V2DeskProcess.SESSION_OPEN_EPOCH_NANOS + 7_200_000_000_000L;
   private static final long SECOND = 1_000_000_000L;
   private static final long MILLION = 100_000_000L;
   private static final int SEGMENT = 8 << 20;

@@ -74,7 +74,8 @@ class DeskGroupV2Test {
   private static final long FUT_BID = 110_000_000_000L;
   private static final long MILLION = 100_000_000L;
 
-  private final ManualClock source = new ManualClock(V2DeskProcess.SESSION_OPEN_EPOCH_NANOS + 5_400 * SECOND);
+  /** 09:00 New York: clear of the 08:30 and 10:00 release windows, in which the desk declines every RFQ. */
+  private final ManualClock source = new ManualClock(V2DeskProcess.SESSION_OPEN_EPOCH_NANOS + 7_200 * SECOND);
   private final ManyToOneRingBuffer ring = RingBufferContract.newInbound(1 << 18);
   private final OneToOneRingBuffer[] out = new OneToOneRingBuffer[AppIds.V2_OUTBOUND_RINGS];
   private final UnsafeBuffer buffer = new UnsafeBuffer(new byte[256]);

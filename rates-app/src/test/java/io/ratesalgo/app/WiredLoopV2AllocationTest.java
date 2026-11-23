@@ -78,7 +78,8 @@ class WiredLoopV2AllocationTest {
   private static final long MILLI = 1_000_000L;
 
   private final UsdUniverse universe = UsdUniverse.simV2();
-  private final ManualClock source = new ManualClock(V2DeskProcess.SESSION_OPEN_EPOCH_NANOS + 5_400_000_000_000L);
+  /** 09:00 New York: clear of the release windows, so that every RFQ is priced. */
+  private final ManualClock source = new ManualClock(V2DeskProcess.SESSION_OPEN_EPOCH_NANOS + 7_200_000_000_000L);
   private final ManyToOneRingBuffer inbound = RingBufferContract.newInbound(1 << 20);
   private final OneToOneRingBuffer[] outbound = new OneToOneRingBuffer[AppIds.V2_OUTBOUND_RINGS];
   private final InboundPublisher publisher = new InboundPublisher(inbound);

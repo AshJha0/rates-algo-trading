@@ -66,8 +66,12 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  */
 public final class V2DeskProcess implements AutoCloseable {
 
-  /** 2026-11-02T12:00:00Z, 07:00 in New York: the open of a simulator v2 session on the fixtures' date. */
-  public static final long SESSION_OPEN_EPOCH_NANOS = 1_793_624_400_000_000_000L;
+  /**
+   * 2026-11-02T12:00:00Z, 07:00 in New York (EST since 1 November): the open of a simulator v2
+   * session on the fixtures' date. The desk's business date and its 17:00 cut are read off this
+   * clock, so the session's ten hours end at the cut.
+   */
+  public static final long SESSION_OPEN_EPOCH_NANOS = 1_793_620_800_000_000_000L;
 
   /** Time between curve rounds: 500 ms, as the version 1 curve feed. */
   public static final long CURVE_INTERVAL_NANOS = 500_000_000L;

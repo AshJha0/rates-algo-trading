@@ -33,7 +33,8 @@ import org.junit.jupiter.api.Test;
  */
 class SimV2PublishingTest {
 
-  private static final long OPEN = 1_793_624_400_000_000_000L;
+  /** 2026-11-02T12:00:00Z, 07:00 in New York. */
+  private static final long OPEN = 1_793_620_800_000_000_000L;
   private static final long SECOND = 1_000_000_000L;
 
   private static MarketSpec spec;

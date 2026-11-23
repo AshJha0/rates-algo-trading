@@ -37,7 +37,8 @@ import org.junit.jupiter.api.Test;
 class V2UniverseTest {
 
   private static final UsdUniverse V2 = UsdUniverse.simV2();
-  private static final long START = 1_793_629_500_000_000_000L;
+  /** 2026-11-02T13:25:00Z, 08:25 in New York. */
+  private static final long START = 1_793_625_900_000_000_000L;
 
   @Test
   void thereIsASwapAtEveryRiskTenorWithTheVenuesIds() {
@@ -190,6 +191,54 @@ class V2UniverseTest {
     }
     assertFalse(overlay.pv01(424_242, 1, through), "an unknown instrument is still unknown");
     assertTrue(overlay.onCurveInput(2003, 3_850_000_000L, START + 10));
+  }
+
+  @Test
+  void twoBindingsBuiltAtDifferentInstantsOfOneBusinessDayPriceAlike() {
+    // 08:25 and 11:25 New York on 2 November: a live loop and the replay of its journal are
+    // built at different instants, and must hold the same state after the same inputs
+    final PricingBinding early = PricingBindings.create(PricingBindings.Version.V2, V2, new ManualClock(START));
+    final PricingBinding late =
+        PricingBindings.create(PricingBindings.Version.V2, V2, new ManualClock(START + 3 * 3_600_000_000_000L + 1));
+    final Book book = new Book();
+    book.bid = 99_500_000_000L;
+    book.ask = 99_507_812_500L;
+    book.nanos = START + 4 * 3_600_000_000_000L;
+    early.book(book);
+    late.book(book);
+    long stamp = START + 4 * 3_600_000_000_000L;
+    for (int round = 0; round < 5; round++) {
+      stamp += 500_000_000L;
+      for (final UsdUniverse.SwapSpec s : V2.swaps()) {
+        final long rate = s.initialMid() + (round - 2) * 300_000L + s.tenorMonths() * 1_000L;
+        assertTrue(early.onCurveInput(s.instrumentId(), rate, stamp));
+        assertTrue(late.onCurveInput(s.instrumentId(), rate, stamp));
+      }
+      early.onCurveInput(V2InputIds.OVERNIGHT, V2.swaps().get(0).initialMid(), stamp);
+      late.onCurveInput(V2InputIds.OVERNIGHT, V2.swaps().get(0).initialMid(), stamp);
+      book.nanos = stamp;
+    }
+    ((PricingV2) early).flush();
+    ((PricingV2) late).flush();
+    for (final int id : V2.instrumentIds()) {
+      assertEquals(early.fairMid(id), late.fairMid(id), "fair value of " + id);
+    }
+    final Dv01Vector a = new Dv01Vector(CurrencyCode.USD);
+    final Dv01Vector b = new Dv01Vector(CurrencyCode.USD);
+    early.pv01(V2.bondIds()[2], 100_000_000L, a);
+    late.pv01(V2.bondIds()[2], 100_000_000L, b);
+    for (int k = 0; k < KeyRateTenors.COUNT; k++) {
+      assertEquals(a.get(k), b.get(k), "bucket " + k);
+    }
+
+    // the start of the business day is the last 17:00 New York: 22:00 UTC in winter
+    final long sundayCut = 1_793_570_400_000_000_000L;
+    assertEquals(sundayCut, BusinessDate.lastCut(START, 17), "Sunday 1 November 17:00 EST for a Monday morning");
+    assertEquals(sundayCut, BusinessDate.lastCut(sundayCut, 17), "an instant on the cut is its own");
+    assertEquals(sundayCut - 86_400_000_000_000L - 3_600_000_000_000L, BusinessDate.lastCut(sundayCut - 1, 17),
+        "the day before, an hour earlier in UTC: daylight saving ended that Sunday morning");
+    assertEquals(sundayCut, PricingBindings.businessDayStart(new ManualClock(START), 17).epochNanos());
+    assertEquals(sundayCut, PricingBindings.businessDayStart(new ManualClock(START), 17).nanoTime());
   }
 
   @Test
