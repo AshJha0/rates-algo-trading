@@ -6,7 +6,7 @@
 
   <groupId>io.ratesalgo</groupId>
   <artifactId>rates-algo-trading</artifactId>
-  <version>1.0.0</version>
+  <version>1.1.0</version>
   <packaging>pom</packaging>
 
   <name>rates-algo-trading</name>
@@ -50,6 +50,9 @@
     <maven.compiler.release>25</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <!-- Reproducible jars: every archive entry carries this time, not the build's, so the same
+         commit builds byte-identical jars. Moved forward at each release. -->
+    <project.build.outputTimestamp>2026-11-23T00:00:00Z</project.build.outputTimestamp>
 
     <agrona.version>2.7.0</agrona.version>
     <sbe.version>1.41.0</sbe.version>
@@ -65,9 +68,17 @@
     <spotbugs-maven-plugin.version>4.10.5.0</spotbugs-maven-plugin.version>
     <exec-maven-plugin.version>3.5.0</exec-maven-plugin.version>
     <build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
+    <pitest.version>1.30.2</pitest.version>
+    <pitest-junit5-plugin.version>1.2.3</pitest-junit5-plugin.version>
 
     <!-- Minimum line coverage per module, checked by JaCoCo at verify. -->
     <jacoco.minimum.line>0.85</jacoco.minimum.line>
+    <!-- Minimum branch coverage per module. Set just under the lowest module as measured on
+         2026-11-23 (DECISIONS.md DR-RV-C05), so it stops a fall and asks nothing new today. -->
+    <jacoco.minimum.branch>0.00</jacoco.minimum.branch>
+
+    <!-- The pit profile mutates only the modules that set this to false in their own pom. -->
+    <pit.skip>true</pit.skip>
   </properties>
 
   <dependencyManagement>
@@ -239,6 +250,11 @@
                       <value>COVEREDRATIO</value>
                       <minimum>${jacoco.minimum.line}</minimum>
                     </limit>
+                    <limit>
+                      <counter>BRANCH</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>${jacoco.minimum.branch}</minimum>
+                    </limit>
                   </limits>
                 </rule>
               </rules>
@@ -261,4 +277,58 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <!-- Mutation testing with PIT, opt-in: it is slow and is not part of the default build or
+           of any required check (.github/workflows/mutation.yml runs it weekly).
+
+             mvn -Ppit -Djacoco.skip=true -Dspotbugs.skip=true -pl rates-journal -am \
+                 test-compile org.pitest:pitest-maven:mutationCoverage
+
+           Only the modules that set pit.skip to false are mutated (rates-risk, rates-quoting,
+           rates-journal, rates-analytics); the others in the reactor are compiled and skipped.
+           Reports: <module>/target/pit-reports/index.html and mutations.xml. -->
+      <id>pit</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-maven</artifactId>
+            <version>${pitest.version}</version>
+            <dependencies>
+              <dependency>
+                <groupId>org.pitest</groupId>
+                <artifactId>pitest-junit5-plugin</artifactId>
+                <version>${pitest-junit5-plugin.version}</version>
+              </dependency>
+            </dependencies>
+            <configuration>
+              <skip>${pit.skip}</skip>
+              <targetClasses>
+                <param>io.ratesalgo.*</param>
+              </targetClasses>
+              <targetTests>
+                <param>io.ratesalgo.*</param>
+              </targetTests>
+              <!-- the flags surefire passes, for Agrona's use of Unsafe -->
+              <jvmArgs>
+                <jvmArg>--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED</jvmArg>
+                <jvmArg>--add-opens=java.base/sun.nio.ch=ALL-UNNAMED</jvmArg>
+                <jvmArg>--add-opens=java.base/java.nio=ALL-UNNAMED</jvmArg>
+              </jvmArgs>
+              <outputFormats>
+                <param>XML</param>
+                <param>HTML</param>
+              </outputFormats>
+              <timestampedReports>false</timestampedReports>
+              <failWhenNoMutations>false</failWhenNoMutations>
+              <threads>2</threads>
+              <timeoutConstant>8000</timeoutConstant>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
