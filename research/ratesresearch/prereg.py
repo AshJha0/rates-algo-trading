@@ -90,6 +90,7 @@ ACCEPTANCE_BASE = 28_000_000
 PILOT_BASE = 29_000_000
 SPAN = 1_000_000
 MINIMUM_SESSIONS = 2000
+MAX_SESSION_NUMBER = 80_000
 MINIMUM_DESCRIPTION_SESSIONS = 2
 LABEL_EPOCH = date(2030, 1, 1)
 
@@ -300,9 +301,10 @@ def _v2_data_set(
     if _is_int(sessions):
         if sessions < floor:
             problems.append(f"data_set.sessions {sessions} is below the floor of {floor}")
-        elif first + sessions > SPAN:
+        elif first + sessions > MAX_SESSION_NUMBER:
             problems.append(
-                f"data_set.first + sessions exceeds the {SPAN} sessions of one seed base"
+                f"data_set.first + sessions exceeds {MAX_SESSION_NUMBER}: later sessions' label"
+                " dates (2030-01-01 plus the session number in days) overflow epoch nanoseconds"
             )
     elif not (draft and isinstance(sessions, str) and sessions.strip()):
         problems.append(

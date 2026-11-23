@@ -64,7 +64,7 @@ public final class SessionExecutor {
     }
     final long started = System.nanoTime();
     final LocalDate date = PairedSessions.labelDate(seed);
-    final SyntheticDay.Publication publication = SyntheticDay.Publication.fromPresets(presets);
+    final SyntheticDay.Publication publication = SyntheticDay.Publication.simV2(presets);
     final Map<String, Object> rowsOut = new LinkedHashMap<>();
     try {
       Files.createDirectories(workDir);

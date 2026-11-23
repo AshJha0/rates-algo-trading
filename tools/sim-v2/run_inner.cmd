@@ -15,7 +15,7 @@ shift
 goto collect
 :run
 cd /d "%REPO%"
-java -Xmx1g @"%OUT%\java.args" io.ratesalgo.app.backtest.DeskExperiment %ARGS% --repo "%REPO%" --out "%OUT%" >> "%OUT%\runner.log" 2>&1
+java -Xmx1g --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED @"%OUT%\java.args" io.ratesalgo.app.backtest.DeskExperiment %ARGS% --repo "%REPO%" --out "%OUT%" >> "%OUT%\runner.log" 2>&1
 set "CODE=%ERRORLEVEL%"
 if "%CODE%"=="0" (
   > "%OUT%\DONE" echo exit 0

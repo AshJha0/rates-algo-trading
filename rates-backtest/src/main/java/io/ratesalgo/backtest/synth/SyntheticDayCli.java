@@ -77,7 +77,7 @@ public final class SyntheticDayCli {
         return 2;
       }
       final SimDay day = SimDay.of(new MarketSpec(SimParams.loadDefault()), seed, PairedSessions.labelDate(seed));
-      final SyntheticDay.Summary s = SyntheticDay.generateSimV2(day, SyntheticDay.Publication.fromPresets(presets), journal, truth);
+      final SyntheticDay.Summary s = SyntheticDay.generateSimV2(day, SyntheticDay.Publication.simV2(presets), journal, truth);
       out.println(
           "simulator v2 seed " + seed + " (" + day.model().dayType() + ", label " + day.date() + "): " + s.frames()
               + " frames, " + s.rfqs() + " rfqs (" + s.informedRfqs() + " informed), " + s.bookUpdates()

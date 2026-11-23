@@ -9,4 +9,4 @@ if "%~1"=="" (
 )
 if exist "%~f1\FAILED.runner" type "%~f1\FAILED.runner"
 if exist "%~f1\DONE" echo runner finished
-java @"%~f1\java.args" io.ratesalgo.app.backtest.DeskExperiment status --out "%~f1"
+java --add-opens java.base/jdk.internal.misc=ALL-UNNAMED @"%~f1\java.args" io.ratesalgo.app.backtest.DeskExperiment status --out "%~f1"

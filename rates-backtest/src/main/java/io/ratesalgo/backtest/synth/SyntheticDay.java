@@ -389,16 +389,39 @@ public final class SyntheticDay {
    * settings of the back-test, not market parameters: how often swap reference prices are
    * written and the SOFR fixing level the curve builder is given.
    */
-  public record Publication(int curveIntervalSeconds, double sofrFixingPct) {
+  public record Publication(int curveIntervalSeconds, double sofrFixingPct, int bookRefreshSeconds) {
     public Publication {
       if (curveIntervalSeconds <= 0) {
         throw new IllegalArgumentException("curve interval must be positive");
       }
+      if (bookRefreshSeconds < 0) {
+        throw new IllegalArgumentException("book refresh must be 0 (on change only) or positive");
+      }
+    }
+
+    /** Book tops written on change only. */
+    public Publication(final int curveIntervalSeconds, final double sofrFixingPct) {
+      this(curveIntervalSeconds, sofrFixingPct, 0);
     }
 
     public static Publication fromPresets(final Presets presets) {
       final Preset m = presets.get("usd_synthetic_market");
       return new Publication((int) m.value("curve_input_interval_s"), m.value("sofr_fixing_pct"));
+    }
+
+    /**
+     * The publication of experiment sessions (preset {@code sim_v2_publication}): swap reference
+     * prices every grid step, so a desk's curve heartbeat never lapses between them, and each
+     * book's top written at least every {@code book_refresh_s} even when unchanged, as a venue's
+     * feed keeps a quiet book's mid fresh (a desk sends no order off a mid older than 5 s); the
+     * fixing level as {@link #fromPresets}.
+     */
+    public static Publication simV2(final Presets presets) {
+      final Preset p = presets.get("sim_v2_publication");
+      return new Publication(
+          (int) p.value("curve_input_interval_s"),
+          presets.get("usd_synthetic_market").value("sofr_fixing_pct"),
+          (int) p.value("book_refresh_s"));
     }
   }
 
@@ -464,7 +487,8 @@ public final class SyntheticDay {
           final long lots = (long) Math.floor(bookModel.displayedUnits(bid, level) / inst.minQuantity());
           final long price = Prices.toMantissa(bookModel.levelPrice(bid, level));
           final long quantity = Math.round(lots * inst.minQuantity() * minorPerUnit);
-          if (k == 0 || price != last[2 * side] || quantity != last[2 * side + 1]) {
+          final boolean refresh = publication.bookRefreshSeconds() > 0 && k % publication.bookRefreshSeconds() == 0;
+          if (k == 0 || refresh || price != last[2 * side] || quantity != last[2 * side + 1]) {
             last[2 * side] = price;
             last[2 * side + 1] = quantity;
             events.add(new Event(open + t, order++, Type.BOOK, inst.id(), price, quantity, bid, 0, 0, false, null, null));

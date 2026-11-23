@@ -59,6 +59,13 @@ public final class SessionDesignRules {
   /** Sessions a registered comparison needs at least (design section 12). */
   public static final int MINIMUM_SESSIONS = 2000;
 
+  /**
+   * Highest session number a data set may reach: a session's label date is 2030-01-01 plus its
+   * number in days (PairedSessions.labelDate), and beyond about 85,000 days epoch nanoseconds
+   * overflow a long.
+   */
+  public static final int MAX_SESSION_NUMBER = 80_000;
+
   /** Sessions a description on the exploration set needs at least: the daily statistics need two. */
   public static final int MINIMUM_DESCRIPTION_SESSIONS = 2;
 
@@ -163,8 +170,10 @@ public final class SessionDesignRules {
     if (sessions instanceof Number n) {
       if (n.longValue() < floor) {
         problems.add("data_set.sessions " + n + " is below the floor of " + floor);
-      } else if (first + n.longValue() > SessionSeeds.SPAN) {
-        problems.add("data_set.first + sessions exceeds the " + SessionSeeds.SPAN + " sessions of one seed base");
+      } else if (first + n.longValue() > MAX_SESSION_NUMBER) {
+        problems.add(
+            "data_set.first + sessions exceeds " + MAX_SESSION_NUMBER
+                + ": later sessions' label dates (2030-01-01 plus the session number in days) overflow epoch nanoseconds");
       }
     } else if (!(draft && sessions instanceof String s && !s.isBlank())) {
       problems.add(

@@ -12,6 +12,7 @@ import io.ratesalgo.core.EventClock;
 import io.ratesalgo.core.EventLoop;
 import io.ratesalgo.core.InboundPublisher;
 import io.ratesalgo.core.RingBufferContract;
+import io.ratesalgo.messages.sbe.BookAction;
 import io.ratesalgo.messages.sbe.BookUpdateDecoder;
 import io.ratesalgo.messages.sbe.BookUpdateEncoder;
 import io.ratesalgo.messages.sbe.CurveInputDecoder;
@@ -32,6 +33,7 @@ import io.ratesalgo.messages.sbe.QuoteRequestEncoder;
 import io.ratesalgo.messages.sbe.QuoteResponseDecoder;
 import io.ratesalgo.messages.sbe.QuoteResponseEncoder;
 import io.ratesalgo.messages.sbe.QuoteWithdrawDecoder;
+import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.router.FrameSink;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -119,6 +121,10 @@ public final class DeskStrategy implements Strategy {
   private long withdrawals;
   private long cancels;
   private long lastInputNanos;
+  private long lastHeartbeatNanos = Long.MIN_VALUE;
+  private long bookSeq;
+  private static final long NO_TOP = Long.MIN_VALUE;
+  private final Long2LongHashMap topOf = new Long2LongHashMap(64, 0.6f, NO_TOP);
 
   /** The desk on its own recorded journal. */
   public DeskStrategy(final UsdUniverse universe, final DeskSettings settings) {
@@ -289,8 +295,23 @@ public final class DeskStrategy implements Strategy {
     if (desk == 0) {
       return;
     }
+    // the journal carries each book's top only, as a change of level 0; the desk keeps its book by
+    // price, so the old top price is deleted before the new one is set, or stale levels would stay
+    final long key = ((long) desk << 1) | (update.side() == Side.Buy ? 0L : 1L);
+    final long previous = topOf.get(key);
+    final long price = update.price().mantissa();
+    if (previous != NO_TOP && previous != price) {
+      final int body = copy(update.buffer(), update.offset(), update.encodedLength());
+      bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk).venueSeqNo(++bookSeq)
+          .action(BookAction.Delete).quantity(0L);
+      bookPatch.price().mantissa(previous);
+      forward(scratch, body, update.encodedLength());
+    }
+    topOf.put(key, price);
     final int body = copy(update.buffer(), update.offset(), update.encodedLength());
-    bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk);
+    // the desk's feed check expects a gapless sequence; updates of instruments it does not hold are
+    // not shown to it, so the sequence is renumbered over the updates it is shown
+    bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk).venueSeqNo(++bookSeq);
     forward(scratch, body, update.encodedLength());
   }
 
@@ -308,6 +329,11 @@ public final class DeskStrategy implements Strategy {
     }
     // the back-tester does not pass Heartbeats to strategies; the curve feed's heartbeat travels
     // with its curve inputs live, so it is restored here or input health would time out
+    // (simulator v2: once per publication time, as the live feed sends one per round)
+    if (binding != null && context.nowEpochNanos() == lastHeartbeatNanos) {
+      return;
+    }
+    lastHeartbeatNanos = context.nowEpochNanos();
     heartbeat.wrapAndApplyHeader(scratch, 0, headerEncoder).sourceId(AppIds.CURVE_HEARTBEAT_SOURCE)
         .timestampNanos(context.nowEpochNanos());
     cycle(scratch, 0, MessageHeaderEncoder.ENCODED_LENGTH + heartbeat.encodedLength());
