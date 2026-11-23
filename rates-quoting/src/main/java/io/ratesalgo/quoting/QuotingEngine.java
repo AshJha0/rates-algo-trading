@@ -10,6 +10,7 @@ import io.ratesalgo.api.OutboundSink;
 import io.ratesalgo.common.time.Clock;
 import io.ratesalgo.hedge.AxeSource;
 import io.ratesalgo.hedge.HedgeCostModel;
+import io.ratesalgo.hedge.HedgePlanning;
 import io.ratesalgo.hedge.HedgeUniverse;
 import io.ratesalgo.hedge.KeyRateCovariance;
 import io.ratesalgo.messages.sbe.CancelReason;
@@ -58,8 +59,15 @@ import org.agrona.concurrent.UnsafeBuffer;
  * the client's DV01 limit ({@link RiskEngine#quoteHeadroom}); the engine tells the risk engine the
  * DV01 live to each client and the DV01 each client deals.
  *
+ * <p>Strategy path (Round 5, docs/research/STRATEGY_V2.md). When {@link StrategyConfig} turns
+ * on any pricing capability, the spread, skew and price are computed by {@link #strategyPrice}
+ * instead: break-even from the client's markouts and the cost of the hedge planner's mix, one
+ * capped inventory term, the expected-P&amp;L quote against the predicted cover, and the price on
+ * the venue tick in the dealer's favour; see that method. With every switch off nothing on the
+ * default path changes.
+ *
  * <p>Single-writer; the RFQ, response and poll paths do not allocate after warm-up
- * (QuotingAllocationTest).
+ * (QuotingAllocationTest, StrategyAllocationTest).
  */
 public final class QuotingEngine implements KillSwitchListener {
 
@@ -91,6 +99,30 @@ public final class QuotingEngine implements KillSwitchListener {
   private final double[] p = new double[K];
   private final double[] sp = new double[K];
   private final double[] u = new double[K];
+
+  // strategy path (Round 5); each part is null when its switch is off
+  private final StrategyConfig strategy;
+  private final boolean strategyPricing;
+  private final CoverModel cover;
+  private final MarkoutStore markouts;
+  private final HedgePlanning quotePlanner;
+  private final WorkingHedges working;
+  private final TierPriors priors;
+  private final double[] delta = new double[K];
+  private final Dv01Vector[] tradeLadder = new Dv01Vector[CurrencyCode.COUNT];
+  private int lastCell = -1;
+  private double lastFill;
+  private double lastBreakEven;
+  private final int[] sCell;
+  private final int[][] hInstrument;
+  private final int[][] hClient;
+  private final boolean[][] hClientBuys;
+  private final boolean[][] hWeBuy;
+  private final double[][] hMid;
+  private final long[][] hDue;
+  private final int[] hHead;
+  private final int[] hCount;
+  private long markoutsDropped;
 
   // live quotes
   private final int capacity;
@@ -184,6 +216,14 @@ public final class QuotingEngine implements KillSwitchListener {
   private final double[] volVariance = new double[CurrencyCode.COUNT];
   private final int[] volSamples = new int[CurrencyCode.COUNT];
 
+  /** What the strategy path needs beyond the default collaborators; {@link #NONE} for none. */
+  public record StrategyParts(
+      CoverModel cover, MarkoutStore markouts, HedgePlanning quotePlanner, WorkingHedges working) {
+
+    /** No strategy parts: the strategy path prices with the default collaborators only. */
+    public static final StrategyParts NONE = new StrategyParts(null, null, null, WorkingHedges.NONE);
+  }
+
   /** Wires an engine; see the class comment for each collaborator's role. */
   public QuotingEngine(
       final InstrumentDirectory directory,
@@ -200,6 +240,31 @@ public final class QuotingEngine implements KillSwitchListener {
       final OutboundSink gateway,
       final Clock clock,
       final QuotingConfig config) {
+    this(directory, risk, fairValue, spread, tiers, toxicity, axes, hedgeUniverse, hedgeCosts, covariance, health, gateway,
+        clock, config, StrategyParts.NONE);
+  }
+
+  /**
+   * Wires an engine with the strategy path's parts (Round 5): the cover model when cover pricing
+   * is on, the markout store when the store is on, a planner whose mix prices the quoted hedge
+   * cost, and the working hedges the reservation price adds to the ladder.
+   */
+  public QuotingEngine(
+      final InstrumentDirectory directory,
+      final RiskEngine risk,
+      final FairValueEngine fairValue,
+      final SpreadModel spread,
+      final TierTableControl tiers,
+      final ToxicityTable toxicity,
+      final AxeSource axes,
+      final HedgeUniverse hedgeUniverse,
+      final HedgeCostModel hedgeCosts,
+      final KeyRateCovariance covariance,
+      final InputHealth health,
+      final OutboundSink gateway,
+      final Clock clock,
+      final QuotingConfig config,
+      final StrategyParts parts) {
     this.directory = directory;
     this.risk = risk;
     this.fairValue = fairValue;
@@ -246,6 +311,33 @@ public final class QuotingEngine implements KillSwitchListener {
     lastQuoteTime = new Long2LongHashMap(Math.max(64, config.duplicateWindow * 2), 0.5f, Long.MIN_VALUE);
     volEstimated = config.volatilityEstimated();
     Arrays.fill(volLast, Double.NaN);
+    strategy = config.strategy;
+    if (strategy.coverPricing && parts.cover() == null) {
+      throw new IllegalArgumentException("cover pricing is on but no cover model was given");
+    }
+    if (strategy.markoutStore && parts.markouts() == null) {
+      throw new IllegalArgumentException("the markout store is on but no store was given");
+    }
+    strategyPricing = strategy.coverPricing || strategy.reservationPrice || strategy.markoutStore || strategy.tickRounding;
+    cover = strategy.coverPricing ? parts.cover() : null;
+    markouts = strategy.markoutStore ? parts.markouts() : null;
+    quotePlanner = parts.quotePlanner();
+    working = parts.working() == null ? WorkingHedges.NONE : parts.working();
+    priors = strategy.tierPriorsOrCalibrated();
+    for (int c = 0; c < CurrencyCode.COUNT; c++) {
+      tradeLadder[c] = new Dv01Vector(CurrencyCode.ofIndex(c));
+    }
+    sCell = new int[capacity];
+    final int rings = markouts == null ? 0 : MarkoutStore.H;
+    final int ring = markouts == null ? 0 : MARKOUTS;
+    hInstrument = new int[rings][ring];
+    hClient = new int[rings][ring];
+    hClientBuys = new boolean[rings][ring];
+    hWeBuy = new boolean[rings][ring];
+    hMid = new double[rings][ring];
+    hDue = new long[rings][ring];
+    hHead = new int[rings];
+    hCount = new int[rings];
   }
 
   /** Work done on every {@link #poll}; must not allocate. */
@@ -407,54 +499,71 @@ public final class QuotingEngine implements KillSwitchListener {
     final double qtyMajor = inst.major(qty);
     final int ccy = inst.currency().index();
     final int dealers = dealerCount > 0 ? dealerCount : DEFAULT_DEALERS;
-    final double volRatio = config.baselineVolBp > 0.0 ? volBp[ccy] / config.baselineVolBp : 1.0;
-    final double cost =
-        toxicity.adverseBp(clientId)
-            + config.winnersCurseBp * Math.sqrt(2.0 * Math.log(Math.max(1, dealers))) * volRatio
-            + hedgeCostBp(inst, qtyMajor * unitPar);
-    final double base =
-        hitRate.base(
-            (double) qty / inst.typicalQuantity(), inst.tenorYears(), liquidSession(inst.currency(), now), dealers);
-    if (cost >= config.maxHalfSpreadBp) {
-      // E(s) = P(s) (s - c) is not positive for any s up to the cap: quoting would lose on average
-      return pass(PassReason.NEGATIVE_EDGE);
-    }
-    final double optimal = spread.optimal(base, cost, config.maxHalfSpreadBp);
-    final double half =
-        config.widenAfterClamp
-            ? widen(clamp(optimal * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp), inst.currency(), now)
-            : clamp(widen(optimal, inst.currency(), now) * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp);
-
-    // skew: kappa * u' Sigma p / |U|, size term 0.5 kappa q u' Sigma u / |U|
-    risk.ladder(inst.currency(), book);
-    book.copyTo(p);
-    for (int a = 0; a < K; a++) {
-      u[a] = risk.unitPv01(instrumentId, a);
-      double s = 0.0;
-      for (int b = 0; b < K; b++) {
-        s += covariance.get(a, b) * p[b];
+    final double base;
+    final double distance;
+    final long price;
+    lastCell = -1;
+    if (strategyPricing) {
+      base =
+          hitRate.base(
+              (double) qty / inst.typicalQuantity(), inst.tenorYears(), liquidSession(inst.currency(), now), dealers);
+      price = strategyPrice(inst, clientId, tier, weBuy, qty, qtyMajor, unitPar, qpb, fair, dealers, now);
+      if (price == NO_PRICE) {
+        return pass(PassReason.NEGATIVE_EDGE);
       }
-      sp[a] = s;
-    }
-    double usp = 0.0;
-    for (int a = 0; a < K; a++) {
-      usp += u[a] * sp[a];
-    }
-    final double skew = clamp(config.kappa * usp / unitPar, -config.maxSkewBp, config.maxSkewBp);
-    final double sizeTerm = Math.min(0.5 * config.kappa * qtyMajor * covariance.quadratic(u, u) / unitPar, config.maxSkewBp);
-    final double axe = Math.min(axes.axeBp(instrumentId, outcome.ourSide), config.maxSkewBp);
-    final double distance =
-        Math.max(-config.maxImproveBp, half + (weBuy ? skew : -skew) + sizeTerm - axe);
-    final long price = weBuy ? Decimal9.floor(fair - distance * qpb) : Decimal9.ceil(fair + distance * qpb);
+      distance = outcome.distanceBp;
+      outcome.winProbability =
+          cover != null ? cover.winProbability(lastCell, lastFill, distance) : hitRate.winProbability(base, distance);
+    } else {
+      final double volRatio = config.baselineVolBp > 0.0 ? volBp[ccy] / config.baselineVolBp : 1.0;
+      final double cost =
+          toxicity.adverseBp(clientId)
+              + config.winnersCurseBp * Math.sqrt(2.0 * Math.log(Math.max(1, dealers))) * volRatio
+              + hedgeCostBp(inst, qtyMajor * unitPar);
+      base =
+          hitRate.base(
+              (double) qty / inst.typicalQuantity(), inst.tenorYears(), liquidSession(inst.currency(), now), dealers);
+      if (cost >= config.maxHalfSpreadBp) {
+        // E(s) = P(s) (s - c) is not positive for any s up to the cap: quoting would lose on average
+        return pass(PassReason.NEGATIVE_EDGE);
+      }
+      final double optimal = spread.optimal(base, cost, config.maxHalfSpreadBp);
+      final double half =
+          config.widenAfterClamp
+              ? widen(clamp(optimal * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp), inst.currency(), now)
+              : clamp(widen(optimal, inst.currency(), now) * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp);
 
-    outcome.costBp = cost;
-    outcome.halfSpreadBp = half;
-    outcome.skewBp = skew;
-    outcome.sizeTermBp = sizeTerm;
-    outcome.axeBp = axe;
-    outcome.distanceBp = distance;
-    outcome.winProbability = hitRate.winProbability(base, distance);
-    outcome.price = price;
+      // skew: kappa * u' Sigma p / |U|, size term 0.5 kappa q u' Sigma u / |U|
+      risk.ladder(inst.currency(), book);
+      book.copyTo(p);
+      for (int a = 0; a < K; a++) {
+        u[a] = risk.unitPv01(instrumentId, a);
+        double s = 0.0;
+        for (int b = 0; b < K; b++) {
+          s += covariance.get(a, b) * p[b];
+        }
+        sp[a] = s;
+      }
+      double usp = 0.0;
+      for (int a = 0; a < K; a++) {
+        usp += u[a] * sp[a];
+      }
+      final double skew = clamp(config.kappa * usp / unitPar, -config.maxSkewBp, config.maxSkewBp);
+      final double sizeTerm = Math.min(0.5 * config.kappa * qtyMajor * covariance.quadratic(u, u) / unitPar, config.maxSkewBp);
+      final double axe = Math.min(axes.axeBp(instrumentId, outcome.ourSide), config.maxSkewBp);
+      distance =
+          Math.max(-config.maxImproveBp, half + (weBuy ? skew : -skew) + sizeTerm - axe);
+      price = weBuy ? Decimal9.floor(fair - distance * qpb) : Decimal9.ceil(fair + distance * qpb);
+
+      outcome.costBp = cost;
+      outcome.halfSpreadBp = half;
+      outcome.skewBp = skew;
+      outcome.sizeTermBp = sizeTerm;
+      outcome.axeBp = axe;
+      outcome.distanceBp = distance;
+      outcome.winProbability = hitRate.winProbability(base, distance);
+      outcome.price = price;
+    }
 
     // risk check, reserve, send
     final int r =
@@ -468,7 +577,7 @@ public final class QuotingEngine implements KillSwitchListener {
     risk.reserve(instrumentId, weBuy ? qty : 0L, weBuy ? 0L : qty);
     final double clientDv01 = qtyMajor * unitPar;
     risk.reserveClient(clientId, clientDv01);
-    long validUntil = now + config.firmTtlNanos;
+    long validUntil = now + timeToLive(inst.currency());
     if (expiryNanos != 0) {
       validUntil = Math.min(validUntil, expiryNanos);
     }
@@ -504,6 +613,7 @@ public final class QuotingEngine implements KillSwitchListener {
     sPrice[slot] = price;
     sFair[slot] = fair;
     sClientDv01[slot] = clientDv01;
+    sCell[slot] = lastCell;
     heldPos[slot] = heldCount;
     held[heldCount++] = slot;
     quoteSlot.put(quoteId, slot);
@@ -569,14 +679,27 @@ public final class QuotingEngine implements KillSwitchListener {
             if (config.coverLearning) {
               spread.observeCoverGap(signed);
             }
+            if (cover != null && sCell[slot] >= 0) {
+              // we were best, so the cover is the best competing quote: observed exactly
+              cover.observeExact(sCell[slot], sDistance[slot] + signed);
+            }
           }
+        } else if (cover != null && sCell[slot] >= 0) {
+          // no cover shown: the best competing quote was further from fair than ours
+          cover.observeAbove(sCell[slot], sDistance[slot]);
         }
         scheduleMarkout(slot);
+        if (markouts != null) {
+          scheduleMarkouts(slot);
+        }
       }
     } else {
       release(slot);
       if (status == QuoteStatus.TradedAway) {
         hitRate.update(sBase[slot], sDistance[slot], false);
+        if (cover != null && sCell[slot] >= 0) {
+          learnFromLoss(slot, coverPrice);
+        }
       }
     }
     free(slot);
@@ -633,6 +756,9 @@ public final class QuotingEngine implements KillSwitchListener {
     while (mCount > 0 && mDue[(mHead - mCount + MARKOUTS) % MARKOUTS] <= nowNanos) {
       measureMarkout((mHead - mCount + MARKOUTS) % MARKOUTS, nowNanos);
       mCount--;
+    }
+    if (markouts != null) {
+      pollMarkouts(nowNanos);
     }
     if (volEstimated && nowNanos >= nextVolSample) {
       sampleVolatility(nowNanos);
@@ -787,6 +913,21 @@ public final class QuotingEngine implements KillSwitchListener {
 
   public HitRateModel hitRate() {
     return hitRate;
+  }
+
+  /** The cover model of the strategy path, or null when cover pricing is off. */
+  public CoverModel cover() {
+    return cover;
+  }
+
+  /** Strategy-path markouts not scheduled because their horizon's ring was full. */
+  public long markoutsDropped() {
+    return markoutsDropped;
+  }
+
+  /** The client markout store of the strategy path, or null when it is off. */
+  public MarkoutStore markouts() {
+    return markouts;
   }
 
   public ToxicityTable toxicity() {
@@ -1062,6 +1203,242 @@ public final class QuotingEngine implements KillSwitchListener {
     }
     final double move = (fairValue.fair() - mPrice[i]) * (mBuy[i] ? 1.0 : -1.0);
     toxicity.record(mClient[i], move / risk.quotePerBp(mInstrument[i]));
+  }
+
+  /** {@link #strategyPrice} found no price; never a valid Decimal9 price. */
+  private static final long NO_PRICE = Long.MIN_VALUE;
+
+  /**
+   * The strategy path's price (Round 5; derivation in docs/research/STRATEGY_V2.md Sections 2 to
+   * 4). All quantities in bp of the instrument's quote per unit of client DV01 unless named USD.
+   *
+   * <pre>
+   *   adverse   = client markout at the adverse horizon, shrunk to the tier prior   (markout store)
+   *             | toxicity table + winner's curse                                 (otherwise)
+   *   H         = cost of the planner's hedge of this trade alone, USD            (or the cheapest single hedge)
+   *   inventory = clamp( kappa (delta' Sigma p + delta' Sigma delta / 2), -H, +H ) / DV01   (reservation price)
+   *             | legacy skew + size term - axe                                  (otherwise; H then added to cost)
+   *   C         = adverse + inventory (+ H / DV01 without the reservation price)
+   *   d         = argmax over d &gt;= C of P(win | d - cover) (d - C)            (cover pricing)
+   *             | legacy optimiser and clamp, plus the inventory term            (otherwise)
+   *   price     = fair -/+ d, on the venue tick in the dealer's favour            (tick rounding)
+   * </pre>
+   *
+   * p is the risk engine's ladder plus the working hedges and delta the trade's own ladder, both
+   * USD per bp. Fills the outcome's spread fields and returns the price, or {@link #NO_PRICE} when
+   * the default optimiser would pass (cover pricing never passes on cost: it widens).
+   */
+  private long strategyPrice(
+      final Instrument inst, final int clientId, final ClientTier tier, final boolean weBuy, final long qty,
+      final double qtyMajor, final double unitPar, final double qpb, final double fair, final int dealers,
+      final long now) {
+    final int instrumentId = inst.id();
+    final int ccy = inst.currency().index();
+    final double dv01 = qtyMajor * unitPar;
+    final double sign = weBuy ? 1.0 : -1.0;
+    final double volRatio = config.baselineVolBp > 0.0 ? volBp[ccy] / config.baselineVolBp : 1.0;
+    double adverse =
+        markouts != null
+            ? markouts.adverseBp(clientId, !weBuy, tier.tier(), strategy.adverseHorizon)
+            : toxicity.adverseBp(clientId)
+                + config.winnersCurseBp * Math.sqrt(2.0 * Math.log(Math.max(1, dealers))) * volRatio;
+    if (cover != null) {
+      // around releases and in fast markets informed flow costs more; the default path widens the
+      // half-spread for the same reason
+      adverse =
+          adverse * config.eventMultiplier(now)
+              + Math.max(0.0, volBp[ccy] - config.baselineVolBp) * config.volWideningPerBp;
+    }
+    for (int k = 0; k < K; k++) {
+      u[k] = risk.unitPv01(instrumentId, k);
+      delta[k] = sign * qtyMajor * u[k];
+    }
+    final double hedgeUsd = hedgeCostUsd(inst, dv01);
+    final double hedgeBp = hedgeUsd / dv01;
+    risk.ladder(inst.currency(), book);
+    working.addTo(inst.currency(), book);
+    book.copyTo(p);
+    double usp = 0.0;
+    for (int a = 0; a < K; a++) {
+      double s = 0.0;
+      for (int b = 0; b < K; b++) {
+        s += covariance.get(a, b) * p[b];
+      }
+      sp[a] = s;
+      usp += u[a] * s;
+    }
+    final double skew;
+    final double sizeTerm;
+    final double axe;
+    final double inventory;
+    final double breakEven;
+    if (strategy.reservationPrice) {
+      final double kappa = strategy.riskAversionPerUsd;
+      final double skewRaw = kappa * usp / unitPar;
+      final double sizeRaw = 0.5 * kappa * qtyMajor * covariance.quadratic(u, u) / unitPar;
+      // holding costs at most what hedging costs: past that the desk would hedge instead
+      inventory = clamp(sign * skewRaw + sizeRaw, -hedgeBp, hedgeBp);
+      skew = clamp(skewRaw, -hedgeBp, hedgeBp);
+      sizeTerm = Math.min(sizeRaw, hedgeBp);
+      axe = 0.0;
+      breakEven = adverse + inventory;
+    } else {
+      skew = clamp(config.kappa * usp / unitPar, -config.maxSkewBp, config.maxSkewBp);
+      sizeTerm = Math.min(0.5 * config.kappa * qtyMajor * covariance.quadratic(u, u) / unitPar, config.maxSkewBp);
+      axe = Math.min(axes.axeBp(instrumentId, outcome.ourSide), config.maxSkewBp);
+      inventory = (weBuy ? skew : -skew) + sizeTerm - axe;
+      breakEven = adverse + hedgeBp + inventory;
+    }
+    double distance;
+    double half = 0.0;
+    if (cover != null) {
+      lastCell = CoverModel.cell(inst, (double) qty / inst.typicalQuantity(), dealers);
+      lastFill = priors.fillProbability(tier.tier());
+      distance = cover.optimal(lastCell, lastFill, breakEven);
+      outcome.predictedCoverBp = cover.predictedCoverBp(lastCell);
+    } else {
+      final double costBp = breakEven - inventory;
+      if (costBp >= config.maxHalfSpreadBp) {
+        outcome.costBp = costBp;
+        return NO_PRICE;
+      }
+      final double base =
+          hitRate.base((double) qty / inst.typicalQuantity(), inst.tenorYears(), liquidSession(inst.currency(), now), dealers);
+      final double optimal = spread.optimal(base, costBp, config.maxHalfSpreadBp);
+      half =
+          config.widenAfterClamp
+              ? widen(clamp(optimal * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp), inst.currency(), now)
+              : clamp(widen(optimal, inst.currency(), now) * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp);
+      distance = Math.max(-config.maxImproveBp, half + inventory);
+    }
+    long price = weBuy ? Decimal9.floor(fair - distance * qpb) : Decimal9.ceil(fair + distance * qpb);
+    final long tick = strategy.tickRounding ? strategy.ticks.tick(inst) : 0L;
+    if (tick > 0L) {
+      price = VenueTickTable.roundForDealer(price, tick, weBuy);
+      if (cover != null) {
+        // the grid point one tick nearer the client, if it is still above break-even and pays more
+        final long nearer = weBuy ? price + tick : price - tick;
+        final double dNearer = distanceOf(nearer, fair, qpb, weBuy);
+        if (dNearer >= breakEven
+            && cover.expected(lastCell, lastFill, breakEven, dNearer)
+                > cover.expected(lastCell, lastFill, breakEven, distanceOf(price, fair, qpb, weBuy))) {
+          price = nearer;
+        }
+      }
+      outcome.distanceTicks = (weBuy ? fair - Decimal9.toDouble(price) : Decimal9.toDouble(price) - fair) / Decimal9.toDouble(tick);
+    }
+    distance = distanceOf(price, fair, qpb, weBuy);
+    if (cover != null) {
+      // the margin over break-even, of the price actually quoted
+      half = distance - breakEven;
+    }
+    lastBreakEven = breakEven;
+    outcome.costBp = breakEven - inventory;
+    outcome.breakEvenBp = breakEven;
+    outcome.halfSpreadBp = half;
+    outcome.skewBp = skew;
+    outcome.sizeTermBp = sizeTerm;
+    outcome.axeBp = axe;
+    outcome.distanceBp = distance;
+    outcome.price = price;
+    return price;
+  }
+
+  /** Distance of {@code price} from fair on our side, bp. */
+  private static double distanceOf(final long price, final double fair, final double qpb, final boolean weBuy) {
+    return (weBuy ? fair - Decimal9.toDouble(price) : Decimal9.toDouble(price) - fair) / qpb;
+  }
+
+  /**
+   * Cost in USD of hedging the trade ladder {@link #delta} on its own: the planner's mix when a
+   * quoting planner is wired (factor hedging), otherwise the cheapest single instrument.
+   */
+  private double hedgeCostUsd(final Instrument inst, final double dv01) {
+    if (quotePlanner == null) {
+      return hedgeCostBp(inst, dv01) * dv01;
+    }
+    final Dv01Vector ladder = tradeLadder[inst.currency().index()];
+    for (int k = 0; k < K; k++) {
+      ladder.set(k, delta[k]);
+    }
+    quotePlanner.plan(ladder);
+    final double cost = quotePlanner.plannedCost();
+    return Double.isFinite(cost) ? cost : 0.0;
+  }
+
+  /**
+   * Time to live of a firm quote. With {@code volatilityTtl} the free option a firm quote gives
+   * the client is held constant: its value grows with sigma sqrt(T), so T scales with (baseline /
+   * sigma)^2, between {@code minTtlNanos} and the configured time to live.
+   */
+  private long timeToLive(final CurrencyCode currency) {
+    if (!strategy.volatilityTtl) {
+      return config.firmTtlNanos;
+    }
+    final double vol = volBp[currency.index()];
+    final double ratio = vol > 0.0 && config.baselineVolBp > 0.0 ? Math.min(1.0, config.baselineVolBp / vol) : 1.0;
+    return Math.max(strategy.minTtlNanos, Math.min(config.firmTtlNanos, (long) (config.firmTtlNanos * ratio * ratio)));
+  }
+
+  /** A TradedAway teaches the cover model: the cover beat us (exactly, when shown). */
+  private void learnFromLoss(final int slot, final long coverPrice) {
+    if (coverPrice == 0L) {
+      cover.observeBelow(sCell[slot], sDistance[slot]);
+      return;
+    }
+    final double better =
+        Decimal9.toDouble(sBuy[slot] ? coverPrice - sPrice[slot] : sPrice[slot] - coverPrice) / risk.quotePerBp(sInstrument[slot]);
+    if (better > 0.0) {
+      cover.observeExact(sCell[slot], sDistance[slot] - better);
+    }
+  }
+
+  /** Schedules the fill's markouts at every horizon of the store, from the mid at the trade. */
+  private void scheduleMarkouts(final int s) {
+    final long now = clock.epochNanos();
+    final Instrument inst = directory.byId(sInstrument[s]);
+    final double mid = inst != null && fairValue.compute(inst, now) ? fairValue.fair() : sFair[s];
+    for (int h = 0; h < MarkoutStore.H; h++) {
+      if (hCount[h] == MARKOUTS) {
+        // full: drop the new one, not the oldest, or a busy desk would overwrite every markout of
+        // a long horizon before it came due and never measure one
+        markoutsDropped++;
+        continue;
+      }
+      final int i = hHead[h];
+      hInstrument[h][i] = sInstrument[s];
+      hClient[h][i] = sClient[s];
+      hClientBuys[h][i] = !sBuy[s];
+      hWeBuy[h][i] = sBuy[s];
+      hMid[h][i] = mid;
+      hDue[h][i] = now + MarkoutStore.horizonNanos(h);
+      hHead[h] = (i + 1) % MARKOUTS;
+      hCount[h]++;
+    }
+  }
+
+  /** Measures due markouts: the move in the client's favour since the trade, bp, into the store. */
+  private void pollMarkouts(final long nowNanos) {
+    for (int h = 0; h < MarkoutStore.H; h++) {
+      while (hCount[h] > 0) {
+        final int i = (hHead[h] - hCount[h] + MARKOUTS) % MARKOUTS;
+        if (hDue[h][i] > nowNanos) {
+          break;
+        }
+        hCount[h]--;
+        final Instrument inst = directory.byId(hInstrument[h][i]);
+        if (inst == null || !fairValue.compute(inst, nowNanos)) {
+          continue;
+        }
+        final double ours = (fairValue.fair() - hMid[h][i]) * (hWeBuy[h][i] ? 1.0 : -1.0);
+        markouts.record(hClient[h][i], hClientBuys[h][i], h, -ours / risk.quotePerBp(hInstrument[h][i]));
+      }
+    }
+  }
+
+  /** The last strategy-path quote's break-even distance, bp (for tests). */
+  double lastBreakEvenBp() {
+    return lastBreakEven;
   }
 
   static double liquidSession(final CurrencyCode ccy, final long epochNanos) {
