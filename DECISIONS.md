@@ -12,7 +12,11 @@ Decision. The repository is `AshJha0/rates-algo-trading`, licensed under Apache 
 
 Amended 2026-10-31 (owner). The repository was created public and switched to private the same day; it stays private until the owner is satisfied with the finished work, then becomes public. Everything is still written as if public: no raw downloaded data, credentials or third-party licensed content is committed (see DR-006), and the word policy (DR-007) applies throughout.
 
+*Annotation 2026-11-23: the amendment above, that the repository stays private, is superseded by DR-REV-01; the repository is public. The text is kept as history.*
+
 Consequences. GitHub Pages does not publish from a private repository on a free plan, so the Docs workflow builds the site with `--strict` on every push but the deploy step stays skipped until the repository is public and the Pages source is set to GitHub Actions. Apache 2.0's patent grant and notice requirements apply to contributors.
+
+*Annotation 2026-11-23: the Pages consequence above applied while the repository was private. Superseded by DR-REV-01: the repository is public and `docs.yml` deploys the site from main.*
 
 ## DR-002: Java for the hot path and venue layer, Python for research
 
@@ -1680,3 +1684,263 @@ Context. The review of 2026-11-23 (docs/reviews/REVIEW_2026-11-23.md, findings E
 Decision. The documents describe what happens: one engineer directs AI coding sessions and merges; the nine required checks are the only merge gate; assisted commits are identified by their `Co-Authored-By` trailer. The RTS 6 inventory uses the scale illustrated in simulation, document only, absent and out of scope, and claims no compliance. The DR-001 amendment that kept the repository private is superseded; the repository is public.
 
 Consequences. Rows of the RTS 6 inventory that rested on review or approval are rated absent or document only. `tools/check_inventory.py` must accept the new status words. Adding an independent reviewer later would be a new decision record and would change these documents back with evidence.
+
+## DR-RV-S01: The kill has two paths, a gateway-side halt that withdraws and a journaled message for replay
+
+Date: 2026-11-23
+
+Context. Review findings L1 and L2: the kill switch was an ordinary message behind market data on the loop thread, the loop most likely to be dead when a kill is needed, and `POST /control/kill` answered 200 whatever happened. DR-R2W-10 put the kill on the loop so that replay reproduces it.
+
+Decision. This extends DR-R2W-10. `TradingProcess.kill` first sets a halt flag that the gateway thread reads on its next duty cycle; each `VenueSession` then cancels every quote and order it knows to be live from its own record (`LiveSet`), without the loop. The KillSwitch message is still offered to every group's inbound ring, so the journal and replay keep the pull; a full ring is retried by the supervisor and does not hold up the withdrawal. Only a confirmed withdrawal is reported as done; the endpoint answers 503 with the reason otherwise. A halt is final for the process: it is never cleared, and quoting again needs a restart.
+
+Consequences. The kill no longer depends on the loop or on ring space. The journaled KillSwitch can arrive after the venues have already cancelled, which is harmless because the loop's pull is idempotent. A halted process cannot be re-armed from the control endpoint. The live record holds 8,192 quotes and 8,192 orders per session; past that the session logs out instead of confirming by acknowledgement.
+
+## DR-RV-S02: A halted session drops loop outbound, cancels from its own record and escalates to logout
+
+Date: 2026-11-23
+
+Context. DR-RV-S01 needs a withdrawal that does not trust the loop's view and does not wait for ever on a venue that does not answer.
+
+Decision. A halted session lets nothing from the loops' outbound rings out. It cancels from its own live set, repeats unanswered cancels every 250 ms for three rounds (`VenueSession.WithdrawPolicy.DEFAULT`), then logs out so the venue's cancel-on-disconnect applies, and closes the socket if the venue's Logout has not come within 1 s. A live set that overflowed logs out at once.
+
+Consequences. The withdrawal depends on the venue honouring cancel-on-disconnect, as every venue simulator does (API_SPEC.md Section 11.1). A real venue's cancel-on-disconnect setting would have to be confirmed during onboarding.
+
+## DR-RV-S03: Another thread may only close a session's socket, never drive it
+
+Date: 2026-11-23
+
+Context. The supervisor and the kill call run on other threads than the gateway thread that owns `VenueSession`, `FixSession` and `TcpInitiator`, which are single-threaded.
+
+Decision. Other threads may read a session's halt state and unconfirmed count and may call `abort()`, which closes the socket. They never send a message or change session state.
+
+Consequences. The session classes stay single-threaded and allocation-free. When the gateway thread is dead or stuck, the only remedy from outside is closing the sockets, which relies on cancel-on-disconnect.
+
+## DR-RV-S04: Must-deliver outbound retries touch the ring only, never the journal
+
+Date: 2026-11-23
+
+Context. Review finding L2: an outbound message dropped on a full ring was counted and never sent again, which for a cancel leaves a quote or order live.
+
+Decision. `EventLoop.Builder.retryOnDrop(int... templateIds)` names templates that are queued and offered again when the ring was full. The wired process names QuoteCancel, QuoteWithdraw, OrderCancel and OrderWithdraw. The message is journaled once, when the handler publishes it; the retry writes only to the ring.
+
+Consequences. Replay is unchanged, because the outbound journal is the same with or without retries. A message the retry could not deliver is counted in `outboundRetryLost`.
+
+## DR-RV-R01: Additive schema entries keep schema version 0
+
+Date: 2026-11-23
+
+Context. Review finding S3 needed OrderCancelReject (FIX 35=9) to reach the loop, and S2 needed a journaled reason for excluding a stale venue. The schema header version is written into every journaled frame, and the experiment ledger records journal hashes.
+
+Decision. Template 45 `OrderCancelReject` and `VenueExclusion.Stale` (6) are added to `rates-schema-v1.xml` without a version bump, as in DR-P2V-02 and DR-P6-01. A bump was tried and made `FirstExperimentTest.ledgerRecordReproduces` fail.
+
+Consequences. Every recorded frame decodes as before and every ledger row still reproduces. A reader of a pre-1.1.0 journal never meets the new entries.
+
+## DR-RV-R02: A refused book delta is a gap
+
+Date: 2026-11-23
+
+Context. Review finding S1: a BookUpdate dropped on a full inbound ring was counted and never recovered, so a lost delete left a phantom level. DR-R2W-05 forwarded every frame, including the first after a gap.
+
+Decision. Supersedes the forwarding rule of DR-R2W-05. The feed binding takes a snapshot before forwarding anything; it forwards a frame only if it is next in sequence and advances only when the ring took it. A gap on the wire and a refused frame are the same event: the binding publishes GatewayStatus DISCONNECTED for the feed, delivers a full snapshot, and publishes CONNECTED only when every snapshot frame was taken.
+
+Consequences. A full ring now pulls quotes and stops routing to the CLOB until the rebuild completes, which is the safe direction. The feed has no heartbeat, so a silent feed is detected only by the routers' 10 s book-age limit.
+
+## DR-RV-R03: Router timeouts are safety bounds outside the cost-model parameters
+
+Date: 2026-11-23
+
+Context. Review findings S3 and S4: a child stuck in CancelRequested never freed its quantity, nothing timed out an unacknowledged or IOC child, and a parent had no terminal failure state.
+
+Decision. `RouterTimeouts` (ack, IOC and cancel waits of 2 s each, three cancels, twenty retries after the deadline, an optional book-age limit) sit outside `RouterParams` and the presets, because no allocation depends on them. A child with no answer after the last cancel is flagged unresolved; its quantity stays reserved and its parent ends Failed. A parent that cannot be placed after its retries ends Expired. `ParentListener` reports each terminal state once.
+
+Consequences. The cost model, its presets and the decision journal are unchanged. Unresolved quantity needs an operator or a reconciliation to settle it.
+
+## DR-RV-R04: Absence from mass status is not evidence of no fill
+
+Date: 2026-11-23
+
+Context. Review finding S8: reconcile closed a child the venue did not list as cancelled with nothing filled. A mass status lists live orders, so an order that filled while the session was down is absent too, and the router would hedge that quantity twice.
+
+Decision. A child missing from mass status frees nothing. It keeps its reservation and is sent a cancel; the venue's answer for that order settles it, and with no answer it ends unresolved under DR-RV-R03.
+
+Consequences. After a reconnect some quantity can stay reserved until the venue answers. That is preferred to a double hedge.
+
+## DR-RV-R05: An IOC in a workup is cancelled, never held
+
+Date: 2026-11-23
+
+Context. Review finding S5: an immediate-or-cancel order could rest on the CLOB simulator during a workup.
+
+Decision. An IOC is never held and never rests, in or out of a workup. Whatever it cannot trade at once is cancelled at once.
+
+Consequences. The simulator matches the meaning of the time-in-force. Router IOC children now always end at once, which the IOC timeout of DR-RV-R03 relies on.
+
+## DR-RV-P01: The fixture calendar follows SIFMA full closes only
+
+Date: 2026-11-23
+
+Context. Review finding A6: the holiday fixture made Good Friday 2026 a holiday while the analytics calendar made it a business day. SIFMA recommends a 12:00 early close for US government securities on 2026-04-03.
+
+Decision. The US-GS fixture lists full closes only; an early close is a business day. The 2026-04-03 row is removed from US-GS (it stays on the UK calendar). `CalendarConsistencyTest` compares the calendars on every day of 2026 and 2027.
+
+Consequences. Settlement and accrual treat early-close days as full days. Early-close hours are not modelled.
+
+## DR-RV-P02: The dated date is reference data, not derived
+
+Date: 2026-11-23
+
+Context. Review finding A5: bonds accrued from the issue date, so on-the-run notes issued after a weekend month end had a short first coupon.
+
+Decision. `bonds.csv` gains a `datedDate` column and `Bond.datedDate` is read from it, validated between announcement and issue. Accrual starts at the dated date. `DatedDateTest` checks accrued interest against QuantLib 1.44.
+
+Consequences. A new bond row needs its dated date from the auction announcement. The on-the-run 2Y and 5Y fixtures are dated 2026-10-31 and the 10Y and 30Y 2026-11-15.
+
+## DR-RV-P03: Curve quotes beyond a 100 bp band are rejected; rejects do not refresh staleness
+
+Date: 2026-11-23
+
+Context. Review finding A8: a failed curve solve left the builder truncated and stopped the loop, and nothing checked incoming quotes.
+
+Decision. `AnalyticsPricing` rejects a pillar quote that moves more than `maxQuoteMove` (default 0.01, 100 bp) or whose rebuild fails, counts it in `rejectedInputs()` and keeps the last good curve. A rejected quote does not refresh the input's reference time, so the input ages as if the bad quotes had not arrived.
+
+Consequences. A genuine jump above 100 bp between two updates would be refused; the band is far above any move between two updates and well below a unit or decimal-place error (3.75 percent sent as 37.5).
+
+## DR-RV-P04: Bond risk at market is optional until pre-registered
+
+Date: 2026-11-23
+
+Context. Review finding A3: bond DV01 is taken at zero spread to the OIS curve, which overstates long-bond risk.
+
+Decision. `AnalyticsPricing.Options.bondRiskAtMarket` takes bond ladders at the z-spread that reprices the market dirty price (`BondPricer.marketGradient`). It is off by default, because it changes every bond DV01 and with it every recorded simulation figure.
+
+Consequences. The default still overstates long-bond DV01. On the lane's run of `PricingRobustnessTest`, which prints and does not assert the figures, the 30-year DV01 per 1mm fell by about 21% and the 10-year by about 6% at market. Turning it on belongs to a pre-registered run (review fix plan, round 4).
+
+## DR-RV-Q01: A hedge needs a fresh mid and healthy inputs; a stalled parent stops counting
+
+Date: 2026-11-23
+
+Context. Review finding Q10: hedge parents were priced at arrival mid with no staleness check, the hedger ignored input health, and a working parent counted as hedged for ever.
+
+Decision. `Hedger.Config.maxMidAgeNanos` (5 s) and the `HedgeInputGate` stop a parent being sent off a stale mid or unhealthy inputs. `parentTimeoutNanos` (60 s) cancels a parent still working and stops counting it toward the residual; its reservation stays until the router reports it done.
+
+Consequences. Neither bound is reached on the smoke day. A venue that stops answering now shows as open risk after 60 s instead of looking hedged.
+
+## DR-RV-Q02: The risk-reducing exemption covers daily loss and flatten-only, never the PV01 envelope
+
+Date: 2026-11-23
+
+Context. Review finding Q12: risk-reducing orders skipped the pillar, net and gross checks on the strength of lower parallel PV01 (DR-P3-05, DR-R2R-09), so a 30-year order could push 2-year risk further past its limit.
+
+Decision. Every order passes the PV01 envelope, with basis and swap-spread inside it. A risk-reducing order skips only the daily-loss check, and still passes while flatten-only is in force after a daily-loss kill.
+
+Consequences. A hedge that would breach a pillar limit is refused. `RiskEngineTest.riskReducingHedgesPassWhenTheBookIsInBreach` covers it: with a 50k pillar limit a 100mm 7-year future against 10-year cash is refused, 70mm passes.
+
+## DR-RV-Q03: A mismatched Done is flagged and booked by default
+
+Date: 2026-11-23
+
+Context. Review finding Q7: there was no price check at acceptance.
+
+Decision. A Done at a price other than our quote (beyond `acceptPriceToleranceBp`, default 0) is counted and reported. By default it is still booked at the venue's price, so the risk engine is not blind to a position the venue believes we have; `rejectMismatchedDone` turns booking off. A Done for zero quantity books nothing and teaches no win.
+
+Consequences. A venue error shows up as a counted mismatch and a position, to be disputed, rather than as a silent difference between our books and the venue's.
+
+## DR-RV-Q04: Client DV01 is gross: dealt today plus live quotes
+
+Date: 2026-11-23
+
+Context. Review finding Q9 asked for per-RFQ and per-client DV01 limits.
+
+Decision. `RiskLimits.rfqDv01` bounds one quote's DV01 (`REJECT_RFQ_DV01`, -5). `clientDv01` bounds a client's DV01 dealt today plus its live quotes plus the new quote (`REJECT_CLIENT_DV01`, -6). Both default to unlimited. Package legs count toward the client limit.
+
+Consequences. Netting between a client's buys and sells is not credited. There is no breach message for these limits, because the schema has no `LimitKind` for them; refusals are counted in `dv01Rejects()`.
+
+## DR-RV-Q05: Back-test limits stay the default; a desk-sized preset is available
+
+Date: 2026-11-23
+
+Context. Review finding Q9: the default limits are sized so that the smoke day never breaches them; they are not controls.
+
+Decision. The default limit preset stays the back-test one, so every recorded figure reproduces. `DeskSettings.deskSized()` sizes limits from a 40k USD largest RFQ DV01 and 45k expected daily income: daily loss 180k, RFQ 40k, client 200k, net 85k, pillar 60k, gross 340k, basis and swap spread 120k each, price collar 10 bp, fat finger 200mm, maximum order 250mm, position 500mm, firm quotes to 100mm.
+
+Consequences. The desk-sized preset is not recommended yet: on the lane's run of the seeded day (`DeskSettingsTest`, printed, not asserted) it ended with net DV01 of about -15.7k against about -64 under the default, and that difference is not explained.
+
+## DR-RV-Q06: A venue bust names an RFQ trade by its quote id
+
+Date: 2026-11-23
+
+Context. Review finding Q14: the risk engine reversed busts with no de-duplication, and the position keeper keyed RFQ trades differently from venue busts, so a bust of an RFQ trade stayed pending.
+
+Decision. A venue's TradeBust carries our quote id as `clOrdId` for an RFQ trade; the position keeper applies it to that Rfq trade when no execution matches. On the loop a bust is applied once, and only for an execution the desk booked.
+
+Consequences. Unknown and repeated busts are counted, not applied. A bust does not reduce the router parent's filled quantity.
+
+## DR-RV-C01: The forward summary prints no mean-over-deviation ratio
+
+Date: 2026-11-23
+
+Context. Review Section 2.5: the forward report would print an annualised mean over standard deviation after 60 sessions on mostly synthetic, near-deterministic income.
+
+Decision. The forward summary reports the real close mark alone with its mean and standard error, and labels session P&L synthetic. No ratio of mean to standard deviation is printed at any sample size.
+
+Consequences. The forward log cannot be quoted as a Sharpe ratio. It still prints the synthetic cumulative figure and table, labelled as synthetic.
+
+## DR-RV-C02: Looks are counted per data set, not per pre-registration id
+
+Date: 2026-11-23
+
+Context. Review Section 2.4: ten pre-registrations that each read the same sessions once all recorded look 1.
+
+Decision. `DataSets` keys each ledger row by the data it read (dates and seeds, or a data hash) and counts looks per key. History is reported, never rewritten. A new run is refused unless its pre-registration lists the earlier ids under `prior_looks`; new rows carry `data_set`, `data_set_look` and `prior_looks`.
+
+Consequences. As of 2026-11-23 three data sets were read more than once: 11, 9 and 2 looks. Results on those sets must be read with that number of looks in mind.
+
+## DR-RV-C03: Paired methods for common-random-number designs; Benjamini-Hochberg across experiments
+
+Date: 2026-11-23
+
+Context. Review Section 2.4: the registered test was an unpaired Welch test on a paired design, and nothing corrected across the ledger.
+
+Decision. `Stats.pairedT` and `pairedBlockBootstrapCi` (and Python twins) are the methods for designs where both arms run on the same sessions with the same random numbers. `benjaminiHochberg` is applied across experiments; Holm stays the rule within one pre-registered family. Existing verdicts stand as registered.
+
+Consequences. New pre-registrations should name the paired test as primary. Old ledger rows are not re-scored.
+
+## DR-RV-C04: Waits on the segment preparer are bounded by thread liveness
+
+Date: 2026-11-23
+
+Context. A journal roll could spin for ever when the preparing thread had died or hung, and rates-journal line coverage depended on thread timing.
+
+Decision. A roll waits while the preparer is alive and making progress, under the 60 s progress rule of DR-INT-10, and fails otherwise. A failed `JournalWriter.open` or `create` releases its mapping, and a `RingJournal.close` that gave up can be called again. Timing-dependent branches are forced in tests by a gating clock (`JournalWaitPathsTest`).
+
+Consequences. A dead preparer surfaces as a failure instead of a hang. Coverage of rates-journal no longer moves with scheduling.
+
+## DR-RV-C05: Branch-coverage floor of 0.75 per module
+
+Date: 2026-11-23
+
+Context. Review finding E6: coverage was line coverage only.
+
+Decision. JaCoCo enforces a branch-coverage minimum of 0.75 per module (`jacoco.minimum.branch` in the root pom), under the lowest module measured on 2026-11-23, rates-strategy at 0.783.
+
+Consequences. The floor stops regressions; it does not show that the tests are good. Mutation testing (DR-RV-C06) is the stronger check.
+
+## DR-RV-C06: Mutation testing is opt-in and non-gating
+
+Date: 2026-11-23
+
+Context. Review findings E6 and the round 7 plan asked for mutation testing on risk, quoting, journal and analytics.
+
+Decision. PIT runs with `-Ppit` on rates-risk, rates-quoting, rates-journal and rates-analytics, and weekly in `.github/workflows/mutation.yml`, which is informational. It does not gate a merge.
+
+Consequences. Mutation scores are reported, not enforced. Gating on them waits until the scores are measured on several runs.
+
+## DR-RV-C07: Actions pinned by SHA; Python pinned by a constraints file without hashes
+
+Date: 2026-11-23
+
+Context. Review finding E7: Actions were referenced by tag and Python dependencies by lower bounds only.
+
+Decision. Every workflow pins each action by commit SHA with the tag in a comment. `research/requirements-lock.txt` pins every Python dependency and is used as a pip constraints file by CI and the forward-log job; `research/pyproject.toml` keeps the supported ranges. Dependabot proposes grouped weekly updates; CodeQL scans Java and Python.
+
+Consequences. The lock has no hashes, so it pins versions, not artefacts. Container images are still referenced by tag and there is no bill of materials.
