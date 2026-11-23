@@ -12,7 +12,7 @@ Every module is built; the outline style marks the phase that introduced it. `ra
 
 ## Data flow
 
-From a venue through the gateway and ring buffer into the event loop, with every input appended to the journal, and from the journal into the replayer, back-tester and Python research.
+From a venue through the gateway and ring buffer into the event loop, with every input appended to the journal, and from the journal into the replayer, back-tester and Python research. Since 1.1.0 the kill and the supervisor reach the venue sessions directly as well as through the loop (API_SPEC.md Section 18.9).
 
 ```mermaid
 --8<-- "docs/diagrams/data_flow.mmd"
@@ -52,7 +52,7 @@ Quotes and fixings become one instrument per pillar; `CurveBuilder` solves them 
 
 ## Child order lifecycle
 
-The router's child order states and the reports and actions that move between them, as pinned in [API contract](api-spec.md) Section 15.4. Late fills after a cancel are counted up to the cumulative quantity the venue reported with the cancel.
+The router's child order states and the reports and actions that move between them, as pinned in [API contract](api-spec.md) Section 15.4. Late fills after a cancel are counted up to the cumulative quantity the venue reported with the cancel. Since 1.1.0 every wait is bounded by `RouterTimeouts`, a cancel reject arrives as template 45, and a child with no answer ends unresolved.
 
 ```mermaid
 --8<-- "docs/diagrams/child_order_lifecycle.mmd"
@@ -108,7 +108,7 @@ What the quoting engine does with one request for quote, in the order the checks
 
 ## Kill-switch state machine (P3)
 
-The three states of the process-wide kill switch and the four-eyes reset (API_SPEC.md Section 13.4).
+The three states of the process-wide kill switch and the four-eyes reset (API_SPEC.md Section 13.4). In the wired process this is the journaled path; the withdrawal is done by the venue sessions on a halt flag (Section 18.9).
 
 ```mermaid
 --8<-- "docs/diagrams/kill_switch_state.mmd"
