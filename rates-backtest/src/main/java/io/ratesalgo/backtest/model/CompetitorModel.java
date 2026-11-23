@@ -1,7 +1,7 @@
 package io.ratesalgo.backtest.model;
 
 import io.ratesalgo.backtest.Instrument;
-import io.ratesalgo.backtest.util.SplitMix64;
+import io.ratesalgo.common.random.SplitMix64;
 
 /**
  * Simulated competing dealers. Each of the {@code dealers - 1} competitors quotes a half-spread in

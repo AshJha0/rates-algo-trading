@@ -1,0 +1,64 @@
+{
+  "schema": "sim_v2_structure/1",
+  "specification": "docs/research/SIM_V2_DESIGN.md",
+  "note": "Constants that the design document fixes in its text and that data/calibration/sim_v2_params.json does not carry as numbers, and the instrument universe. Every one is an assumption of the design (section given per group); the calibrated values stay in sim_v2_params.json.",
+  "grid": {
+    "section": "2",
+    "step_seconds": 1.0
+  },
+  "event_windows": {
+    "section": "3",
+    "release_0830": {"start_ny": "08:30", "end_ny": "08:35"},
+    "auction_1300": {"start_ny": "13:00", "end_ny": "13:05"},
+    "fomc_1400": {"start_ny": "14:00", "end_ny": "14:30"}
+  },
+  "rfq": {
+    "section": "5",
+    "bin_minutes": 30.0,
+    "min_size_mm": 1.0,
+    "size_redraws": 20.0,
+    "treasury_size_ladder_mm": [[1.0, 0.35], [5.0, 0.35], [10.0, 0.20], [25.0, 0.08], [50.0, 0.02]],
+    "tier_informed_probability": [0.25, 0.60, 0.975]
+  },
+  "competitors": {
+    "section": "5 and 7",
+    "delay_median_ms": 800.0,
+    "delay_log_sd": 0.6,
+    "response_window_ms": 5000.0,
+    "reserve_multiple_median": 2.5,
+    "reserve_log_sd": 0.4,
+    "done_away_probability": 0.05,
+    "markout_horizon_s": 300.0
+  },
+  "clob": {
+    "section": "8",
+    "depth_multiples": [1.0, 1.5, 2.0, 2.0, 2.0],
+    "taker_size_log_sd": 1.0,
+    "taker_look_ahead_s": 5.0,
+    "depth_reference_instrument": "UST-10Y"
+  },
+  "checks": {
+    "section": "11, test A12",
+    "zero_profit_tolerance_bp": 0.001,
+    "max_informed_variance_share": 0.6,
+    "loading_norm_tolerance": 0.001
+  },
+  "instruments": {
+    "section": "3",
+    "note": "kind swap: mid is the fixed rate in percent, price_change_per_bp is 0.01. kind treasury and future: mid is a price per 100 of face and price_change_per_bp is negative (the back-test's InstrumentSet values for the 2-year and 10-year notes and for TY; 5-year and 30-year are duration times price at a 4 percent yield). node_years is the maturity used for the loadings. unit_face_usd is the face of one quantity unit; min_quantity is the smallest order in those units. annuity is the swap's value per bp per unit notional times 1e4, as the back-test values it.",
+    "list": [
+      {"key": "SOFR-2Y", "id": 101, "kind": "swap", "node_years": 2.0, "initial_mid": 3.60, "price_change_per_bp": 0.01, "tick": 0.0001, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 1.92},
+      {"key": "SOFR-3Y", "id": 105, "kind": "swap", "node_years": 3.0, "initial_mid": 3.55, "price_change_per_bp": 0.01, "tick": 0.0001, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 2.83},
+      {"key": "SOFR-5Y", "id": 102, "kind": "swap", "node_years": 5.0, "initial_mid": 3.60, "price_change_per_bp": 0.01, "tick": 0.0001, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 4.52},
+      {"key": "SOFR-7Y", "id": 106, "kind": "swap", "node_years": 7.0, "initial_mid": 3.70, "price_change_per_bp": 0.01, "tick": 0.0001, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 6.07},
+      {"key": "SOFR-10Y", "id": 103, "kind": "swap", "node_years": 10.0, "initial_mid": 3.85, "price_change_per_bp": 0.01, "tick": 0.0001, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 8.11},
+      {"key": "SOFR-20Y", "id": 107, "kind": "swap", "node_years": 20.0, "initial_mid": 4.05, "price_change_per_bp": 0.01, "tick": 0.0001, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 13.50},
+      {"key": "SOFR-30Y", "id": 104, "kind": "swap", "node_years": 30.0, "initial_mid": 3.95, "price_change_per_bp": 0.01, "tick": 0.0001, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 17.29},
+      {"key": "UST-2Y", "id": 201, "kind": "treasury", "node_years": 2.0, "initial_mid": 100.0, "price_change_per_bp": -0.0190, "tick": 0.00390625, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 0.0},
+      {"key": "UST-5Y", "id": 203, "kind": "treasury", "node_years": 5.0, "initial_mid": 100.0, "price_change_per_bp": -0.0450, "tick": 0.0078125, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 0.0},
+      {"key": "UST-10Y", "id": 202, "kind": "treasury", "node_years": 10.0, "initial_mid": 100.0, "price_change_per_bp": -0.0815, "tick": 0.0078125, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 0.0},
+      {"key": "UST-30Y", "id": 204, "kind": "treasury", "node_years": 30.0, "initial_mid": 100.0, "price_change_per_bp": -0.1730, "tick": 0.0078125, "unit_face_usd": 1.0, "min_quantity": 1000000.0, "annuity": 0.0},
+      {"key": "TY", "id": 301, "kind": "future", "node_years": 7.0, "initial_mid": 110.0, "price_change_per_bp": -0.0715, "tick": 0.015625, "unit_face_usd": 100000.0, "min_quantity": 1.0, "annuity": 0.0}
+    ]
+  }
+}

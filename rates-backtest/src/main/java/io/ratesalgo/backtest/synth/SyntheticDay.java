@@ -5,7 +5,7 @@ import io.ratesalgo.backtest.InstrumentSet;
 import io.ratesalgo.backtest.model.Preset;
 import io.ratesalgo.backtest.model.Presets;
 import io.ratesalgo.backtest.util.Prices;
-import io.ratesalgo.backtest.util.SplitMix64;
+import io.ratesalgo.common.random.SplitMix64;
 import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.journal.JournalFormat;
 import io.ratesalgo.journal.JournalWriter;

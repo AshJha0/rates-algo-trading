@@ -1,7 +1,7 @@
 package io.ratesalgo.backtest.model;
 
 import io.ratesalgo.backtest.Instrument;
-import io.ratesalgo.backtest.util.SplitMix64;
+import io.ratesalgo.common.random.SplitMix64;
 
 /**
  * Settles one quoted RFQ: draws the cover from the {@link CompetitorModel}, decides the client's
