@@ -121,6 +121,15 @@ public final class FixWriter {
     return this;
   }
 
+  /**
+   * Overwrites the body written so far with zeros and empties the writer. The session calls it
+   * after a Logon that carried a password, so the password does not stay in the scratch buffer.
+   */
+  public void wipe() {
+    body.setMemory(0, position, (byte) 0);
+    position = 0;
+  }
+
   /** Bytes of body written so far. */
   public int bodyLength() {
     return position;

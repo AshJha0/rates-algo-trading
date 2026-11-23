@@ -1,6 +1,13 @@
 package io.ratesalgo.venues.sim;
 
+import io.ratesalgo.common.security.Secret;
+import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.common.time.Clock;
+import java.io.IOException;
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -9,17 +16,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import quickfix.Application;
 import quickfix.ConfigError;
 import quickfix.DefaultMessageFactory;
+import quickfix.FieldNotFound;
+import quickfix.FileStoreFactory;
 import quickfix.MemoryStoreFactory;
 import quickfix.Message;
+import quickfix.MessageStoreFactory;
+import quickfix.RejectLogon;
 import quickfix.RuntimeError;
 import quickfix.Session;
 import quickfix.SessionID;
 import quickfix.SessionNotFound;
 import quickfix.SessionSettings;
 import quickfix.SocketAcceptor;
+import quickfix.mina.ssl.SSLSupport;
 
 /**
  * Base class of the three venue simulators: a QuickFIX/J acceptor with one session per engine
@@ -30,6 +43,13 @@ import quickfix.SocketAcceptor;
  * another, so every entry point (message, logon, logout, time) runs while holding this object's
  * monitor. Simulators are test and research infrastructure, not hot-path code; the lock keeps a
  * run's event order a function of message order and clock only.
+ *
+ * <p>Listening ({@link AcceptorOptions}): plain FIX is bound to loopback and nothing else; any
+ * other address needs TLS (QuickFIX/J's MINA filter over the JDK engine, TLS 1.3 unless the
+ * settings name more). With a username and password set, a Logon without the matching 553 and 554
+ * is answered with a Logout and a disconnect. With a store directory the venue's sequence numbers
+ * and sent messages are kept on disk, so an engine that reconnects after the simulator restarts
+ * can resume and have its fills resent, and ids continue above those of earlier runs.
  */
 public abstract class VenueSimulator implements Application, AutoCloseable {
 
@@ -48,8 +68,30 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
   private SocketAcceptor acceptor;
   private int port;
   private long eventSeq;
-  private long idSeq;
+  /** Atomic because start() sets the base under the lock and subclasses draw ids under it too. */
+  private final AtomicLong idSeq = new AtomicLong();
   private long sendFailures;
+  private long logonsRefused;
+  private Secret requiredUsername;
+  private Secret requiredPassword;
+
+  /** Text of the Logout that answers a Logon with wrong or missing credentials. */
+  public static final String LOGON_REFUSED_TEXT = "logon refused: invalid credentials";
+
+  /** The address plain FIX listens on. */
+  public static final String LOOPBACK = "127.0.0.1";
+
+  /**
+   * Ids of one run are below two to this power; a run with a store directory starts at its
+   * generation shifted by it, so ids never repeat across restarts.
+   */
+  static final int GENERATION_SHIFT = 32;
+
+  /**
+   * Highest generation: ids stay below 2^43, the bound the router's child order book puts on an
+   * ExecID (ChildOrderBook.MAX_EXEC_ID).
+   */
+  static final long MAX_GENERATION = (1L << (43 - GENERATION_SHIFT)) - 1;
 
   private record Event(long atNanos, long seq, Runnable action) implements Comparable<Event> {
     @Override
@@ -85,10 +127,33 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
     return port;
   }
 
-  /** Starts the acceptor on a port. */
+  /** Starts a plain acceptor on a loopback port: {@link AcceptorOptions#PLAIN}. */
   public final synchronized void start(final int listenPort) {
+    start(listenPort, AcceptorOptions.PLAIN);
+  }
+
+  /** Starts the acceptor on a loopback port with the given options. */
+  public final synchronized void start(final int listenPort, final AcceptorOptions options) {
+    start(LOOPBACK, listenPort, options);
+  }
+
+  /**
+   * Starts the acceptor on an address and port.
+   *
+   * @param bindAddress the local address to listen on; anything but loopback needs TLS
+   * @throws IllegalArgumentException if plain FIX is asked to listen beyond loopback
+   * @throws IllegalStateException if the acceptor cannot start, or the id generation kept in the
+   *     store directory has reached its limit
+   */
+  public final synchronized void start(final String bindAddress, final int listenPort, final AcceptorOptions options) {
+    final TlsConfig tls = options.tls();
+    if (tls == null && !isLoopback(bindAddress)) {
+      throw new IllegalArgumentException(
+          "plain FIX is for loopback only: refusing to listen on " + bindAddress + " without TLS");
+    }
     final SessionSettings settings = new SessionSettings();
     settings.setString("ConnectionType", "acceptor");
+    settings.setString("SocketAcceptAddress", bindAddress);
     settings.setLong("SocketAcceptPort", listenPort);
     settings.setString("SocketReuseAddress", "Y");
     settings.setString("NonStopSession", "Y");
@@ -104,6 +169,20 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
     settings.setString("ResetOnLogon", "N");
     settings.setString("ResetOnLogout", "N");
     settings.setString("ResetOnDisconnect", "N");
+    if (tls != null) {
+      applyTls(settings, tls);
+    }
+    final MessageStoreFactory stores;
+    if (options.storeDir() == null) {
+      stores = new MemoryStoreFactory();
+    } else {
+      final long base = nextGeneration(options.storeDir()) << GENERATION_SHIFT;
+      idSeq.accumulateAndGet(base, Math::max);
+      settings.setString(FileStoreFactory.SETTING_FILE_STORE_PATH, options.storeDir().toString());
+      stores = new FileStoreFactory(settings);
+    }
+    requiredUsername = options.username() == null ? null : Secret.of(options.username());
+    requiredPassword = options.password();
     for (final String cp : counterparties) {
       final SessionID id = new SessionID("FIX.4.4", compId, cp);
       settings.setString(id, "BeginString", "FIX.4.4");
@@ -111,13 +190,82 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
     }
     try {
       acceptor =
-          new SocketAcceptor(
-              this, new MemoryStoreFactory(), settings, null, new DefaultMessageFactory());
+          new SocketAcceptor(this, stores, settings, null, new DefaultMessageFactory());
       acceptor.start();
     } catch (ConfigError | RuntimeError e) {
-      throw new IllegalStateException("cannot start " + compId + " on port " + listenPort, e);
+      // QuickFIX/J's own message names settings and files, never their values
+      throw new IllegalStateException("cannot start " + compId + " on " + bindAddress + ":" + listenPort, e);
     }
     port = listenPort;
+  }
+
+  /**
+   * QuickFIX/J's TLS settings from ours. Its settings API takes passwords as strings, so a copy
+   * of each lives in the settings object for as long as the acceptor does; it is never logged
+   * (the acceptor has no log factory) and never put in a message of ours.
+   */
+  private static void applyTls(final SessionSettings settings, final TlsConfig tls) {
+    settings.setString(SSLSupport.SETTING_USE_SSL, "Y");
+    settings.setString(SSLSupport.SETTING_KEY_STORE_NAME, tls.keyStore().toString());
+    settings.setString(SSLSupport.SETTING_KEY_STORE_PWD, text(tls.keyStorePassword()));
+    settings.setString(SSLSupport.SETTING_KEY_STORE_TYPE, "PKCS12");
+    settings.setString(SSLSupport.SETTING_ENABLED_PROTOCOLS, String.join(",", tls.protocols()));
+    if (tls.requireClientCertificate()) {
+      settings.setString(SSLSupport.SETTING_NEED_CLIENT_AUTH, "Y");
+      settings.setString(SSLSupport.SETTING_TRUST_STORE_NAME, tls.trustStore().toString());
+      settings.setString(SSLSupport.SETTING_TRUST_STORE_PWD, text(tls.trustStorePassword()));
+      settings.setString(SSLSupport.SETTING_TRUST_STORE_TYPE, "PKCS12");
+    }
+  }
+
+  private static String text(final Secret secret) {
+    if (secret == null) {
+      return "";
+    }
+    final char[] chars = secret.chars();
+    final String value = new String(chars);
+    java.util.Arrays.fill(chars, (char) 0);
+    return value;
+  }
+
+  /** True for a loopback address literal or {@code localhost}; no other name counts. */
+  public static boolean isLoopback(final String address) {
+    if ("localhost".equalsIgnoreCase(address)) {
+      return true;
+    }
+    try {
+      return InetAddress.ofLiteral(address).isLoopbackAddress();
+    } catch (final IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  /**
+   * Reads the generation kept in the store directory, writes the next one and returns the one
+   * read: 0 for the first run, 1 for the second, and so on. The trading side drops a fill whose
+   * ExecID it has seen, so a restarted venue must not hand out the ids of its last run again.
+   */
+  private long nextGeneration(final Path storeDir) {
+    final Path file = storeDir.resolve(compId + ".generation");
+    try {
+      Files.createDirectories(storeDir);
+      final long generation =
+          Files.exists(file) ? Long.parseLong(Files.readString(file, StandardCharsets.US_ASCII).strip()) : 0;
+      if (generation < 0 || generation > MAX_GENERATION) {
+        throw new IllegalStateException(
+            compId + " has been restarted " + generation + " times on the store " + storeDir + ", the most its"
+                + " ids allow (" + MAX_GENERATION + "); start it on an empty store directory");
+      }
+      Files.writeString(file, Long.toString(generation + 1), StandardCharsets.US_ASCII);
+      return generation;
+    } catch (final IOException | NumberFormatException e) {
+      throw new IllegalStateException("cannot read or write the id generation file " + file, e);
+    }
+  }
+
+  /** Logons refused for wrong or missing credentials. */
+  public final synchronized long logonsRefused() {
+    return logonsRefused;
   }
 
   @Override
@@ -160,7 +308,7 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
 
   /** Next id from a per-simulator sequence (order ids, exec ids, quote response ids). */
   protected final long nextId() {
-    return ++idSeq;
+    return idSeq.incrementAndGet();
   }
 
   /** Schedules an action at a monotonic time. */
@@ -240,9 +388,40 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
     // no venue-specific admin fields
   }
 
+  /**
+   * Checks the credentials of a Logon when the acceptor asks for them; everything else at session
+   * level belongs to QuickFIX/J. A refusal makes QuickFIX/J send a Logout with the text and close
+   * the connection. The text is the same whatever was wrong and repeats nothing that was sent.
+   */
   @Override
-  public final void fromAdmin(final Message message, final SessionID sessionId) {
-    // session-level handling belongs to QuickFIX/J
+  public final void fromAdmin(final Message message, final SessionID sessionId) throws RejectLogon {
+    final Secret username;
+    final Secret password;
+    synchronized (this) {
+      username = requiredUsername;
+      password = requiredPassword;
+    }
+    if (username == null || !"A".equals(Fix.type(message))) {
+      return;
+    }
+    // both comparisons always run, each in constant time: which half was wrong does not show
+    final boolean userOk = username.matches(field(message, 553));
+    final boolean passwordOk = password.matches(field(message, 554));
+    if (!(userOk && passwordOk)) {
+      synchronized (this) {
+        logonsRefused++;
+        log("logon refused " + sessionId.getTargetCompID());
+      }
+      throw new RejectLogon(LOGON_REFUSED_TEXT);
+    }
+  }
+
+  private static String field(final Message message, final int tag) {
+    try {
+      return message.isSetField(tag) ? message.getString(tag) : null;
+    } catch (final FieldNotFound e) {
+      return null;
+    }
   }
 
   @Override

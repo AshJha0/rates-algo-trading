@@ -18,6 +18,7 @@ public final class SessionStats {
   long timeouts;
   long sequenceResets;
   long resendTimeouts;
+  long logonsRefused;
 
   /** Messages accepted from the transport (well formed). */
   public long received() {
@@ -92,6 +93,11 @@ public final class SessionStats {
   /** Sessions ended because a ResendRequest stayed unanswered after its repeats. */
   public long resendTimeouts() {
     return resendTimeouts;
+  }
+
+  /** Logons the venue answered with a Logout (wrong credentials, unknown CompID). */
+  public long logonsRefused() {
+    return logonsRefused;
   }
 
   /** Gaps plus too-low sequence numbers: the figure the synthetic day requires to be zero. */

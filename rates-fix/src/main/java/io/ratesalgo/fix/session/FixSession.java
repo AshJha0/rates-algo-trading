@@ -1,5 +1,6 @@
 package io.ratesalgo.fix.session;
 
+import io.ratesalgo.common.security.Secret;
 import io.ratesalgo.common.time.Clock;
 import io.ratesalgo.fix.codec.FixFormatException;
 import io.ratesalgo.fix.codec.FixParser;
@@ -7,6 +8,7 @@ import io.ratesalgo.fix.codec.FixTags;
 import io.ratesalgo.fix.codec.FixWriter;
 import io.ratesalgo.fix.codec.MsgType;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 
@@ -25,6 +27,12 @@ import org.agrona.concurrent.UnsafeBuffer;
  *   <li>A ResendRequest from the counterparty is always answered with one SequenceReset-GapFill
  *       to our next sequence number: the engine never resends application messages, because a
  *       resent quote or order would be stale (DR-P2V-03).
+ *   <li>With ResetSeqNumFlag off the session resumes: a reconnect keeps both numbers, the Logon
+ *       carries no 141, and a Logon reply above the expected number opens a gap like any other
+ *       message, so the venue resends what was missed (fills, flagged PossDup).
+ *   <li>Username (553) and Password (554) go on the Logon when configured. The password is never
+ *       logged or kept in a counter or message text, and the buffers the Logon was built in are
+ *       overwritten once the transport has taken it.
  *   <li>SequenceReset in reset mode sets the expected number regardless of MsgSeqNum.
  *   <li>A ResendRequest that is not answered within the resend timeout is sent again; after the
  *       configured number of repeats the session logs out and disconnects. Without this a venue
@@ -53,6 +61,11 @@ public final class FixSession {
   private final UnsafeBuffer out = new UnsafeBuffer(ByteBuffer.allocateDirect(64 * 1024 + 64));
   private final UnsafeBuffer testReqId = new UnsafeBuffer(ByteBuffer.allocateDirect(32));
   private final SessionStats stats = new SessionStats();
+  private final byte[] username;
+  private final Secret password;
+  private SequenceStore store = SequenceStore.NONE;
+  private long recordedOutSeq = -1;
+  private long recordedInSeq = -1;
 
   private SessionState state = SessionState.DISCONNECTED;
   private long nextOutSeq = 1;
@@ -68,6 +81,7 @@ public final class FixSession {
   private long testRequestCounter;
   private int testReqIdLength;
   private long pendingSeq = -1;
+  private int lastSentLength;
 
   /** Creates a disconnected session. */
   public FixSession(
@@ -85,6 +99,26 @@ public final class FixSession {
     this.resetOnLogon = config.resetOnLogon();
     this.resendTimeoutNanos = config.resendTimeoutNanos();
     this.maxResendRetries = config.maxResendRetries();
+    this.username = config.usernameBytes();
+    this.password = config.password();
+  }
+
+  /**
+   * Where the session records its sequence numbers each time one changes, so that a restarted
+   * process can resume. The store is told on the session's thread and must not allocate.
+   */
+  public void sequenceStore(final SequenceStore sequenceStore) {
+    this.store = sequenceStore == null ? SequenceStore.NONE : sequenceStore;
+    recordedOutSeq = -1;
+    recordedInSeq = -1;
+  }
+
+  private void recordSequences() {
+    if (nextOutSeq != recordedOutSeq || expectedInSeq != recordedInSeq) {
+      recordedOutSeq = nextOutSeq;
+      recordedInSeq = expectedInSeq;
+      store.record(nextOutSeq, expectedInSeq);
+    }
   }
 
   /** Current state. */
@@ -114,6 +148,7 @@ public final class FixSession {
     }
     this.nextOutSeq = nextOut;
     this.expectedInSeq = expectedIn;
+    recordSequences();
   }
 
   /** The clock the session stamps messages with. */
@@ -126,6 +161,7 @@ public final class FixSession {
     if (resetOnLogon) {
       nextOutSeq = 1;
       expectedInSeq = 1;
+      recordSequences();
     }
     resendPending = false;
     testRequestPending = false;
@@ -137,8 +173,29 @@ public final class FixSession {
     if (resetOnLogon) {
       w.putBool(FixTags.RESET_SEQ_NUM_FLAG, true);
     }
-    send();
+    if (password == null) {
+      send();
+    } else {
+      sendWithPassword(w);
+    }
     state = SessionState.LOGON_SENT;
+  }
+
+  /**
+   * Adds the credentials, sends, and then overwrites every place the password was written: the
+   * copy taken from the {@link Secret}, the writer's body and the outbound buffer. The transport
+   * has copied or encrypted the bytes by the time {@code send} returns.
+   */
+  private void sendWithPassword(final FixWriter w) {
+    final byte[] secret = password.bytes();
+    try {
+      w.putAscii(FixTags.USERNAME, username).putAscii(FixTags.PASSWORD, secret);
+      send();
+    } finally {
+      Arrays.fill(secret, (byte) 0);
+      writer.wipe();
+      out.setMemory(0, lastSentLength, (byte) 0);
+    }
   }
 
   /** Called when the transport has closed. */
@@ -199,6 +256,9 @@ public final class FixSession {
     pendingSeq = -1;
     lastSentNanos = clock.nanoTime();
     stats.sent++;
+    lastSentLength = length;
+    // recorded before the bytes leave: a number the venue has seen is never handed out twice
+    recordSequences();
     transport.send(out, 0, length);
   }
 
@@ -216,6 +276,9 @@ public final class FixSession {
     } catch (FixFormatException e) {
       reject(e.tag());
     }
+    // after the handler has returned: a crash inside it leaves the old number, and the venue
+    // resends the message on the next logon
+    recordSequences();
   }
 
   private void process() {
@@ -342,6 +405,12 @@ public final class FixSession {
   }
 
   private void onLogout() {
+    final boolean refused = state == SessionState.LOGON_SENT;
+    if (refused) {
+      // the venue's answer to our Logon: wrong credentials, unknown CompID or a sequence it rejects
+      stats.logonsRefused++;
+    }
+    handler.onLogout(this, parser, refused);
     if (state != SessionState.LOGOUT_SENT && state != SessionState.DISCONNECTED) {
       beginAdmin(MsgType.LOGOUT);
       send();
@@ -350,6 +419,13 @@ public final class FixSession {
     transport.disconnect();
   }
 
+  /**
+   * The market-maker rule: our own quotes and orders are never resent. Whatever the venue asks
+   * for, it gets one SequenceReset-GapFill up to our next number. A quote or order replayed after
+   * a gap would be acted on at a price that is no longer ours, so it is skipped and the strategy
+   * sends a fresh one if it still wants it. Fills flow the other way: those the venue does resend
+   * to us, and the order tracker books each ExecID once.
+   */
   private void answerResend() {
     final long begin = parser.getLong(FixTags.BEGIN_SEQ_NO);
     if (begin >= nextOutSeq) {

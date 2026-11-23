@@ -1,5 +1,7 @@
 package io.ratesalgo.venues.sim;
 
+import io.ratesalgo.common.security.Secret;
+import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.fix.session.FixSessionHandler;
 import java.io.IOException;
@@ -18,9 +20,14 @@ public final class VenueHarness implements AutoCloseable {
 
   /** Starts the simulator on a free port. The simulator must have been built with {@code clock}. */
   public VenueHarness(final VenueSimulator simulator, final ManualClock clock) {
+    this(simulator, clock, AcceptorOptions.PLAIN);
+  }
+
+  /** Starts the simulator on a free loopback port with TLS, credentials or a store directory. */
+  public VenueHarness(final VenueSimulator simulator, final ManualClock clock, final AcceptorOptions options) {
     this.simulator = simulator;
     this.clock = clock;
-    simulator.start(freePort());
+    simulator.start(freePort(), options);
   }
 
   /** A port that was free a moment ago. */
@@ -69,6 +76,36 @@ public final class VenueHarness implements AutoCloseable {
     final EngineSession s = new EngineSession(simulator, clock, simulator.port(), compId, handler);
     s.logon();
     return s;
+  }
+
+  /**
+   * Connects an engine-side session over TLS, with logon credentials, or resuming (reset off),
+   * and waits for logon. Any of {@code tls}, {@code username} and {@code password} may be null.
+   */
+  public EngineSession connect(
+      final String compId,
+      final FixSessionHandler handler,
+      final TlsConfig tls,
+      final String username,
+      final Secret password,
+      final boolean resetOnLogon) {
+    final EngineSession s = prepare(compId, handler, tls, username, password, resetOnLogon);
+    s.logon();
+    return s;
+  }
+
+  /**
+   * Builds an engine-side session without connecting it, for tests that set sequence numbers or a
+   * sequence store first, or that expect the logon to be refused.
+   */
+  public EngineSession prepare(
+      final String compId,
+      final FixSessionHandler handler,
+      final TlsConfig tls,
+      final String username,
+      final Secret password,
+      final boolean resetOnLogon) {
+    return new EngineSession(simulator, clock, simulator.port(), compId, handler, tls, username, password, resetOnLogon);
   }
 
   @Override
