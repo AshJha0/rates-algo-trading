@@ -129,14 +129,29 @@ public final class JournalWriter implements AutoCloseable {
     if (mapped == null) {
       return null;
     }
-    mapped.order(JournalFormat.BYTE_ORDER);
-    final UnsafeBuffer header = new UnsafeBuffer(mapped);
-    header.putInt(MAGIC_OFFSET, MAGIC);
-    header.putShort(FORMAT_VERSION_OFFSET, (short) FORMAT_VERSION);
-    header.putShort(HEADER_LENGTH_OFFSET, (short) FILE_HEADER_LENGTH);
-    header.putInt(CAPACITY_OFFSET, capacityBytes);
-    header.putLong(CREATED_OFFSET, clock.epochNanos());
-    return new JournalWriter(mapped, clock, FILE_HEADER_LENGTH, firstSequence, previousHash);
+    boolean created = false;
+    try {
+      mapped.order(JournalFormat.BYTE_ORDER);
+      final UnsafeBuffer header = new UnsafeBuffer(mapped);
+      header.putInt(MAGIC_OFFSET, MAGIC);
+      header.putShort(FORMAT_VERSION_OFFSET, (short) FORMAT_VERSION);
+      header.putShort(HEADER_LENGTH_OFFSET, (short) FILE_HEADER_LENGTH);
+      header.putInt(CAPACITY_OFFSET, capacityBytes);
+      header.putLong(CREATED_OFFSET, clock.epochNanos());
+      final JournalWriter writer = new JournalWriter(mapped, clock, FILE_HEADER_LENGTH, firstSequence, previousHash);
+      created = true;
+      return writer;
+    } finally {
+      if (!created) {
+        // the file is ours (CREATE_NEW) and has no valid header: release the mapping and remove it
+        IoUtil.unmap(mapped);
+        try {
+          java.nio.file.Files.deleteIfExists(path);
+        } catch (final IOException ignored) {
+          // the failure being thrown is the one to report
+        }
+      }
+    }
   }
 
   /**
@@ -190,15 +205,19 @@ public final class JournalWriter implements AutoCloseable {
     final MappedByteBuffer mapped = IoUtil.mapExistingFile(path.toFile(), "journal");
     mapped.order(JournalFormat.BYTE_ORDER);
     final UnsafeBuffer buffer = new UnsafeBuffer(mapped);
-    final JournalReader reader;
+    boolean opened = false;
     try {
-      reader = new JournalReader(buffer, null, firstSequence, previousHash);
-    } catch (final JournalCorruptionException e) {
-      IoUtil.unmap(mapped);
-      throw e;
+      final long[] tail = new JournalReader(buffer, null, firstSequence, previousHash).scanToEnd();
+      final JournalWriter writer = new JournalWriter(mapped, clock, (int) tail[0], tail[1] + 1, tail[2]);
+      opened = true;
+      return writer;
+    } finally {
+      if (!opened) {
+        // a bad header or a bad frame: release the mapping, or the file stays mapped until a
+        // garbage collection and cannot be replaced or truncated on Windows meanwhile
+        IoUtil.unmap(mapped);
+      }
     }
-    final long[] tail = reader.scanToEnd();
-    return new JournalWriter(mapped, clock, (int) tail[0], tail[1] + 1, tail[2]);
   }
 
   /**

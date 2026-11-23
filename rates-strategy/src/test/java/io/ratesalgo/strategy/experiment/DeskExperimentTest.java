@@ -138,6 +138,17 @@ class DeskExperimentTest {
     assertEquals(DeskExperimentCli.OK, code);
     final List<Map<String, Object>> entries = new Ledger(repo.resolve("data/ledger/ledger.jsonl")).entries();
     assertEquals(7, entries.size());
+    // seven rows from one run are seven looks at the same sessions; a later id must declare them
+    assertEquals(List.of(1L, 2L, 3L, 4L, 5L, 6L, 7L),
+        entries.stream().map(e -> ((Number) e.get("data_set_look")).longValue()).toList());
+    Files.writeString(
+        repo.resolve("data/preregs/late.yaml"), prereg("T-900", DeskFactory.TREATMENTS.get(0), sha), StandardCharsets.UTF_8);
+    assertEquals(
+        DeskExperimentCli.REFUSED,
+        DeskExperimentCli.run(new String[] {"--repo", repo.toString(), "--preregs", "data/preregs/late.yaml"}, out));
+    assertTrue(bytes.toString(StandardCharsets.UTF_8).contains("T-900 must declare them: add 'prior_looks: [T-001, "),
+        bytes.toString(StandardCharsets.UTF_8));
+    assertEquals(7, new Ledger(repo.resolve("data/ledger/ledger.jsonl")).entries().size());
     for (final Map<String, Object> e : entries) {
       assertTrue(List.of("supported", "not supported").contains(e.get("verdict")), e.get("verdict").toString());
       @SuppressWarnings("unchecked")

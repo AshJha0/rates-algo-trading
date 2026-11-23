@@ -43,7 +43,7 @@ TREASURY_URL = (
 )
 SOFR_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/10.json"
 DTCC_URL = "https://kgc0418-tdw-data-0.s3.amazonaws.com/cftc/eod/CFTC_CUMULATIVE_RATES_{d}.zip"
-USER_AGENT = "ratesresearch/1.0.0 (+https://github.com/AshJha0/rates-algo-trading)"
+USER_AGENT = "ratesresearch/1.1.0 (+https://github.com/AshJha0/rates-algo-trading)"
 
 # Treasury column per tenor key used by the desk.
 UST_COLUMNS = {

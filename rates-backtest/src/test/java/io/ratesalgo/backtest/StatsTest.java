@@ -94,6 +94,69 @@ class StatsTest {
     assertTrue(Stats.logGamma(0.25) > 0);
   }
 
+  /**
+   * Known values: differences 1..5 have mean 3 and standard error sqrt(2.5 / 5), so t = 3 *
+   * sqrt(2) on 4 degrees of freedom; scipy.stats.ttest_rel gives p = 0.01323559956368269.
+   */
+  @Test
+  void pairedTestMatchesKnownValues() {
+    final double[] b = {10, 20, 30, 40, 50};
+    final double[] a = {11, 22, 33, 44, 55};
+    final Stats.Paired r = Stats.pairedT(a, b);
+    assertEquals(5, r.n());
+    assertEquals(3.0, r.meanDifference(), 1e-15);
+    assertEquals(Math.sqrt(0.5), r.standardError(), 1e-15);
+    assertEquals(3 * Math.sqrt(2), r.t(), 1e-14);
+    assertEquals(4.0, r.df(), 0.0);
+    assertEquals(0.01323559956368269, r.p(), 1e-13);
+    assertEquals(-r.t(), Stats.pairedT(b, a).t(), 1e-15);
+    assertEquals(r.p(), Stats.pairedT(b, a).p(), 1e-15);
+    assertArrayEquals(new double[] {1, 2, 3, 4, 5}, Stats.pairedDifferences(a, b), 0.0);
+    final Stats.Interval ci = Stats.pairedBlockBootstrapCi(a, b, 2, 500, 0.9, 7);
+    final Stats.Interval direct = Stats.blockBootstrapMeanCi(new double[] {1, 2, 3, 4, 5}, 2, 500, 0.9, 7);
+    assertEquals(direct, ci);
+    assertTrue(ci.lower() <= 3.0 && 3.0 <= ci.upper() && ci.lower() >= 1.0 && ci.upper() <= 5.0);
+    assertThrows(IllegalArgumentException.class, () -> Stats.pairedT(new double[] {1, 2}, new double[] {1}));
+    assertThrows(IllegalArgumentException.class, () -> Stats.pairedT(new double[] {2, 3}, new double[] {1, 2}));
+    assertThrows(IllegalArgumentException.class, () -> Stats.pairedT(new double[] {2}, new double[] {1}));
+  }
+
+  /**
+   * Why the paired test is the method for a common-random-number design: the same sessions, a
+   * steady gain of about 30 on a session spread in the thousands. Welch cannot see it; the paired
+   * test can.
+   */
+  @Test
+  void pairedTestFindsWhatWelchMissesOnSharedSessions() {
+    final SplitMix64 rng = new SplitMix64(42);
+    final double[] base = new double[20];
+    final double[] treat = new double[20];
+    for (int i = 0; i < base.length; i++) {
+      base[i] = 5_000 * rng.nextGaussian();
+      treat[i] = base[i] + 30 + 10 * rng.nextGaussian();
+    }
+    assertTrue(Stats.welch(treat, base).p() > 0.9);
+    assertTrue(Stats.pairedT(treat, base).p() < 1e-6);
+  }
+
+  @Test
+  void benjaminiHochbergMatchesKnownValues() {
+    // sorted 0.005, 0.01, 0.03, 0.04 times 4/1, 4/2, 4/3, 4/4 = 0.02, 0.02, 0.04, 0.04
+    assertArrayEquals(new double[] {0.02, 0.04, 0.04, 0.02},
+        Stats.benjaminiHochberg(new double[] {0.01, 0.04, 0.03, 0.005}), 1e-15);
+    // the running minimum: 0.04 * 3/2 = 0.06 is capped by the larger rank's 0.05
+    assertArrayEquals(new double[] {0.03, 0.05, 0.05}, Stats.benjaminiHochberg(new double[] {0.01, 0.04, 0.05}), 1e-15);
+    assertArrayEquals(new double[] {1.0, 1.0}, Stats.benjaminiHochberg(new double[] {1.0, 0.9}), 0.0);
+    assertEquals(0, Stats.benjaminiHochberg(new double[0]).length);
+    final double[] p = {0.001, 0.2, 0.03, 0.04, 0.5, 0.012};
+    final double[] bh = Stats.benjaminiHochberg(p);
+    final double[] holm = Stats.holm(p);
+    for (int i = 0; i < p.length; i++) {
+      assertTrue(p[i] <= bh[i] && bh[i] <= holm[i], "raw <= BH <= Holm at " + i);
+    }
+    assertThrows(IllegalArgumentException.class, () -> Stats.benjaminiHochberg(new double[] {-0.1}));
+  }
+
   @Test
   void generatorAndJson() {
     final SplitMix64 r = new SplitMix64(1);

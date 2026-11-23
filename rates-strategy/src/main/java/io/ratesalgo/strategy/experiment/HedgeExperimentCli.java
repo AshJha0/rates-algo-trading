@@ -1,5 +1,6 @@
 package io.ratesalgo.strategy.experiment;
 
+import io.ratesalgo.backtest.prereg.DataSets;
 import io.ratesalgo.backtest.prereg.Ledger;
 import io.ratesalgo.backtest.prereg.PreRegistration;
 import io.ratesalgo.backtest.prereg.PreRegistrationException;
@@ -99,7 +100,13 @@ public final class HedgeExperimentCli {
           default -> first.period().businessDays();
         };
     final Path config = repo.resolve(opts.getOrDefault("config", first.config()));
-    final HedgeExperiment.Outcome outcome = new HedgeExperiment(repo, config).run(days, work);
+    final HedgeExperiment experiment = new HedgeExperiment(repo, config);
+    final List<Map<String, Object>> before = ledger.entries();
+    if (!"fitting".equals(scope) && DeskExperimentCli.refusedForUndeclaredLooks(
+        before, DataSets.key(days, experiment::daySeed), preregs, out)) {
+      return REFUSED;
+    }
+    final HedgeExperiment.Outcome outcome = experiment.run(days, work);
     if ("fitting".equals(scope)) {
       for (final String t : HedgeExperiment.TREATMENTS) {
         out.println(Json.write(outcome.resultsByTreatment().get(t)));
@@ -127,6 +134,7 @@ public final class HedgeExperimentCli {
       record.put("recorded_utc", recorded);
       record.put("results", outcome.resultsByTreatment().get(treatment));
       record.put("verdict", outcome.verdictByTreatment().get(treatment));
+      DataSets.stamp(record, ledger.entries(), p);
       ledger.append(record);
       out.println(
           p.id() + " " + treatment + " " + scope + ": " + outcome.verdictByTreatment().get(treatment)

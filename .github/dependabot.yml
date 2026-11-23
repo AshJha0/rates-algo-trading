@@ -1,0 +1,37 @@
+# Weekly dependency updates, grouped so each ecosystem opens one pull request, not one per
+# dependency. Security updates are not grouped and arrive as soon as an advisory is published.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      maven:
+        patterns: ["*"]
+
+  # research/pyproject.toml with research/requirements-lock.txt, and docs/site/requirements.txt
+  - package-ecosystem: pip
+    directories:
+      - "/research"
+      - "/docs/site"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 2
+    groups:
+      python:
+        patterns: ["*"]
+
+  # keeps the commit SHAs the workflows pin, and the version comments beside them, current
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    groups:
+      actions:
+        patterns: ["*"]
