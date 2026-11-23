@@ -22,7 +22,7 @@ flowchart LR
     sr["StressReplayer<br/>busiest window at twice the rate"]
   end
   subgraph chg["Change management, Art 5, 8, 11 and 14"]
-    cicheck["ci.yml and pull request review"]
+    cicheck["ci.yml required checks<br/>no independent review"]
     cfgv["ConfigValidatorMain<br/>versioned deploy/config"]
     bg["deploy/bluegreen.sh<br/>RestartProcedure"]
     standby["Warm standby over Aeron<br/>warm-standby-design.md"]
@@ -34,7 +34,7 @@ flowchart LR
   tb -->|rate checks inside| chk
   alerts -->|new daily loss breach triggers| ks
   op -->|token and party id| ep
-  ep -.->|bound to the real engines at integration| ks
+  ep -->|wired in rates-app| ks
   ks -->|"KillSwitch (31) journaled"| journal
   chk -->|checked messages journaled| journal
   prom -->|"KillSwitchEngaged, QuotesLiveAfterKill"| op
