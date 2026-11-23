@@ -10,7 +10,8 @@ flowchart LR
   end
   subgraph kill["Kill functionality, Art 12"]
     ks["KillSwitchController<br/>ACTIVE, KILLED, RESET_PENDING"]
-    ep["POST /control/kill<br/>OpsHttpServer"]
+    ep["POST /control/kill<br/>OpsHttpServer, token, 200 or 503"]
+    halt["Halt flag and supervisor<br/>venue sessions withdraw, then logout"]
   end
   subgraph post["Post-trade, Art 17 and 28"]
     pk["PositionKeeper<br/>books from journal frames"]
@@ -35,6 +36,7 @@ flowchart LR
   alerts -->|new daily loss breach triggers| ks
   op -->|token and party id| ep
   ep -->|wired in rates-app| ks
+  ep -->|"withdraws first (1.1.0)"| halt
   ks -->|"KillSwitch (31) journaled"| journal
   chk -->|checked messages journaled| journal
   prom -->|"KillSwitchEngaged, QuotesLiveAfterKill"| op
