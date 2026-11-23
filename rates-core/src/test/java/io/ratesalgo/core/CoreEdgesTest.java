@@ -183,6 +183,23 @@ class CoreEdgesTest {
   }
 
   @Test
+  void aDropOnTheSecondGatewayIsReportedForThatGateway() {
+    final ManyToOneRingBuffer in = RingBufferContract.newInbound(1 << 16);
+    final OneToOneRingBuffer first = RingBufferContract.newOutbound(1 << 16);
+    final OneToOneRingBuffer second = RingBufferContract.newOutbound(RingBufferContract.MIN_CAPACITY);
+    final EventLoop loop = builder(in, first, second).build();
+    final List<Integer> gateways = new ArrayList<>();
+    loop.backpressureListener(e -> gateways.add(e.gatewayId()));
+    fillRing(second);
+    loop.addAgent(() -> {
+      loop.publish(1, scratch, 0, message(0, REQUEST, 64));
+      return 1;
+    });
+    loop.doWork();
+    assertEquals(List.of(1), gateways);
+  }
+
+  @Test
   void dropsByATimerOrAnAgentAreReportedInTheSameDutyCycle() {
     final ManyToOneRingBuffer in = RingBufferContract.newInbound(1 << 16);
     final OneToOneRingBuffer small = RingBufferContract.newOutbound(RingBufferContract.MIN_CAPACITY);
