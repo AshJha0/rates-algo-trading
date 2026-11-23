@@ -75,6 +75,14 @@ final class HedgeFixture {
     fair.set(inst.id(), Decimal9.round(level), clock.epochNanos());
   }
 
+  /** Re-stamps every mid at the clock's time, as a live pricing feed would. */
+  void restamp() {
+    for (int i = 0; i < directory.size(); i++) {
+      final int id = directory.byIndex(i).id();
+      fair.set(id, fair.fairMid(id), clock.epochNanos());
+    }
+  }
+
   HedgePlanner planner(final double kappa) {
     return new HedgePlanner(universe, risk, KeyRateCovariance.assumedDefault(), costs, kappa, 1e-10, 50_000);
   }

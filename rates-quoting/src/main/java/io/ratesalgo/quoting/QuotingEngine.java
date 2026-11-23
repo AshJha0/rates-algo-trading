@@ -47,8 +47,19 @@ import org.agrona.concurrent.UnsafeBuffer;
  * grown older than the maximum age or whose fair value has moved against it by more than {@code
  * fairMoveWithdrawBp}, and measures fill markouts for the toxicity table from the mid at the
  * trade. Every RFQ decision and every response, with the cover and our rank where the venue gives
- * one, goes to the {@link RfqRecordListener}. Single-writer; the RFQ, response and poll paths do not
- * allocate after warm-up (QuotingAllocationTest).
+ * one, goes to the {@link RfqRecordListener}.
+ *
+ * <p>Acceptance (review 2026-11-23, Q7). A Done is compared with the price we quoted: a difference
+ * beyond {@code acceptPriceToleranceBp} is counted and reported to the recorder as a price
+ * mismatch, and booked or not as {@code rejectMismatchedDone} says. A Done for zero quantity is
+ * not a trade: nothing is booked and the hit-rate model is not taught a win.
+ *
+ * <p>Limits (Q9). The quoted size is also held inside the per-RFQ DV01 limit and what is left of
+ * the client's DV01 limit ({@link RiskEngine#quoteHeadroom}); the engine tells the risk engine the
+ * DV01 live to each client and the DV01 each client deals.
+ *
+ * <p>Single-writer; the RFQ, response and poll paths do not allocate after warm-up
+ * (QuotingAllocationTest).
  */
 public final class QuotingEngine implements KillSwitchListener {
 
@@ -98,6 +109,7 @@ public final class QuotingEngine implements KillSwitchListener {
   private final double[] sDistance;
   private final long[] sPrice;
   private final double[] sFair;
+  private final double[] sClientDv01;
   private final int[] held;
   private final int[] heldPos;
   private int heldCount;
@@ -148,6 +160,7 @@ public final class QuotingEngine implements KillSwitchListener {
   private final long[] tQty = new long[TOMBSTONES];
   private final long[] tRfqId = new long[TOMBSTONES];
   private final long[] tPrice = new long[TOMBSTONES];
+  private final int[] tClient = new int[TOMBSTONES];
   private int tHead;
   private double coverDistanceBp;
   private long coverObservations;
@@ -155,6 +168,21 @@ public final class QuotingEngine implements KillSwitchListener {
   private long wonBehindCover;
   private double wonBehindCoverBp;
   private long fairMovePulls;
+  private long priceMismatches;
+  private long rejectedDones;
+  private long emptyDones;
+
+  // housekeeping the engine's poll drives for the quoters that share its clock (package, CLOB)
+  private static final int MAX_HOOKS = 4;
+  private final Housekeeping[] hooks = new Housekeeping[MAX_HOOKS];
+  private int hookCount;
+
+  // realised volatility, when a reference instrument is configured (review Q11)
+  private final boolean volEstimated;
+  private long nextVolSample = Long.MIN_VALUE;
+  private final double[] volLast = new double[CurrencyCode.COUNT];
+  private final double[] volVariance = new double[CurrencyCode.COUNT];
+  private final int[] volSamples = new int[CurrencyCode.COUNT];
 
   /** Wires an engine; see the class comment for each collaborator's role. */
   public QuotingEngine(
@@ -204,6 +232,7 @@ public final class QuotingEngine implements KillSwitchListener {
     sDistance = new double[capacity];
     sPrice = new long[capacity];
     sFair = new double[capacity];
+    sClientDv01 = new double[capacity];
     held = new int[capacity];
     heldPos = new int[capacity];
     freeSlots = new int[capacity];
@@ -215,6 +244,25 @@ public final class QuotingEngine implements KillSwitchListener {
     seen = new LongHashSet(config.duplicateWindow * 4);
     seenRing = new long[config.duplicateWindow];
     lastQuoteTime = new Long2LongHashMap(Math.max(64, config.duplicateWindow * 2), 0.5f, Long.MIN_VALUE);
+    volEstimated = config.volatilityEstimated();
+    Arrays.fill(volLast, Double.NaN);
+  }
+
+  /** Work done on every {@link #poll}; must not allocate. */
+  @FunctionalInterface
+  public interface Housekeeping {
+    void poll(long nowNanos);
+  }
+
+  /**
+   * Runs {@code hook} at the end of every poll, so a quoter that holds reservations to a time to
+   * live releases them on time and not only when its next request arrives.
+   */
+  public void attach(final Housekeeping hook) {
+    if (hookCount == MAX_HOOKS) {
+      throw new IllegalStateException("more than " + MAX_HOOKS + " housekeeping hooks");
+    }
+    hooks[hookCount++] = hook;
   }
 
   /**
@@ -233,6 +281,15 @@ public final class QuotingEngine implements KillSwitchListener {
               final long rfqId, final long quoteId, final QuoteStatus status, final long ourPrice,
               final long coverPrice, final double coverGapBp, final int rank) {}
         };
+
+    /**
+     * A Done whose price differs from the one we quoted by more than the tolerance. {@code
+     * againstUsBp} is positive when the venue's price is worse for us; {@code booked} says whether
+     * the fill went to the risk engine. Does nothing unless overridden.
+     */
+    default void onPriceMismatch(
+        final long rfqId, final long quoteId, final long quotedPrice, final long tradedPrice,
+        final double againstUsBp, final boolean booked) {}
 
     /** One RFQ's decision, pass or quote; {@code outcome} is reused after the call returns. */
     void onDecision(RfqOutcome outcome);
@@ -334,7 +391,7 @@ public final class QuotingEngine implements KillSwitchListener {
 
     // size
     long qty = Math.min(quantity, tier.maxQuantity());
-    qty = Math.min(qty, risk.headroom(instrumentId, outcome.ourSide));
+    qty = Math.min(qty, risk.quoteHeadroom(clientId, instrumentId, outcome.ourSide));
     qty -= qty % config.minQuoteQuantity;
     if (qty <= 0) {
       return pass(PassReason.NO_RISK_CAPACITY);
@@ -364,7 +421,9 @@ public final class QuotingEngine implements KillSwitchListener {
     }
     final double optimal = spread.optimal(base, cost, config.maxHalfSpreadBp);
     final double half =
-        clamp(widen(optimal, inst.currency(), now) * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp);
+        config.widenAfterClamp
+            ? widen(clamp(optimal * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp), inst.currency(), now)
+            : clamp(widen(optimal, inst.currency(), now) * tier.spreadMultiplier(), config.minHalfSpreadBp, config.maxHalfSpreadBp);
 
     // skew: kappa * u' Sigma p / |U|, size term 0.5 kappa q u' Sigma u / |U|
     risk.ladder(inst.currency(), book);
@@ -400,13 +459,15 @@ public final class QuotingEngine implements KillSwitchListener {
     // risk check, reserve, send
     final int r =
         weBuy
-            ? risk.checkQuote(instrumentId, price, qty, 0L, 0L, journalSeqNo)
-            : risk.checkQuote(instrumentId, 0L, 0L, price, qty, journalSeqNo);
+            ? risk.checkQuote(clientId, instrumentId, price, qty, 0L, 0L, journalSeqNo)
+            : risk.checkQuote(clientId, instrumentId, 0L, 0L, price, qty, journalSeqNo);
     if (r != RiskEngine.OK) {
       outcome.limitRejection = r;
       return pass(PassReason.RISK_REJECT);
     }
     risk.reserve(instrumentId, weBuy ? qty : 0L, weBuy ? 0L : qty);
+    final double clientDv01 = qtyMajor * unitPar;
+    risk.reserveClient(clientId, clientDv01);
     long validUntil = now + config.firmTtlNanos;
     if (expiryNanos != 0) {
       validUntil = Math.min(validUntil, expiryNanos);
@@ -442,6 +503,7 @@ public final class QuotingEngine implements KillSwitchListener {
     sDistance[slot] = distance;
     sPrice[slot] = price;
     sFair[slot] = fair;
+    sClientDv01[slot] = clientDv01;
     heldPos[slot] = heldCount;
     held[heldCount++] = slot;
     quoteSlot.put(quoteId, slot);
@@ -468,6 +530,9 @@ public final class QuotingEngine implements KillSwitchListener {
    * its distance to the cover statistics, but is not a second observation (one RFQ, one label;
    * DR-R2R-08). TradedAway teaches a loss. Every outcome releases the quote's reservation and frees
    * it, and goes to the recorder with the cover gap and our rank.
+   *
+   * <p>A Done is checked before it is booked: for zero quantity it is counted and nothing else
+   * happens, and at a price other than the quoted one it is flagged (see the class comment).
    */
   public void onQuoteResponse(
       final long quoteId, final QuoteStatus status, final long tradedPrice, final long tradedQuantity, final long coverPrice) {
@@ -483,22 +548,31 @@ public final class QuotingEngine implements KillSwitchListener {
     record(sRfqId[slot], quoteId, status, sBuy[slot], sPrice[slot], coverPrice, instrumentId);
     if (status == QuoteStatus.Done) {
       final long qty = Math.min(Math.max(tradedQuantity, 0L), sQty[slot]);
-      fills++;
       release(slot);
-      risk.onFill(instrumentId, sBuy[slot] ? qty : -qty, tradedPrice);
-      hitRate.update(sBase[slot], sDistance[slot], true);
-      if (coverPrice != 0L) {
-        // the cover is the client's next best price: below our bid when we buy, above our offer
-        // when we sell; one on the wrong side of the trade is inconsistent and not recorded
-        final double signed =
-            Decimal9.toDouble(sBuy[slot] ? tradedPrice - coverPrice : coverPrice - tradedPrice)
-                / risk.quotePerBp(instrumentId);
-        if (signed > 0.0) {
-          coverDistanceBp += signed;
-          coverObservations++;
+      if (qty == 0L) {
+        // nothing traded: not a fill, and not a win the hit-rate model should learn from
+        emptyDones++;
+      } else if (accept(sRfqId[slot], quoteId, sBuy[slot], sPrice[slot], tradedPrice, instrumentId)) {
+        fills++;
+        risk.onFill(instrumentId, sBuy[slot] ? qty : -qty, tradedPrice);
+        risk.onClientFill(sClient[slot], sClientDv01[slot] * ((double) qty / sQty[slot]));
+        hitRate.update(sBase[slot], sDistance[slot], true);
+        if (coverPrice != 0L) {
+          // the cover is the client's next best price: below our bid when we buy, above our offer
+          // when we sell; one on the wrong side of the trade is inconsistent and not recorded
+          final double signed =
+              Decimal9.toDouble(sBuy[slot] ? tradedPrice - coverPrice : coverPrice - tradedPrice)
+                  / risk.quotePerBp(instrumentId);
+          if (signed > 0.0) {
+            coverDistanceBp += signed;
+            coverObservations++;
+            if (config.coverLearning) {
+              spread.observeCoverGap(signed);
+            }
+          }
         }
+        scheduleMarkout(slot);
       }
-      scheduleMarkout(slot);
     } else {
       release(slot);
       if (status == QuoteStatus.TradedAway) {
@@ -522,7 +596,7 @@ public final class QuotingEngine implements KillSwitchListener {
     } else {
       pulledForRelease = false;
     }
-    if (config.fairMoveWithdrawBp > 0.0) {
+    if (config.fairMoveWithdrawBp > 0.0 || config.fairMoveWithdrawFraction > 0.0) {
       pullOnFairMove(nowNanos);
     }
     if (nowNanos >= nextExpiry || nowNanos >= nextStale) {
@@ -559,6 +633,12 @@ public final class QuotingEngine implements KillSwitchListener {
     while (mCount > 0 && mDue[(mHead - mCount + MARKOUTS) % MARKOUTS] <= nowNanos) {
       measureMarkout((mHead - mCount + MARKOUTS) % MARKOUTS, nowNanos);
       mCount--;
+    }
+    if (volEstimated && nowNanos >= nextVolSample) {
+      sampleVolatility(nowNanos);
+    }
+    for (int h = 0; h < hookCount; h++) {
+      hooks[h].poll(nowNanos);
     }
   }
 
@@ -658,6 +738,26 @@ public final class QuotingEngine implements KillSwitchListener {
   /** Quotes withdrawn because fair value moved against them by more than the threshold. */
   public long fairMovePulls() {
     return fairMovePulls;
+  }
+
+  /** Done responses whose price differed from the quoted one by more than the tolerance. */
+  public long priceMismatches() {
+    return priceMismatches;
+  }
+
+  /** Mismatched Done responses that were not booked ({@code rejectMismatchedDone}). */
+  public long rejectedDones() {
+    return rejectedDones;
+  }
+
+  /** Done responses for zero quantity: not booked and not taught to the hit-rate model. */
+  public long emptyDones() {
+    return emptyDones;
+  }
+
+  /** Daily realised volatility in use for a currency, bp. */
+  public double realisedVolatility(final CurrencyCode currency) {
+    return volBp[currency.index()];
   }
 
   /** Responses that carried a cover price. */
@@ -784,7 +884,11 @@ public final class QuotingEngine implements KillSwitchListener {
       // against us: fair falls under our bid's fair or rises over our offer's, so the client gains by trading
       final double move =
           (sBuy[s] ? sFair[s] - fairValue.fair() : fairValue.fair() - sFair[s]) / risk.quotePerBp(sInstrument[s]);
-      if (move > config.fairMoveWithdrawBp) {
+      final double threshold =
+          config.fairMoveWithdrawFraction > 0.0
+              ? config.fairMoveWithdrawFraction * Math.max(sDistance[s], config.minHalfSpreadBp)
+              : config.fairMoveWithdrawBp;
+      if (move > threshold) {
         fairMovePulls++;
         pull(s, CancelReason.AdverseSignal, nowNanos);
       }
@@ -824,6 +928,65 @@ public final class QuotingEngine implements KillSwitchListener {
 
   private void release(final int s) {
     risk.release(sInstrument[s], sBuy[s] ? sQty[s] : 0L, sBuy[s] ? 0L : sQty[s]);
+    risk.releaseClient(sClient[s], sClientDv01[s]);
+  }
+
+  /**
+   * The price check at acceptance: true when the Done is to be booked. A venue trades an RFQ at
+   * the price we quoted; a Done at another price is a venue or mapping error, and is never booked
+   * without being counted and reported.
+   */
+  private boolean accept(
+      final long rfqId, final long quoteId, final boolean weBuy, final long quoted, final long traded,
+      final int instrumentId) {
+    if (traded == quoted) {
+      return true;
+    }
+    final double againstUsBp =
+        Decimal9.toDouble(weBuy ? traded - quoted : quoted - traded) / risk.quotePerBp(instrumentId);
+    if (Math.abs(againstUsBp) <= config.acceptPriceToleranceBp) {
+      return true;
+    }
+    priceMismatches++;
+    final boolean booked = !config.rejectMismatchedDone;
+    if (!booked) {
+      rejectedDones++;
+    }
+    recorder.onPriceMismatch(rfqId, quoteId, quoted, traded, againstUsBp, booked);
+    return booked;
+  }
+
+  /**
+   * One sample of each configured reference instrument: the squared move of its fair value since
+   * the last sample, in bp, goes into an exponentially weighted variance, which is scaled to a
+   * trading day. A reference with no fresh fair value skips the sample and restarts the series.
+   */
+  private void sampleVolatility(final long nowNanos) {
+    nextVolSample = nowNanos + config.volSampleNanos;
+    for (int c = 0; c < CurrencyCode.COUNT; c++) {
+      final int id = config.volReference[c];
+      final Instrument inst = id == 0 ? null : directory.byId(id);
+      if (inst == null) {
+        continue;
+      }
+      if (!fairValue.compute(inst, nowNanos) || nowNanos - fairValue.oldestNanos() > config.maxInputAgeNanos) {
+        volLast[c] = Double.NaN;
+        continue;
+      }
+      final double fair = fairValue.fair();
+      if (!Double.isNaN(volLast[c])) {
+        final double bp = (fair - volLast[c]) / risk.quotePerBp(id);
+        volVariance[c] =
+            volSamples[c] == 0 ? bp * bp : config.volDecay * volVariance[c] + (1.0 - config.volDecay) * bp * bp;
+        volSamples[c]++;
+        if (volSamples[c] >= config.volWarmupSamples) {
+          final double daily = Math.sqrt(volVariance[c] * ((double) config.volDayNanos / config.volSampleNanos));
+          // floored at the baseline: realised volatility widens a quote, it never tightens one
+          volBp[c] = Math.max(config.baselineVolBp, daily);
+        }
+      }
+      volLast[c] = fair;
+    }
   }
 
   private void remember(final int s) {
@@ -833,6 +996,7 @@ public final class QuotingEngine implements KillSwitchListener {
     tQty[tHead] = sQty[s];
     tRfqId[tHead] = sRfqId[s];
     tPrice[tHead] = sPrice[s];
+    tClient[tHead] = sClient[s];
     tHead = (tHead + 1) % TOMBSTONES;
   }
 
@@ -847,10 +1011,15 @@ public final class QuotingEngine implements KillSwitchListener {
       if (tQuoteId[k] == quoteId && tQty[k] > 0) {
         final long qty = Math.min(Math.max(tradedQuantity, 0L), tQty[k]);
         tQty[k] = 0;
-        lateFills++;
-        fills++;
         record(tRfqId[k], quoteId, QuoteStatus.Done, tBuy[k], tPrice[k], 0L, tInstrument[k]);
-        risk.onFill(tInstrument[k], tBuy[k] ? qty : -qty, tradedPrice);
+        if (qty == 0L) {
+          emptyDones++;
+        } else if (accept(tRfqId[k], quoteId, tBuy[k], tPrice[k], tradedPrice, tInstrument[k])) {
+          lateFills++;
+          fills++;
+          risk.onFill(tInstrument[k], tBuy[k] ? qty : -qty, tradedPrice);
+          risk.onClientFill(tClient[k], risk.dv01(tInstrument[k], qty));
+        }
         return true;
       }
     }
