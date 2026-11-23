@@ -97,7 +97,10 @@ public final class Checkpoints {
   /** Writes text to a temporary file next to {@code target} and moves it into place atomically. */
   static void writeAtomically(final Path target, final String text) {
     try {
-      Files.createDirectories(target.getParent());
+      final Path parent = target.toAbsolutePath().getParent();
+      if (parent != null) {
+        Files.createDirectories(parent);
+      }
       final Path tmp = target.resolveSibling(target.getFileName() + ".tmp");
       Files.writeString(tmp, text, StandardCharsets.UTF_8);
       try {
