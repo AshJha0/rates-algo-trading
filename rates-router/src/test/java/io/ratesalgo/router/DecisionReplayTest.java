@@ -13,6 +13,7 @@ import io.ratesalgo.messages.sbe.RouteDecisionEncoder;
 import io.ratesalgo.messages.sbe.RouteReason;
 import io.ratesalgo.messages.sbe.RouteDecisionVenueEncoder;
 import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.messages.sbe.VenueExclusion;
 import io.ratesalgo.router.sim.SimConfig;
 import io.ratesalgo.router.sim.SimMarket;
 import java.nio.file.Path;
@@ -61,6 +62,12 @@ class DecisionReplayTest {
       router.submit(1, 10, Side.Buy, 40 * MM, 0.3, 0L);
       router.submit(2, 10, Side.Sell, 25 * MM, 0.8, 0L);
       for (int i = 0; i < 20_000 && (router.isActive(1) || router.isActive(2)); i++) {
+        // venue health is an input to the decision: it must come back from the journal too
+        if (i == 5) {
+          router.venueHealth(venues[0].venueId(), false);
+        } else if (i == 60) {
+          router.venueHealth(venues[0].venueId(), true);
+        }
         clock.advance(config.stepNanos());
         market.step();
         market.drain(router);
@@ -100,6 +107,9 @@ class DecisionReplayTest {
           "re-evaluation differs:\n" + journaled.format() + again.format());
     }
     assertTrue(rebuilt.get(0).format().contains("decision 1 parent 1"));
+    assertTrue(
+        rebuilt.stream().anyMatch(t -> t.exclusion(0) == VenueExclusion.Stale),
+        "no journaled decision shows the unhealthy venue as Stale");
   }
 
   @Test
