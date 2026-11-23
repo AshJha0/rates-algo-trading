@@ -32,7 +32,8 @@ public final class SimSequencer {
   private final List<VenueSimulator> venues = new ArrayList<>();
   private final List<ConcurrentLinkedQueue<Runnable>> inboxes = new ArrayList<>();
   private final AtomicLong offered = new AtomicLong();
-  private long drained;
+  private final java.util.concurrent.atomic.AtomicBoolean draining = new java.util.concurrent.atomic.AtomicBoolean();
+  private final AtomicLong drained = new AtomicLong();
 
   /** Adds a venue; its place in the drain order is the order of registration. */
   synchronized int register(final VenueSimulator venue) {
@@ -59,23 +60,33 @@ public final class SimSequencer {
    * Runs what is queued: venue by venue in registration order, each venue's work in arrival
    * order. Only what was queued when a venue's turn came is run, so the pass ends. Returns the
    * number of pieces of work run.
+   *
+   * @throws IllegalStateException if another thread is draining
    */
   public int drain() {
-    int done = 0;
-    final int count = venueCount();
-    for (int v = 0; v < count; v++) {
-      final ConcurrentLinkedQueue<Runnable> inbox = inbox(v);
-      for (int n = inbox.size(); n > 0; n--) {
-        final Runnable work = inbox.poll();
-        if (work == null) {
-          break;
-        }
-        work.run();
-        done++;
-      }
+    if (!draining.compareAndSet(false, true)) {
+      // two owners would be the race this class exists to remove: fail loudly, not quietly
+      throw new IllegalStateException("the venues are being drained by another thread");
     }
-    drained += done;
-    return done;
+    try {
+      int done = 0;
+      final int count = venueCount();
+      for (int v = 0; v < count; v++) {
+        final ConcurrentLinkedQueue<Runnable> inbox = inbox(v);
+        for (int n = inbox.size(); n > 0; n--) {
+          final Runnable work = inbox.poll();
+          if (work == null) {
+            break;
+          }
+          work.run();
+          done++;
+        }
+      }
+      drained.addAndGet(done);
+      return done;
+    } finally {
+      draining.set(false);
+    }
   }
 
   /** Work queued and not yet run. Any thread; exact only when nothing is being offered or drained. */
@@ -93,8 +104,8 @@ public final class SimSequencer {
     return offered.get();
   }
 
-  /** Pieces of work run so far. The draining thread. */
+  /** Pieces of work run so far. Any thread. */
   public long drained() {
-    return drained;
+    return drained.get();
   }
 }
