@@ -79,6 +79,9 @@ class EodReportOutputsTest {
     assertEquals(2, run("journal", "x"));
     assertTrue(err.toString(StandardCharsets.UTF_8).contains("unexpected argument journal"));
     err.reset();
+    assertEquals(2, run("--journal"), "a flag without its value is ignored, then reported missing");
+    assertTrue(err.toString(StandardCharsets.UTF_8).contains("missing --journal"), err.toString(StandardCharsets.UTF_8));
+    err.reset();
     assertEquals(2, run("--journal", "x", "--date", "2026-10-30"));
     assertTrue(err.toString(StandardCharsets.UTF_8).contains("missing --instruments"), err.toString(StandardCharsets.UTF_8));
     err.reset();
@@ -90,5 +93,19 @@ class EodReportOutputsTest {
     assertEquals(2, run(a));
     assertTrue(err.toString(StandardCharsets.UTF_8).startsWith("io error: "), err.toString(StandardCharsets.UTF_8));
     assertEquals("", out.toString(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void aMissingOfficialMarkStopsTheRunWithStatusThreeAndSaysWhich() throws Exception {
+    final Path j = dir.resolve("m.raj");
+    try (JournalScript s = new JournalScript(j, 1 << 16, SyntheticDay.MIDNIGHT)) {
+      s.executionReport(NINE, 1, 7, 507, 71, 1001, Side.Buy, OrdStatus.Filled, px("99.5"), 300, 0, 300, NINE);
+    }
+    final Path marks = dir.resolve("marks.csv");
+    Files.writeString(marks, "date,instrument_id,mark" + System.lineSeparator());
+    final String[] a = args(j, "2026-10-30", dir.resolve("o"));
+    a[9] = marks.toString();
+    assertEquals(3, run(a));
+    assertTrue(err.toString(StandardCharsets.UTF_8).contains("1001"), err.toString(StandardCharsets.UTF_8));
   }
 }

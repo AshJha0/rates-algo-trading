@@ -133,4 +133,16 @@ class ValueTypesTest {
     assertTrue(ReconItem.fromRecords(List.of(newo)).isEmpty());
     assertEquals("Buy 5@7 t=9", new ReconItem("1:E:1", 1001, Side.Buy, 5, 7, 9).describe());
   }
+
+  @Test
+  void anAmendmentRebuildsOnlyATradeThatIsThere() {
+    final OrderRecord fill = new OrderRecord(1, "2026-10-30", "T3", "FILL", "BUYI", "DEAL", false, "ALG", 7, 0,
+        "VENUE-1", "LMT", 100, "USD", "PERC", 0, 5, 0, 9, "1", "GDAY", "X", 1001, 0, 1, "1:E:1");
+    final OrderRecord amend = new OrderRecord(2, "2026-10-30", "T3", "AMND", "BUYI", "DEAL", false, "ALG", 7, 0,
+        "VENUE-1", "LMT", 101, "USD", "PERC", 0, 4, 0, 10, "1", "GDAY", "X", 1001, 0, 2, "1:E:1");
+    final OrderRecord stray = new OrderRecord(3, "2026-10-30", "T3", "AMND", "BUYI", "DEAL", false, "ALG", 8, 0,
+        "VENUE-1", "LMT", 101, "USD", "PERC", 0, 4, 0, 10, "2", "GDAY", "X", 1001, 0, 3, "1:E:2");
+    assertEquals(List.of(new ReconItem("1:E:1", 1001, Side.Buy, 4, 101, 9)),
+        ReconItem.fromRecords(List.of(fill, amend, stray)));
+  }
 }
