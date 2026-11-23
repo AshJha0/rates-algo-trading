@@ -73,7 +73,7 @@ Instruments: swaps 9012 (1Y), 2001, 9105, 2002, 9106, 2003, 9107, 2004; the four
 | hedge parents routed / hedge fills | 28 / 63 | 89 / 92 |
 | fills on CLOB 1 / CLOB 2 / futures | 38 / 25 / 0 | 4 / 1 / 87 (4 / 1 / 0 at the outage) |
 | curve rounds / reprices | 3,600 / 3,601 | - |
-| book frames CLOB 1 / CLOB 2 / futures | 10,665 / 10,035 / 7,324 | - |
+| book frames CLOB 1 / CLOB 2 / futures | 10,665 / 10,035 / 7,324 (10,667 / 10,033 in another run; Section 8) | - |
 | trade prints applied | 7,236 | - |
 | feed gaps / limit breaches / overfills | 0 / 0 / 0 | 0 / 0 / 0 |
 | trades reconciled with the four venues | 72 of 72 | 94 of 94 |
@@ -87,14 +87,14 @@ Asserted: quotes on swaps and on Treasuries, RFQs won, covers reaching the cover
 
 ## 6. Cost on the loop and allocation
 
-`WiredLoopV2AllocationTest`: the v2 desk stepped with a manual clock through curve rounds, books and prints on three venues, RFQs, their outcomes and hedge fills; bytes allocated inside each `doWork` are counted against the kind of message that caused them. Four windows of 400 cycles after 1,600 of warm-up, under the version 1 gate's bound: no window after the first above 1,024 bytes and at least one at zero. Observed over four runs: 0 bytes in every later window in two, and one later window of 56 bytes in two, counted against an RFQ.
+`WiredLoopV2AllocationTest`: the v2 desk stepped with a manual clock through curve rounds, books and prints on three venues, RFQs, their outcomes and hedge fills; bytes allocated inside each `doWork` are counted against the kind of message that caused them. Four windows of 400 cycles after 1,600 of warm-up, under the version 1 gate's bound: no window after the first above 1,024 bytes and at least one at zero. Observed over five runs: 0 bytes in every later window in three, and one later window of 56 bytes in two, counted against an RFQ.
 
 | Path | Median | 99th percentile |
 |---|---:|---:|
 | one RFQ, QuoteRequest to Quote | 7.8 to 43 microseconds | 26 to 161 microseconds |
 | one complete curve round's reprice (bootstrap, leave-one-out, bonds, every fair value pushed) | 132 to 789 microseconds | 362 to 2,302 microseconds |
 
-Four runs of the test under the build's coverage agent on a shared machine; the low end of each range is the one run made while no other build was running, the high end the worst of the three made beside other builds. Read the low end as nearer the truth and the spread as what a loaded host does. An RFQ that arrives during a reprice waits for it.
+Five runs of the test under the build's coverage agent on a shared machine; the low end of each range is the one run made while no other build was running, the high end the worst of those made beside other builds. The run inside the final whole build printed 27 and 90 microseconds for an RFQ and 492 and 1,081 for a reprice. Read the low end as nearer the truth and the spread as what a loaded host does. An RFQ that arrives during a reprice waits for it.
 
 Hot-path rules: `DeskGroup`, `LoopBook`, `InboundRouter`, `FeedBinding`, `RouterHedgeSink` and the new `FuturesOverlay` are `@HotPath` and pass `AppHotPathRulesTest`.
 
@@ -126,6 +126,7 @@ Not built: `SimulatedVenuesV2` starts its acceptors plain, without the TLS, cred
 | `PricingV2` constructor (rates-app pricing, lines 268 to 378) | The binding stamps its start-of-day marks with the clock at construction, and the residuals it carries afterwards depend on that stamp. A live loop is built before its first input and its replay on the first journaled frame, so a desk rebuilt from its journals priced a Treasury 5e-9 of a point away from the desk that wrote them (`DeskV2RecoveryTest`, with the desk built 1 ms before its first frame). On a process running on its own threads the two instants always differ | Worked around in `PricingBindings.create`: version 2 is built as of the last New York cut, which is the same for both. The binding is unchanged; a desk built just before a cut and replayed from a first frame just after it would still differ |
 | `PricingV2.inputId` (rates-app pricing) | Returns `V2InputIds.parSwap(months)` for every pillar swap, where PRICING_V2.md Section 12 says "the template id where one exists". Both ids reach the input, so nothing breaks; the feed sends the id the binding lists | Not changed |
 | `Venues.T0` (rates-venues), `SimV2VenuesTest.OPEN`, `SimulatedVenuesV2Test` | The constants are read in comments as 13:30Z / 08:30 and 12:00Z / 07:00 New York; they are 14:30Z and 13:00Z, an hour later, because daylight saving ended on 1 November 2026. The values are what the recorded runs use and are right for them (the trading process starts 65 minutes before `T0`, at 08:25 New York); only the reading was wrong. It matters to pricing v2, whose business date and cut are read off the epoch clock, and to a simulator v2 session, which stands for 07:00 at whatever instant it is opened | `Venues.T0` comment corrected, value unchanged; `V2DeskProcess.SESSION_OPEN_EPOCH_NANOS` is the true 12:00Z; the two test constants are not mine and are unchanged |
+| `Venues.simV2` / `ClobSimulator` (rates-venues), `BookModel` (rates-sim, line 46) | The three simulator v2 order books share one `BookModel`, which says it is not thread-safe, and each venue handles the desk's orders on its own FIX thread under its own lock. When the router sends children to both CLOBs in one step, the order in which the two venues consume the model's depth is not fixed. Two runs of the same seed gave book frames 10,665 / 10,035 and 10,667 / 10,033 with every other count equal; each run replays to its own hash, because replay reads the journal, but the live day is not bit-identical from run to run. Version 1, with one order book, is | Not fixed: it needs one lock for the session across the venues. This is why `SmokeV2Test` records its counts and does not assert them |
 | `ChildOrderBook.execSeen` (rates-router, line 138) | The set of execution ids is sized for an expected number of fills and doubles on the loop thread: a 131 kB array when a router has seen about 4,500 fills in a day | Not fixed (not owned); the allocation gate is kept below it and says so |
 | `STRATEGY_V2.md` Section 10 | Expects futures to become hedges "once a futures book exists"; at the declared tick costs the planner never chose TY on the smoke day | Not a code defect; recorded in Section 5 |
 | `DeskSettings.V2_CLIENT_TIERS` | Maps five client ids to tiers A, A, B, B, C; simulator v2 sends 2001, 2002, 2003 for tiers A, B, C (SIM_V2_DESIGN.md D12), so tier B clients are priced as tier A and tier C as tier B until their own markouts take over | Not changed: a strategy parameter, and its document says it follows the simulator when the ids are fixed. Owner decision |
