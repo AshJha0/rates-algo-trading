@@ -62,6 +62,48 @@ public final class SegmentedJournal implements AutoCloseable {
   /** File suffix of every segment. */
   public static final String SUFFIX = ".raj";
 
+  /**
+   * How a journal is written beyond its size and clock.
+   *
+   * @param hashAlgorithm the {@link ChainHash} of a new journal; an opened journal keeps the one
+   *     its files name
+   * @param lockPages lock the current and the prepared segment in memory ({@link PageLock}; Linux,
+   *     with the limit to cover them); a refusal is counted, not fatal
+   * @param refaultWindowBytes with preallocation, bytes ahead of the write position the background
+   *     thread keeps writable ({@link JournalWriter#refault}); 0 turns it off
+   * @param refaultPeriodNanos how often it does so
+   */
+  public record Options(int hashAlgorithm, boolean lockPages, int refaultWindowBytes, long refaultPeriodNanos) {
+
+    /** FNV-1a, unlocked, 4 MiB kept writable, refreshed every second. */
+    public static final Options DEFAULT = new Options(ChainHash.DEFAULT, false, 4 << 20, 1_000_000_000L);
+
+    /** Validates the options. */
+    public Options {
+      if (!ChainHash.isKnown(hashAlgorithm)) {
+        throw new IllegalArgumentException("unknown chain hash algorithm " + hashAlgorithm);
+      }
+      if (refaultWindowBytes < 0 || refaultPeriodNanos <= 0) {
+        throw new IllegalArgumentException("refault window must be >= 0 and its period positive");
+      }
+    }
+
+    /** These options with another chain hash for new journals. */
+    public Options withHashAlgorithm(final int algorithm) {
+      return new Options(algorithm, lockPages, refaultWindowBytes, refaultPeriodNanos);
+    }
+
+    /** These options locking pages, or not. */
+    public Options withLockPages(final boolean lock) {
+      return new Options(hashAlgorithm, lock, refaultWindowBytes, refaultPeriodNanos);
+    }
+
+    /** These options with another refault window and period. */
+    public Options withRefault(final int windowBytes, final long periodNanos) {
+      return new Options(hashAlgorithm, lockPages, windowBytes, periodNanos);
+    }
+  }
+
   /** Largest segment index; six decimal digits. */
   public static final int MAX_SEGMENTS = 999_999;
 
@@ -71,6 +113,8 @@ public final class SegmentedJournal implements AutoCloseable {
   private final String name;
   private final int segmentCapacity;
   private final Clock clock;
+  private final int hashAlgorithm;
+  private final Options options;
 
   private final Preparer preparer;
 
@@ -86,16 +130,23 @@ public final class SegmentedJournal implements AutoCloseable {
       final JournalWriter current,
       final int segmentIndex,
       final boolean preallocate,
-      final long stallNanos) {
+      final long stallNanos,
+      final Options options) {
+    this.options = options;
     this.dir = dir;
     this.name = name;
     this.segmentCapacity = segmentCapacity;
     this.clock = clock;
+    this.hashAlgorithm = current.hashAlgorithm();
     this.current = current;
     this.segmentIndex = segmentIndex;
     this.preparer = preallocate ? new Preparer(segmentIndex, stallNanos) : null;
     if (preparer != null) {
       current.pretouch();
+      if (options.lockPages()) {
+        preparer.countLock(current.lockPages());
+      }
+      preparer.active = current;
       preparer.thread.start();
     }
   }
@@ -152,7 +203,32 @@ public final class SegmentedJournal implements AutoCloseable {
       final int segmentCapacity,
       final Clock clock,
       final boolean preallocate) {
-    return create(dir, name, segmentCapacity, clock, preallocate, STALL_NANOS);
+    return create(dir, name, segmentCapacity, clock, preallocate, ChainHash.DEFAULT);
+  }
+
+  /**
+   * {@link #create(Path, String, int, Clock, boolean)} chaining every segment with {@code
+   * hashAlgorithm} ({@link ChainHash#FNV1A} or {@link ChainHash#WORD64}).
+   */
+  public static SegmentedJournal create(
+      final Path dir,
+      final String name,
+      final int segmentCapacity,
+      final Clock clock,
+      final boolean preallocate,
+      final int hashAlgorithm) {
+    return create(dir, name, segmentCapacity, clock, preallocate, STALL_NANOS, Options.DEFAULT.withHashAlgorithm(hashAlgorithm));
+  }
+
+  /** {@link #create(Path, String, int, Clock, boolean)} with every option given. */
+  public static SegmentedJournal create(
+      final Path dir,
+      final String name,
+      final int segmentCapacity,
+      final Clock clock,
+      final boolean preallocate,
+      final Options options) {
+    return create(dir, name, segmentCapacity, clock, preallocate, STALL_NANOS, options);
   }
 
   /** {@link #create(Path, String, int, Clock, boolean)} with a given stall limit; for tests. */
@@ -163,12 +239,24 @@ public final class SegmentedJournal implements AutoCloseable {
       final Clock clock,
       final boolean preallocate,
       final long stallNanos) {
+    return create(dir, name, segmentCapacity, clock, preallocate, stallNanos, Options.DEFAULT);
+  }
+
+  static SegmentedJournal create(
+      final Path dir,
+      final String name,
+      final int segmentCapacity,
+      final Clock clock,
+      final boolean preallocate,
+      final long stallNanos,
+      final Options options) {
+    final int hashAlgorithm = options.hashAlgorithm();
     if (segmentIndices(dir, name).length != 0) {
       throw new IllegalArgumentException("journal " + name + " already exists in " + dir);
     }
     final JournalWriter first =
-        JournalWriter.create(segmentPath(dir, name, 1), segmentCapacity, clock, 1L, GENESIS_HASH);
-    return new SegmentedJournal(dir, name, segmentCapacity, clock, first, 1, preallocate, stallNanos);
+        JournalWriter.create(segmentPath(dir, name, 1), segmentCapacity, clock, 1L, GENESIS_HASH, hashAlgorithm);
+    return new SegmentedJournal(dir, name, segmentCapacity, clock, first, 1, preallocate, stallNanos, options);
   }
 
   /**
@@ -199,6 +287,20 @@ public final class SegmentedJournal implements AutoCloseable {
       final int segmentCapacity,
       final Clock clock,
       final boolean preallocate) {
+    return open(dir, name, segmentCapacity, clock, preallocate, Options.DEFAULT);
+  }
+
+  /**
+   * {@link #open(Path, String, int, Clock, boolean)} with options; the chain hash is the one the
+   * files name, whatever {@code options} says.
+   */
+  public static SegmentedJournal open(
+      final Path dir,
+      final String name,
+      final int segmentCapacity,
+      final Clock clock,
+      final boolean preallocate,
+      final Options options) {
     final int[] indices = segmentIndices(dir, name);
     if (indices.length == 0) {
       throw new IllegalArgumentException("journal " + name + " not found in " + dir);
@@ -206,16 +308,25 @@ public final class SegmentedJournal implements AutoCloseable {
     final int last = indices[indices.length - 1];
     final long nextSequence;
     final long hash;
+    final int algorithm;
     try (SegmentedJournalReader reader = SegmentedJournalReader.open(dir, name, last - 1)) {
       while (reader.next((s, t, id, v, b, o, l) -> {})) {
         // verifying every earlier segment
       }
       nextSequence = reader.expectedSequence();
       hash = reader.chainHash();
+      algorithm = last > 1 ? reader.hashAlgorithm() : 0;
     }
     final JournalWriter writer =
         JournalWriter.open(segmentPath(dir, name, last), clock, nextSequence, hash);
-    return new SegmentedJournal(dir, name, segmentCapacity, clock, writer, last, preallocate, STALL_NANOS);
+    if (algorithm != 0 && writer.hashAlgorithm() != algorithm) {
+      writer.discard();
+      throw new JournalCorruptionException(
+          nextSequence, "segment " + last + " of journal " + name + " uses another chain hash than the segments before it");
+    }
+    return new SegmentedJournal(
+        dir, name, segmentCapacity, clock, writer, last, preallocate, STALL_NANOS,
+        options.withHashAlgorithm(writer.hashAlgorithm()));
   }
 
   /**
@@ -269,6 +380,9 @@ public final class SegmentedJournal implements AutoCloseable {
     if (preparer != null) {
       final JournalWriter next = preparer.take();
       next.continueChain(nextSequence, hash);
+      // the background thread refaults the active segment: point it at the new one before it is
+      // given the old one to close, so it never touches a segment it has unmapped
+      preparer.active = next;
       preparer.retire(current);
       current = next;
       segmentIndex++;
@@ -279,7 +393,7 @@ public final class SegmentedJournal implements AutoCloseable {
     segmentIndex++;
     current =
         JournalWriter.create(
-            segmentPath(dir, name, segmentIndex), segmentCapacity, clock, nextSequence, hash);
+            segmentPath(dir, name, segmentIndex), segmentCapacity, clock, nextSequence, hash, hashAlgorithm);
   }
 
   /** The sequence the next appended frame will get. */
@@ -295,6 +409,16 @@ public final class SegmentedJournal implements AutoCloseable {
   /** The 1-based index of the segment being written. */
   public int segmentIndex() {
     return segmentIndex;
+  }
+
+  /** The {@link ChainHash} algorithm every segment of this journal is chained with. */
+  public int hashAlgorithm() {
+    return hashAlgorithm;
+  }
+
+  /** Segments locked in memory so far, and segments whose lock was refused; {0, 0} unless asked to lock. */
+  public long[] pageLocks() {
+    return preparer == null ? new long[2] : new long[] {preparer.locked.get(), preparer.lockRefused.get()};
   }
 
   /** Capacity of each new segment in bytes. */
@@ -350,9 +474,13 @@ public final class SegmentedJournal implements AutoCloseable {
   public void close() {
     if (!closed) {
       closed = true;
-      current.close();
-      if (preparer != null) {
-        preparer.stop();
+      // the background thread refaults the current segment: stop it before the segment is unmapped
+      try {
+        if (preparer != null) {
+          preparer.stop();
+        }
+      } finally {
+        current.close();
       }
     }
   }
@@ -391,6 +519,13 @@ public final class SegmentedJournal implements AutoCloseable {
     /** The index of the segment being appended to; written by the appender at each roll. */
     private volatile int currentIndex;
 
+    /** The segment being appended to, for the refault; written by the appender before each retire. */
+    private volatile JournalWriter active;
+
+    private long nextRefaultNanos;
+    private final AtomicLong locked = new AtomicLong();
+    private final AtomicLong lockRefused = new AtomicLong();
+
     private volatile boolean stopping;
     private volatile Throwable failure;
     /** Written by the appender only; read from any thread. */
@@ -424,6 +559,7 @@ public final class SegmentedJournal implements AutoCloseable {
             ready = prepare(index + 1);
             prepared = index + 1;
           } else if (retiring == null) {
+            refaultIfDue();
             LockSupport.parkNanos(PREPARER_PARK_NANOS);
           }
         }
@@ -438,6 +574,24 @@ public final class SegmentedJournal implements AutoCloseable {
       }
     }
 
+    /** Keeps the window ahead of the appender writable; see {@link JournalWriter#refault}. */
+    private void refaultIfDue() {
+      final int window = options.refaultWindowBytes();
+      final JournalWriter w = active;
+      if (window == 0 || w == null) {
+        return;
+      }
+      final long now = System.nanoTime();
+      if (now - nextRefaultNanos >= 0) {
+        nextRefaultNanos = now + options.refaultPeriodNanos();
+        progress.lazySet(progress.get() + w.refault(window) / JournalWriter.PRETOUCH_PAGES_PER_CHECK);
+      }
+    }
+
+    void countLock(final boolean done) {
+      (done ? locked : lockRefused).incrementAndGet();
+    }
+
     private JournalWriter prepare(final int index) throws IOException {
       final Path target = segmentPath(dir, name, index);
       final Path temp = dir.resolve(target.getFileName() + ".pending");
@@ -447,6 +601,7 @@ public final class SegmentedJournal implements AutoCloseable {
               temp,
               segmentCapacity,
               clock,
+              hashAlgorithm,
               chunks -> {
                 progress.lazySet(progress.get() + 1);
                 return !stopping;
@@ -471,6 +626,9 @@ public final class SegmentedJournal implements AutoCloseable {
             progress.lazySet(progress.get() + JournalWriter.PRETOUCH_PAGES_PER_CHECK);
             return !stopping;
           });
+      if (options.lockPages()) {
+        countLock(w.lockPages());
+      }
       return w;
     }
 
@@ -511,11 +669,31 @@ public final class SegmentedJournal implements AutoCloseable {
       return next;
     }
 
-    /** Called by the appender at a roll to hand over the full segment. */
+    /**
+     * Called by the appender at a roll to hand over the full segment. Waits, if the previous one is
+     * still being closed, for as long as this thread makes progress; throws after the stall limit
+     * without any, so a preparer stuck in {@code force} on a dead disk fails the appender instead
+     * of spinning it for ever (review round 6, unbounded spins).
+     */
     void retire(final JournalWriter full) {
-      while (retiring != null) {
-        checkAlive();
-        Thread.onSpinWait();
+      if (retiring != null) {
+        long seen = progress.get();
+        long since = System.nanoTime();
+        while (retiring != null) {
+          checkAlive();
+          final long count = progress.get();
+          final long now = System.nanoTime();
+          if (count != seen) {
+            seen = count;
+            since = now;
+          } else if (now - since >= stallNanos) {
+            throw new IllegalStateException(
+                "journal " + name + ": the previous segment was not closed and the background thread made no "
+                    + "progress for " + TimeUnit.NANOSECONDS.toMillis(stallNanos) + " ms");
+          }
+          LockSupport.unpark(thread);
+          Thread.onSpinWait();
+        }
       }
       retiring = full;
     }

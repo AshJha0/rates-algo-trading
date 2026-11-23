@@ -31,8 +31,8 @@ import org.agrona.concurrent.UnsafeBuffer;
  * owner calls {@link #poll()} from its loop: it reads, frames complete messages, hands each to the
  * session and runs the session's timers. The channel is non-blocking throughout.
  *
- * <p>Nothing here waits without a bound, because one gateway thread carries every session and the
- * kill path: a connect that is not established by its deadline fails, a handshake that is not
+ * <p>Nothing here waits without a bound, because the thread that owns the session also carries
+ * its part of the kill path: a connect that is not established by its deadline fails, a handshake that is not
  * finished by the deadline of the {@link TlsConfig} fails, and a write the venue does not take
  * within the spin budget closes the connection and is counted ({@link #writeTimeouts()}). A venue
  * that has stopped reading is treated as down; its cancel-on-disconnect then applies.
@@ -44,6 +44,12 @@ import org.agrona.concurrent.UnsafeBuffer;
  * the client's certificate after the client's own handshake has finished, so a refused client
  * certificate shows as a connection that closes before the Logon is answered; it is counted with
  * the handshake failures.
+ *
+ * <p>Copies. On the plain path a message held in a direct buffer (the session's {@code FixWriter}
+ * buffer) is written to the socket from that buffer through a view made once per backing buffer,
+ * so the bytes are not copied on the way out (review finding L11); any other buffer is copied into
+ * this class's own direct buffer first. Under TLS the message is copied into the heap buffer the
+ * engine encrypts from, as measured below.
  *
  * <p>Allocation. The plain path allocates nothing per message (measured: 0 bytes). Under TLS
  * this class reuses its buffers and allocates nothing of its own, but the JDK's engine does
@@ -69,6 +75,9 @@ public final class TcpInitiator implements FixTransport, AutoCloseable {
   private final UnsafeBuffer in;
   private final ByteBuffer outBytes;
   private final UnsafeBuffer outPlain;
+  /** The direct buffer the last message was sent from, and a view of it the channel writes from. */
+  private ByteBuffer viewOf;
+  private ByteBuffer view;
   private final long connectTimeoutNanos;
   private final int maxWriteSpins;
   private final int maxBodyLength;
@@ -568,15 +577,15 @@ public final class TcpInitiator implements FixTransport, AutoCloseable {
     if (!isConnected()) {
       return;
     }
-    outBytes.clear();
-    buffer.getBytes(offset, outBytes, length);
-    outBytes.flip();
     final SocketChannel c = channel;
     try {
       if (tls == null) {
-        writeFully(c, outBytes);
+        writeFully(c, plainBytes(buffer, offset, length));
         return;
       }
+      outBytes.clear();
+      buffer.getBytes(offset, outBytes, length);
+      outBytes.flip();
       final SSLEngine e = engine;
       while (outBytes.hasRemaining()) {
         netOut.clear();
@@ -594,6 +603,31 @@ public final class TcpInitiator implements FixTransport, AutoCloseable {
     } catch (IOException e) {
       drop(false);
     }
+  }
+
+  /**
+   * The bytes to write on the plain path: a view of the caller's direct buffer when it has one, so
+   * nothing is copied; otherwise a copy in this class's direct buffer. The view is made once per
+   * backing buffer (a session sends from one buffer), so the steady state allocates nothing. The
+   * caller's buffer is not changed; the view has its own position and limit.
+   */
+  // identity on purpose: a ByteBuffer's equals compares contents, and the view is of this buffer object
+  @SuppressWarnings("ReferenceEquality")
+  private ByteBuffer plainBytes(final DirectBuffer buffer, final int offset, final int length) {
+    final ByteBuffer backing = buffer.byteBuffer();
+    if (backing != null && backing.isDirect()) {
+      if (backing != viewOf) {
+        viewOf = backing;
+        view = backing.duplicate();
+      }
+      final int from = buffer.wrapAdjustment() + offset;
+      view.clear().position(from).limit(from + length);
+      return view;
+    }
+    outBytes.clear();
+    buffer.getBytes(offset, outBytes, length);
+    outBytes.flip();
+    return outBytes;
   }
 
   /**

@@ -1,15 +1,18 @@
 package io.ratesalgo.fix.codec;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
- * Encodes one FIX 4.4 message. The body (everything from MsgType to the last field before
- * CheckSum) is written into a pre-allocated scratch buffer; {@link #finish} then writes
- * BeginString and the exact BodyLength, copies the body and appends CheckSum. Nothing is
- * allocated after construction.
+ * Encodes one FIX 4.4 message into a pre-allocated buffer. The body (everything from MsgType to
+ * the last field before CheckSum) is written behind room reserved for BeginString and the widest
+ * BodyLength the buffer can need; {@link #finish()} then writes BeginString and the exact
+ * BodyLength right-aligned against the body, so the message starts a few bytes into the buffer
+ * ({@link #messageOffset()}) and the body is never copied (review finding L11). CheckSum is summed
+ * eight bytes at a time. Nothing is allocated after construction.
  *
  * <p>Fields are written in call order, so callers write header fields first (the session does
  * this) and group fields in the order the FIX 4.4 dictionary defines.
@@ -18,12 +21,25 @@ public final class FixWriter {
 
   private static final byte[] BEGIN = "8=FIX.4.4\u00019=".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
 
+  /** {@code 10=nnn<SOH>}. */
+  private static final int TRAILER = 7;
+
+  private static final long LOW_BYTES = 0x00FF00FF00FF00FFL;
+
+  private final UnsafeBuffer buffer;
+  /** The body's view of {@link #buffer}, from {@link #bodyStart}. */
   private final UnsafeBuffer body;
+  private final int bodyStart;
+  private final FixTime.DayCache day = new FixTime.DayCache();
   private int position;
+  private int messageOffset;
+  private int messageLength;
 
   /** Creates a writer whose body may be up to {@code capacity} bytes. */
   public FixWriter(final int capacity) {
-    this.body = new UnsafeBuffer(ByteBuffer.allocateDirect(capacity));
+    this.bodyStart = BEGIN.length + digits(capacity) + 1;
+    this.buffer = new UnsafeBuffer(ByteBuffer.allocateDirect(bodyStart + capacity + TRAILER));
+    this.body = new UnsafeBuffer(buffer, bodyStart, capacity + TRAILER);
   }
 
   /** Starts a new message with the given MsgType. */
@@ -113,21 +129,27 @@ public final class FixWriter {
     return this;
   }
 
-  /** UTCTimestamp field with millisecond precision. */
+  /**
+   * UTCTimestamp field with millisecond precision. The date part is kept from the last stamp of
+   * the same day, so most stamps skip the civil-date arithmetic.
+   */
   public FixWriter putTimestamp(final int tag, final long epochNanos) {
     putTag(tag);
-    position += FixTime.writeMillis(body, position, epochNanos);
+    position += FixTime.writeMillis(body, position, epochNanos, day);
     end();
     return this;
   }
 
   /**
-   * Overwrites the body written so far with zeros and empties the writer. The session calls it
-   * after a Logon that carried a password, so the password does not stay in the scratch buffer.
+   * Overwrites everything written so far, header, body and trailer, with zeros and empties the
+   * writer. The session calls it after a Logon that carried a password, so the password does not
+   * stay in the buffer.
    */
   public void wipe() {
-    body.setMemory(0, position, (byte) 0);
+    buffer.setMemory(0, bodyStart + position + TRAILER, (byte) 0);
     position = 0;
+    messageOffset = 0;
+    messageLength = 0;
   }
 
   /** Bytes of body written so far. */
@@ -136,27 +158,93 @@ public final class FixWriter {
   }
 
   /**
-   * Writes the complete message (BeginString, BodyLength, body, CheckSum) into {@code out}.
+   * Completes the message in place: BeginString and BodyLength in front of the body, CheckSum
+   * behind it. The message is then {@link #messageLength()} bytes of {@link #buffer()} from {@link
+   * #messageOffset()}, until the next {@link #begin}.
+   *
+   * @return the message's total length
+   */
+  public int finish() {
+    final int start = bodyStart - 1 - digits(position) - BEGIN.length;
+    buffer.putBytes(start, BEGIN);
+    AsciiNumbers.writeNatural(buffer, start + BEGIN.length, position);
+    buffer.putByte(bodyStart - 1, FixParser.SOH);
+    final int end = bodyStart + position;
+    final int sum = checksum(buffer, start, end);
+    buffer.putByte(end, (byte) '1');
+    buffer.putByte(end + 1, (byte) '0');
+    buffer.putByte(end + 2, (byte) '=');
+    AsciiNumbers.writePadded(buffer, end + 3, sum, 3);
+    buffer.putByte(end + 6, FixParser.SOH);
+    messageOffset = start;
+    messageLength = end + TRAILER - start;
+    return messageLength;
+  }
+
+  /**
+   * Writes the complete message (BeginString, BodyLength, body, CheckSum) into {@code out}: {@link
+   * #finish()} and one copy, for callers that need the bytes in their own buffer.
    *
    * @return total length written
    */
   public int finish(final MutableDirectBuffer out, final int offset) {
-    int p = offset;
-    out.putBytes(p, BEGIN);
-    p += BEGIN.length;
-    p += AsciiNumbers.writeNatural(out, p, position);
-    out.putByte(p++, FixParser.SOH);
-    out.putBytes(p, body, 0, position);
-    p += position;
-    int sum = 0;
-    for (int i = offset; i < p; i++) {
-      sum += out.getByte(i) & 0xFF;
+    final int length = finish();
+    out.putBytes(offset, buffer, messageOffset, length);
+    return length;
+  }
+
+  /** The buffer the finished message is in. */
+  public DirectBuffer buffer() {
+    return buffer;
+  }
+
+  /** Where the finished message starts in {@link #buffer()}. */
+  public int messageOffset() {
+    return messageOffset;
+  }
+
+  /** The finished message's length; 0 before the first {@link #finish()}. */
+  public int messageLength() {
+    return messageLength;
+  }
+
+  /**
+   * The FIX CheckSum of {@code [from, to)}: the byte sum modulo 256. Eight bytes are added per
+   * step as four 16-bit lanes (each step adds at most 510 to a lane), folded every 128 steps
+   * before a lane can overflow.
+   */
+  static int checksum(final DirectBuffer b, final int from, final int to) {
+    long sum = 0;
+    long lanes = 0;
+    int steps = 0;
+    int i = from;
+    while (i + Long.BYTES <= to) {
+      final long w = b.getLong(i, ByteOrder.LITTLE_ENDIAN);
+      lanes += (w & LOW_BYTES) + ((w >>> 8) & LOW_BYTES);
+      i += Long.BYTES;
+      if (++steps == 128) {
+        sum += fold(lanes);
+        lanes = 0;
+        steps = 0;
+      }
     }
-    out.putByte(p++, (byte) '1');
-    out.putByte(p++, (byte) '0');
-    out.putByte(p++, (byte) '=');
-    p += AsciiNumbers.writePadded(out, p, sum & 0xFF, 3);
-    out.putByte(p++, FixParser.SOH);
-    return p - offset;
+    sum += fold(lanes);
+    while (i < to) {
+      sum += b.getByte(i++) & 0xFF;
+    }
+    return (int) (sum & 0xFF);
+  }
+
+  private static long fold(final long lanes) {
+    return (lanes & 0xFFFF) + ((lanes >>> 16) & 0xFFFF) + ((lanes >>> 32) & 0xFFFF) + (lanes >>> 48);
+  }
+
+  /** Decimal digits of a non-negative int. */
+  static int digits(final int v) {
+    int n = 1;
+    for (long limit = 10; limit <= v; limit *= 10) {
+      n++;
+    }
+    return n;
   }
 }

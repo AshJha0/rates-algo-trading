@@ -178,10 +178,11 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
     }
     final int ccy = p.indexOf(FixTags.CURRENCY);
     final DirectBuffer b = p.buffer();
+    final long rfqId = p.getLong(FixTags.QUOTE_REQ_ID);
     quoteRequest
         .wrapAndApplyHeader(sbe, 0, headerEncoder)
         .venueId(venueId)
-        .rfqId(p.getLong(FixTags.QUOTE_REQ_ID))
+        .rfqId(rfqId)
         .clientId((int) p.getLong(FixTags.PARTY_ID, 0))
         .instrumentId(instrumentId)
         .side(side(p.getChar(FixTags.SIDE)))
@@ -196,6 +197,9 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
       quoteRequest.putCurrency((byte) ' ', (byte) ' ', (byte) ' ');
     }
     deliver(MessageHeaderEncoder.ENCODED_LENGTH + quoteRequest.encodedLength());
+    if (GatewayProbe.ENABLED) {
+      GatewayProbe.Installed.probe.onStage(GatewayProbe.REQUEST_PUBLISHED, rfqId);
+    }
   }
 
   private void encodeQuoteResponse(
@@ -523,6 +527,9 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
 
   private boolean sendQuote(final DirectBuffer b, final int o, final int bl, final int v) {
     quote.wrap(b, o, bl, v);
+    if (GatewayProbe.ENABLED) {
+      GatewayProbe.Installed.probe.onStage(GatewayProbe.QUOTE_DEQUEUED, quote.rfqId());
+    }
     if (instruments.securityId(quote.instrumentId()) == null) {
       return false;
     }
@@ -543,7 +550,13 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
     }
     w.putTimestamp(FixTags.VALID_UNTIL_TIME, quote.validUntilNanos())
         .putTimestamp(FixTags.TRANSACT_TIME, quote.sentNanos());
+    if (GatewayProbe.ENABLED) {
+      GatewayProbe.Installed.probe.onStage(GatewayProbe.QUOTE_ENCODED, quote.rfqId());
+    }
     session.send();
+    if (GatewayProbe.ENABLED) {
+      GatewayProbe.Installed.probe.onStage(GatewayProbe.QUOTE_WRITTEN, quote.rfqId());
+    }
     return true;
   }
 

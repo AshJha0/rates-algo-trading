@@ -58,7 +58,6 @@ public final class FixSession {
   private final int maxResendRetries;
   private final FixParser parser = new FixParser();
   private final FixWriter writer = new FixWriter(64 * 1024);
-  private final UnsafeBuffer out = new UnsafeBuffer(ByteBuffer.allocateDirect(64 * 1024 + 64));
   private final UnsafeBuffer testReqId = new UnsafeBuffer(ByteBuffer.allocateDirect(32));
   private final SessionStats stats = new SessionStats();
   private final byte[] username;
@@ -81,7 +80,6 @@ public final class FixSession {
   private long testRequestCounter;
   private int testReqIdLength;
   private long pendingSeq = -1;
-  private int lastSentLength;
 
   /** Creates a disconnected session. */
   public FixSession(
@@ -183,8 +181,8 @@ public final class FixSession {
 
   /**
    * Adds the credentials, sends, and then overwrites every place the password was written: the
-   * copy taken from the {@link Secret}, the writer's body and the outbound buffer. The transport
-   * has copied or encrypted the bytes by the time {@code send} returns.
+   * copy taken from the {@link Secret} and the writer's buffer, which is where the message was
+   * sent from. The transport has copied or encrypted the bytes by the time {@code send} returns.
    */
   private void sendWithPassword(final FixWriter w) {
     final byte[] secret = password.bytes();
@@ -194,7 +192,6 @@ public final class FixSession {
     } finally {
       Arrays.fill(secret, (byte) 0);
       writer.wipe();
-      out.setMemory(0, lastSentLength, (byte) 0);
     }
   }
 
@@ -249,17 +246,17 @@ public final class FixSession {
 
   /** Finishes the message started by {@link #begin} and sends it. */
   public void send() {
-    final int length = writer.finish(out, 0);
+    // completed in the writer's own buffer and sent from there: the body is not copied (L11)
+    final int length = writer.finish();
     if (pendingSeq == nextOutSeq) {
       nextOutSeq++;
     }
     pendingSeq = -1;
     lastSentNanos = clock.nanoTime();
     stats.sent++;
-    lastSentLength = length;
     // recorded before the bytes leave: a number the venue has seen is never handed out twice
     recordSequences();
-    transport.send(out, 0, length);
+    transport.send(writer.buffer(), writer.messageOffset(), length);
   }
 
   /** Processes one framed inbound message. */

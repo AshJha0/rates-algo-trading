@@ -14,7 +14,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system rates \
  && useradd --system --gid rates --home-dir /opt/rates --shell /usr/sbin/nologin rates \
- && mkdir -p /var/lib/rates/journal \
+ && mkdir -p /var/lib/rates/journal /var/lib/rates/log \
  && chown -R rates:rates /var/lib/rates
 
 WORKDIR /opt/rates
@@ -34,13 +34,36 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
         curl -fsS http://127.0.0.1:${RATES_HTTP_PORT:-8081}/health/ready; \
       fi || exit 1
 
-# Agrona 2.x needs these opens on every JVM that runs the platform (docs/ARCHITECTURE.md).
+# JVM flags, one by one (DECISIONS.md DR-R6-L06; the wired-desk benchmark runs with exactly these,
+# WiredDeskSuite.shippedFlags, and a test keeps the two lists equal):
+# - the three --add-opens: Agrona 2.x needs them on every JVM that runs the platform
+#   (docs/ARCHITECTURE.md);
+# - --enable-native-access=ALL-UNNAMED: core pinning (sched_setaffinity) and segment locking (mlock)
+#   call the C library through the foreign function API; without the flag the JDK warns once;
+# - -XX:+UseZGC: the loop allocates nothing in steady state, but the in-process venue simulators,
+#   TLS (about 1.3 KB per record inside the JDK's engine) and the HTTP endpoints do. ZGC collects
+#   that concurrently; its pauses are sub-millisecond and do not grow with the heap. The Parallel
+#   collector stops every thread, the loop's included, for each young collection
+#   (docs/BENCHMARKS_V2.md has both measured on the wired desk);
+# - -Xms512m -Xmx512m: a fixed heap, so it is never resized under load;
+# - -XX:+AlwaysPreTouch: every heap page is faulted in at start, not on first use by a thread that
+#   is quoting;
+# - -XX:+UseTransparentHugePages: the heap in 2 MB pages where the host's THP mode is madvise or
+#   always, fewer TLB misses; ignored where THP is off;
+# - -Xlog gc and safepoint to a rotated file on the volume: every pause and time-to-safepoint is on
+#   record for the incident review, at a few hundred bytes per event.
+# No AOT cache or CDS archive yet: building one needs a training run of the process in the image
+# build, which this file cannot do reproducibly today (the process has no bounded run mode).
 ENTRYPOINT ["java", \
   "--add-opens", "java.base/jdk.internal.misc=ALL-UNNAMED", \
   "--add-opens", "java.base/sun.nio.ch=ALL-UNNAMED", \
   "--add-opens", "java.base/java.nio=ALL-UNNAMED", \
-  "-XX:+UseZGC", "-XX:+AlwaysPreTouch", "-Xms512m", "-Xmx512m", \
+  "--enable-native-access=ALL-UNNAMED", \
+  "-XX:+UseZGC", "-Xms512m", "-Xmx512m", "-XX:+AlwaysPreTouch", "-XX:+UseTransparentHugePages", \
+  "-Xlog:gc*,safepoint:file=/var/lib/rates/log/jvm.log:uptime,level,tags:filecount=5,filesize=20m", \
   "-cp", "/opt/rates/lib/*", \
   "io.ratesalgo.app.TradingProcessMain"]
+# For the low-latency profile pass --config /opt/rates/config/trading-lowlatency.yaml and run the
+# container on reserved cores (docker run --cpuset-cpus=...; the file says which it expects).
 CMD ["--config", "/opt/rates/config/trading-blue.yaml", \
      "--schema", "/opt/rates/config/schema/process-config.schema.json"]

@@ -195,7 +195,7 @@ public final class TradingProcessMain {
       process =
           TradingProcess.start(
               new TradingProcess.Options(journalDir, seed, DeskSettings.defaults())
-                  .withTuning(TradingProcess.Tuning.DEFAULT.withLoopThread(cfg.loopIdleStrategy(), cfg.loopCpu()))
+                  .withTuning(tuning(cfg.runtime()))
                   .withFix(fix));
     } catch (final io.ratesalgo.journal.JournalCorruptionException | LoopRecovery.RecoveryException e) {
       // the journals do not allow a restart: say why and stay down
@@ -203,6 +203,7 @@ public final class TradingProcessMain {
       err.println("  " + e.getMessage());
       return null;
     }
+    out.println("runtime: " + cfg.runtime());
     // what a restart found: frames replayed, a torn tail cut, how long the process was down
     process.recoveryLog().forEach(line -> out.println("recovery: " + line));
     final OpsHttpServer server;
@@ -243,5 +244,23 @@ public final class TradingProcessMain {
         return process.statusJson();
       }
     }, token, tls);
+  }
+
+  /**
+   * The process tuning for a configuration's {@code runtime} section, its profile already applied
+   * (DECISIONS.md DR-R6-L02). The kill deadline and the supervisor's limits stay at their defaults.
+   */
+  static TradingProcess.Tuning tuning(final ProcessConfig.RuntimeSettings r) {
+    final io.ratesalgo.core.LoopJournals.Settings journals =
+        io.ratesalgo.core.LoopJournals.Settings.DEFAULT
+            .withMode(io.ratesalgo.core.JournalMode.valueOf(r.journalMode().toUpperCase(java.util.Locale.ROOT)))
+            .withHashAlgorithm(io.ratesalgo.journal.ChainHash.byName(r.journalHash()))
+            .withRing(io.ratesalgo.journal.RingJournal.DEFAULT_RING_CAPACITY, r.journalIdleStrategy())
+            .withSegmentOptions(io.ratesalgo.journal.SegmentedJournal.Options.DEFAULT.withLockPages(r.lockJournalPages()));
+    return TradingProcess.Tuning.DEFAULT
+        .withLoopThread(r.loopIdleStrategy(), r.loopCpu())
+        .withGatewayThreads(r.gatewayIdleStrategy(), r.gatewayCpu())
+        .withJournals(journals)
+        .withCurveConflation(r.conflateCurveInputs());
   }
 }

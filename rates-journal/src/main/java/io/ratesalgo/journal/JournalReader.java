@@ -4,6 +4,8 @@ import static io.ratesalgo.journal.JournalFormat.CAPACITY_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.CHAIN_HASH_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.FILE_HEADER_LENGTH;
 import static io.ratesalgo.journal.JournalFormat.FORMAT_VERSION;
+import static io.ratesalgo.journal.JournalFormat.FORMAT_VERSION_NAMED_HASH;
+import static io.ratesalgo.journal.JournalFormat.HASH_ALGORITHM_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.FORMAT_VERSION_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.FRAME_HEADER_LENGTH;
 import static io.ratesalgo.journal.JournalFormat.FRAME_LENGTH_OFFSET;
@@ -39,6 +41,7 @@ public final class JournalReader implements FrameSource {
   private int position;
   private long expectedSequence;
   private long chainHash;
+  private int hashAlgorithm;
 
   /** Reads from a buffer that already holds a journal (a mapped file or an in-memory copy). */
   public JournalReader(final DirectBuffer buffer) {
@@ -89,7 +92,15 @@ public final class JournalReader implements FrameSource {
       throw new JournalCorruptionException(0, "bad magic 0x" + Integer.toHexString(magic));
     }
     final int version = buffer.getShort(FORMAT_VERSION_OFFSET) & 0xFFFF;
-    if (version != FORMAT_VERSION) {
+    if (version == FORMAT_VERSION) {
+      hashAlgorithm = ChainHash.FNV1A;
+    } else if (version == FORMAT_VERSION_NAMED_HASH) {
+      hashAlgorithm = buffer.getShort(HASH_ALGORITHM_OFFSET) & 0xFFFF;
+      // a version-2 file must name something other than the version-1 default
+      if (hashAlgorithm == ChainHash.FNV1A || !ChainHash.isKnown(hashAlgorithm)) {
+        throw new JournalCorruptionException(0, "unsupported chain hash algorithm " + hashAlgorithm);
+      }
+    } else {
       throw new JournalCorruptionException(0, "unsupported format version " + version);
     }
     final int headerLength = buffer.getShort(HEADER_LENGTH_OFFSET) & 0xFFFF;
@@ -132,7 +143,10 @@ public final class JournalReader implements FrameSource {
           sequence, "sequence " + storedSequence + " where " + sequence + " was expected");
     }
     final int payloadOffset = position + FRAME_HEADER_LENGTH;
-    final long computed = ChainHash.next(chainHash, buffer, payloadOffset, payloadLength);
+    final long computed =
+        hashAlgorithm == ChainHash.WORD64
+            ? ChainHash.word64(chainHash, buffer, payloadOffset, payloadLength)
+            : ChainHash.next(chainHash, buffer, payloadOffset, payloadLength);
     final long stored = buffer.getLong(position + CHAIN_HASH_OFFSET);
     if (computed != stored) {
       throw new JournalCorruptionException(
@@ -165,6 +179,12 @@ public final class JournalReader implements FrameSource {
   @Override
   public long chainHash() {
     return chainHash;
+  }
+
+  /** The {@link ChainHash} algorithm the file's header names. */
+  @Override
+  public int hashAlgorithm() {
+    return hashAlgorithm;
   }
 
   /** Byte position of the next frame header. */

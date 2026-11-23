@@ -92,7 +92,8 @@ public final class LoopReplay {
         final DirectBuffer buffer,
         final int offset,
         final int length) {
-      hash = ChainHash.next(hash, buffer, offset, length);
+      // chained as the recorded journal is, whichever hash its files name
+      hash = ChainHash.next(recorded.hashAlgorithm(), hash, buffer, offset, length);
       produced++;
       if (firstMismatch == 0) {
         final boolean present = recorded.next(capture);
