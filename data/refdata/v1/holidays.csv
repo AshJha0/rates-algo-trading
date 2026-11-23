@@ -1,9 +1,8 @@
-# Holiday fixture for 2026 and 2027 for the calendars the venues use; a date outside the years listed is refused. Replaced by rates-analytics calendars once merged.
+# Holiday fixture for 2026 and 2027 for the calendars the venues use; a date outside the years listed is refused. Full closes only: an early close (US Good Friday 2026-04-03) is a business day. Kept equal to the rates-analytics calendars by CalendarConsistencyTest.
 calendar,date,name
 US-GS,2026-01-01,New Year
 US-GS,2026-01-19,Martin Luther King Jr Day
 US-GS,2026-02-16,Presidents Day
-US-GS,2026-04-03,Good Friday
 US-GS,2026-05-25,Memorial Day
 US-GS,2026-06-19,Juneteenth
 US-GS,2026-07-03,Independence Day observed

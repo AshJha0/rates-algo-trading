@@ -60,6 +60,79 @@ class RefDataTest {
     assertEquals(2, REF.parties().byId(2004).orElseThrow().tier());
   }
 
+  /**
+   * Tick sizes against the exchange (review 2026-11-23, A11). The 2-Year T-Note trades in eighths
+   * of a 32nd, 0.00390625 points or 7.8125 dollars a contract, since 2019-01-13 (CME SER-8171; the
+   * CME 2-Year T-Note contract specifications; CBOT Submission 20-119 cites it when giving the
+   * 3-Year the same tick). The fixture had the old quarter of a 32nd. The 5-Year is a quarter of
+   * a 32nd, the 10-Year half a 32nd, the Bond one 32nd.
+   */
+  @Test
+  void treasuryFuturesTicksFollowTheContractSpecifications() {
+    final SecuritiesMaster m = REF.securities();
+    assertEquals(3_906_250L, m.futureBySymbol("TUZ6").orElseThrow().tickSizeMantissa());
+    assertEquals(200_000L, m.futureBySymbol("TUZ6").orElseThrow().contractSize());
+    assertEquals(7_812_500L, m.futureBySymbol("FVZ6").orElseThrow().tickSizeMantissa());
+    assertEquals(15_625_000L, m.futureBySymbol("TYZ6").orElseThrow().tickSizeMantissa());
+    assertEquals(31_250_000L, m.futureBySymbol("USZ6").orElseThrow().tickSizeMantissa());
+    // one tick is 7.8125 dollars on the 2-Year and the 5-Year alike: tick times contract size
+    assertEquals(7.8125, 3_906_250L * 1e-9 / 100.0 * 200_000L, 1e-12);
+    assertEquals(7.8125, 7_812_500L * 1e-9 / 100.0 * 100_000L, 1e-12);
+  }
+
+  /**
+   * Dated dates (review 2026-11-23, A5): the Treasury dates a note on its nominal date and issues
+   * it on the next business day (31 CFR 356.2, "dated date"), so the notes maturing on 31 October
+   * and issued on Monday 2026-11-02 are dated Saturday 2026-10-31.
+   */
+  @Test
+  void weekendDatedNotesCarryTheirNominalDatedDate() {
+    final SecuritiesMaster m = REF.securities();
+    for (final int id : new int[] {1003, 1006}) {
+      final Bond b = m.bond(id).orElseThrow();
+      assertEquals(LocalDate.of(2026, 10, 31), b.datedDate(), b.isin());
+      assertEquals(LocalDate.of(2026, 11, 2), b.issueDate(), b.isin());
+      assertEquals(LocalDate.of(2027, 4, 30), b.firstCouponDate(), b.isin());
+    }
+    for (final int id : new int[] {1008, 1010}) {
+      assertEquals(LocalDate.of(2026, 11, 15), m.bond(id).orElseThrow().datedDate());
+      assertEquals(LocalDate.of(2026, 11, 16), m.bond(id).orElseThrow().issueDate());
+    }
+    // issued on its nominal date, or with a genuinely short first coupon: dated on the issue date
+    for (final int id : new int[] {1001, 1002, 1004, 1005, 1011, 1013}) {
+      final Bond b = m.bond(id).orElseThrow();
+      assertEquals(b.issueDate(), b.datedDate(), b.isin());
+    }
+  }
+
+  /**
+   * Good Friday 2026-04-03 is a business day for US government securities (review 2026-11-23, A6):
+   * SIFMA recommends an early close at 12:00 Eastern, not a full close, because the employment
+   * report is released that day (sifma.org holiday schedule, read 2026-11-23). In 2027 Good Friday
+   * is 26 March and a full close by the standing rule.
+   */
+  @Test
+  void goodFriday2026IsAnEarlyCloseNotAHolidayForUsGovernmentSecurities() {
+    final CalendarSource c = REF.calendars();
+    assertTrue(c.isBusinessDay("US-GS", LocalDate.of(2026, 4, 3)));
+    assertFalse(c.isBusinessDay("UK", LocalDate.of(2026, 4, 3)));
+    assertFalse(c.isBusinessDay("TARGET", LocalDate.of(2026, 4, 3)));
+    assertFalse(c.isBusinessDay("US-GS", LocalDate.of(2027, 3, 26)));
+    assertEquals(LocalDate.of(2026, 4, 3), c.addBusinessDays("US-GS", LocalDate.of(2026, 4, 2), 1));
+  }
+
+  @Test
+  void aDateOutsideTheFixtureYearsSaysWhatIsCoveredAndHowToExtendIt() {
+    final CalendarSource c = REF.calendars();
+    final RefDataException e =
+        assertThrows(RefDataException.class, () -> c.isBusinessDay("US-GS", LocalDate.of(2028, 1, 3)));
+    for (final String part : new String[] {"'US-GS'", "2026 to 2027", "2028-01-03", "gen_refdata_fixtures.py"}) {
+      assertTrue(e.getMessage().contains(part), e.getMessage());
+    }
+    // addBusinessDays walks into the next year and must fail the same way, not run on
+    assertThrows(RefDataException.class, () -> c.addBusinessDays("UK", LocalDate.of(2027, 12, 31), 1));
+  }
+
   @Test
   void auctionCalendar() {
     final AuctionCalendar a = REF.auctions();
@@ -139,6 +212,10 @@ class RefDataTest {
     assertLoadFails(tmp.resolve("i"), "parties.csv", "15,DLR-E", "14,DLR-E", "duplicate party");
     assertLoadFails(tmp.resolve("j"), "futures.csv", "3001,", "1001,", "duplicate instrument id");
     assertLoadFails(tmp.resolve("k"), "bonds.csv", "1001,US", "1001,,US", "columns");
+    assertLoadFails(tmp.resolve("l"), "bonds.csv", "2027-04-30,2026-10-31,2026-11-02", "2027-04-30,2026-11-03,2026-11-02",
+        "dated date");
+    assertLoadFails(tmp.resolve("m"), "bonds.csv", "2027-04-30,2026-10-31,2026-11-02", "2027-04-30,2026-10-01,2026-11-02",
+        "dated date");
   }
 
   @Test
