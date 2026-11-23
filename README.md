@@ -50,7 +50,7 @@ These show that the parts agree with each other and with the project's own model
 
 | What | Result | Source, date |
 |---|---|---|
-| Test suite, 1.1.0 | not yet recorded <!-- BUILD-RESULT --> | the release build of the fix round |
+| Test suite, 1.1.0 | 887 Java tests in 21 modules and 121 Python tests (1 skipped), no failures, run locally on 2026-11-23 (`mvn -o -B -ntp verify`, `pytest -q research`); `mypy` is checked in CI only | the release build of the fix round |
 | Test suite, before the fix round | 639 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 114 Python tests, 11 executed notebooks, 36 of the 37 cookbook recipes checked against their recorded output | local run on the PR #8 branch `hedge-carry-limit` (README commit 7320610), 2026-11-07; not re-run for this page |
 | Wired process, ten simulated minutes, seed 7 | 36 RFQs, 27 quoted, 16 filled, 210 hedge parents, 213 hedge fills, 229 trades reconciled with 0 breaks, nothing working after the kill switch, replay hash equal | `SmokeTest`, DR-INT-07, 2026-10-31 |
 | Risk limits under load | 1,000,000 simulated RFQs with 0 limit violations at the sink; 10,000 chaos scenarios with 0 invariant failures | `MillionRfqTest`, `ChaosTest`, STATUS.md P3, 2026-10-31 |
