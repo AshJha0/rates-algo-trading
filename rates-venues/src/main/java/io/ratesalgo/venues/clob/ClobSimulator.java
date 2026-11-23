@@ -1,6 +1,9 @@
 package io.ratesalgo.venues.clob;
 
 import io.ratesalgo.common.time.Clock;
+import io.ratesalgo.sim.BookModel;
+import io.ratesalgo.sim.MarketSpec;
+import io.ratesalgo.sim.SimInstrument;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.venues.feed.BookFeedPublisher;
 import io.ratesalgo.venues.feed.FeedChannel;
@@ -82,6 +85,202 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
     return out;
   }
 
+  // ------------------------------------------------------------------ simulator v2
+
+  /** Owner of the provider orders under simulator v2. */
+  public static final String PROVIDERS = "LP";
+
+  /** Owner of the other takers' orders under simulator v2. */
+  public static final String TAKERS = "TAKER";
+
+  /** One instrument's link to the shared model's book: this venue's provider orders by side and price. */
+  private static final class ModelBook {
+    final BookModel model;
+    final long lot;
+    final Map<Long, java.util.ArrayDeque<ClobOrder>> bids = new java.util.TreeMap<>();
+    final Map<Long, java.util.ArrayDeque<ClobOrder>> asks = new java.util.TreeMap<>();
+    double ownFilled;
+
+    ModelBook(final BookModel model, final long lot) {
+      this.model = model;
+      this.lot = lot;
+    }
+  }
+
+  private final io.ratesalgo.venues.sim.SimV2Session session;
+  private final double share;
+  private final Map<Integer, ModelBook> modelBooks = new LinkedHashMap<>();
+  private int lastStep = -1;
+  private boolean liquidityStarted;
+
+  /**
+   * Creates an order-book venue on a simulator v2 session (docs/research/SIM_V2_DESIGN.md section
+   * 8). The venue displays {@code share} of the shared model's provider size at each of its five
+   * levels and receives the same share of every other taker's trade. Depth taken on one venue is
+   * gone from the model's book and so from every venue: consolidated depth is the model's, never
+   * more. An order of anyone but the providers and the other takers is the desk's: what it takes
+   * from the providers moves the book and the level factor by the model's impact law.
+   *
+   * <p>Each book uses its instrument's own tick and minimum size. Liquidity starts with {@link
+   * #startLiquidity()}.
+   */
+  public ClobSimulator(
+      final String compId,
+      final ClobConfig config,
+      final io.ratesalgo.venues.sim.SimV2Session session,
+      final List<Instrument> instruments,
+      final double share,
+      final List<String> engineCompIds,
+      final FeedChannel feedChannel,
+      final Clock clock) {
+    super(compId, engineCompIds, clock, session.model().seed());
+    if (!(share > 0.0 && share <= 1.0)) {
+      throw new IllegalArgumentException("venue share must be in (0, 1]: " + share);
+    }
+    this.config = config;
+    this.session = session;
+    this.share = share;
+    final MarketSpec spec = session.model().spec();
+    for (final Instrument i : instruments) {
+      final int index = session.index(i.securityId());
+      if (index < 0 || !spec.instrument(index).hasBook()) {
+        throw new IllegalArgumentException(i.securityId() + " has no order book in the model");
+      }
+      final SimInstrument s = spec.instrument(index);
+      final long lot = (long) s.minQuantity();
+      bySecurityId.put(i.securityId(), i);
+      byId.put(i.instrumentId(), i);
+      books.put(
+          i.instrumentId(),
+          new ClobBook(
+              i.instrumentId(),
+              new ClobConfig(
+                  i.tick(), lot, config.workupNanos(), config.exclusiveNanos(), config.extendOnTrade(), config.selfMatch(),
+                  config.depth()),
+              this));
+      modelBooks.put(i.instrumentId(), new ModelBook(session.model().book(index), lot));
+    }
+    this.feed = new BookFeedPublisher(VENUE_ID, feedChannel, clock);
+  }
+
+  /** Starts the model's liquidity and taker flow on this venue: one pass now, then one per grid step. */
+  public synchronized void startLiquidity() {
+    if (session == null) {
+      throw new IllegalStateException("only a simulator v2 venue has model liquidity");
+    }
+    if (!liquidityStarted) {
+      liquidityStarted = true;
+      onModelStep();
+    }
+  }
+
+  private void onModelStep() {
+    final MarketSpec spec = session.model().spec();
+    final long t = session.sessionNanos();
+    final int step = spec.stepAt(t);
+    for (final Map.Entry<Integer, ModelBook> e : modelBooks.entrySet()) {
+      final ModelBook mb = e.getValue();
+      final ClobBook book = books.get(e.getKey());
+      mb.model.advanceTo(t);
+      // this venue's share of the other takers' trades of the steps just passed, in whole lots
+      for (int k = Math.max(0, lastStep + 1); k <= Math.min(step, spec.steps() - 1); k++) {
+        for (int n = mb.model.takerStart(k); n < mb.model.takerStart(k + 1); n++) {
+          final long qty = (long) Math.floor(share * mb.model.takerUnits(n) / mb.lot) * mb.lot;
+          if (qty > 0) {
+            takerOrder(book, mb, mb.model.takerBuys(n), qty);
+          }
+        }
+      }
+      syncProviders(book, mb);
+      afterBookChange(book);
+    }
+    lastStep = step;
+    if (step < spec.steps()) {
+      schedule(session.nanoTimeOf((step + 1L) * MarketSpec.STEP_NANOS), this::onModelStep);
+    }
+  }
+
+  /** An immediate-or-cancel order through every provider level; what it cannot trade is cancelled. */
+  private void takerOrder(final ClobBook book, final ModelBook mb, final boolean buy, final long qty) {
+    final int last = session.model().spec().params().bookLevels() - 1;
+    final long limit = io.ratesalgo.venues.sim.SimV2Session.mantissa(mb.model.levelPrice(!buy, last));
+    final ClobOrder o = new ClobOrder(nextId(), TAKERS, 0, buy, limit, qty, 0, true);
+    byVenueId.put(o.venueOrderId, o);
+    orderInstrument.put(o.venueOrderId, book.instrumentId());
+    book.submit(o, clock.nanoTime());
+  }
+
+  /**
+   * Makes this venue's provider orders match the model: at each of the five prices of a side, the
+   * venue's share of the displayed size in whole lots. A level that shrank is reduced from its
+   * newest order, so older size keeps its place; size that came back is a new order at the back
+   * of the queue, behind anyone resting there; a price that left the five levels is cancelled.
+   */
+  private void syncProviders(final ClobBook book, final ModelBook mb) {
+    final int levels = session.model().spec().params().bookLevels();
+    for (final boolean bid : new boolean[] {true, false}) {
+      final Map<Long, java.util.ArrayDeque<ClobOrder>> mine = bid ? mb.bids : mb.asks;
+      final Map<Long, Long> wanted = new java.util.HashMap<>();
+      for (int l = 0; l < levels; l++) {
+        final long qty = (long) Math.floor(share * mb.model.displayedUnits(bid, l) / mb.lot) * mb.lot;
+        wanted.put(io.ratesalgo.venues.sim.SimV2Session.mantissa(mb.model.levelPrice(bid, l)), qty);
+      }
+      for (final java.util.Iterator<Map.Entry<Long, java.util.ArrayDeque<ClobOrder>>> it = mine.entrySet().iterator();
+          it.hasNext(); ) {
+        final Map.Entry<Long, java.util.ArrayDeque<ClobOrder>> e = it.next();
+        final java.util.ArrayDeque<ClobOrder> queue = e.getValue();
+        queue.removeIf(o -> o.done);
+        long have = 0;
+        for (final ClobOrder o : queue) {
+          have += o.remaining;
+        }
+        long excess = have - wanted.getOrDefault(e.getKey(), 0L);
+        while (excess > 0 && !queue.isEmpty()) {
+          final ClobOrder newest = queue.peekLast();
+          if (newest.remaining <= excess) {
+            excess -= newest.remaining;
+            book.cancel(newest);
+            queue.pollLast();
+          } else {
+            book.replace(newest, newest.price, newest.quantity - excess, clock.nanoTime());
+            excess = 0;
+          }
+        }
+        if (queue.isEmpty()) {
+          it.remove();
+        }
+      }
+      for (final Map.Entry<Long, Long> w : wanted.entrySet()) {
+        long have = 0;
+        for (final ClobOrder o : mine.getOrDefault(w.getKey(), new java.util.ArrayDeque<>())) {
+          have += o.remaining;
+        }
+        final long missing = w.getValue() - have;
+        if (missing > 0 && book.validate(w.getKey(), missing, 0) == null) {
+          final ClobOrder o = new ClobOrder(nextId(), PROVIDERS, 0, bid, w.getKey(), missing, 0, false);
+          byVenueId.put(o.venueOrderId, o);
+          orderInstrument.put(o.venueOrderId, book.instrumentId());
+          mine.computeIfAbsent(w.getKey(), k -> new java.util.ArrayDeque<>()).addLast(o);
+          book.submit(o, clock.nanoTime());
+        }
+      }
+    }
+  }
+
+  /** After the desk has taken provider size: the model's impact, then the providers follow the book. */
+  private void applyOwnImpact(final ClobBook book) {
+    final ModelBook mb = modelBooks.get(book.instrumentId());
+    if (mb == null || mb.ownFilled == 0.0) {
+      return;
+    }
+    final double filled = mb.ownFilled;
+    mb.ownFilled = 0.0;
+    final long t = session.sessionNanos();
+    mb.model.advanceTo(t);
+    mb.model.ownMarketable(t, filled > 0.0, Math.abs(filled));
+    syncProviders(book, mb);
+  }
+
   /** Creates the simulator. */
   public ClobSimulator(
       final String compId,
@@ -93,6 +292,8 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final long seed) {
     super(compId, engineCompIds, clock, seed);
     this.config = config;
+    this.session = null;
+    this.share = 1.0;
     for (final Instrument i : instruments) {
       bySecurityId.put(i.securityId(), i);
       byId.put(i.instrumentId(), i);
@@ -221,6 +422,12 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final char workup) {
     trades++;
     log("trade " + quantity + " @ " + Px.text(price) + " " + aggressor.owner + "/" + passive.owner + " " + workup);
+    if (session != null && PROVIDERS.equals(passive.owner) && !TAKERS.equals(aggressor.owner)) {
+      // the desk took provider size: it is consumed in the shared model, and moves it once matching is done
+      final ModelBook mb = modelBooks.get(orderInstrument(passive));
+      mb.model.consume(passive.buy, price / 1e9, (double) quantity);
+      mb.ownFilled += aggressor.buy ? quantity : -quantity;
+    }
     for (final ClobOrder o : new ClobOrder[] {aggressor, passive}) {
       if (isEngine(o.owner)) {
         final long execId = nextId();
@@ -281,6 +488,9 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
   // ------------------------------------------------------------------ market data
 
   private void afterBookChange(final ClobBook book) {
+    if (session != null) {
+      applyOwnImpact(book);
+    }
     flush();
     final int id = book.instrumentId();
     final Map<Boolean, Map<Long, long[]>> prev =

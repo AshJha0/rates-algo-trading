@@ -176,6 +176,7 @@ public final class SimParams {
   private final double[] ladderSizeMm;
   private final double[] ladderWeight;
   private final double[] depthMultiple;
+  private final double[] venueShare;
   private final EnumMap<DayType, int[]> eventWindowMinutes;
   private final List<SimInstrument> instruments;
   private final String depthReferenceKey;
@@ -198,6 +199,7 @@ public final class SimParams {
     this.ladderSizeMm = b.ladderSizeMm;
     this.ladderWeight = b.ladderWeight;
     this.depthMultiple = b.depthMultiple;
+    this.venueShare = b.venueShare;
     this.eventWindowMinutes = b.eventWindowMinutes;
     this.instruments = List.copyOf(b.instruments);
     this.depthReferenceKey = b.depthReferenceKey;
@@ -223,6 +225,7 @@ public final class SimParams {
     double[] ladderSizeMm;
     double[] ladderWeight;
     double[] depthMultiple;
+    double[] venueShare;
     EnumMap<DayType, int[]> eventWindowMinutes;
     List<SimInstrument> instruments;
     String depthReferenceKey;
@@ -247,6 +250,7 @@ public final class SimParams {
     b.ladderSizeMm = ladderSizeMm;
     b.ladderWeight = ladderWeight;
     b.depthMultiple = depthMultiple;
+    b.venueShare = venueShare;
     b.eventWindowMinutes = eventWindowMinutes;
     b.instruments = instruments;
     b.depthReferenceKey = depthReferenceKey;
@@ -563,6 +567,8 @@ public final class SimParams {
     final List<Object> depth = clob.list("depth_multiples");
     b.depthMultiple = numbers(depth, depth.size(), "depth_multiples");
     b.depthReferenceKey = clob.text("depth_reference_instrument");
+    final List<Object> shares = clob.list("treasury_venue_shares");
+    b.venueShare = numbers(shares, shares.size(), "treasury_venue_shares");
 
     final Map<String, Obj> groups =
         Map.of(
@@ -644,6 +650,7 @@ public final class SimParams {
     near(sum(timeOfDayShare), 1.0, 1e-3, "sum of rfq.time_of_day_share");
     near(sum(tierWeight), 1.0, 1e-9, "sum of the tier weights");
     near(sum(ladderWeight), 1.0, 1e-9, "sum of the Treasury size ladder weights");
+    near(sum(venueShare), 1.0, 1e-9, "sum of the Treasury venue shares");
     near(
         timeOfDayShare.length * get(Scalar.RFQ_BIN_MINUTES),
         get(Scalar.SESSION_MINUTES),
@@ -793,6 +800,16 @@ public final class SimParams {
   /** Target size of level {@code l} (0 is the touch) as a multiple of the touch size. */
   public double depthMultiple(final int l) {
     return depthMultiple[l];
+  }
+
+  /** Number of Treasury order-book venues that share the model's book. */
+  public int treasuryVenues() {
+    return venueShare.length;
+  }
+
+  /** Share of the model's provider size and taker flow that Treasury venue {@code v} shows and receives. */
+  public double treasuryVenueShare(final int v) {
+    return venueShare[v];
   }
 
   /** Start of the day type's event window, minutes after midnight New York; -1 for no event. */

@@ -1,9 +1,13 @@
 package io.ratesalgo.venues.d2c;
 
 import io.ratesalgo.common.time.Clock;
+import io.ratesalgo.sim.RfqDecision;
+import io.ratesalgo.sim.SimParams;
+import io.ratesalgo.sim.SimRfq;
 import io.ratesalgo.venues.sim.Fix;
 import io.ratesalgo.venues.sim.Instrument;
 import io.ratesalgo.venues.sim.Px;
+import io.ratesalgo.venues.sim.SimV2Session;
 import io.ratesalgo.venues.sim.VenueSimulator;
 import java.time.Instant;
 import java.time.LocalTime;
@@ -32,10 +36,18 @@ import quickfix.Message;
  * AJ (694=1 hit with cover price in 9502, 694=5 with 9503=TA or DA, 694=6 pass, 694=3 expired);
  * a hit is followed by ExecutionReport 8 (150=F). Cancel-on-disconnect: when a dealer session
  * drops, its live quotes are removed and it takes no part in open RFQs.
+ *
+ * <p>Two market models. Version 1 (the default preset) draws mids, arrivals, sizes, competitors
+ * and an informed jump here, from this simulator's own random source; it stays so that recorded
+ * runs reproduce. Simulator v2 (the constructor that takes a {@link SimV2Session}) draws nothing
+ * here: the shared market model fixes every RFQ of the session with its competitors' quotes and
+ * the client's reserve, and decides by best price, so this class only carries messages
+ * (docs/research/SIM_V2_DESIGN.md sections 5 to 7 and 10).
  */
 public final class D2cRfqSimulator extends VenueSimulator {
 
   private final D2cConfig config;
+  private final SimV2Session session;
   private final Map<String, Instrument> instruments = new LinkedHashMap<>();
   private final Map<String, Long> mids = new HashMap<>();
   private final Map<String, Long> midTimes = new HashMap<>();
@@ -86,6 +98,8 @@ public final class D2cRfqSimulator extends VenueSimulator {
     final boolean informed;
     final List<String> engines;
     final int simulatedDealers;
+    SimRfq sim;
+    long createdNanos;
     final List<QuoteEntry> quotes = new ArrayList<>();
     int simulatedResponses;
     boolean closed;
@@ -115,10 +129,26 @@ public final class D2cRfqSimulator extends VenueSimulator {
       final long seed) {
     super("D2C", engineDealers, clock, seed);
     this.config = config;
+    this.session = null;
     for (final Instrument i : instrumentList) {
       instruments.put(i.securityId(), i);
       mids.put(i.securityId(), i.initialMid());
       midTimes.put(i.securityId(), clock.nanoTime());
+    }
+  }
+
+  /**
+   * Creates the simulator on a simulator v2 session. The instruments are the session's swaps and
+   * Treasuries; nothing is drawn from this simulator's own random source.
+   */
+  public D2cRfqSimulator(final SimV2Session session, final List<String> engineDealers, final Clock clock) {
+    super("D2C", engineDealers, clock, session.model().seed());
+    this.session = session;
+    this.config =
+        D2cConfig.simV2(
+            (long) (session.model().spec().params().get(SimParams.Scalar.RESPONSE_WINDOW_MS) * 1e6));
+    for (final Instrument i : session.rfqInstruments()) {
+      instruments.put(i.securityId(), i);
     }
   }
 
@@ -147,8 +177,15 @@ public final class D2cRfqSimulator extends VenueSimulator {
     return quotesRejected;
   }
 
-  /** Current mid of an instrument (advances the random walk to now). */
+  /**
+   * Current mid of an instrument. Version 1 advances the random walk to now. Simulator v2 returns
+   * the published reference price, the latent mid rounded to the tick; the latent mid itself
+   * never leaves the simulator.
+   */
   public synchronized long mid(final String securityId) {
+    if (session != null) {
+      return session.referencePrice(session.index(securityId));
+    }
     return midNow(instruments.get(securityId));
   }
 
@@ -157,6 +194,9 @@ public final class D2cRfqSimulator extends VenueSimulator {
   }
 
   private long midNow(final Instrument i) {
+    if (session != null) {
+      return session.latentMid(session.index(i.securityId()));
+    }
     final long now = clock.nanoTime();
     final long last = midTimes.get(i.securityId());
     long mid = mids.get(i.securityId());
@@ -180,8 +220,53 @@ public final class D2cRfqSimulator extends VenueSimulator {
   public synchronized void startAutoFlow() {
     if (!autoFlow) {
       autoFlow = true;
+      if (session != null) {
+        // the session's RFQs are already fixed; each is sent at its own arrival time
+        for (final SimRfq r : session.model().rfqs()) {
+          schedule(session.nanoTimeOf(r.arrivalNanos()), () -> createModelRfq(r));
+        }
+        return;
+      }
       scheduleNextArrival();
     }
+  }
+
+  /** Client id sent for a model RFQ: 2001, 2002, 2003 for tiers A, B, C. */
+  static final int CLIENT_ID_BASE = 2001;
+
+  private void createModelRfq(final SimRfq r) {
+    final Instrument inst = session.instrument(r.instrument());
+    final long id = ++rfqSeq;
+    final List<String> engines = new ArrayList<>(loggedOn());
+    final Rfq rfq =
+        new Rfq(id, inst, r.clientBuys(), (long) r.quantityUnits(), CLIENT_ID_BASE + r.tier(), r.dealersAsked(),
+            ClientDecision.MODEL, r.informed(), engines, r.competitors());
+    rfq.sim = r;
+    final long now = clock.nanoTime();
+    rfq.createdNanos = now;
+    rfqs.put(id, rfq);
+    log("rfq " + id + " " + inst.securityId() + (rfq.buy ? " buy " : " sell ") + rfq.quantity + " dealers " + rfq.dealerCount
+        + (rfq.informed ? " informed" : ""));
+    for (final String engine : engines) {
+      send(engine, quoteRequest(rfq, clock.epochNanos() + config.responseWindowNanos()));
+    }
+    for (int d = 0; d < r.competitors(); d++) {
+      if (!r.answers(d)) {
+        rfq.simulatedResponses++;
+        continue;
+      }
+      final String dealer = dealerCodes.get(d % dealerCodes.size());
+      // the only place a tick enters: the model rounds the quote away from the mid
+      final long price = SimV2Session.mantissa(session.model().competitorQuote(r, d));
+      schedule(now + r.delayNanos(d), () -> {
+        if (!rfq.closed) {
+          rfq.quotes.add(new QuoteEntry(dealer, false, 0, price, clock.nanoTime()));
+          rfq.simulatedResponses++;
+          maybeDecideEarly(rfq);
+        }
+      });
+    }
+    schedule(now + config.responseWindowNanos(), () -> onWindowClosed(rfq));
   }
 
   private void scheduleNextArrival() {
@@ -495,6 +580,8 @@ public final class D2cRfqSimulator extends VenueSimulator {
       outcome = RfqOutcome.DONE_AWAY;
     } else if (decision == ClientDecision.BEST) {
       outcome = RfqOutcome.DONE;
+    } else if (rfq.sim != null) {
+      outcome = modelOutcome(rfq, live);
     } else if (rng.chance(config.doneAwayProbability())) {
       outcome = RfqOutcome.DONE_AWAY;
     } else {
@@ -548,12 +635,39 @@ public final class D2cRfqSimulator extends VenueSimulator {
     }
   }
 
+  /**
+   * The model's decision for a model RFQ (design section 7). The live quotes here are the model's
+   * answering competitors plus the engines' quotes; the best engine quote stands for the desk.
+   * The model orders quotes as this simulator does, by price and then by time, so when it says
+   * the client trades, the winner is the first live quote.
+   */
+  private RfqOutcome modelOutcome(final Rfq rfq, final List<QuoteEntry> live) {
+    double deskPrice = Double.NaN;
+    long deskDelay = 0;
+    for (final QuoteEntry q : live) {
+      if (q.engine) {
+        deskPrice = q.price / 1e9;
+        deskDelay = q.arrival - rfq.createdNanos;
+        break;
+      }
+    }
+    final RfqDecision d = session.model().decide(rfq.sim, deskPrice, deskDelay);
+    return switch (d.outcome()) {
+      case DONE -> RfqOutcome.DONE;
+      case PASSED -> RfqOutcome.PASSED;
+      case DONE_AWAY -> RfqOutcome.DONE_AWAY;
+      case EXPIRED -> RfqOutcome.EXPIRED;
+    };
+  }
+
   private void recordTrade(final Rfq rfq, final QuoteEntry best, final long mid) {
     final int index = trades.size();
     trades.add(new TradeRecord(rfq.id, best.dealer, rfq.buy, best.price, rfq.quantity, rfq.informed, mid, 0,
         best.engine ? best.quoteId : 0L, inst0(rfq), clock.epochNanos()));
     final Instrument inst = rfq.instrument;
-    if (rfq.informed) {
+    // version 1 only: under simulator v2 information is a drift of the level factor that starts
+    // when the informed client arrives, whoever wins (design section 6)
+    if (rfq.informed && rfq.sim == null) {
       final long jump = round(config.informedJumpMultiple() * halfSpreadMedian(inst), inst.tick());
       schedule(clock.nanoTime() + config.informedLagNanos(), () -> {
         final long m = midNow(inst);

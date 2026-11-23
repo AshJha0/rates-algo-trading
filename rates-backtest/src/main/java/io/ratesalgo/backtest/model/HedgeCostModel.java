@@ -1,6 +1,7 @@
 package io.ratesalgo.backtest.model;
 
 import io.ratesalgo.backtest.Instrument;
+import io.ratesalgo.backtest.sim.SimDay;
 import io.ratesalgo.backtest.util.Prices;
 
 /**
@@ -27,6 +28,11 @@ import io.ratesalgo.backtest.util.Prices;
  *
  * <p>Parameters are declared assumptions in preset {@value #PRESET}. The half-spread and the
  * displayed quantity are the book's own when a book exists, so the cost moves with the market.
+ *
+ * <p>Simulator v2 ({@link #simV2}): neither rule. The order is matched against the shared market
+ * model's book (five provider levels around the displaced mid), moves that book and the level
+ * factor by the model's impact law, and pays the venue fee. The two rules above are version 1 and
+ * stay only so that the ledger's recorded experiments reproduce.
  */
 public final class HedgeCostModel {
 
@@ -39,6 +45,7 @@ public final class HedgeCostModel {
   private final double feePerLot;
   private final double maxImpactTicks;
   private final boolean depthWalk;
+  private final SimDay simDay;
 
   /** The linear-impact rule (the constructor before package D, unchanged in behaviour). */
   public HedgeCostModel(final double impactTicksPerLot, final double feePerLot, final double maxImpactTicks) {
@@ -57,6 +64,44 @@ public final class HedgeCostModel {
     this.feePerLot = feePerLot;
     this.maxImpactTicks = maxImpactTicks;
     this.depthWalk = depthWalk;
+    this.simDay = null;
+  }
+
+  private HedgeCostModel(final SimDay simDay, final double feePerLot) {
+    if (feePerLot < 0) {
+      throw new IllegalArgumentException("fee must be non-negative");
+    }
+    this.impactTicksPerLot = 0.0;
+    this.feePerLot = feePerLot;
+    this.maxImpactTicks = 0.0;
+    this.depthWalk = false;
+    this.simDay = simDay;
+  }
+
+  /**
+   * The simulator v2 hedge model of one session. The fee per lot is the venue's fee schedule, a
+   * desk-side cost and not a market parameter; it is still read from preset {@value #PRESET}.
+   */
+  public static HedgeCostModel simV2(final SimDay day, final double feePerLot) {
+    return new HedgeCostModel(day, feePerLot);
+  }
+
+  /** The simulator v2 session this model fills against, or null for version 1. */
+  public SimDay simDay() {
+    return simDay;
+  }
+
+  /**
+   * Fills a market order against the simulator v2 book at {@code epochNanos}. The price is the
+   * quantity-weighted average of the levels taken, rounded against us to one mantissa unit.
+   */
+  public Fill fillSimV2(final Instrument instrument, final boolean buy, final long quantity, final long epochNanos) {
+    if (quantity <= 0) {
+      throw new IllegalArgumentException("hedge quantity must be positive: " + quantity);
+    }
+    final double average = simDay.market(instrument.id(), buy, quantity, epochNanos);
+    final double scaled = average * Prices.SCALE;
+    return new Fill(buy ? (long) Math.ceil(scaled) : (long) Math.floor(scaled), fee(instrument, quantity));
   }
 
   /**

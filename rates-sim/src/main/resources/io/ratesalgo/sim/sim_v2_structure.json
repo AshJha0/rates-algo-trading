@@ -35,7 +35,8 @@
     "depth_multiples": [1.0, 1.5, 2.0, 2.0, 2.0],
     "taker_size_log_sd": 1.0,
     "taker_look_ahead_s": 5.0,
-    "depth_reference_instrument": "UST-10Y"
+    "depth_reference_instrument": "UST-10Y",
+    "treasury_venue_shares": [0.6, 0.4]
   },
   "checks": {
     "section": "11, test A12",

@@ -4,6 +4,7 @@ import io.ratesalgo.backtest.Instrument;
 import io.ratesalgo.backtest.InstrumentSet;
 import io.ratesalgo.backtest.model.Preset;
 import io.ratesalgo.backtest.model.Presets;
+import io.ratesalgo.backtest.sim.SimDay;
 import io.ratesalgo.backtest.util.Prices;
 import io.ratesalgo.common.random.SplitMix64;
 import io.ratesalgo.common.time.ManualClock;
@@ -16,6 +17,11 @@ import io.ratesalgo.messages.sbe.CurveInputKind;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.QuoteRequestEncoder;
 import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.sim.BookModel;
+import io.ratesalgo.sim.MarketModel;
+import io.ratesalgo.sim.MarketSpec;
+import io.ratesalgo.sim.SimInstrument;
+import io.ratesalgo.sim.SimRfq;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -58,6 +64,11 @@ import org.agrona.concurrent.UnsafeBuffer;
  * {@code ratesresearch.flow} (preset {@code usd_rfq_flow}). Sizes are lognormal in millions,
  * capped. Market and client parameters are declared assumptions in preset
  * {@code usd_synthetic_market}.
+ *
+ * <p>The above is version 1, kept so that the ledger's recorded experiments reproduce. For
+ * simulator v2, {@link #generateSimV2} is a thin adapter: it asks the shared market model for the
+ * day and writes it in the same record format, with no generator and no market constant of its
+ * own (docs/research/SIM_V2_DESIGN.md section 10).
  */
 public final class SyntheticDay {
 
@@ -373,7 +384,103 @@ public final class SyntheticDay {
     return (bytes + 4095) & -4096L;
   }
 
-  private Summary write(
+  /**
+   * What the simulator v2 adapter publishes besides the market itself. These are transport
+   * settings of the back-test, not market parameters: how often swap reference prices are
+   * written and the SOFR fixing level the curve builder is given.
+   */
+  public record Publication(int curveIntervalSeconds, double sofrFixingPct) {
+    public Publication {
+      if (curveIntervalSeconds <= 0) {
+        throw new IllegalArgumentException("curve interval must be positive");
+      }
+    }
+
+    public static Publication fromPresets(final Presets presets) {
+      final Preset m = presets.get("usd_synthetic_market");
+      return new Publication((int) m.value("curve_input_interval_s"), m.value("sofr_fixing_pct"));
+    }
+  }
+
+  /**
+   * Writes one simulator v2 session as a journal: the model's RFQs, the swap reference prices
+   * (the latent mid rounded to the tick, which is all a venue publishes) and the top of each
+   * order book as it is with no desk in the market. The journal is a function of the seed, the
+   * parameters and the publication settings.
+   *
+   * <p>The desk's own effect on the market is not in the journal and cannot be: its fills, its
+   * impact and its marks come from {@code day}'s live model during the run
+   * ({@code BacktestConfig.forSimV2}). The book written here is read from a second model of the
+   * same seed, so generating a journal never disturbs the session a run will use.
+   */
+  public static Summary generateSimV2(final SimDay day, final Publication publication, final Path journal, final Path truthCsv) {
+    final MarketSpec spec = day.model().spec();
+    final MarketModel model = new MarketModel(spec, day.model().seed(), day.model().dayType());
+    final long open = day.openEpochNanos();
+    final List<Event> events = new ArrayList<>(100_000);
+    long order = 0;
+
+    events.add(
+        new Event(open, order++, Type.CURVE, SOFR_INDEX, Prices.toMantissa(publication.sofrFixingPct()), 0, false, 0,
+            0, false, CurveInputKind.Fixing, "ON"));
+    for (int k = 0; k <= spec.steps(); k += publication.curveIntervalSeconds()) {
+      final long t = k * MarketSpec.STEP_NANOS;
+      for (int i = 0; i < spec.instruments(); i++) {
+        final SimInstrument inst = spec.instrument(i);
+        if (inst.kind() == SimInstrument.Kind.SWAP) {
+          events.add(
+              new Event(open + t, order++, Type.CURVE, inst.id(), Prices.toMantissa(model.referencePrice(i, t)), 0,
+                  false, 0, 0, false, CurveInputKind.ParSwap, inst.key().substring(inst.key().indexOf('-') + 1)));
+        }
+      }
+    }
+
+    // top of book per step, written when a price or a whole lot of size changes
+    for (int b = 0; b < spec.bookCount(); b++) {
+      final int i = spec.bookInstrument(b);
+      final SimInstrument inst = spec.instrument(i);
+      final BookModel bookModel = model.book(i);
+      final double minorPerUnit = inst.unitFaceUsd() * 100.0;
+      final long[] last = new long[4];
+      for (int k = 0; k < spec.steps(); k++) {
+        final long t = k * MarketSpec.STEP_NANOS;
+        bookModel.advanceTo(t);
+        for (int side = 0; side < 2; side++) {
+          final boolean bid = side == 0;
+          int level = 0;
+          while (level < spec.params().bookLevels() - 1 && bookModel.displayedUnits(bid, level) < inst.minQuantity()) {
+            level++;
+          }
+          final long lots = (long) Math.floor(bookModel.displayedUnits(bid, level) / inst.minQuantity());
+          final long price = Prices.toMantissa(bookModel.levelPrice(bid, level));
+          final long quantity = Math.round(lots * inst.minQuantity() * minorPerUnit);
+          if (k == 0 || price != last[2 * side] || quantity != last[2 * side + 1]) {
+            last[2 * side] = price;
+            last[2 * side + 1] = quantity;
+            events.add(new Event(open + t, order++, Type.BOOK, inst.id(), price, quantity, bid, 0, 0, false, null, null));
+          }
+        }
+      }
+    }
+
+    int informed = 0;
+    for (final SimRfq r : model.rfqs()) {
+      informed += r.informed() ? 1 : 0;
+      events.add(
+          new Event(open + r.arrivalNanos(), order++, Type.RFQ, spec.instrument(r.instrument()).id(), 0,
+              Math.round(r.quantityUnits() * 100.0), r.clientBuys(), r.tier() + 1, r.dealersAsked(), r.informed(),
+              null, null));
+    }
+
+    events.sort(Comparator.comparingLong(Event::time).thenComparingLong(Event::order));
+    final long capacity = capacityFor(events);
+    if (capacity > Integer.MAX_VALUE) {
+      throw new IllegalStateException("simulator v2 day too large for one segment: " + capacity);
+    }
+    return write(day.date(), model.seed(), journal, truthCsv, events, (int) capacity, model.rfqs().size(), informed);
+  }
+
+  private static Summary write(
       final LocalDate date,
       final long seed,
       final Path journal,

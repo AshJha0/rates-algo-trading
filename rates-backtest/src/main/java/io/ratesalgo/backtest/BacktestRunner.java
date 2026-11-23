@@ -6,6 +6,7 @@ import io.ratesalgo.backtest.model.HedgeCostModel;
 import io.ratesalgo.backtest.model.HitRateModel;
 import io.ratesalgo.backtest.model.RfqOutcomeModel;
 import io.ratesalgo.backtest.pnl.PositionBook;
+import io.ratesalgo.backtest.sim.SimDay;
 import io.ratesalgo.backtest.util.Prices;
 import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.journal.ChainHash;
@@ -178,6 +179,10 @@ public final class BacktestRunner {
     private final Map<Integer, Long> maxAbsPosition = new TreeMap<>();
     private final RfqOutcomeModel outcomes = config.outcomes();
     private final HedgeCostModel hedgeCost = config.hedgeCost();
+    // simulator v2: the shared market model's session, or null for version 1
+    private final SimDay simDay = config.outcomes().simDay();
+    private int simMarkedStep = -1;
+    private double simMarkedOffset = Double.NaN;
 
     private final MessageHeaderDecoder headerDecoder = new MessageHeaderDecoder();
     private final QuoteRequestDecoder rfqDecoder = new QuoteRequestDecoder();
@@ -253,9 +258,47 @@ public final class BacktestRunner {
       }
     }
 
+    /**
+     * Simulator v2: brings the model's books to the clock, settles resting orders and marks every
+     * instrument at its unrounded latent mid. Marks are refreshed when the grid step changes or
+     * the desk's own impact has moved the level factor, so a mark never lags the model.
+     */
+    private void simTick() {
+      if (simDay == null) {
+        return;
+      }
+      final long now = clock.epochNanos();
+      simDay.advance(now);
+      final int step = simDay.step(now);
+      final double offset = simDay.levelOffset(now);
+      if (step != simMarkedStep || Double.compare(offset, simMarkedOffset) != 0) {
+        simMarkedStep = step;
+        simMarkedOffset = offset;
+        for (final Instrument i : config.instruments().all()) {
+          final double mid = simDay.latentMid(i.id(), now);
+          book.mark(i.id(), mid, now);
+          mids.computeIfAbsent(i.id(), k -> new MidSeries()).add(now, mid);
+        }
+      }
+      if (!resting.isEmpty()) {
+        final List<Order> filled = new ArrayList<>();
+        for (final Order o : resting.values()) {
+          if (o.resting.onBook(0L, 0L, 0L)) {
+            filled.add(o);
+          }
+        }
+        for (final Order o : filled) {
+          resting.remove(o.clOrdId);
+          o.resting.cancel();
+          fillOrder(o, o.priceMantissa, hedgeCost.fee(config.instruments().get(o.instrumentId), o.quantity));
+        }
+      }
+    }
+
     private void begin(final long firstTs) {
       startNanos = firstTs;
       clock.setEpochNanos(firstTs);
+      simTick();
       final LocalDate date =
           LocalDate.ofInstant(Instant.ofEpochSecond(firstTs / 1_000_000_000L), ZoneOffset.UTC);
       final BacktestConfig.CalendarSpec spec = config.calendar();
@@ -271,6 +314,7 @@ public final class BacktestRunner {
       }
       drain(ts);
       clock.setEpochNanos(ts);
+      simTick();
       headerDecoder.wrap(buffer, offset);
       if (headerDecoder.schemaId() != QuoteRequestDecoder.SCHEMA_ID
           || headerDecoder.version() != QuoteRequestDecoder.SCHEMA_VERSION) {
@@ -312,6 +356,7 @@ public final class BacktestRunner {
         if (p.time() > clock.epochNanos()) {
           clock.setEpochNanos(p.time());
         }
+        simTick();
         switch (p.kind()) {
           case RFQ_OUTCOME -> settle((RfqRecord) p.ref());
           case ORDER_ARRIVAL -> arrive((Order) p.ref());
@@ -398,6 +443,10 @@ public final class BacktestRunner {
     }
 
     private void mark(final int id, final double mid) {
+      if (simDay != null) {
+        // simulator v2 marks at the latent mid (simTick), not at the journal's tick-rounded prices
+        return;
+      }
       book.mark(id, mid, clock.epochNanos());
       mids.computeIfAbsent(id, k -> new MidSeries()).add(clock.epochNanos(), mid);
     }
@@ -447,9 +496,24 @@ public final class BacktestRunner {
 
     private void settle(final RfqRecord rec) {
       final Instrument instrument = config.instruments().get(rec.instrumentId);
-      final RfqOutcomeModel.Outcome o =
-          outcomes.settle(
-              rec.rfqId, instrument, rec.ourSpreadBp, rec.sizeMillions(), rec.dealers, rec.inFixingWindow);
+      final RfqOutcomeModel.Outcome o;
+      final QuoteStatus status;
+      if (simDay != null) {
+        final RfqOutcomeModel.SimOutcome s =
+            outcomes.settleSimV2(
+                rec.rfqId,
+                instrument,
+                Prices.toDouble(rec.ourPriceMantissa),
+                rec.quoteSentNanos - rec.receivedNanos,
+                rec.midAtQuote);
+        o = s.outcome();
+        status = s.status();
+      } else {
+        o =
+            outcomes.settle(
+                rec.rfqId, instrument, rec.ourSpreadBp, rec.sizeMillions(), rec.dealers, rec.inFixingWindow);
+        status = o.won() ? QuoteStatus.Done : QuoteStatus.TradedAway;
+      }
       rec.settled = true;
       rec.won = o.won();
       rec.coverBp = o.coverSpreadBp();
@@ -468,7 +532,7 @@ public final class BacktestRunner {
           .venueId(0)
           .rfqId(rec.rfqId)
           .quoteId(0)
-          .status(o.won() ? QuoteStatus.Done : QuoteStatus.TradedAway)
+          .status(status)
           .tradedQuantity(rec.quantity)
           .timestampNanos(clock.epochNanos());
       responseEncoder.tradedPrice().mantissa(tradedPrice);
@@ -519,6 +583,15 @@ public final class BacktestRunner {
     public boolean cancelOrder(final long clOrdId) {
       final Order r = resting.remove(clOrdId);
       if (r != null) {
+        // simulator v2: what the order had traded before the cancel is booked, at its limit price
+        final long partial = r.resting.cancel();
+        if (partial > 0) {
+          final Instrument instrument = config.instruments().get(r.instrumentId);
+          bookFill(
+              r.instrumentId, r.buy ? partial : -partial, Prices.toDouble(r.priceMantissa),
+              hedgeCost.fee(instrument, partial), r.hedge, r.clOrdId, 0, 0);
+          report(r, OrdStatus.PartiallyFilled, r.priceMantissa, partial);
+        }
         report(r, OrdStatus.Cancelled, 0, 0);
         return true;
       }
@@ -539,6 +612,22 @@ public final class BacktestRunner {
       final Instrument instrument = config.instruments().get(order.instrumentId);
       if (!book.hasMid(order.instrumentId)) {
         report(order, OrdStatus.Rejected, 0, 0);
+        return;
+      }
+      if (simDay != null) {
+        if (!simDay.instrument(order.instrumentId).hasBook()) {
+          report(order, OrdStatus.Rejected, 0, 0);
+        } else if (order.type == OrdType.Market) {
+          final HedgeCostModel.Fill fill = hedgeCost.fillSimV2(instrument, order.buy, order.quantity, clock.epochNanos());
+          fillOrder(order, fill.priceMantissa(), fill.fee());
+        } else {
+          order.resting =
+              config.clob().joinSimV2(order.instrumentId, order.buy, order.priceMantissa, order.quantity, clock.epochNanos());
+          report(order, OrdStatus.New, 0, 0);
+          resting.put(order.clOrdId, order);
+        }
+        // the order may have moved the level factor, and may already be complete
+        simTick();
         return;
       }
       final Top top = tops.get(order.instrumentId);
@@ -569,7 +658,7 @@ public final class BacktestRunner {
     }
 
     private void checkResting(final int instrumentId, final Top top) {
-      if (resting.isEmpty()) {
+      if (resting.isEmpty() || simDay != null) {
         return;
       }
       final List<Order> filled = new ArrayList<>();

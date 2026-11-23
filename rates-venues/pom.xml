@@ -42,6 +42,11 @@
     </dependency>
     <dependency>
       <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-sim</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
       <artifactId>rates-journal</artifactId>
       <version>${project.version}</version>
     </dependency>
