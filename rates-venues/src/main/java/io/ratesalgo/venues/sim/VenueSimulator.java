@@ -70,6 +70,7 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
   private long eventSeq;
   /** Atomic because start() sets the base under the lock and subclasses draw ids under it too. */
   private final AtomicLong idSeq = new AtomicLong();
+  private long idBase;
   private long sendFailures;
   private long logonsRefused;
   private Secret requiredUsername;
@@ -178,6 +179,7 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
     } else {
       final long base = nextGeneration(options.storeDir()) << GENERATION_SHIFT;
       idSeq.accumulateAndGet(base, Math::max);
+      idBase = base;
       settings.setString(FileStoreFactory.SETTING_FILE_STORE_PATH, options.storeDir().toString());
       stores = new FileStoreFactory(settings);
     }
@@ -304,6 +306,15 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
   /** Appends to the event log. */
   protected final void log(final String line) {
     eventLog.add(clock.epochNanos() + " " + line);
+  }
+
+  /**
+   * Where this run's ids start: 0, or with a store directory the restart generation shifted up.
+   * A simulator that numbers something with a counter of its own (RFQs) adds this to it, so those
+   * ids do not repeat across restarts either: the engine drops an RFQ whose id it has seen.
+   */
+  protected final synchronized long idBase() {
+    return idBase;
   }
 
   /** Next id from a per-simulator sequence (order ids, exec ids, quote response ids). */

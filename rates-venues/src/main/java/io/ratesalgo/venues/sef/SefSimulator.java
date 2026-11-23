@@ -121,7 +121,7 @@ public final class SefSimulator extends ClobSimulator {
       log("rfq refused: required transaction to " + spec.dealerCount() + " dealers");
       return -1;
     }
-    final long id = ++rfqSeq;
+    final long id = idBase() + ++rfqSeq;
     final Rfq rfq = new Rfq(id, inst, spec, new ArrayList<>(loggedOn()));
     rfqs.put(id, rfq);
     for (int i = 0; i < spec.competitorRates().size(); i++) {

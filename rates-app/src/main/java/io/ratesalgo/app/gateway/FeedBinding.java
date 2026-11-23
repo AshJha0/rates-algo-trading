@@ -162,6 +162,15 @@ public final class FeedBinding {
     return true;
   }
 
+  /**
+   * Makes the next duty cycle tell the loop its book is not to be trusted and rebuild it from a
+   * snapshot, whatever the feed has delivered. A process that restarted on its journals calls this
+   * before its first duty cycle: the book its loop rebuilt by replay is the book at the stop.
+   */
+  public void requireRebuild() {
+    loseSync();
+  }
+
   private void loseSync() {
     synced = false;
     tellDown = true;

@@ -2,6 +2,7 @@ package io.ratesalgo.app;
 
 import io.ratesalgo.app.gateway.FeedBinding;
 import io.ratesalgo.app.gateway.InboundRouter;
+import io.ratesalgo.app.gateway.ReconnectPolicy;
 import io.ratesalgo.app.gateway.VenueSession;
 import io.ratesalgo.app.loop.AppIds;
 import io.ratesalgo.app.loop.DeskGroup;
@@ -12,17 +13,23 @@ import io.ratesalgo.app.sim.ClobLiquidity;
 import io.ratesalgo.app.sim.CurveFeed;
 import io.ratesalgo.app.sim.SimClock;
 import io.ratesalgo.app.sim.SimulatedVenues;
+import io.ratesalgo.common.security.Secret;
+import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.common.time.Clock;
 import io.ratesalgo.common.time.SystemClock;
 import io.ratesalgo.core.AnchoredClock;
+import io.ratesalgo.core.ControlMessages;
 import io.ratesalgo.core.EventClock;
 import io.ratesalgo.core.EventLoop;
 import io.ratesalgo.core.IdleStrategies;
 import io.ratesalgo.core.InboundPublisher;
 import io.ratesalgo.core.LoopCounters;
 import io.ratesalgo.core.LoopJournals;
+import io.ratesalgo.core.LoopRecovery;
 import io.ratesalgo.core.LoopRunner;
+import io.ratesalgo.core.RecoveryClock;
 import io.ratesalgo.core.RingBufferContract;
+import io.ratesalgo.journal.JournalRecovery;
 import io.ratesalgo.journal.JournalWarmUp;
 import io.ratesalgo.journal.SegmentedJournal;
 import io.ratesalgo.messages.sbe.KillReason;
@@ -33,19 +40,24 @@ import io.ratesalgo.messages.sbe.OrderWithdrawEncoder;
 import io.ratesalgo.messages.sbe.QuoteCancelEncoder;
 import io.ratesalgo.messages.sbe.QuoteWithdrawEncoder;
 import io.ratesalgo.messages.sbe.RiskLimitBreachDecoder;
+import io.ratesalgo.router.FrameSink;
 import io.ratesalgo.venues.Venues;
+import io.ratesalgo.venues.sim.AcceptorOptions;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Stream;
+import org.agrona.DirectBuffer;
 import org.agrona.collections.Int2IntHashMap;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.ringbuffer.ManyToOneRingBuffer;
@@ -84,6 +96,29 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  *       from outside, which is the one thing another thread may safely do to a session.
  * </ul>
  *
+ * <p>Restart (review finding L6). A journal directory that already holds a group's journals is a
+ * process that stopped, cleanly or not, and is starting again. Before anything connects:
+ *
+ * <ol>
+ *   <li>the journals are checked; a torn tail is cut and reported, a broken chain refuses to start
+ *       ({@link JournalRecovery});
+ *   <li>each loop replays its own inbound journal through the handlers it will run live, and what
+ *       they publish is checked against the outbound journal ({@link LoopRecovery}). That is the
+ *       only way state is restored: positions, risk, quotes, router children and hedge parents are
+ *       whatever replay makes them, and replay is what the tests hold to an equal hash;
+ *   <li>simulated time carries on from the last journaled frame;
+ *   <li>each loop is told, as journaled inputs, that both sessions are down, and the book feed is
+ *       made to rebuild: the venues cancelled on disconnect, so the loops pull their quotes and
+ *       stop counting on orders the venue no longer holds.
+ * </ol>
+ *
+ * <p>Then the sessions log on. The CLOB session reconciles before its loop may use the venue
+ * ({@link VenueSession}), and the feed delivers a snapshot. Until all of that has happened the
+ * loops' input health keeps quoting off and {@link #notReadyReason} says what is still missing.
+ * With {@link Fix#resetOnLogon} off the sessions resume their sequence numbers, so the venues
+ * resend fills sent while the process was down; a fill already journaled is dropped by its
+ * execution id.
+ *
  * <p>Instrument groups are currencies (DECISIONS.md DR-R2W-03): the risk engine and the hedger
  * aggregate by currency, so a group cannot split one. The universe is USD only, so there is one
  * group, {@code usd}; the inbound router and the journal layout take any number.
@@ -107,7 +142,18 @@ public final class TradingProcess implements AutoCloseable {
    * @param settings the desks' parameters
    * @param startNanos simulated wall time at start, epoch nanoseconds
    */
-  public record Options(Path journalDir, long seed, DeskSettings settings, long startNanos, Tuning tuning) {
+  public record Options(Path journalDir, long seed, DeskSettings settings, long startNanos, Tuning tuning, Fix fix) {
+
+    /** Options with the simulator's FIX preset: plain loopback, no credentials, reset on logon. */
+    public Options(
+        final Path journalDir, final long seed, final DeskSettings settings, final long startNanos, final Tuning tuning) {
+      this(journalDir, seed, settings, startNanos, tuning, Fix.SIMULATOR);
+    }
+
+    /** These options with other FIX settings. */
+    public Options withFix(final Fix other) {
+      return new Options(journalDir, seed, settings, startNanos, tuning, other);
+    }
 
     /** Options starting at {@link #DEFAULT_START}. */
     public Options(final Path journalDir, final long seed, final DeskSettings settings) {
@@ -121,7 +167,45 @@ public final class TradingProcess implements AutoCloseable {
 
     /** These options with another tuning. */
     public Options withTuning(final Tuning other) {
-      return new Options(journalDir, seed, settings, startNanos, other);
+      return new Options(journalDir, seed, settings, startNanos, other, fix);
+    }
+  }
+
+  /**
+   * How the FIX sessions reach the venues, and how the in-process simulators accept them.
+   *
+   * @param clientTls the initiators' TLS settings, or null for plain loopback TCP
+   * @param acceptorTls the simulators' TLS settings; needed when {@code clientTls} is given
+   * @param username Logon Username (553), or null for no credentials; the simulators then
+   *     require the same pair
+   * @param password Logon Password (554)
+   * @param resetOnLogon true restarts sequence numbers at every Logon; false resumes them from a
+   *     store under the journal directory, so a reconnect or a restart gets a resend of the gap
+   * @param reconnect how a refused or dropped session is retried
+   */
+  public record Fix(
+      TlsConfig clientTls, TlsConfig acceptorTls, String username, Secret password, boolean resetOnLogon,
+      ReconnectPolicy reconnect) {
+
+    /**
+     * The simulator preset: plain loopback, no credentials, sequence numbers reset at every Logon.
+     * It is what every recorded smoke and back-test figure was run with.
+     */
+    public static final Fix SIMULATOR = new Fix(null, null, null, null, true, ReconnectPolicy.DEFAULT);
+
+    /** Validates the settings. */
+    public Fix {
+      if ((clientTls == null) != (acceptorTls == null)) {
+        throw new IllegalArgumentException("TLS needs both the initiator's and the acceptor's settings");
+      }
+      if ((username == null) != (password == null)) {
+        throw new IllegalArgumentException("give a username and a password, or neither");
+      }
+    }
+
+    /** These settings resuming sequence numbers, or resetting them. */
+    public Fix withResetOnLogon(final boolean reset) {
+      return new Fix(clientTls, acceptorTls, username, password, reset, reconnect);
     }
   }
 
@@ -350,13 +434,82 @@ public final class TradingProcess implements AutoCloseable {
   private volatile Throwable driverFailure;
   private long killSwitchMessages;
   private long breachMessages;
+  private final Restart restart;
+  private long recoveredFrames;
+  private long outboundCompleted;
+  private boolean feedSyncedSeen;
+  private volatile boolean feedSynced;
+
+  /** The router journal's sink, silent while a restart replays decisions it already holds. */
+  private static final class RouteSink implements FrameSink {
+    private final SegmentedJournal route;
+    private boolean muted;
+
+    RouteSink(final SegmentedJournal route, final boolean muted) {
+      this.route = route;
+      this.muted = muted;
+    }
+
+    @Override
+    public void append(
+        final int templateId, final int schemaVersion, final DirectBuffer buffer, final int offset, final int length) {
+      if (!muted) {
+        route.append(templateId, schemaVersion, buffer, offset, length);
+      }
+    }
+  }
+
+  /** What the journal directory held at start: nothing, or the journals of a process that stopped. */
+  private static final class Restart {
+    final boolean[] existing;
+    final long[] stateDigest;
+    final long[] replayHash;
+    final List<String> log = new ArrayList<>();
+    long resumeNanos = Long.MIN_VALUE;
+    int tornTails;
+    boolean any;
+
+    Restart(final Path journalDir, final String[] names) {
+      existing = new boolean[names.length];
+      stateDigest = new long[names.length];
+      replayHash = new long[names.length];
+      for (int g = 0; g < names.length; g++) {
+        final Path dir = journalDir.resolve(names[g]);
+        if (!JournalRecovery.exists(dir, "in")) {
+          continue;
+        }
+        if (!JournalRecovery.exists(dir, "out")) {
+          throw new IllegalStateException(
+              "group " + names[g] + " has an inbound journal and no outbound journal in " + dir + "; refusing to start");
+        }
+        existing[g] = true;
+        any = true;
+        for (final String journal : new String[] {"in", "out", "route"}) {
+          if (JournalRecovery.exists(dir, journal)) {
+            final JournalRecovery.Report report = JournalRecovery.repair(dir, journal);
+            log.add(names[g] + " " + report.describe(journal));
+            if (report.tornSegment() != 0) {
+              tornTails++;
+            }
+            if ("in".equals(journal)) {
+              resumeNanos = Math.max(resumeNanos, report.lastTimestampNanos());
+            }
+          }
+        }
+      }
+    }
+  }
 
   private TradingProcess(final Options options) {
     this.options = options;
     this.universe = UsdUniverse.standard();
-    this.clock = new SimClock(options.startNanos());
-    this.venues = new SimulatedVenues(clock, options.seed());
     final String[] names = {"usd"};
+    // Journals already there mean a restart: check and repair them before anything else exists,
+    // and start simulated time where the journal ended, not where the day began.
+    this.restart = new Restart(options.journalDir(), names);
+    this.clock = new SimClock(Math.max(options.startNanos(), restart.resumeNanos));
+    final Fix fix = options.fix();
+    this.venues = new SimulatedVenues(clock, options.seed(), acceptor(fix, "d2c"), acceptor(fix, "clob"));
     groups = new Group[names.length];
     inboundRings = new ManyToOneRingBuffer[names.length];
     controlRings = new RingBuffer[names.length];
@@ -367,15 +520,25 @@ public final class TradingProcess implements AutoCloseable {
     final RingBuffer[] d2cRings = new RingBuffer[names.length];
     final RingBuffer[] clobRings = new RingBuffer[names.length];
     final Int2IntHashMap groupOf = new Int2IntHashMap(-1);
+    final RecoveryClock[] recoveryClocks = new RecoveryClock[names.length];
+    final RouteSink[] routeSinks = new RouteSink[names.length];
     try {
       // DR-INT-06: run the journals' wait paths (a roll that waits for its segment, an append to a
       // full ring) on scratch journals before any loop starts, so that the first real wait does not
-      // deoptimise compiled code on a loop thread while it quotes.
-      JournalWarmUp.exerciseWaitPaths(options.journalDir().resolve("journal-warmup"), clock);
+      // deoptimise compiled code on a loop thread while it quotes. A crash during the warm-up
+      // leaves its scratch files behind; they are of no use to anyone.
+      final Path warmUp = options.journalDir().resolve("journal-warmup");
+      deleteTree(warmUp);
+      JournalWarmUp.exerciseWaitPaths(warmUp, clock);
       for (int g = 0; g < names.length; g++) {
         final Path dir = options.journalDir().resolve(names[g]);
         Files.createDirectories(dir);
-        final EventClock loopClock = new EventClock(new AnchoredClock(clock));
+        // A restarted loop first lives in journal time: its clock stands at the first journaled
+        // frame and the replayer moves it, then it is switched to simulated time (goLive below).
+        final long firstFrame = restart.existing[g] ? LoopRecovery.firstFrameNanos(dir, "in") : -1L;
+        recoveryClocks[g] = firstFrame >= 0 ? new RecoveryClock(firstFrame) : null;
+        final EventClock loopClock =
+            new EventClock(new AnchoredClock(recoveryClocks[g] != null ? recoveryClocks[g] : clock));
         inboundRings[g] = RingBufferContract.newInbound(RingBufferContract.DEFAULT_INBOUND_CAPACITY);
         killPublishers[g] = new InboundPublisher(inboundRings[g]);
         final OneToOneRingBuffer[] outbound = new OneToOneRingBuffer[AppIds.OUTBOUND_RINGS];
@@ -387,48 +550,171 @@ public final class TradingProcess implements AutoCloseable {
         controlRings[g] = outbound[AppIds.CONTROL_GATEWAY];
         // DR-INT-03: the loop's journals use the R2 write path (LoopJournals, default mode,
         // segments prepared and touched off the loop thread), so a roll does no I/O on the loop.
-        final LoopJournals journals = LoopJournals.create(dir, "in", "out", SEGMENT_BYTES, loopClock);
-        final SegmentedJournal route = SegmentedJournal.create(dir, "route", SEGMENT_BYTES, loopClock, true);
-        final DeskLoopFactory factory =
-            new DeskLoopFactory(universe, options.settings(), (t, v, b, o, l) -> route.append(t, v, b, o, l));
-        final EventLoop loop =
-            factory.create(
-                EventLoop.builder(loopClock)
-                    .inbound(inboundRings[g])
-                    .outbound(outbound[AppIds.D2C_GATEWAY])
-                    .outbound(outbound[AppIds.CLOB_GATEWAY])
-                    .outbound(outbound[AppIds.CONTROL_GATEWAY])
-                    // a cancel lost to a full gateway ring leaves a quote or order at the venue:
-                    // hold these and deliver them when the gateway has room
-                    .retryOnDrop(
-                        QuoteCancelEncoder.TEMPLATE_ID,
-                        QuoteWithdrawEncoder.TEMPLATE_ID,
-                        OrderCancelEncoder.TEMPLATE_ID,
-                        OrderWithdrawEncoder.TEMPLATE_ID)
-                    .journals(journals));
-        final Group group = new Group(names[g], dir, loop, factory.last(), journals, route);
-        loop.addAgent(group::publishStatus);
+        final LoopJournals journals =
+            restart.existing[g]
+                ? LoopJournals.open(dir, "in", "out", SEGMENT_BYTES, loopClock)
+                : LoopJournals.create(dir, "in", "out", SEGMENT_BYTES, loopClock);
+        final SegmentedJournal route;
+        try {
+          route =
+              JournalRecovery.exists(dir, "route")
+                  ? SegmentedJournal.open(dir, "route", SEGMENT_BYTES, loopClock, true)
+                  : SegmentedJournal.create(dir, "route", SEGMENT_BYTES, loopClock, true);
+        } catch (final RuntimeException e) {
+          journals.close();
+          throw e;
+        }
+        // The router journal already holds the decisions replay will make again; it is not
+        // compared with anything, so they are not written twice. A decision the stopped process
+        // made and had not written is therefore missing from it, which is the cost.
+        routeSinks[g] = new RouteSink(route, recoveryClocks[g] != null);
+        final DeskLoopFactory factory = new DeskLoopFactory(universe, options.settings(), routeSinks[g]);
+        final Group group;
+        try {
+          final EventLoop loop =
+              factory.create(
+                  EventLoop.builder(loopClock)
+                      .inbound(inboundRings[g])
+                      .outbound(outbound[AppIds.D2C_GATEWAY])
+                      .outbound(outbound[AppIds.CLOB_GATEWAY])
+                      .outbound(outbound[AppIds.CONTROL_GATEWAY])
+                      // a cancel lost to a full gateway ring leaves a quote or order at the venue:
+                      // hold these and deliver them when the gateway has room
+                      .retryOnDrop(
+                          QuoteCancelEncoder.TEMPLATE_ID,
+                          QuoteWithdrawEncoder.TEMPLATE_ID,
+                          OrderCancelEncoder.TEMPLATE_ID,
+                          OrderWithdrawEncoder.TEMPLATE_ID)
+                      .journals(journals));
+          group = new Group(names[g], dir, loop, factory.last(), journals, route);
+        } catch (final RuntimeException e) {
+          journals.close();
+          route.close();
+          throw e;
+        }
         groups[g] = group;
         for (final int id : universe.instrumentIds()) {
           groupOf.put(id, g);
         }
       }
+      final InboundRouter gatewayInbound = new InboundRouter(inboundRings, groupOf);
+      for (int g = 0; g < names.length; g++) {
+        if (recoveryClocks[g] != null) {
+          final int group = g;
+          final LoopRecovery.Result r =
+              LoopRecovery.run(
+                  groups[g].loop, recoveryClocks[g], groups[g].dir, "in", "out", groups[g].journals.outbound(),
+                  (templateId, buffer, offset, length) -> gatewayInbound.restore(group, buffer, offset, length),
+                  LoopRecovery.Observer.NONE);
+          restart.stateDigest[g] = groups[g].desk.stateDigest(universe.instrumentIds());
+          restart.replayHash[g] = r.replayHash();
+          final long down = recoveryClocks[g].goLive(clock);
+          routeSinks[g].muted = false;
+          recoveredFrames += r.inboundFrames();
+          outboundCompleted += r.outboundCompleted();
+          restart.log.add(String.format(Locale.ROOT,
+              "%s replayed %d inbound frames: %d outbound verified, %d completed, hash %016x; down for %d ms",
+              names[g], r.inboundFrames(), r.outboundVerified(), r.outboundCompleted(), r.replayHash(),
+              down / 1_000_000L));
+        }
+        groups[g].loop.addAgent(groups[g]::publishStatus);
+      }
+      // a fill or reject the loop never received leaves its view of the venue wrong: stop trading
+      gatewayInbound.undeliveredHandler(
+          (templateId, group) -> requestHalt("a session message could not be delivered to the loop", true));
+      final Clock fixClock = fixClock(clock);
+      final Path sequences = options.journalDir().resolve("fix");
+      final VenueSession.Link link =
+          new VenueSession.Link(
+              fix.clientTls(), fix.username(), fix.password(), fix.resetOnLogon(),
+              fix.resetOnLogon() ? null : sequences.resolve("d2c.seq"), false);
+      d2c = new VenueSession(AppIds.D2C_VENUE, AppIds.D2C_GATEWAY, new String[] {AppIds.COMP_ID, venues.d2c().compId()},
+          "127.0.0.1", venues.d2c().port(), universe.instrumentMap(), gatewayInbound, fixClock, d2cRings,
+          fix.reconnect(), VenueSession.WithdrawPolicy.DEFAULT, link);
+      VenueSession second = null;
+      try {
+        // the CLOB holds orders for us: a session that comes back reconciles them before use
+        second = new VenueSession(AppIds.CLOB_VENUE, AppIds.CLOB_GATEWAY,
+            new String[] {AppIds.COMP_ID, venues.clob().compId()}, "127.0.0.1", venues.clob().port(),
+            universe.instrumentMap(), gatewayInbound, fixClock, clobRings, fix.reconnect(),
+            VenueSession.WithdrawPolicy.DEFAULT,
+            link.withSequenceFile(fix.resetOnLogon() ? null : sequences.resolve("clob.seq")).withReconcileOrders(true));
+      } finally {
+        if (second == null) {
+          d2c.close();
+        }
+      }
+      clob = second;
+      d2c.inboundDrained(this::inboundDrained);
+      clob.inboundDrained(this::inboundDrained);
+      feed = new FeedBinding(venues.feed(), venues.clob().feed(), gatewayInbound, AppIds.CLOB_FEED_STATUS, clock);
+      curve = new CurveFeed(universe, venues.d2c(), gatewayInbound, clock, CURVE_INTERVAL_NANOS);
+      liquidity = new ClobLiquidity(universe, venues.d2c(), venues.clob(), clock, LIQUIDITY_INTERVAL_NANOS);
+      if (restart.any) {
+        // Journaled inputs, so that replay sees them too: the sessions the stopped process had are
+        // gone and the venues cancelled on disconnect. The loops pull their quotes and stop
+        // counting on their orders; the logons that follow bring the venues back.
+        final UnsafeBuffer down = new UnsafeBuffer(ByteBuffer.allocateDirect(64));
+        for (final int gateway : new int[] {AppIds.D2C_GATEWAY, AppIds.CLOB_GATEWAY}) {
+          final int length =
+              ControlMessages.encodeGatewayStatus(
+                  down, 0, clock.epochNanos(), gateway, ControlMessages.STATUS_DISCONNECTED);
+          gatewayInbound.offer(down, 0, length);
+        }
+        d2c.recovered();
+        clob.recovered();
+        feed.requireRebuild();
+      }
     } catch (final IOException e) {
-      venues.close();
+      closeBuilt();
       throw new UncheckedIOException(e);
+    } catch (final RuntimeException e) {
+      closeBuilt();
+      throw e;
     }
-    final InboundRouter gatewayInbound = new InboundRouter(inboundRings, groupOf);
-    // a fill or reject the loop never received leaves its view of the venue wrong: stop trading
-    gatewayInbound.undeliveredHandler(
-        (templateId, group) -> requestHalt("a session message could not be delivered to the loop", true));
-    final Clock fixClock = fixClock(clock);
-    d2c = new VenueSession(AppIds.D2C_VENUE, AppIds.D2C_GATEWAY, new String[] {AppIds.COMP_ID, venues.d2c().compId()},
-        "127.0.0.1", venues.d2c().port(), universe.instrumentMap(), gatewayInbound, fixClock, d2cRings);
-    clob = new VenueSession(AppIds.CLOB_VENUE, AppIds.CLOB_GATEWAY, new String[] {AppIds.COMP_ID, venues.clob().compId()},
-        "127.0.0.1", venues.clob().port(), universe.instrumentMap(), gatewayInbound, fixClock, clobRings);
-    feed = new FeedBinding(venues.feed(), venues.clob().feed(), gatewayInbound, AppIds.CLOB_FEED_STATUS, clock);
-    curve = new CurveFeed(universe, venues.d2c(), gatewayInbound, clock, CURVE_INTERVAL_NANOS);
-    liquidity = new ClobLiquidity(universe, venues.d2c(), venues.clob(), clock, LIQUIDITY_INTERVAL_NANOS);
+  }
+
+  /** The constructor failed: release the journals and venues it had built. */
+  private void closeBuilt() {
+    for (final Group g : groups) {
+      if (g != null) {
+        g.journals.close();
+        g.route.close();
+      }
+    }
+    venues.close();
+  }
+
+  /**
+   * The acceptor settings of one in-process simulator. Each keeps its FIX store and its id
+   * sequence under the journal directory, so that a restarted process meets a venue that still
+   * knows its sequence numbers and does not hand out execution ids it has used before: the desk
+   * drops a fill whose execution id it has already booked.
+   */
+  private AcceptorOptions acceptor(final Fix fix, final String venue) {
+    return new AcceptorOptions(
+        fix.acceptorTls(), fix.username(), fix.password(), options.journalDir().resolve("venues").resolve(venue));
+  }
+
+  private static void deleteTree(final Path dir) throws IOException {
+    if (!Files.exists(dir)) {
+      return;
+    }
+    try (Stream<Path> files = Files.walk(dir)) {
+      for (final Path p : files.sorted(Comparator.reverseOrder()).toList()) {
+        Files.delete(p);
+      }
+    }
+  }
+
+  /** True when every loop has read everything in its inbound ring. Any thread. */
+  private boolean inboundDrained() {
+    for (final ManyToOneRingBuffer ring : inboundRings) {
+      if (ring.size() != 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -451,12 +737,18 @@ public final class TradingProcess implements AutoCloseable {
 
   /**
    * Builds the process, logs both sessions on and starts the venues' RFQ flow. Time stands at
-   * the options' start until it is moved.
+   * the options' start until it is moved. On a journal directory that already holds journals the
+   * process is rebuilt from them first (see the class comment) and time stands where they ended.
    */
   public static TradingProcess start(final Options options) {
     final TradingProcess p = new TradingProcess(options);
     boolean started = false;
     try {
+      if (p.restart.any) {
+        // let the loops act on the journaled disconnects before any session is back; what they
+        // send finds the sessions down and is dropped, as it would be on a live disconnect
+        p.pump();
+      }
       p.d2c.connect();
       p.clob.connect();
       final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
@@ -524,6 +816,19 @@ public final class TradingProcess implements AutoCloseable {
     }
   }
 
+  /**
+   * One duty cycle of the gateways, the feed and the control rings on the calling thread, and
+   * none of the loops: what the gateway thread does while a loop stands still. For a process that
+   * is stepped, not one running on its own threads. Tests use it to hold a loop back while the
+   * sessions keep working; {@link #pump} is this plus the loops.
+   */
+  public int driveGateways() {
+    if (driver != null) {
+      throw new IllegalStateException("the process is running on its own threads");
+    }
+    return gatewayWork();
+  }
+
   private int gatewayWork() {
     if (haltReason != null) {
       applyHalt();
@@ -534,6 +839,11 @@ public final class TradingProcess implements AutoCloseable {
       fault.run();
     }
     int work = d2c.doWork() + clob.doWork() + feed.doWork();
+    final boolean synced = feed.synced();
+    if (synced != feedSyncedSeen) {
+      feedSyncedSeen = synced;
+      feedSynced = synced;
+    }
     for (final RingBuffer ring : controlRings) {
       work += ring.read(controlHandler, 64);
     }
@@ -969,9 +1279,12 @@ public final class TradingProcess implements AutoCloseable {
     return String.format(Locale.ROOT,
         "{\"quoting\":%s,\"killSwitch\":%s,\"liveQuotes\":%d,\"quotesSent\":%d,\"fills\":%d,\"hedgesRouted\":%d,"
             + "\"liveChildOrders\":%d,\"groups\":%d,\"simulatedNanos\":%d,\"halted\":%s,\"withdrawn\":%s,"
-            + "\"haltReason\":%s}",
+            + "\"haltReason\":%s,\"recovered\":%s,\"recoveredFrames\":%d,\"journalTornTails\":%d,"
+            + "\"outboundCompleted\":%d,\"reconciling\":%s,\"bookSynced\":%s,\"ready\":%s}",
         !killed, killed, live, sent, fills, hedges, children, groups.length, clock.epochNanos() - options.startNanos(),
-        halt != null, halt != null && withdrawn(), halt == null ? "null" : quote(halt));
+        halt != null, halt != null && withdrawn(), halt == null ? "null" : quote(halt), restart.any, recoveredFrames,
+        restart.tornTails, outboundCompleted, d2c.isReconciling() || clob.isReconciling(), feedSynced,
+        notReadyReason() == null);
   }
 
   private static String quote(final String text) {
@@ -1012,7 +1325,12 @@ public final class TradingProcess implements AutoCloseable {
     return live;
   }
 
-  /** Null when both sessions are logged on and nothing has halted or failed, else the reason. */
+  /**
+   * Null when the process may be sent flow, else the reason: it has halted or a thread has
+   * failed, a session is not logged on, the CLOB's orders are still being reconciled after a
+   * reconnect or a restart, or the CLOB book has no whole snapshot. The loops apply the same
+   * conditions to their own quoting through their input health; this is the outside view.
+   */
   public String notReadyReason() {
     final String halt = haltReason;
     if (halt != null) {
@@ -1024,7 +1342,13 @@ public final class TradingProcess implements AutoCloseable {
     if (!clob.isActive()) {
       return "CLOB session not logged on";
     }
-    return failure() == null ? null : "stopped: " + failure();
+    if (failure() != null) {
+      return "stopped: " + failure();
+    }
+    if (d2c.isReconciling() || clob.isReconciling()) {
+      return "order reconciliation with the venue in progress";
+    }
+    return feedSynced ? null : "CLOB book has no whole snapshot yet";
   }
 
   // ---------------------------------------------------------------- reads
@@ -1077,6 +1401,44 @@ public final class TradingProcess implements AutoCloseable {
 
   public ClobLiquidity liquidity() {
     return liquidity;
+  }
+
+  /** True if the process started on journals a stopped process left and rebuilt itself from them. */
+  public boolean recovered() {
+    return restart.any;
+  }
+
+  /** What the restart found and did, one line per journal and per replayed group; empty on a fresh start. */
+  public List<String> recoveryLog() {
+    return List.copyOf(restart.log);
+  }
+
+  /**
+   * Group {@code g}'s {@link DeskGroup#stateDigest} as replay left it at start, before any new
+   * input: the state of the stopped process at its last journaled frame. 0 on a fresh start.
+   */
+  public long recoveredStateDigest(final int g) {
+    return restart.stateDigest[g];
+  }
+
+  /** The chain hash over the outbound messages group {@code g}'s replay produced at start. */
+  public long recoveredReplayHash(final int g) {
+    return restart.replayHash[g];
+  }
+
+  /** Inbound frames replayed at start, over every group. */
+  public long recoveredFrames() {
+    return recoveredFrames;
+  }
+
+  /** Journals whose torn tail was cut at start. */
+  public int journalTornTails() {
+    return restart.tornTails;
+  }
+
+  /** Outbound frames the stopped process had not journaled, completed at start. */
+  public long outboundCompleted() {
+    return outboundCompleted;
   }
 
   /** KillSwitch messages the loops sent on the control ring. */

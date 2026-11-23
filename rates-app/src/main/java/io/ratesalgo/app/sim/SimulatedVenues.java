@@ -7,6 +7,7 @@ import io.ratesalgo.venues.clob.ClobSimulator;
 import io.ratesalgo.venues.d2c.D2cConfig;
 import io.ratesalgo.venues.d2c.D2cRfqSimulator;
 import io.ratesalgo.venues.feed.InProcessFeedChannel;
+import io.ratesalgo.venues.sim.AcceptorOptions;
 import io.ratesalgo.venues.sim.Instrument;
 import io.ratesalgo.venues.sim.VenueHarness;
 import java.util.ArrayList;
@@ -26,13 +27,27 @@ public final class SimulatedVenues implements AutoCloseable {
 
   /** Builds and starts both simulators; RFQ flow starts with {@link #startFlow}. */
   public SimulatedVenues(final Clock clock, final long seed) {
+    this(clock, seed, AcceptorOptions.PLAIN, AcceptorOptions.PLAIN);
+  }
+
+  /**
+   * Builds and starts both simulators with the given acceptor settings: TLS, logon credentials and
+   * the directory in which each keeps its sequence numbers and its id sequence across restarts.
+   */
+  public SimulatedVenues(
+      final Clock clock, final long seed, final AcceptorOptions d2cOptions, final AcceptorOptions clobOptions) {
     this.clock = clock;
     final List<Instrument> rfqInstruments = new ArrayList<>(Venues.treasuries());
     rfqInstruments.addAll(Venues.swaps());
     d2c = new D2cRfqSimulator(D2cConfig.defaults(), rfqInstruments, Venues.ENGINES, clock, seed);
     clob = new ClobSimulator("CLOB", ClobConfig.defaults(), Venues.treasuries(), Venues.ENGINES, feed, clock, seed + 1);
-    d2c.start(VenueHarness.freePort());
-    clob.start(VenueHarness.freePort());
+    d2c.start(VenueHarness.freePort(), d2cOptions);
+    try {
+      clob.start(VenueHarness.freePort(), clobOptions);
+    } catch (final RuntimeException e) {
+      d2c.close();
+      throw e;
+    }
   }
 
   /** Starts the D2C arrival model. */
