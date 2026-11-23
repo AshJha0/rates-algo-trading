@@ -24,3 +24,5 @@ band:
   basis: "futures_basis.stationary_sd at 0.05 and 0.4 bp (central 0.15), when a futures book is wired"
   taker_skill: "clob.taker_sign_skill at 0.0 and 0.2 (central 0.1)"
   impact_half_life: "clob.impact_half_life at 5 s and 120 s (central 30 s)"
+# guard_metrics of the pre-registration, treatment over baseline, summed over the set
+guards: {quoted_share: 0.8, hit_rate: 0.25, client_dv01: 0.25}

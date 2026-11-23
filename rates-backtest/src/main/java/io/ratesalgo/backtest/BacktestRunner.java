@@ -8,6 +8,7 @@ import io.ratesalgo.backtest.model.RfqOutcomeModel;
 import io.ratesalgo.backtest.pnl.PositionBook;
 import io.ratesalgo.backtest.sim.SimDay;
 import io.ratesalgo.backtest.util.Prices;
+import io.ratesalgo.sim.RfqDecision;
 import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.journal.ChainHash;
 import io.ratesalgo.journal.JournalFormat;
@@ -15,6 +16,8 @@ import io.ratesalgo.journal.JournalReader;
 import io.ratesalgo.journal.JournalWriter;
 import io.ratesalgo.messages.sbe.BookAction;
 import io.ratesalgo.messages.sbe.BookUpdateDecoder;
+import io.ratesalgo.messages.sbe.BookUpdateEncoder;
+import io.ratesalgo.messages.sbe.CancelReason;
 import io.ratesalgo.messages.sbe.CurveInputDecoder;
 import io.ratesalgo.messages.sbe.CurveInputKind;
 import io.ratesalgo.messages.sbe.ExecutionReportDecoder;
@@ -29,6 +32,7 @@ import io.ratesalgo.messages.sbe.QuoteRequestDecoder;
 import io.ratesalgo.messages.sbe.QuoteResponseDecoder;
 import io.ratesalgo.messages.sbe.QuoteResponseEncoder;
 import io.ratesalgo.messages.sbe.QuoteStatus;
+import io.ratesalgo.messages.sbe.QuoteWithdrawEncoder;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TimeInForce;
 import java.io.IOException;
@@ -101,14 +105,18 @@ public final class BacktestRunner {
     final long quantity;
     final long priceMantissa;
     final boolean hedge;
+    final TimeInForce timeInForce;
     ClobFillModel.Resting resting;
     boolean cancelRequested;
+    // quantity booked so far, minor units: simulator v2 books a resting order's fills as they happen
+    long cum;
 
     Order(
         final long clOrdId,
         final int instrumentId,
         final boolean buy,
         final OrdType type,
+        final TimeInForce timeInForce,
         final long quantity,
         final long priceMantissa,
         final boolean hedge) {
@@ -116,6 +124,7 @@ public final class BacktestRunner {
       this.instrumentId = instrumentId;
       this.buy = buy;
       this.type = type;
+      this.timeInForce = timeInForce;
       this.quantity = quantity;
       this.priceMantissa = priceMantissa;
       this.hedge = hedge;
@@ -183,6 +192,14 @@ public final class BacktestRunner {
     private final SimDay simDay = config.outcomes().simDay();
     private int simMarkedStep = -1;
     private double simMarkedOffset = Double.NaN;
+    // simulator v2: the live books are shown to the strategy every step and after its own orders
+    private int simPublishedStep = -1;
+    private boolean simBookDirty;
+    private boolean strategyStarted;
+    private long liveBookSeq = 1;
+    private final BookUpdateEncoder liveBookEncoder = new BookUpdateEncoder();
+    private final BookUpdateDecoder liveBookDecoder = new BookUpdateDecoder();
+    private final UnsafeBuffer liveBook = new UnsafeBuffer(ByteBuffer.allocateDirect(256));
 
     private final MessageHeaderDecoder headerDecoder = new MessageHeaderDecoder();
     private final QuoteRequestDecoder rfqDecoder = new QuoteRequestDecoder();
@@ -198,6 +215,7 @@ public final class BacktestRunner {
     private final QuoteResponseEncoder responseEncoder = new QuoteResponseEncoder();
     private final NewOrderEncoder orderEncoder = new NewOrderEncoder();
     private final ExecutionReportEncoder execEncoder = new ExecutionReportEncoder();
+    private final QuoteWithdrawEncoder withdrawEncoder = new QuoteWithdrawEncoder();
 
     private JournalWriter results;
     private EventCalendar calendar;
@@ -280,18 +298,83 @@ public final class BacktestRunner {
           mids.computeIfAbsent(i.id(), k -> new MidSeries()).add(now, mid);
         }
       }
+      if (strategyStarted && (step != simPublishedStep || simBookDirty)) {
+        simPublishedStep = step;
+        simBookDirty = false;
+        publishLiveBooks(now);
+      }
       if (!resting.isEmpty()) {
-        final List<Order> filled = new ArrayList<>();
+        final List<Order> touched = new ArrayList<>();
         for (final Order o : resting.values()) {
-          if (o.resting.onBook(0L, 0L, 0L)) {
-            filled.add(o);
+          if (o.resting.onBook(0L, 0L, 0L) || o.resting.filledMinor() > o.cum) {
+            touched.add(o);
           }
         }
-        for (final Order o : filled) {
-          resting.remove(o.clOrdId);
-          o.resting.cancel();
-          fillOrder(o, o.priceMantissa, hedgeCost.fee(config.instruments().get(o.instrumentId), o.quantity));
+        for (final Order o : touched) {
+          bookRestingFills(o);
         }
+      }
+    }
+
+    /**
+     * Simulator v2: shows the strategy the top of every order book as the live model has it, with
+     * the strategy's own impact and the depth it took, once per grid step and again after each of
+     * its own orders. The journal's book was written with no desk in the market, so in simulator
+     * v2 it is not passed on: a desk that saw it would keep hitting prices its own orders had
+     * already moved.
+     */
+    private void publishLiveBooks(final long now) {
+      final io.ratesalgo.sim.MarketSpec spec = simDay.model().spec();
+      for (int b = 0; b < spec.bookCount(); b++) {
+        final int id = spec.instrument(spec.bookInstrument(b)).id();
+        if (!config.instruments().contains(id)) {
+          continue;
+        }
+        final double[] t = simDay.top(id, now);
+        final Top top = tops.computeIfAbsent(id, k -> new Top());
+        top.bid = Prices.toMantissa(t[0]);
+        top.bidQty = (long) t[1];
+        top.ask = Prices.toMantissa(t[2]);
+        top.askQty = (long) t[3];
+        for (int side = 0; side < 2; side++) {
+          liveBookEncoder
+              .wrapAndApplyHeader(liveBook, 0, headerEncoder)
+              .venueId(io.ratesalgo.backtest.synth.SyntheticDay.CLOB_VENUE)
+              .instrumentId(id)
+              .venueSeqNo(liveBookSeq++)
+              .side(side == 0 ? Side.Buy : Side.Sell)
+              .action(BookAction.Change)
+              .level((short) 0)
+              .quantity((long) t[2 * side + 1])
+              .orderCount(1)
+              .timestampNanos(now);
+          liveBookEncoder.price().mantissa(side == 0 ? top.bid : top.ask);
+          liveBookDecoder.wrapAndApplyHeader(liveBook, 0, headerDecoder);
+          strategy.onBookUpdate(liveBookDecoder, this);
+        }
+      }
+    }
+
+    /**
+     * Simulator v2: books what a resting order has traded since the last look, at its limit price,
+     * and reports it, so the strategy sees each passive fill when it happens. A complete order
+     * leaves the book.
+     */
+    private void bookRestingFills(final Order o) {
+      final Instrument instrument = config.instruments().get(o.instrumentId);
+      final boolean complete = o.resting.onBook(0L, 0L, 0L);
+      final long filled = complete ? o.quantity : Math.min(o.quantity, o.resting.filledMinor());
+      final long delta = filled - o.cum;
+      if (complete) {
+        resting.remove(o.clOrdId);
+        o.resting.cancel();
+      }
+      if (delta > 0) {
+        o.cum = filled;
+        bookFill(
+            o.instrumentId, o.buy ? delta : -delta, Prices.toDouble(o.priceMantissa), hedgeCost.fee(instrument, delta),
+            o.hedge, o.clOrdId, 0, 0);
+        report(o, complete ? OrdStatus.Filled : OrdStatus.PartiallyFilled, o.priceMantissa, delta);
       }
     }
 
@@ -305,6 +388,8 @@ public final class BacktestRunner {
       calendar =
           EventCalendar.forDay(date, spec.utcOffsetHours(), spec.minutesEt(), spec.halfWidthMinutes());
       strategy.onStart(this);
+      strategyStarted = true;
+      simTick();
     }
 
     private void onFrame(final long ts, final int templateId, final DirectBuffer buffer, final int offset) {
@@ -397,6 +482,10 @@ public final class BacktestRunner {
     }
 
     private void onBookUpdate() {
+      if (simDay != null) {
+        // simulator v2: the strategy sees the live books instead (publishLiveBooks)
+        return;
+      }
       final int id = bookDecoder.instrumentId();
       if (!config.instruments().contains(id) || bookDecoder.level() != 0) {
         strategy.onBookUpdate(bookDecoder, this);
@@ -495,25 +584,14 @@ public final class BacktestRunner {
     }
 
     private void settle(final RfqRecord rec) {
-      final Instrument instrument = config.instruments().get(rec.instrumentId);
-      final RfqOutcomeModel.Outcome o;
-      final QuoteStatus status;
       if (simDay != null) {
-        final RfqOutcomeModel.SimOutcome s =
-            outcomes.settleSimV2(
-                rec.rfqId,
-                instrument,
-                Prices.toDouble(rec.ourPriceMantissa),
-                rec.quoteSentNanos - rec.receivedNanos,
-                rec.midAtQuote);
-        o = s.outcome();
-        status = s.status();
-      } else {
-        o =
-            outcomes.settle(
-                rec.rfqId, instrument, rec.ourSpreadBp, rec.sizeMillions(), rec.dealers, rec.inFixingWindow);
-        status = o.won() ? QuoteStatus.Done : QuoteStatus.TradedAway;
+        settleSimV2(rec);
+        return;
       }
+      final Instrument instrument = config.instruments().get(rec.instrumentId);
+      final RfqOutcomeModel.Outcome o =
+          outcomes.settle(rec.rfqId, instrument, rec.ourSpreadBp, rec.sizeMillions(), rec.dealers, rec.inFixingWindow);
+      final QuoteStatus status = o.won() ? QuoteStatus.Done : QuoteStatus.TradedAway;
       rec.settled = true;
       rec.won = o.won();
       rec.coverBp = o.coverSpreadBp();
@@ -542,6 +620,81 @@ public final class BacktestRunner {
       strategy.onQuoteResponse(responseDecoder, this);
     }
 
+    /**
+     * Simulator v2: the model's best-price decision. The venue's answer carries the cover on a
+     * win (the second-best live price) and the winning price on a loss to a competitor, both
+     * exact, so a strategy learning where competitors quote sees what a disclosing venue shows.
+     * A withdrawn quote takes no part: the client decides between the competitors alone, and the
+     * answer carries no price of ours to learn from.
+     */
+    private void settleSimV2(final RfqRecord rec) {
+      final Instrument instrument = config.instruments().get(rec.instrumentId);
+      final double ours = rec.withdrawn ? Double.NaN : Prices.toDouble(rec.ourPriceMantissa);
+      final RfqOutcomeModel.SimOutcome s =
+          outcomes.settleSimV2(rec.rfqId, instrument, ours, rec.quoteSentNanos - rec.receivedNanos, rec.midAtQuote);
+      final RfqDecision d = simDay.outcome(rec.rfqId, ours, rec.quoteSentNanos - rec.receivedNanos).decision();
+      final RfqOutcomeModel.Outcome o = s.outcome();
+      rec.settled = true;
+      rec.won = o.won();
+      rec.coverBp = o.coverSpreadBp();
+      rec.winProbability = o.winProbability();
+      final long cover;
+      final long traded;
+      if (o.won()) {
+        traded = rec.ourPriceMantissa;
+        cover = Double.isNaN(d.coverPrice()) ? 0L : Prices.toMantissa(d.coverPrice());
+      } else if (d.outcome() == RfqDecision.Outcome.DONE) {
+        // lost to a competitor: the winning level is disclosed as the traded price and the cover
+        traded = Prices.toMantissa(d.price());
+        cover = rec.withdrawn ? 0L : traded;
+      } else {
+        traded = 0L;
+        cover = 0L;
+      }
+      rec.tradedPriceMantissa = traded;
+      if (o.won()) {
+        final long signed = rec.clientBuys ? -rec.quantity : rec.quantity;
+        bookFill(rec.instrumentId, signed, Prices.toDouble(traded), 0.0, false, rec.rfqId, rec.clientId, rec.tier);
+      }
+      responseEncoder
+          .wrapAndApplyHeader(callback, 0, headerEncoder)
+          .venueId(0)
+          .rfqId(rec.rfqId)
+          .quoteId(0)
+          .status(s.status())
+          .tradedQuantity(rec.quantity)
+          .timestampNanos(clock.epochNanos());
+      responseEncoder.tradedPrice().mantissa(traded);
+      responseEncoder.coverPrice().mantissa(cover);
+      emit(callback, QuoteResponseEncoder.TEMPLATE_ID, responseEncoder.limit());
+      responseDecoder.wrapAndApplyHeader(callback, 0, headerDecoder);
+      strategy.onQuoteResponse(responseDecoder, this);
+    }
+
+    @Override
+    public boolean withdrawQuote(final long rfqId) {
+      final RfqRecord rec = rfqById.get(rfqId);
+      if (simDay == null || rec == null || !rec.quoted || rec.settled || rec.withdrawn) {
+        return false;
+      }
+      // the withdrawal travels like a quote; it counts only if it is at the venue before the client decides
+      final long arrives = clock.epochNanos() + config.quoteLatencyNanos();
+      if (arrives >= rec.quoteSentNanos + config.clientDecisionNanos()) {
+        return false;
+      }
+      rec.withdrawn = true;
+      withdrawEncoder
+          .wrapAndApplyHeader(out, 0, headerEncoder)
+          .venueId(0)
+          .rfqId(rfqId)
+          .quoteId(0)
+          .instrumentId(rec.instrumentId)
+          .reason(CancelReason.AdverseSignal)
+          .sentNanos(clock.epochNanos());
+      emit(out, QuoteWithdrawEncoder.TEMPLATE_ID, withdrawEncoder.limit());
+      return true;
+    }
+
     // ---------------------------------------------------------------- orders
 
     @Override
@@ -552,13 +705,27 @@ public final class BacktestRunner {
         final long quantity,
         final long priceMantissa,
         final boolean hedge) {
+      return sendOrder(
+          instrumentId, side, type, type == OrdType.Market ? TimeInForce.ImmediateOrCancel : TimeInForce.Day, quantity,
+          priceMantissa, hedge);
+    }
+
+    @Override
+    public long sendOrder(
+        final int instrumentId,
+        final Side side,
+        final OrdType type,
+        final TimeInForce timeInForce,
+        final long quantity,
+        final long priceMantissa,
+        final boolean hedge) {
       if (quantity <= 0) {
         throw new IllegalArgumentException("order quantity must be positive: " + quantity);
       }
       config.instruments().get(instrumentId);
       final long clOrdId = nextClOrdId++;
       final Order order =
-          new Order(clOrdId, instrumentId, side == Side.Buy, type, quantity, priceMantissa, hedge);
+          new Order(clOrdId, instrumentId, side == Side.Buy, type, timeInForce, quantity, priceMantissa, hedge);
       final long sent = clock.epochNanos();
       orderEncoder
           .wrapAndApplyHeader(out, 0, headerEncoder)
@@ -568,7 +735,7 @@ public final class BacktestRunner {
           .instrumentId(instrumentId)
           .side(side)
           .ordType(type)
-          .timeInForce(type == OrdType.Market ? TimeInForce.ImmediateOrCancel : TimeInForce.Day)
+          .timeInForce(timeInForce)
           .quantity(quantity)
           .expireNanos(0)
           .sentNanos(sent);
@@ -583,16 +750,7 @@ public final class BacktestRunner {
     public boolean cancelOrder(final long clOrdId) {
       final Order r = resting.remove(clOrdId);
       if (r != null) {
-        // simulator v2: what the order had traded before the cancel is booked, at its limit price
-        final long partial = r.resting.cancel();
-        if (partial > 0) {
-          final Instrument instrument = config.instruments().get(r.instrumentId);
-          bookFill(
-              r.instrumentId, r.buy ? partial : -partial, Prices.toDouble(r.priceMantissa),
-              hedgeCost.fee(instrument, partial), r.hedge, r.clOrdId, 0, 0);
-          report(r, OrdStatus.PartiallyFilled, r.priceMantissa, partial);
-        }
-        report(r, OrdStatus.Cancelled, 0, 0);
+        cancelResting(r);
         return true;
       }
       final Order f = inFlight.get(clOrdId);
@@ -601,6 +759,24 @@ public final class BacktestRunner {
         return true;
       }
       return false;
+    }
+
+    /**
+     * Takes a resting order off the book. Simulator v2: what it traded and was not yet booked is
+     * booked first, at its limit price. A version 1 order fills whole or not at all.
+     */
+    private void cancelResting(final Order r) {
+      final long partial = Math.min(r.quantity, r.resting.cancel());
+      final long delta = partial - r.cum;
+      if (delta > 0) {
+        r.cum = partial;
+        final Instrument instrument = config.instruments().get(r.instrumentId);
+        bookFill(
+            r.instrumentId, r.buy ? delta : -delta, Prices.toDouble(r.priceMantissa), hedgeCost.fee(instrument, delta),
+            r.hedge, r.clOrdId, 0, 0);
+        report(r, OrdStatus.PartiallyFilled, r.priceMantissa, delta);
+      }
+      report(r, OrdStatus.Cancelled, 0, 0);
     }
 
     private void arrive(final Order order) {
@@ -620,14 +796,21 @@ public final class BacktestRunner {
         } else if (order.type == OrdType.Market) {
           final HedgeCostModel.Fill fill = hedgeCost.fillSimV2(instrument, order.buy, order.quantity, clock.epochNanos());
           fillOrder(order, fill.priceMantissa(), fill.fee());
+          simBookDirty = true;
+          simTick();
         } else {
           order.resting =
               config.clob().joinSimV2(order.instrumentId, order.buy, order.priceMantissa, order.quantity, clock.epochNanos());
           report(order, OrdStatus.New, 0, 0);
           resting.put(order.clOrdId, order);
+          // the order may have moved the level factor, and may already have traded
+          simBookDirty = true;
+          simTick();
+          if (order.timeInForce != TimeInForce.Day && resting.remove(order.clOrdId) != null) {
+            // immediate-or-cancel (fill-or-kill alike: a match on the shared book cannot be undone)
+            cancelResting(order);
+          }
         }
-        // the order may have moved the level factor, and may already be complete
-        simTick();
         return;
       }
       final Top top = tops.get(order.instrumentId);
@@ -675,6 +858,7 @@ public final class BacktestRunner {
     }
 
     private void fillOrder(final Order order, final long priceMantissa, final double fee) {
+      order.cum = order.quantity;
       final long signed = order.buy ? order.quantity : -order.quantity;
       bookFill(order.instrumentId, signed, Prices.toDouble(priceMantissa), fee, order.hedge, order.clOrdId, 0, 0);
       report(order, OrdStatus.Filled, priceMantissa, order.quantity);
@@ -691,8 +875,9 @@ public final class BacktestRunner {
           .side(order.buy ? Side.Buy : Side.Sell)
           .ordStatus(status)
           .lastQuantity(qty)
-          .leavesQuantity(status == OrdStatus.New ? order.quantity : 0)
-          .cumQuantity(qty)
+          .leavesQuantity(
+              status == OrdStatus.New || status == OrdStatus.PartiallyFilled ? order.quantity - order.cum : 0)
+          .cumQuantity(status == OrdStatus.Filled ? order.quantity : order.cum)
           .transactNanos(clock.epochNanos());
       execEncoder.lastPrice().mantissa(price);
       emit(callback, ExecutionReportEncoder.TEMPLATE_ID, execEncoder.limit());

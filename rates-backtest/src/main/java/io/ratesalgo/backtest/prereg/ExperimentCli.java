@@ -76,6 +76,11 @@ public final class ExperimentCli {
       }
       return REFUSED;
     }
+    if (prereg.version() == SessionDesignRules.VERSION) {
+      out.println("refused: " + prereg.id() + " is a simulator v2 session-seed design; run it with ExperimentRunner"
+          + " (io.ratesalgo.backtest.experiment), which runs full-day sessions by seed");
+      return REFUSED;
+    }
     final Ledger ledger = new Ledger(ledgerFile);
     final long previous = ledger.looks(prereg.id(), scope);
     if ("holdout".equals(scope) && previous > 0) {

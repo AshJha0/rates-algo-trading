@@ -389,16 +389,39 @@ public final class SyntheticDay {
    * settings of the back-test, not market parameters: how often swap reference prices are
    * written and the SOFR fixing level the curve builder is given.
    */
-  public record Publication(int curveIntervalSeconds, double sofrFixingPct) {
+  public record Publication(int curveIntervalSeconds, double sofrFixingPct, int bookRefreshSeconds) {
     public Publication {
       if (curveIntervalSeconds <= 0) {
         throw new IllegalArgumentException("curve interval must be positive");
       }
+      if (bookRefreshSeconds < 0) {
+        throw new IllegalArgumentException("book refresh must be 0 (on change only) or positive");
+      }
+    }
+
+    /** Book tops written on change only. */
+    public Publication(final int curveIntervalSeconds, final double sofrFixingPct) {
+      this(curveIntervalSeconds, sofrFixingPct, 0);
     }
 
     public static Publication fromPresets(final Presets presets) {
       final Preset m = presets.get("usd_synthetic_market");
       return new Publication((int) m.value("curve_input_interval_s"), m.value("sofr_fixing_pct"));
+    }
+
+    /**
+     * The publication of experiment sessions (preset {@code sim_v2_publication}): swap reference
+     * prices every grid step, so a desk's curve heartbeat never lapses between them, and each
+     * book's top written at least every {@code book_refresh_s} even when unchanged, as a venue's
+     * feed keeps a quiet book's mid fresh (a desk sends no order off a mid older than 5 s); the
+     * fixing level as {@link #fromPresets}.
+     */
+    public static Publication simV2(final Presets presets) {
+      final Preset p = presets.get("sim_v2_publication");
+      return new Publication(
+          (int) p.value("curve_input_interval_s"),
+          presets.get("usd_synthetic_market").value("sofr_fixing_pct"),
+          (int) p.value("book_refresh_s"));
     }
   }
 
@@ -414,6 +437,16 @@ public final class SyntheticDay {
    * same seed, so generating a journal never disturbs the session a run will use.
    */
   public static Summary generateSimV2(final SimDay day, final Publication publication, final Path journal, final Path truthCsv) {
+    return generateSimV2(day, publication, journal, truthCsv, Long.MAX_VALUE);
+  }
+
+  /**
+   * The same journal cut at {@code windowNanos} after the open: only events before the cut are
+   * written. For tests and smoke runs that need the full-day model but not the full day's
+   * replay; the experiment protocol always uses the whole session.
+   */
+  public static Summary generateSimV2(
+      final SimDay day, final Publication publication, final Path journal, final Path truthCsv, final long windowNanos) {
     final MarketSpec spec = day.model().spec();
     final MarketModel model = new MarketModel(spec, day.model().seed(), day.model().dayType());
     final long open = day.openEpochNanos();
@@ -454,7 +487,8 @@ public final class SyntheticDay {
           final long lots = (long) Math.floor(bookModel.displayedUnits(bid, level) / inst.minQuantity());
           final long price = Prices.toMantissa(bookModel.levelPrice(bid, level));
           final long quantity = Math.round(lots * inst.minQuantity() * minorPerUnit);
-          if (k == 0 || price != last[2 * side] || quantity != last[2 * side + 1]) {
+          final boolean refresh = publication.bookRefreshSeconds() > 0 && k % publication.bookRefreshSeconds() == 0;
+          if (k == 0 || refresh || price != last[2 * side] || quantity != last[2 * side + 1]) {
             last[2 * side] = price;
             last[2 * side + 1] = quantity;
             events.add(new Event(open + t, order++, Type.BOOK, inst.id(), price, quantity, bid, 0, 0, false, null, null));
@@ -463,21 +497,25 @@ public final class SyntheticDay {
       }
     }
 
-    int informed = 0;
     for (final SimRfq r : model.rfqs()) {
-      informed += r.informed() ? 1 : 0;
       events.add(
           new Event(open + r.arrivalNanos(), order++, Type.RFQ, spec.instrument(r.instrument()).id(), 0,
               Math.round(r.quantityUnits() * 100.0), r.clientBuys(), r.tier() + 1, r.dealersAsked(), r.informed(),
               null, null));
     }
 
+    if (windowNanos != Long.MAX_VALUE) {
+      final long cut = open + windowNanos;
+      events.removeIf(e -> e.time() >= cut);
+    }
     events.sort(Comparator.comparingLong(Event::time).thenComparingLong(Event::order));
     final long capacity = capacityFor(events);
     if (capacity > Integer.MAX_VALUE) {
       throw new IllegalStateException("simulator v2 day too large for one segment: " + capacity);
     }
-    return write(day.date(), model.seed(), journal, truthCsv, events, (int) capacity, model.rfqs().size(), informed);
+    final int rfqCount = (int) events.stream().filter(e -> e.type() == Type.RFQ).count();
+    final int informedCount = (int) events.stream().filter(e -> e.type() == Type.RFQ && e.informed()).count();
+    return write(day.date(), model.seed(), journal, truthCsv, events, (int) capacity, rfqCount, informedCount);
   }
 
   private static Summary write(

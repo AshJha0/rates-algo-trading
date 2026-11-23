@@ -17,3 +17,5 @@ band:
   level_vol: "curve factor sds scaled by 0.76 and 1.29 (the 2015-2018 and 2022-2025 values)"
   impact: "clob.impact_coefficient_Y at 0.3 and 1.5 (central 0.7)"
   drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s (central 10 s)"
+# guard_metrics of the pre-registration, treatment over baseline, summed over the set
+guards: {quoted_share: 0.8, hit_rate: 0.5, client_dv01: 0.6}

@@ -18,3 +18,5 @@ band:
   all_in_cost: "competitors.all_in_cost at 0.05 and 0.15 bp (central 0.08), adverse move re-solved"
   informed_fraction: "informed_flow.informed_fraction at 0.2 and 1.0 (central 0.5) at fixed average move"
   drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s (central 10 s)"
+# guard_metrics of the pre-registration, treatment over baseline, summed over the set
+guards: {quoted_share: 0.8, hit_rate: 0.25, client_dv01: 0.25}

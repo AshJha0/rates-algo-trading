@@ -1,0 +1,12 @@
+# DRAFT family of Round 5 primary tests, for LedgerCli --bh and python -m ratesresearch.prereg bh.
+#
+# The drafts R5-001 to R5-007 each name their own confirmation base (32,000,000 to 38,000,000),
+# so under the design's definition (all primary tests read on one confirmation set,
+# SIM_V2_DESIGN.md Section 12) each would be a family of one, and the matching command is
+# `--bh data_set:<key>` with the key the ledger row records. This file is the stricter
+# alternative, one family across the seven: the owner chooses one of the two when signing, and
+# the choice is recorded in DECISIONS.md before the first of them is run. Not signed.
+status: draft
+family: R5
+q: 0.05
+members: [R5-001, R5-002, R5-003, R5-004, R5-005, R5-006, R5-007]

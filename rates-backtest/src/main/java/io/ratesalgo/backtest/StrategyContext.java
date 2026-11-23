@@ -4,6 +4,7 @@ import io.ratesalgo.backtest.model.EventCalendar;
 import io.ratesalgo.backtest.model.HitRateModel;
 import io.ratesalgo.messages.sbe.OrdType;
 import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.messages.sbe.TimeInForce;
 
 /** What a {@link Strategy} can see and do during a back-test (API_SPEC.md Section 16.1). */
 public interface StrategyContext {
@@ -46,6 +47,33 @@ public interface StrategyContext {
    * @return the client order id
    */
   long sendOrder(int instrumentId, Side side, OrdType type, long quantity, long priceMantissa, boolean hedge);
+
+  /**
+   * Sends an order with an explicit time in force. Simulator v2 honours it: an immediate-or-cancel
+   * limit order trades what it can at once and the rest is cancelled (fill-or-kill is treated the
+   * same, because the shared book cannot undo a match). Version 1 has no such model and ignores it.
+   */
+  default long sendOrder(
+      final int instrumentId,
+      final Side side,
+      final OrdType type,
+      final TimeInForce timeInForce,
+      final long quantity,
+      final long priceMantissa,
+      final boolean hedge) {
+    return sendOrder(instrumentId, side, type, quantity, priceMantissa, hedge);
+  }
+
+  /**
+   * Withdraws our quote for an RFQ. Simulator v2 honours it when the withdrawal reaches the venue
+   * (one quote latency from now) before the client decides; the quote then takes no part in the
+   * decision. Version 1 has no withdrawal and returns false.
+   *
+   * @return true when the withdrawal will be honoured
+   */
+  default boolean withdrawQuote(final long rfqId) {
+    return false;
+  }
 
   /**
    * Cancels a limit order that has not filled. A resting order is reported {@code Cancelled} at

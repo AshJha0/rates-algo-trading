@@ -13,7 +13,14 @@ import io.ratesalgo.backtest.InstrumentSet;
 import io.ratesalgo.backtest.ResultsWriter;
 import io.ratesalgo.backtest.model.BandPoint;
 import io.ratesalgo.backtest.model.Presets;
+import io.ratesalgo.backtest.experiment.SpentData;
 import io.ratesalgo.backtest.report.DailyReport;
+import io.ratesalgo.backtest.report.SimV2Report;
+import io.ratesalgo.backtest.sim.PairedSessions;
+import io.ratesalgo.backtest.sim.SimDay;
+import io.ratesalgo.backtest.synth.SyntheticDay;
+import io.ratesalgo.sim.MarketSpec;
+import io.ratesalgo.sim.SimParams;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -84,6 +91,49 @@ public final class DeskBacktest {
       Files.writeString(outDir.resolve("report.md"), report.toMarkdown(), StandardCharsets.UTF_8);
       Files.writeString(outDir.resolve("report.json"), report.toJson(), StandardCharsets.UTF_8);
       return new Run(result, report, strategy, frames);
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  /** A finished simulator v2 session. */
+  public record SimRun(BacktestResult result, SimV2Report report, DeskStrategy strategy, SimDay day) {}
+
+  /**
+   * One simulator v2 session of the desk with its daily report (docs/research/SIM_V2_DESIGN.md
+   * section 12): the session of {@code seed} is generated, replayed through the desk on the
+   * shared model, and {@code results.raj}, the CSV tables, {@code report-v2.md} and {@code
+   * report-v2.json} are written under {@code outDir}. Every figure in the report is labelled as
+   * simulator output.
+   *
+   * @param windowNanos replay only this much of the session after the open; {@link Long#MAX_VALUE}
+   *     for the full day
+   */
+  public static SimRun runSimV2(
+      final long seed, final DeskSettings settings, final Path presetsYaml, final Path outDir, final long windowNanos) {
+    final String spent = SpentData.seedRefusal(seed);
+    if (spent != null) {
+      throw new IllegalArgumentException(spent);
+    }
+    try {
+      Files.createDirectories(outDir);
+      final Presets presets = Presets.load(presetsYaml);
+      final MarketSpec spec = new MarketSpec(SimParams.loadDefault());
+      final Path journal = outDir.resolve("session.raj");
+      Files.deleteIfExists(journal);
+      SyntheticDay.generateSimV2(
+          SimDay.of(spec, seed, PairedSessions.labelDate(seed)), SyntheticDay.Publication.simV2(presets), journal, null,
+          windowNanos);
+      final SimDay day = SimDay.of(spec, seed, PairedSessions.labelDate(seed));
+      final UsdUniverse universe = UsdUniverse.standard();
+      final DeskStrategy strategy = new DeskStrategy(universe, settings, SimBinding.of(spec, universe));
+      final BacktestConfig config = BacktestConfig.forSimV2(presets, day, List.of(journal), outDir);
+      final BacktestResult result = new BacktestRunner(config).run(strategy);
+      ResultsWriter.write(result, config.instruments(), outDir);
+      final SimV2Report report = new SimV2Report(result, config.instruments(), day);
+      Files.writeString(outDir.resolve("report-v2.md"), report.toMarkdown(), StandardCharsets.UTF_8);
+      Files.writeString(outDir.resolve("report-v2.json"), report.toJson(), StandardCharsets.UTF_8);
+      return new SimRun(result, report, strategy, day);
     } catch (final IOException e) {
       throw new UncheckedIOException(e);
     }

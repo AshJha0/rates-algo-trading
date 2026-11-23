@@ -263,6 +263,35 @@ public final class SimDay {
     }
   }
 
+  /**
+   * The live top of an instrument's book at an epoch time, as a venue would show it: on each side
+   * the best level that displays at least the minimum quantity, its price in quoted units and its
+   * displayed quantity in whole lots, minor units. Unlike the journal's book (written with no desk
+   * in the market) this includes the desk's own impact and the depth it has taken.
+   *
+   * @return {bid price, bid quantity, ask price, ask quantity}
+   */
+  public double[] top(final int instrumentId, final long epochNanos) {
+    final int i = index(instrumentId);
+    final BookModel b = book(i);
+    b.advanceTo(epochNanos - openEpochNanos);
+    collect(i, b);
+    final SimInstrument inst = spec.instrument(i);
+    final double minorPerUnit = inst.unitFaceUsd() * 100.0;
+    final double[] out = new double[4];
+    for (int side = 0; side < 2; side++) {
+      final boolean bid = side == 0;
+      int level = 0;
+      while (level < spec.params().bookLevels() - 1 && b.displayedUnits(bid, level) < inst.minQuantity()) {
+        level++;
+      }
+      final double lots = Math.floor(b.displayedUnits(bid, level) / inst.minQuantity());
+      out[2 * side] = b.levelPrice(bid, level);
+      out[2 * side + 1] = Math.round(lots * inst.minQuantity() * minorPerUnit);
+    }
+    return out;
+  }
+
   /** The instrument a back-test instrument id maps to. */
   public SimInstrument instrument(final int instrumentId) {
     return spec.instrument(index(instrumentId));

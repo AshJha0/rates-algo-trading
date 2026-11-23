@@ -4,14 +4,15 @@
 # data sets named below has been generated for it. It becomes a pre-registration when the owner
 # has (1) settled the open items listed under `open_before_signing`, (2) fixed `config` and its
 # hash, and (3) signed and committed it before the run, as API_SPEC.md Section 16.8 requires.
-# Until then it is not read by ratesresearch.prereg.validate or by the Java requireValid (it has
-# no prereg_version on purpose).
+# Format: prereg_version 2, the session-seed design (SessionDesignRules in rates-backtest,
+# ratesresearch.prereg). It validates as a draft; no harness runs it while status is draft.
 #
 # Why a baseline with no hypothesis: every simulated P&L figure the repository has published
 # came from the old simulators, whose constants fixed the answer (docs/reviews/REVIEW_2026-11-23.md
 # section 2). Before any change to the desk is tested on simulator v2, the level and the
 # attribution of the unchanged desk on the new market model have to be on record once, with
 # their bands. This note describes; it does not test.
+prereg_version: 2
 kind: pre_registration_draft
 status: draft_unsigned_not_run
 id: SIM3-BASE-001
@@ -37,18 +38,23 @@ metric: >
 baseline: engine
 treatments: []
 
-sessions:
+data_set:
   simulator: v2 (rates-sim; docs/research/SIM_V2_DESIGN.md; parameters data/calibration/sim_v2_params.json)
   seed_base: 30000000   # exploration set E; a descriptive baseline makes no claim, so it does not spend a confirmation set
   first: 0
-  count: 2000
+  sessions: 2000
+  simulator_params: data/calibration/sim_v2_params.json
+  simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
   day_types: by seed, n modulo 21 (4 release, 1 FOMC, 6 auction, 10 none in 21)
   data_set_key: computed by PairedSessions.dataSetKey(30000000, 0, 2000) and recorded in the ledger row
   spent_and_not_used: >
     The 20 recorded sessions of AUDIT-11 to AUDIT-25, the five April 2026 sessions of AUDIT-26,
     and every session under seed bases 5,000,000 and 8,000,000. None is generated or read.
 
-band:
+assumption_band:
+  preset: sim_v2_params
+  parameters: [winner_half_spread, all_in_cost, informed_fraction, drift_tau, level_vol, spread_factor, impact]
+  points: [low, central, high]
   what: >
     The parameters the calibration could only bound or had to assume. Each row is run on the
     same seeds as the central row and is part of the same look. A sign that changes inside the
@@ -104,5 +110,5 @@ limitations: >
 
 author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
 date: 2026-11-23
-config: not fixed (see open_before_signing)
-config_sha256: not fixed
+config: research/prereg/SIM3-BASE-001.config.yaml
+config_sha256: 7617434b781bb0f48f23f070755676e6bfd7cc5099091336a31c954a6eb0e409

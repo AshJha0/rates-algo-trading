@@ -2,11 +2,11 @@
 # Design: docs/research/STRATEGY_V2.md Section 7; ablation table in Section 8.
 # DRAFT: not signed and not to be run. It follows the Round 3 protocol (SIM_V2_DESIGN.md
 # Section 12): seeded full-day sessions, a paired primary test and looks counted per data
-# set. The date keys of prereg_version 1 (period, fitting_period, holdout) do not describe
-# seeded sessions and are left out until the Round 3 harness extends the schema with the
-# data_set block below, so this file does not validate as prereg_version 1 yet. Written
+# set. Format: prereg_version 2, the session-seed design (SessionDesignRules in rates-backtest,
+# ratesresearch.prereg); it validates as a draft and no harness runs it while status is draft.
+# guards in the config are guard_metrics below in machine-readable form. Written
 # from theory and the calibration; no desk P&L under any simulator was looked at.
-prereg_version: 1
+prereg_version: 2
 status: draft
 id: R5-006
 title: "Venue ticks, volatility time to live and the pull at half the quoted distance, inside the Round 5 desk"
@@ -69,7 +69,7 @@ assumption_band:
 author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
 date: 2026-11-23
 config: research/prereg/R5-006.config.yaml
-config_sha256: 67d23dbd3c840ef79f65f64f9a610f72e2377e3748705bd73629ba25b5be9cda
+config_sha256: a999c3bcbf795df0676b8e8b4c5af572bd180afcd5633006b6f2f1a3b3563438
 limitations: >
   Simulated sessions only: every number is a statement about the Round 3 simulator under the
   calibration, which ties competitor dispersion, the product of informed fraction and move,

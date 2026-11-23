@@ -27,6 +27,7 @@ public final class RfqRecord {
   double coverBp;
   double winProbability;
   long tradedPriceMantissa;
+  boolean withdrawn;
 
   RfqRecord(
       final long rfqId,
@@ -129,6 +130,11 @@ public final class RfqRecord {
 
   public long tradedPriceMantissa() {
     return tradedPriceMantissa;
+  }
+
+  /** True when our quote was withdrawn before the client decided (simulator v2 only). */
+  public boolean withdrawn() {
+    return withdrawn;
   }
 
   /**

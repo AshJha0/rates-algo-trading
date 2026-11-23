@@ -12,20 +12,31 @@ import io.ratesalgo.core.EventClock;
 import io.ratesalgo.core.EventLoop;
 import io.ratesalgo.core.InboundPublisher;
 import io.ratesalgo.core.RingBufferContract;
+import io.ratesalgo.messages.sbe.BookAction;
 import io.ratesalgo.messages.sbe.BookUpdateDecoder;
+import io.ratesalgo.messages.sbe.BookUpdateEncoder;
 import io.ratesalgo.messages.sbe.CurveInputDecoder;
+import io.ratesalgo.messages.sbe.CurveInputEncoder;
 import io.ratesalgo.messages.sbe.ExecutionReportDecoder;
 import io.ratesalgo.messages.sbe.ExecutionReportEncoder;
 import io.ratesalgo.messages.sbe.HeartbeatEncoder;
 import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.NewOrderDecoder;
+import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.OrdType;
+import io.ratesalgo.messages.sbe.OrderCancelDecoder;
+import io.ratesalgo.messages.sbe.OrderCancelRejectEncoder;
 import io.ratesalgo.messages.sbe.QuoteDecoder;
 import io.ratesalgo.messages.sbe.QuoteRequestDecoder;
+import io.ratesalgo.messages.sbe.QuoteRequestEncoder;
 import io.ratesalgo.messages.sbe.QuoteResponseDecoder;
 import io.ratesalgo.messages.sbe.QuoteResponseEncoder;
+import io.ratesalgo.messages.sbe.QuoteWithdrawDecoder;
+import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.router.FrameSink;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2LongHashMap;
@@ -43,10 +54,32 @@ import org.agrona.concurrent.ringbuffer.OneToOneRingBuffer;
  * and handed to the {@link StrategyContext}: a Quote becomes {@code ctx.quote} (the side the client
  * did not ask for is set equal to the other, since the back-tester settles only the client's
  * side), a NewOrder becomes {@code ctx.sendOrder}. The back-tester's QuoteResponses and
- * ExecutionReports come back with the desk's own quote and order ids put in. The back-tester has
- * no resting-order cancel, so every child order is sent as a market order and filled by its hedge
- * cost model; the router's cancels are dropped (DECISIONS.md DR-R2W-11). A timer every
+ * ExecutionReports come back with the desk's own quote and order ids put in. A timer every
  * housekeeping period runs the loop's timers, until five seconds after the last input.
+ *
+ * <p>Two modes.
+ *
+ * <ul>
+ *   <li>Recorded journals (no {@link SimBinding}): the journal is the desk's own inbound journal,
+ *       so ids already agree. The back-tester of that version has no resting-order model the desk
+ *       could use, so every child order is sent as a market order and filled by its hedge cost
+ *       model; cancels and quote withdrawals are dropped (DECISIONS.md DR-R2W-11). This mode is
+ *       unchanged, so every recorded figure reproduces.
+ *   <li>Simulator v2 (with a {@link SimBinding}): the journal is the shared market model's day.
+ *       Instrument ids are translated between the model's universe and the desk's reference data,
+ *       venue and curve ids are the desk's, and each RFQ's client id is the fixed id of its tier
+ *       (the tier table's ids, {@link SimBinding#clientIdOfTier}). Child orders keep their order
+ *       type and time in force, so limit and passive hedges rest on the model's book and fill by
+ *       its queue; the router's cancels (OrderCancel) cancel them, and a cancel that comes too late
+ *       is answered with an OrderCancelReject. The quoting engine's QuoteWithdraw is forwarded and
+ *       honoured when it reaches the venue before the client decides. Market orders pay the book
+ *       and its square-root impact (DECISIONS.md DR-R3-04). Instruments outside the desk's
+ *       universe (three swap tenors and the future, design section 14 D3) are not shown to it;
+ *       their RFQs count as declined.
+ * </ul>
+ *
+ * <p>A callback the back-tester makes while the loop is already running (a cancel answered at
+ * once) is queued and delivered after the current duty cycle, so the loop is never re-entered.
  */
 public final class DeskStrategy implements Strategy {
 
@@ -55,6 +88,7 @@ public final class DeskStrategy implements Strategy {
 
   private final UsdUniverse universe;
   private final DeskSettings settings;
+  private final SimBinding binding;
   private final ManualClock clock = new ManualClock(0L);
   private final ManyToOneRingBuffer inbound = RingBufferContract.newInbound(1 << 20);
   private final OneToOneRingBuffer[] outbound = new OneToOneRingBuffer[AppIds.OUTBOUND_RINGS];
@@ -62,24 +96,51 @@ public final class DeskStrategy implements Strategy {
   private final MessageHeaderDecoder header = new MessageHeaderDecoder();
   private final QuoteDecoder quote = new QuoteDecoder();
   private final NewOrderDecoder newOrder = new NewOrderDecoder();
+  private final QuoteWithdrawDecoder quoteWithdraw = new QuoteWithdrawDecoder();
+  private final OrderCancelDecoder orderCancel = new OrderCancelDecoder();
   private final QuoteResponseEncoder response = new QuoteResponseEncoder();
   private final ExecutionReportEncoder report = new ExecutionReportEncoder();
+  private final OrderCancelRejectEncoder cancelReject = new OrderCancelRejectEncoder();
   private final HeartbeatEncoder heartbeat = new HeartbeatEncoder();
   private final MessageHeaderEncoder headerEncoder = new MessageHeaderEncoder();
-  private final UnsafeBuffer scratch = new UnsafeBuffer(new byte[256]);
+  private final QuoteRequestEncoder rfqPatch = new QuoteRequestEncoder();
+  private final BookUpdateEncoder bookPatch = new BookUpdateEncoder();
+  private final CurveInputEncoder curvePatch = new CurveInputEncoder();
+  private final UnsafeBuffer scratch = new UnsafeBuffer(new byte[512]);
   private final Long2LongHashMap quoteOfRfq = new Long2LongHashMap(1024, 0.6f, 0L);
   private final Long2LongHashMap childOfOrder = new Long2LongHashMap(1024, 0.6f, 0L);
+  private final Long2LongHashMap orderOfChild = new Long2LongHashMap(1024, 0.6f, 0L);
+  private final Deque<byte[]> deferred = new ArrayDeque<>();
   private final org.agrona.concurrent.MessageHandler onOutbound = this::onOutbound;
   private EventLoop loop;
   private DeskGroup desk;
   private StrategyContext ctx;
+  private boolean inCycle;
   private long quotes;
   private long orders;
+  private long withdrawals;
+  private long cancels;
   private long lastInputNanos;
+  private long lastHeartbeatNanos = Long.MIN_VALUE;
+  private long bookSeq;
+  private static final long NO_TOP = Long.MIN_VALUE;
+  private final Long2LongHashMap topOf = new Long2LongHashMap(64, 0.6f, NO_TOP);
 
+  /** The desk on its own recorded journal. */
   public DeskStrategy(final UsdUniverse universe, final DeskSettings settings) {
+    this(universe, settings, null);
+  }
+
+  /**
+   * The desk on a simulator v2 session.
+   *
+   * @param binding the id translation between the model's universe and the desk's; null for a
+   *     recorded journal
+   */
+  public DeskStrategy(final UsdUniverse universe, final DeskSettings settings, final SimBinding binding) {
     this.universe = universe;
     this.settings = settings;
+    this.binding = binding;
   }
 
   @Override
@@ -108,10 +169,37 @@ public final class DeskStrategy implements Strategy {
 
   /** Runs the loop on one message at the back-tester's time and forwards what it sends. */
   private void cycle(final DirectBuffer buffer, final int offset, final int length) {
-    clock.setEpochNanos(Math.max(clock.epochNanos(), ctx.nowEpochNanos()));
+    if (inCycle) {
+      // a back-tester callback made from inside this cycle: deliver it after the cycle
+      if (buffer != null) {
+        final byte[] copy = new byte[length];
+        buffer.getBytes(offset, copy);
+        deferred.addLast(copy);
+      }
+      return;
+    }
+    inCycle = true;
+    try {
+      clock.setEpochNanos(Math.max(clock.epochNanos(), ctx.nowEpochNanos()));
+      offer(buffer, offset, length);
+      runAndDrain();
+      while (!deferred.isEmpty()) {
+        final byte[] next = deferred.pollFirst();
+        offer(new UnsafeBuffer(next), 0, next.length);
+        runAndDrain();
+      }
+    } finally {
+      inCycle = false;
+    }
+  }
+
+  private void offer(final DirectBuffer buffer, final int offset, final int length) {
     if (buffer != null && !publisher.offer(buffer, offset, length)) {
       throw new IllegalStateException("desk inbound ring full");
     }
+  }
+
+  private void runAndDrain() {
     loop.doWork();
     for (final OneToOneRingBuffer ring : outbound) {
       ring.read(onOutbound, Integer.MAX_VALUE);
@@ -122,6 +210,13 @@ public final class DeskStrategy implements Strategy {
     lastInputNanos = ctx.nowEpochNanos();
     final int offset = bodyOffset - MessageHeaderDecoder.ENCODED_LENGTH;
     cycle(buffer, offset, MessageHeaderDecoder.ENCODED_LENGTH + encodedLength);
+  }
+
+  /** Copies a frame (header and body) into the scratch buffer and returns the body offset there. */
+  private int copy(final DirectBuffer buffer, final int bodyOffset, final int encodedLength) {
+    scratch.putBytes(0, buffer, bodyOffset - MessageHeaderDecoder.ENCODED_LENGTH,
+        MessageHeaderDecoder.ENCODED_LENGTH + encodedLength);
+    return MessageHeaderDecoder.ENCODED_LENGTH;
   }
 
   private void onOutbound(final int msgTypeId, final MutableDirectBuffer buffer, final int index, final int length) {
@@ -135,30 +230,110 @@ public final class DeskStrategy implements Strategy {
       ctx.quote(quote.rfqId(), px, px);
     } else if (msgTypeId == NewOrderDecoder.TEMPLATE_ID) {
       newOrder.wrap(buffer, body, header.blockLength(), header.version());
-      final long id =
-          ctx.sendOrder(newOrder.instrumentId(), newOrder.side(), OrdType.Market, newOrder.quantity(),
-              newOrder.price().mantissa(), true);
+      final long id;
+      if (binding == null) {
+        id = ctx.sendOrder(newOrder.instrumentId(), newOrder.side(), OrdType.Market, newOrder.quantity(),
+            newOrder.price().mantissa(), true);
+      } else {
+        id = ctx.sendOrder(binding.simId(newOrder.instrumentId()), newOrder.side(), newOrder.ordType(),
+            newOrder.timeInForce(), newOrder.quantity(), newOrder.price().mantissa(), true);
+        orderOfChild.put(newOrder.clOrdId(), id);
+      }
       childOfOrder.put(id, newOrder.clOrdId());
       orders++;
+    } else if (binding != null && msgTypeId == QuoteWithdrawDecoder.TEMPLATE_ID) {
+      quoteWithdraw.wrap(buffer, body, header.blockLength(), header.version());
+      withdrawals += ctx.withdrawQuote(quoteWithdraw.rfqId()) ? 1 : 0;
+    } else if (binding != null && msgTypeId == OrderCancelDecoder.TEMPLATE_ID) {
+      orderCancel.wrap(buffer, body, header.blockLength(), header.version());
+      cancel(orderCancel.clOrdId(), orderCancel.origClOrdId(), orderCancel.instrumentId());
     }
-    // QuoteWithdraw, OrderCancel and control messages have no back-test counterpart
+    // recorded journals: QuoteWithdraw and OrderCancel have no counterpart; control messages never do
+  }
+
+  /** Simulator v2: cancels a resting child, or tells the router the cancel came too late. */
+  private void cancel(final long request, final long child, final int deskInstrument) {
+    final long order = orderOfChild.get(child);
+    if (order != 0L && ctx.cancelOrder(order)) {
+      cancels++;
+      return;
+    }
+    cancelReject
+        .wrapAndApplyHeader(scratch, 0, headerEncoder)
+        .venueId(AppIds.CLOB_VENUE)
+        .clOrdId(request)
+        .origClOrdId(child)
+        .instrumentId(deskInstrument)
+        .ordStatus(OrdStatus.Filled)
+        .responseTo((short) 1)
+        .timestampNanos(ctx.nowEpochNanos());
+    cycle(scratch, 0, MessageHeaderEncoder.ENCODED_LENGTH + cancelReject.encodedLength());
   }
 
   @Override
   public void onQuoteRequest(final QuoteRequestDecoder rfq, final StrategyContext context) {
-    forward(rfq.buffer(), rfq.offset(), rfq.encodedLength());
+    if (binding == null) {
+      forward(rfq.buffer(), rfq.offset(), rfq.encodedLength());
+      return;
+    }
+    final int desk = binding.deskId(rfq.instrumentId());
+    if (desk == 0) {
+      return;
+    }
+    final int body = copy(rfq.buffer(), rfq.offset(), rfq.encodedLength());
+    rfqPatch.wrap(scratch, body).venueId(AppIds.D2C_VENUE).instrumentId(desk).clientId(binding.clientIdOfTier(rfq.clientId()));
+    forward(scratch, body, rfq.encodedLength());
   }
 
   @Override
   public void onBookUpdate(final BookUpdateDecoder update, final StrategyContext context) {
-    forward(update.buffer(), update.offset(), update.encodedLength());
+    if (binding == null) {
+      forward(update.buffer(), update.offset(), update.encodedLength());
+      return;
+    }
+    final int desk = binding.deskId(update.instrumentId());
+    if (desk == 0) {
+      return;
+    }
+    // the journal carries each book's top only, as a change of level 0; the desk keeps its book by
+    // price, so the old top price is deleted before the new one is set, or stale levels would stay
+    final long key = ((long) desk << 1) | (update.side() == Side.Buy ? 0L : 1L);
+    final long previous = topOf.get(key);
+    final long price = update.price().mantissa();
+    if (previous != NO_TOP && previous != price) {
+      final int body = copy(update.buffer(), update.offset(), update.encodedLength());
+      bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk).venueSeqNo(++bookSeq)
+          .action(BookAction.Delete).quantity(0L);
+      bookPatch.price().mantissa(previous);
+      forward(scratch, body, update.encodedLength());
+    }
+    topOf.put(key, price);
+    final int body = copy(update.buffer(), update.offset(), update.encodedLength());
+    // the desk's feed check expects a gapless sequence; updates of instruments it does not hold are
+    // not shown to it, so the sequence is renumbered over the updates it is shown
+    bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk).venueSeqNo(++bookSeq);
+    forward(scratch, body, update.encodedLength());
   }
 
   @Override
   public void onCurveInput(final CurveInputDecoder input, final StrategyContext context) {
-    forward(input.buffer(), input.offset(), input.encodedLength());
+    if (binding == null) {
+      forward(input.buffer(), input.offset(), input.encodedLength());
+    } else {
+      final int desk = binding.deskId(input.instrumentId());
+      if (desk != 0) {
+        final int body = copy(input.buffer(), input.offset(), input.encodedLength());
+        curvePatch.wrap(scratch, body).curveId(AppIds.SOFR_CURVE).instrumentId(desk);
+        forward(scratch, body, input.encodedLength());
+      }
+    }
     // the back-tester does not pass Heartbeats to strategies; the curve feed's heartbeat travels
     // with its curve inputs live, so it is restored here or input health would time out
+    // (simulator v2: once per publication time, as the live feed sends one per round)
+    if (binding != null && context.nowEpochNanos() == lastHeartbeatNanos) {
+      return;
+    }
+    lastHeartbeatNanos = context.nowEpochNanos();
     heartbeat.wrapAndApplyHeader(scratch, 0, headerEncoder).sourceId(AppIds.CURVE_HEARTBEAT_SOURCE)
         .timestampNanos(context.nowEpochNanos());
     cycle(scratch, 0, MessageHeaderEncoder.ENCODED_LENGTH + heartbeat.encodedLength());
@@ -189,7 +364,7 @@ public final class DeskStrategy implements Strategy {
         .clOrdId(child)
         .venueOrderId(r.venueOrderId())
         .execId(r.execId())
-        .instrumentId(r.instrumentId())
+        .instrumentId(binding == null ? r.instrumentId() : binding.deskId(r.instrumentId()))
         .side(r.side())
         .ordStatus(r.ordStatus())
         .lastQuantity(r.lastQuantity())
@@ -222,5 +397,15 @@ public final class DeskStrategy implements Strategy {
   /** Child orders handed to the back-tester. */
   public long orders() {
     return orders;
+  }
+
+  /** Quote withdrawals the back-tester honoured (simulator v2). */
+  public long withdrawals() {
+    return withdrawals;
+  }
+
+  /** Resting child orders cancelled at the router's request (simulator v2). */
+  public long cancels() {
+    return cancels;
   }
 }

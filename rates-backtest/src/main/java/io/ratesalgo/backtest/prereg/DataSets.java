@@ -1,7 +1,9 @@
 package io.ratesalgo.backtest.prereg;
 
+import io.ratesalgo.backtest.sim.PairedSessions;
 import io.ratesalgo.backtest.util.Hashing;
 import io.ratesalgo.backtest.util.Yaml;
+import io.ratesalgo.sim.SessionSeeds;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -58,8 +60,27 @@ public final class DataSets {
     return sessionsKey(lines);
   }
 
+  /**
+   * The key of simulator v2 sessions {@code first .. first + count - 1} of a seed base: the same
+   * lines {@code <label date>|<seed>} as a row with journals, the label date being the one
+   * {@code PairedSessions.labelDate} gives each seed. Equal to {@code PairedSessions.dataSetKey}.
+   */
+  public static String sessionsKey(final long base, final int first, final int count) {
+    final List<String> lines = new ArrayList<>(count);
+    for (int n = first; n < first + count; n++) {
+      final long seed = SessionSeeds.seed(base, n);
+      lines.add(PairedSessions.labelDate(seed) + "|" + seed);
+    }
+    return sessionsKey(lines);
+  }
+
   /** The key of a ledger row, or null when the row names no data. */
   public static String key(final Map<String, Object> entry) {
+    if (entry.get("session_seeds") instanceof Map<?, ?> s) {
+      // a simulator v2 row names its sessions by seed base, first session and count
+      return sessionsKey(
+          ((Number) s.get("base")).longValue(), ((Number) s.get("first")).intValue(), ((Number) s.get("count")).intValue());
+    }
     if (entry.get("journals") instanceof List<?> journals && !journals.isEmpty()) {
       final List<String> lines = new ArrayList<>();
       for (final Object o : journals) {
@@ -75,6 +96,12 @@ public final class DataSets {
   }
 
   private static String describe(final Map<String, Object> entry) {
+    if (entry.get("session_seeds") instanceof Map<?, ?> s) {
+      final long base = ((Number) s.get("base")).longValue();
+      final long first = ((Number) s.get("first")).longValue();
+      final long count = ((Number) s.get("count")).longValue();
+      return count + " simulator v2 sessions, seeds " + (base + first) + ".." + (base + first + count - 1);
+    }
     if (entry.get("journals") instanceof List<?> journals && !journals.isEmpty()) {
       final TreeSet<String> dates = new TreeSet<>();
       final TreeSet<Long> seeds = new TreeSet<>();

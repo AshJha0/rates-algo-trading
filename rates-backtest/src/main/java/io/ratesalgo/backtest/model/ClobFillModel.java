@@ -25,9 +25,9 @@ import io.ratesalgo.backtest.util.Prices;
  *
  * <p>Simulator v2 ({@link #simV2}): the order rests on the shared market model's book, behind the
  * provider size displayed at its price, and is filled by the model's other takers or when the
- * market comes through it (docs/research/SIM_V2_DESIGN.md section 8). The back-tester still books
- * one execution per order, when the whole quantity has traded; a partial fill is booked when the
- * order is cancelled.
+ * market comes through it (docs/research/SIM_V2_DESIGN.md section 8). The back-tester books each
+ * passive fill when the model reports it, at the order's limit price, and reports it to the
+ * strategy as a partial fill until the whole quantity has traded.
  */
 public final class ClobFillModel {
 
@@ -96,6 +96,14 @@ public final class ClobFillModel {
      */
     public long cancel() {
       return handle == 0 ? 0L : Math.round(simDay.cancel(handle));
+    }
+
+    /**
+     * Quantity a simulator v2 order has traded so far, whole minor units rounded down, so that a
+     * fill is never booked before it has happened; 0 for a version 1 order.
+     */
+    public long filledMinor() {
+      return handle == 0 ? 0L : (long) Math.floor(simDay.filledMinor(handle) + 1e-6);
     }
 
     /**
