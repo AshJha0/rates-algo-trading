@@ -25,7 +25,6 @@ import io.ratesalgo.messages.sbe.LimitKind;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.RiskLimitBreachDecoder;
 import io.ratesalgo.messages.sbe.Side;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -633,21 +632,16 @@ class RiskEngineEdgeCasesTest {
   }
 
   /**
-   * Headroom is documented as the largest additional quantity that passes. With no position and no
-   * order-size limit the bisection runs over [0, Long.MAX_VALUE] and stops after 48 halvings, so it
-   * can land up to 2^15 minor units (about 328 of face) short of the edge. The error is on the safe
-   * side, but the quoting engine sizes from it.
+   * Headroom is the largest additional quantity that passes. With no position and no order-size
+   * limit the bisection runs over [0, Long.MAX_VALUE]; it used to stop after 48 halvings, up to
+   * 2^15 minor units short of the edge (6,097,534,975 where one unit more still passed). The
+   * edge: 50,000 / (820 per 100,000,000 minor) = 6,097,560,975.6, so 6,097,560,975.
    */
   @Test
-  @Disabled(
-      "defect, round 7: RiskEngine.headroom (RiskEngine.java:529) stops the bisection after 48"
-          + " iterations; with no position or order-size limit the range is 2^63 wide, so the result"
-          + " can be 2^15 minor units below the edge (measured: 6,097,534,975 where one more unit"
-          + " still passes). Fix: iterate until hi - lo <= 1 (at most 64 halvings) or bisect over"
-          + " min(room, the PV01-implied bound). Enable this test with the fix.")
   void headroomWithOnlyAPv01LimitIsTheExactEdge() {
     final RiskFixture f = new RiskFixture(new RiskLimits().bucketPv01(50_000.0));
     final long h = f.risk.headroom(BOND10, Side.Buy);
+    assertEquals(6_097_560_975L, h);
     assertEquals(RiskEngine.OK, f.risk.checkOrder(BOND10, Side.Buy, h, f.fairMid(BOND10), 1));
     assertEquals(LimitKind.BucketDv01.value(), f.risk.checkOrder(BOND10, Side.Buy, h + 1, f.fairMid(BOND10), 2), "h = " + h);
   }
