@@ -37,12 +37,14 @@
     </Or>
   </Match>
   <!-- rates-analytics pricing v2 (DR-R4-02, DR-R4-03): SofrCurve hands out the one curve its
-       bootstrap writes, as CurveBuilder does, and the leave-one-out rates read the full curve's
-       quotes through the caller's object on purpose. -->
+       bootstrap writes, as CurveBuilder does, the leave-one-out rates read the full curve's
+       quotes through the caller's object on purpose, and PillarOverride wraps the caller's
+       instrument, whose quote the builder sets through it. -->
   <Match>
     <Or>
       <Class name="io.ratesalgo.analytics.curve.SofrCurve" />
       <Class name="io.ratesalgo.analytics.curve.SofrLeaveOneOut" />
+      <Class name="io.ratesalgo.analytics.curve.PillarOverride" />
     </Or>
     <Or>
       <Bug pattern="EI_EXPOSE_REP" />

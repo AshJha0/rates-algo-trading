@@ -167,7 +167,7 @@ the Nelson-Siegel basis with a fixed decay, so the model is linear and the fit i
 
 **Plain idea.** What a position earns or costs to hold over a horizon if no curve moves: income against financing (carry), and the change in the curve's rate as the instrument shortens (roll-down).
 
-**Formal statement.** Bonds: `BondCarry.carry` at the repo rate for the term from `RepoCurve`, less a specialness spread for on-the-run issues, divided by the bond's price change per basis point; roll-down is the fall in the curve's yield as the bond shortens, y(T) - y(T - h), with y the par yield of the SOFR curve plus the fitted spread (`TreasurySpreadCurve.parYield`). `BondCarry.rollDown` reprices the bond at the horizon and gives the same number to first order; it is not called per reprice because it needs a yield solve per bond. Swaps: with S(T) the spot par rate and F(h, T) the par rate of the swap starting h days later and ending on the same date, carry = F(h, T) - S(T) and roll-down = S(T) - S(T - h) (`SwapCarryRoll`). Both are reported in basis points of the instrument's own yield, positive when a long bond or a receiver swap earns them, through `CarrySource.carry(instrumentId, CarryRoll)`. The quoting engine does not read it; that is for the strategy round.
+**Formal statement.** Bonds: `BondCarry.carry` at the repo rate for the term from `RepoCurve`, less a specialness spread for on-the-run issues, divided by the bond's price change per basis point; roll-down is the fall in the curve's yield as the bond shortens, y(T) - y(T - h), with y the par yield of the SOFR curve plus the fitted spread (`TreasurySpreadCurve.parYield`). `BondCarry.rollDown` reprices the bond at the horizon and gives the same number to first order; it is not called per reprice because it needs a yield solve per bond. Swaps: with S(T) the spot par rate and F(h, T) the par rate of the swap starting h days later and ending on the same date, carry = F(h, T) - S(T) and roll-down = S(T) - S(T - h) (`SwapCarryRoll`). Both are reported in basis points of the instrument's own yield, positive when a long bond or a receiver swap earns them, through `CarrySource.carry(instrumentId, CarryRoll)`. They are recomputed on every sixteenth reprice and after a date change, since they move with the slope of the curve and not its level. The quoting engine does not read it; that is for the strategy round.
 
 **Worked example** (`PricingV2Test.carryAndRollDownComeFromTheLibraryAndTheRepoCurve`): 30-day horizon, general collateral 3.64 percent at 30 days, 20 bp special. The 10-year note's carry equals `BondCarry` at 3.44 percent to 1e-9 and lies between 0.3 and 1.0 bp; removing the specialness lowers it by dirty price times 20 bp times 30/360, to 1e-6. The 10-year swap's two numbers equal `SwapCarryRoll` to 1e-12 and are both positive on a curve rising from 3.60 to 3.70.
 
@@ -191,9 +191,23 @@ Limits: the universe (which Treasuries are on the run, the swap templates) is st
 
 **What is incremental.** The solve starts from the previous solution. The leave-one-out rates are first-order between references. Each bond's z-spread is found by Newton from its last accepted spread (three price evaluations with derivatives, where the bracketing search takes about fifty). The interpolation matrices are rebuilt, since a tension spline is global. Bond stage and ladders are recomputed every round, because the books move.
 
-**Measured.** PENDING_PERF
+**What makes it affordable.** Three things were measured to matter and were changed in the library; none changes a version 1 result.
 
-**Allocation.** Zero bytes over 2,000 reprices after warm-up, including rounds in which the leave-one-out reference is retaken (`PricingV2Test.repriceDoesNotAllocate`, thread-allocated bytes). A date change allocates.
+- The bootstrap. The global solve was Levenberg-Marquardt on the normal equations, which stalls at the rounding floor of a futures price: on this curve an update took milliseconds and one in a few hundred failed its residual check (`SofrCurveTest.repeatedUpdatesSolveEveryTimeAndCheaply` is the regression test). `CurveBuilder` now tries Newton on the square system first, starting from the Jacobian already factored at the previous solution, so a round of small moves costs three residual evaluations and no Jacobian; Levenberg-Marquardt remains the fallback. The residual check is in rate units (a futures price error divided by 100).
+- Discount factors. Under the tension spline the log discount factor at a date is a fixed linear combination of the node values. `DiscountCurve` keeps the weight row of each date it is asked for, so a discount factor is a 14-term dot product and an exponential and a gradient is a copy. In a plain loop without the coverage agent a 30-year par rate went from 26 to 2.4 microseconds and its gradient from 94 to 6.4. Linear log discount factors are left on the direct path so that version 1 is bit for bit what it was.
+- Compounding. An OIS period whose days all telescope is one ratio of discount factors; `OisSwapPricer` used to walk every day of the period to find that out (7,500 days for a 30-year swap, per evaluation). The flag is now set when the swap is built. Same arithmetic, same bits.
+
+**Measured.** `PricingV2RepriceBenchmark`, JMH 1 fork, 3 warm-up and 5 measured iterations of 3 s, JDK 25 on the development machine while other builds were running on it (which is why the errors are wide; read the figures as an upper bound for a quiet machine and as a ratio, not as a reference):
+
+| Case | Time per round | Allocation |
+|---|---|---|
+| Version 2, every quote moves (15 messages, one solve, one reprice) | 562 +/- 390 microseconds | 1.3 +/- 0.9 B/op |
+| Version 2, quotes unchanged (no solve) | 148 +/- 151 microseconds | 0.3 +/- 0.3 B/op |
+| Version 1, five quotes (five incremental rebuilds and five recomputes) | 873 +/- 304 microseconds | 2.0 +/- 0.7 B/op |
+
+Under the coverage agent in the build the same three cases print 339, 95 and 951 microseconds (`PricingV2RepriceBenchmarkTest`), and the allocation test's own loop 403 microseconds a round with the leave-one-out reference retaken 67 times in 4,000 rounds. So a version 2 round costs between a third and two thirds of a version 1 round, in one piece where version 1 has five pieces of a fifth each. It is not small: a few hundred microseconds on the loop thread twice a second, and an RFQ that arrives during a reprice waits for it. If the loop's latency budget cannot take that, the snapshot design is the next step (DR-R4-07). The byte or two per operation that JMH's profiler reports is its own sampling; the thread-allocated-bytes test below reads zero.
+
+**Allocation.** `PricingV2Test.repriceDoesNotAllocate` asserts zero thread-allocated bytes over 4,000 reprices after warm-up, including rounds in which the leave-one-out reference is retaken. A date change allocates.
 
 ## 11. Independent verification
 
@@ -246,7 +260,8 @@ Only a cross-language retyping, which catches a slip in one language and not a f
 - Hull-White parameters assumed (Section 4).
 - Four Treasuries: no premium, weak outlier detection (Section 6).
 - A persistent wrong quote is absorbed with a 5 minute half-life (Section 5).
-- The spline can overshoot; only measured on one market (Section 3).
+- The spline can overshoot; only measured on one market (Section 3). Its ladders for instruments between pillars are not local (Section 7).
+- A reprice is several hundred microseconds on the loop thread (Section 10).
 - Ten of fourteen inputs seeded with today's feed (Section 12).
 - CME contract terms (SR1: arithmetic average over the calendar month; SR3: daily compounding between third Wednesdays) are as the library already had them from the Rulebook chapters it cites; they were not re-read this round, and cmegroup.com refuses automated fetches. UNVERIFIED this round.
 - Bond carry uses the overnight rate as repo unless a repo curve is given.
@@ -254,7 +269,7 @@ Only a cross-language retyping, which catches a slip in one language and not a f
 
 ## 14. Text for the documents this round did not edit
 
-See the hand-over report of the round for CHANGELOG lines, DECISIONS records DR-R4-01 to DR-R4-08, and the API_SPEC and LEARN notes; they are reproduced here so that they live in the repository.
+See the hand-over report of the round for CHANGELOG lines, DECISIONS records DR-R4-01 to DR-R4-09, and the API_SPEC and LEARN notes; they are reproduced here so that they live in the repository.
 
 ### CHANGELOG, Unreleased, Added
 
@@ -262,6 +277,13 @@ See the hand-over report of the round for CHANGELOG lines, DECISIONS records DR-
 - `Interpolation.STEP_THEN_TENSION_SPLINE` and `STEP_THEN_MONOTONE_CONVEX`; `CurveBuilder.rebuildAll`; `PillarOverride`; `FomcCalendar` (dates unverified); `HullWhite.compoundedFuturesConvexity`, `averageFuturesConvexity`, `integratedVariance`; `BondPricer.spreadLadder`; `SwapCarryRoll`.
 - `data/golden/pricing_v2_golden.json` and `ratesresearch.goldens.pricing_v2`: QuantLib-priced golden for the v2 curve, monotone-convex forwards, in-arrears convexity and bond spread risk. `analytics_golden.json` regenerates unchanged.
 - `PricingV2RepriceBenchmark` (JMH) in rates-bench, which now depends on rates-app.
+
+### CHANGELOG, Unreleased, Changed
+
+- `CurveBuilder`: the global solve tries Newton on the square system before Levenberg-Marquardt, and the residual check is in rate units (a futures price error divided by 100). Sequential solves, and so version 1 pricing, are unchanged.
+- `DiscountCurve`: weight rows per date under the tension-spline schemes (a curve under those schemes must not be read from two threads). `TensionSplineInterpolator` keeps its system across value updates.
+- `OisSwapPricer`: a period whose days all telescope is priced as one ratio without walking its days; results are bit for bit the same.
+- `config/spotbugs-exclude.xml`: `SofrCurve` and `SofrLeaveOneOut` added to the classes that hand out the bootstrap's one curve.
 
 ### DECISIONS
 
@@ -280,6 +302,8 @@ See the hand-over report of the round for CHANGELOG lines, DECISIONS records DR-
 **DR-R4-07: Reprice on the loop, conflated, as a pure function of journaled inputs.** Context: replay determinism; no new message template. Decision: Section 10. Revisit if the measured cost of a round becomes a problem for the loop's latency budget.
 
 **DR-R4-08: Business date from the clock with a 17:00 New York cut.** Context: A7. Decision: Section 9. The instrument universe is still built on `Venues.TRADE_DATE`.
+
+**DR-R4-09: Newton before Levenberg-Marquardt in the global bootstrap; tolerance in rate.** Context: on the v2 curve the damped solver stalled at the rounding floor of futures prices (milliseconds per update, occasional failed residual checks). Decision: Section 10. The tolerance of 1e-12 now applies to the error in rate, so a futures price may be off by 1e-10.
 
 ### API_SPEC
 

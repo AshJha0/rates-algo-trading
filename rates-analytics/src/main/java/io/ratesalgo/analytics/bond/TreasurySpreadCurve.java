@@ -381,20 +381,22 @@ public final class TreasurySpreadCurve {
       final io.ratesalgo.analytics.curve.DiscountCurve curve, final int settlement,
       final double years, final double spread) {
     final double dfs = curve.df(settlement);
+    // coupons at years, years - 1/2, ... while positive
+    final int coupons = (int) Math.ceil(2.0 * years - 1e-9);
     double annuity = 0.0;
-    double t = years;
     double last = 0.0;
-    while (t > 1e-9) {
+    for (int k = 0; k < coupons; k++) {
+      final double t = years - 0.5 * k;
       final double d = curve.df(settlement + (int) Math.round(t * 365.0)) / dfs
           * Math.exp(-spread * t);
-      if (t == years) {
+      if (k == 0) {
         last = d;
       }
       annuity += d;
-      t -= 0.5;
     }
-    // the first coupon period is short by -t half-years; its accrued is not paid by the buyer
-    final double shortfall = -t / 0.5;
+    // the first coupon period is short by this share of a half-year; its accrued is not paid by
+    // the buyer
+    final double shortfall = coupons - 2.0 * years;
     return 2.0 * (1.0 - last) / (annuity - shortfall);
   }
 }
