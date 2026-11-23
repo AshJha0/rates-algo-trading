@@ -14,9 +14,10 @@ import java.util.Map;
  * Benjamini-Hochberg across the primary tests of a registered family, computed from the ledger on
  * request and printed, never applied silently (docs/research/SIM_V2_DESIGN.md section 12).
  *
- * <p>A family is either every simulator v2 row that read one data set ({@code data_set:<key>}: all
- * primary tests read on one confirmation set, the design's definition), or the members listed in
- * a family file:
+ * <p>A family is every simulator v2 row that read one data set ({@code data_set:<key>}: all
+ * primary tests read on one confirmation set, the design's definition), the rows of a registered
+ * family ({@code family:<id>}, rows carrying that {@code family_id}, one per hypothesis), or the
+ * members listed in a family file:
  *
  * <pre>
  *   family: R5
@@ -31,21 +32,32 @@ import java.util.Map;
  * if the adjusted p is below q, the central bootstrap interval lies above zero and the mean
  * difference is positive at every band row; {@code reversed} if the adjusted p is below q and the
  * interval lies below zero; {@code not robust} if the sign of the mean difference changes across
- * the band rows; otherwise {@code inconclusive}. {@code ratesresearch.prereg} prints the same text.
+ * the band rows; otherwise {@code inconclusive}. A registered family's row (it carries {@code
+ * hypothesis_id}) is judged without the band rows, which such a family reports as description
+ * only: {@code trading less}, {@code supported} (adjusted p below q and interval above zero),
+ * {@code reversed}, or {@code inconclusive}. {@code ratesresearch.prereg} prints the same text.
  */
 public final class FamilyAdjustment {
 
   /** A family: its name, q and the rows that belong to it. */
-  public record Family(String name, double q, List<String> members, String dataSet) {
+  public record Family(String name, double q, List<String> members, String dataSet, String familyId) {
     public Family {
       members = List.copyOf(members);
     }
 
-    /** Parses {@code data_set:<key>} or a family file. */
+    /** A family by data set or by member list. */
+    public Family(final String name, final double q, final List<String> members, final String dataSet) {
+      this(name, q, members, dataSet, null);
+    }
+
+    /** Parses {@code data_set:<key>}, {@code family:<id>} or a family file. */
     public static Family of(final String spec) {
       if (spec.startsWith("data_set:")) {
         final String key = spec.substring("data_set:".length());
         return new Family(spec, 0.05, List.of(), key);
+      }
+      if (spec.startsWith("family:")) {
+        return new Family(spec, 0.05, List.of(), null, spec.substring("family:".length()));
       }
       final Path file = Path.of(spec);
       if (!Files.isRegularFile(file)) {
@@ -61,7 +73,13 @@ public final class FamilyAdjustment {
     }
 
     boolean contains(final Map<String, Object> row) {
-      return dataSet != null ? dataSet.equals(row.get("data_set")) : members.contains(String.valueOf(row.get("prereg_id")));
+      if (dataSet != null) {
+        return dataSet.equals(row.get("data_set"));
+      }
+      if (familyId != null) {
+        return familyId.equals(row.get("family_id"));
+      }
+      return members.contains(String.valueOf(row.get("prereg_id")));
     }
   }
 
@@ -75,7 +93,8 @@ public final class FamilyAdjustment {
     final Map<String, Map<String, Object>> latest = new LinkedHashMap<>();
     for (final Map<String, Object> e : entries) {
       if (family.contains(e) && e.get("results") instanceof Map<?, ?> r && r.get("primary") instanceof Map<?, ?>) {
-        latest.put(String.valueOf(e.get("prereg_id")), e);
+        // a family's rows share the pre-registration id and differ by hypothesis
+        latest.put(e.get("prereg_id") + "|" + (e.get("hypothesis_id") == null ? "" : e.get("hypothesis_id")), e);
       }
     }
     final List<Test> tests = new ArrayList<>();
@@ -103,6 +122,14 @@ public final class FamilyAdjustment {
     final double[] adjusted = Stats.benjaminiHochberg(raw);
     for (int i = 0; i < raw.length; i++) {
       final Test t = tests.get(i);
+      if (t.row().get("hypothesis_id") != null) {
+        b.append("  ").append(t.preregId()).append(' ').append(t.row().get("hypothesis_id")).append(' ')
+            .append(t.comparison()).append("  seq ").append(t.seq()).append("  p ").append(fmt(raw[i], 8)).append("  bh ")
+            .append(fmt(adjusted[i], 8)).append("  ci [").append(fmt(number(t.central().get("ci_low")), 2)).append(", ")
+            .append(fmt(number(t.central().get("ci_high")), 2)).append("]  guards ").append(guards(t)).append("  verdict ")
+            .append(familyVerdict(t, adjusted[i], family.q())).append('\n');
+        continue;
+      }
       final int[] signs = signs(t);
       b.append("  ").append(t.preregId()).append(' ').append(t.comparison()).append("_vs_baseline  seq ").append(t.seq())
           .append("  p ").append(fmt(raw[i], 8)).append("  bh ").append(fmt(adjusted[i], 8)).append("  ci [")
@@ -158,6 +185,21 @@ public final class FamilyAdjustment {
     }
     if (signs[0] > 0 && signs[1] > 0) {
       return "not robust";
+    }
+    return "inconclusive";
+  }
+
+  /** A registered family's verdict: the band rows are description and do not enter it. */
+  private static String familyVerdict(final Test t, final double adjusted, final double q) {
+    final String guards = guards(t);
+    if ("fail".equals(guards)) {
+      return "trading less";
+    }
+    if (adjusted < q && number(t.central().get("ci_low")) > 0.0) {
+      return "unchecked".equals(guards) ? "supported if the guards hold" : "supported";
+    }
+    if (adjusted < q && number(t.central().get("ci_high")) < 0.0) {
+      return "reversed";
     }
     return "inconclusive";
   }

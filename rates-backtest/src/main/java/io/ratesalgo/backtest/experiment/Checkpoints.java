@@ -24,6 +24,9 @@ import java.util.TreeMap;
  *   manifest.json          what the run is: pre-registration and config hashes, seeds, arms, band
  *                          rows, factory, presets hash, code commit; a resume must match it exactly
  *   sessions/&lt;seed&gt;.json   one session's per-arm outputs; present only once complete
+ *   parts/&lt;seed&gt;/         a session in progress: one file per row journal and per (row, arm),
+ *                          so a killed worker resumes at the next arm; removed once the
+ *                          session file is written
  *   timing/&lt;seed&gt;.txt      that session's wall-clock milliseconds, read by the status command
  *   logs/&lt;seed&gt;.log        the worker's output
  *   heartbeat.txt          rewritten at least every minute while the coordinator runs
@@ -81,7 +84,7 @@ public final class Checkpoints {
   /** Creates the directories and removes temporary files a killed writer left behind. */
   public void prepare() {
     try {
-      for (final String sub : List.of("sessions", "timing", "logs")) {
+      for (final String sub : List.of("sessions", "timing", "logs", "parts")) {
         Files.createDirectories(dir.resolve(sub));
         try (DirectoryStream<Path> s = Files.newDirectoryStream(dir.resolve(sub), "*.tmp")) {
           for (final Path p : s) {
@@ -89,6 +92,94 @@ public final class Checkpoints {
           }
         }
       }
+      try (DirectoryStream<Path> seeds = Files.newDirectoryStream(dir.resolve("parts"))) {
+        for (final Path seed : seeds) {
+          if (Files.isDirectory(seed)) {
+            try (DirectoryStream<Path> s = Files.newDirectoryStream(seed, "*.tmp")) {
+              for (final Path p : s) {
+                Files.delete(p);
+              }
+            }
+          }
+        }
+      }
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  // ------------------------------------------------------------------ parts of a session
+
+  private Path partDir(final long seed) {
+    return dir.resolve("parts").resolve(Long.toString(seed));
+  }
+
+  private static String fileName(final String row) {
+    return row.replace(':', '_');
+  }
+
+  /**
+   * The checkpoint of one session's work in progress: a file per (row, arm) and per row's journal,
+   * so a worker that dies after five of nine arms resumes at the sixth. A part holds what the
+   * session file will hold and is read only to assemble it; status never opens one.
+   */
+  public SessionExecutor.Parts parts(final long seed) {
+    final Path d = partDir(seed);
+    return new SessionExecutor.Parts() {
+      @Override
+      public Map<String, Object> row(final String row) {
+        return read(d.resolve(fileName(row) + ".row.json"));
+      }
+
+      @Override
+      public void putRow(final String row, final Map<String, Object> value) {
+        writeAtomically(d.resolve(fileName(row) + ".row.json"), Json.write(value) + "\n");
+      }
+
+      @Override
+      public Map<String, Object> arm(final String row, final String arm) {
+        return read(d.resolve(fileName(row) + "__" + arm + ".json"));
+      }
+
+      @Override
+      public void putArm(final String row, final String arm, final Map<String, Object> value) {
+        writeAtomically(d.resolve(fileName(row) + "__" + arm + ".json"), Json.write(value) + "\n");
+      }
+    };
+  }
+
+  private static Map<String, Object> read(final Path p) {
+    return Files.isRegularFile(p) ? Yaml.loadMap(p) : null;
+  }
+
+  /** Removes a session's parts once its session file is written. */
+  public void clearParts(final long seed) {
+    final Path d = partDir(seed);
+    if (!Files.isDirectory(d)) {
+      return;
+    }
+    try (DirectoryStream<Path> s = Files.newDirectoryStream(d)) {
+      for (final Path p : s) {
+        Files.delete(p);
+      }
+      Files.delete(d);
+    } catch (final IOException e) {
+      throw new UncheckedIOException(e);
+    }
+  }
+
+  /** Number of (row, arm) parts on disk for a session, for status; reads names only. */
+  public long partCount(final long seed) {
+    final Path d = partDir(seed);
+    if (!Files.isDirectory(d)) {
+      return 0;
+    }
+    try (DirectoryStream<Path> s = Files.newDirectoryStream(d, "*__*.json")) {
+      long n = 0;
+      for (final Path ignored : s) {
+        n++;
+      }
+      return n;
     } catch (final IOException e) {
       throw new UncheckedIOException(e);
     }

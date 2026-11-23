@@ -140,9 +140,36 @@ public final class DataSets {
     return out;
   }
 
-  /** Rows of {@code entries} that read {@code key}. */
+  /**
+   * Rows grouped into looks: the rows of one run of a registered family (one {@code family_run},
+   * a row per hypothesis) are one look; every other row is a look of its own. In row order.
+   */
+  public static List<List<Map<String, Object>>> looksOf(final List<Map<String, Object>> rows) {
+    final List<List<Map<String, Object>>> out = new ArrayList<>();
+    final Map<String, List<Map<String, Object>>> runs = new LinkedHashMap<>();
+    for (final Map<String, Object> r : rows) {
+      if (r.get("family_run") instanceof String run && !run.isEmpty()) {
+        final List<Map<String, Object>> look = runs.get(run);
+        if (look == null) {
+          final List<Map<String, Object>> fresh = new ArrayList<>();
+          fresh.add(r);
+          runs.put(run, fresh);
+          out.add(fresh);
+        } else {
+          look.add(r);
+        }
+      } else {
+        final List<Map<String, Object>> single = new ArrayList<>();
+        single.add(r);
+        out.add(single);
+      }
+    }
+    return out;
+  }
+
+  /** Looks at {@code key} among {@code entries}: rows that read it, a family run counted once. */
   public static long count(final List<Map<String, Object>> entries, final String key) {
-    return entries.stream().filter(e -> key.equals(key(e))).count();
+    return looksOf(entries.stream().filter(e -> key.equals(key(e))).toList()).size();
   }
 
   /**
@@ -175,8 +202,8 @@ public final class DataSets {
     if (missing.isEmpty()) {
       return null;
     }
-    return "data set " + key + " has already been read by " + String.join(", ", missing) + " (" + count(entries, key)
-        + " ledger rows); " + prereg.id() + " must declare them: add 'prior_looks: [" + String.join(", ", missing)
+    return "data set " + key + " has already been read by " + String.join(", ", missing) + " ("
+        + entries.stream().filter(e -> key.equals(key(e))).count() + " ledger rows); " + prereg.id() + " must declare them: add 'prior_looks: [" + String.join(", ", missing)
         + "]' to the pre-registration and say there how the earlier results are allowed for";
   }
 
@@ -199,16 +226,25 @@ public final class DataSets {
     int unkeyed = entries.size();
     for (final Looks l : all) {
       unkeyed -= l.rows().size();
-      b.append(l.key()).append("  ").append(l.description()).append(": ").append(l.rows().size())
-          .append(l.rows().size() == 1 ? " look\n" : " looks\n");
+      final List<List<Map<String, Object>>> looks = looksOf(l.rows());
+      b.append(l.key()).append("  ").append(l.description()).append(": ").append(looks.size())
+          .append(looks.size() == 1 ? " look\n" : " looks\n");
       int n = 0;
       final List<String> ids = new ArrayList<>();
-      for (final Map<String, Object> r : l.rows()) {
+      for (final List<Map<String, Object>> look : looks) {
         n++;
+        final Map<String, Object> r = look.get(0);
         ids.add(String.valueOf(r.get("prereg_id")));
-        b.append("  look ").append(n).append("  seq ").append(r.get("seq")).append("  ").append(r.get("prereg_id"))
-            .append("  ").append(r.get("scope")).append("  ").append(r.get("verdict")).append("  (recorded as look ")
-            .append(r.get("look")).append(")\n");
+        if (look.size() == 1) {
+          b.append("  look ").append(n).append("  seq ").append(r.get("seq")).append("  ").append(r.get("prereg_id"))
+              .append("  ").append(r.get("scope")).append("  ").append(r.get("verdict")).append("  (recorded as look ")
+              .append(r.get("look")).append(")\n");
+        } else {
+          b.append("  look ").append(n).append("  seq ").append(r.get("seq")).append("..")
+              .append(look.get(look.size() - 1).get("seq")).append("  ").append(r.get("prereg_id")).append("  ")
+              .append(r.get("scope")).append("  family ").append(r.get("family_id")).append(", ").append(look.size())
+              .append(" rows  (recorded as look ").append(r.get("look")).append(")\n");
+        }
       }
       if (n > 1) {
         repeated++;

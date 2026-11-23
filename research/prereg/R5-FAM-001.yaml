@@ -1,0 +1,203 @@
+# Pre-registration R5-FAM-001 (UNSIGNED, Round 5): one registered family on shared sessions.
+#
+# Replaces, before any of them was signed or run, the eight drafts SIM3-BASE-001 and R5-001 to
+# R5-007 (each now says so under superseded_by). Owner's decision, taken by the maintainer on the
+# owner's delegation on 2026-11-23, before any result existed: instead of eight runs on eight seed
+# bases with up to 15 parameter rows each (weeks of compute and eight looks), one data set, every
+# arm on the same seeds under common random numbers, and Benjamini-Hochberg across the family.
+#
+# Status: UNSIGNED. It validates (ExperimentRunner validate, LedgerCli's rules, python -m
+# ratesresearch.prereg validate) and the runner refuses it while the status starts with "draft".
+# It becomes a pre-registration when the owner removes the draft status, signs and commits it
+# before the run (API_SPEC.md Section 16.8). Nothing here was chosen after looking at any session
+# of seed base 31,000,000; none has been generated. The pilot that measured the timings below ran
+# on the pilot base and printed timings and structural counts only (--timing-only).
+prereg_version: 2
+kind: family
+status: draft_unsigned
+id: R5-FAM-001
+title: "Round 5 family: the v2 desk against the default desk, each v2 capability against v2 without it, and cover pricing alone, on one shared data set"
+
+hypothesis: >
+  Eight primary comparisons, one family (config: family.hypotheses). Each predicts a positive
+  paired difference of session P&L, treatment minus baseline.
+  H1 (headline): the v2 desk (DeskProfile.v2: strategy v2, pricing v2, ladder router, the full
+  simulator v2 universe) earns more per session than the default desk (DeskProfile.defaults).
+  H2 to H7, does each capability earn its place inside the v2 desk (STRATEGY_V2.md Section 8,
+  leave-one-out): v2 earns more than v2 without break-even cover-relative pricing (H2), without the
+  capped reservation price (H3), without the fitted factor covariance, factor hedging and tick
+  hedge cost (H4), without the internalising hedger (H5), without the client markout store (H6),
+  without quote protection: tick rounding, volatility time to live and the pull at half the quoted
+  distance (H7). H8: the default desk with cover pricing alone earns more than the default desk
+  (Q1 of the review: the clamp of 0.02 to 0.08 bp sits below every client's break-even).
+  Mechanisms: STRATEGY_V2.md Sections 1 to 7. Descriptive baseline, no hypothesis (replaces
+  SIM3-BASE-001): the default arm's P&L per session and its attribution, reported in USD and in bp
+  of client DV01, with no test.
+
+metric: >
+  Primary: total position P&L per session in USD (cash plus the final position at the final
+  unrounded latent mid, SIM_V2_DESIGN.md Section 4); per comparison the paired difference
+  treatment minus baseline, also in bp of the baseline arm's client DV01 traded (USD over the
+  summed |quantity| x DV01 of client fills). Secondary, reported only: the attribution lines
+  (spread capture, inventory marking, hedge cost, carry and roll, funding, fees, residual) per arm
+  in USD per session and in bp of client DV01. Guard metrics below.
+
+baseline: default
+treatments: [v2, v2_minus_cover_pricing, v2_minus_reservation_price, v2_minus_factor_hedging, v2_minus_internalisation, v2_minus_markouts, v2_minus_quote_protection, cover_only]
+
+data_set:
+  simulator: v2 (rates-sim; docs/research/SIM_V2_DESIGN.md; parameters data/calibration/sim_v2_params.json)
+  # 31,000,000 is the design's confirmation set C (rates-sim SessionSeeds.CONFIRMATION). No draft
+  # named it (the drafts used 30,000,000 and 32,000,000 to 38,000,000), no pilot or test generated
+  # a session on it, and the ledger has no row that read it.
+  seed_base: 31000000
+  first: 0
+  sessions: 2000
+  simulator_params: data/calibration/sim_v2_params.json
+  simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+  day_types: by session number n modulo 21 (residues 0-3 release, 4 FOMC, 5-10 auction, the rest none)
+  rows: >
+    Three rows of this one data set (config: rows), each on seeds 31,000,000 + n. The central row,
+    sessions 0 to 1,999, runs all nine arms. The two sensitivity rows, sessions 0 to 999 (the
+    first 1,000 seeds of the same base), run the arms default and v2 only. All rows are one look.
+  why_2000: >
+    The protocol's rule (SIM_V2_DESIGN.md Section 12) is N = max(2000, ceil(16.7 x sigma_d^2 /
+    delta^2)), 16.7 = (z_0.9975 + z_0.90)^2, sigma_d the sd of the paired difference. With delta =
+    24,000 USD for the headline comparison (fixed in R5-007 before any pilot: 0.02 bp of an
+    estimated 1.2mm USD of client DV01 a session) and the pilot's session sd of about 214,000 USD
+    (8 sessions, default desk, imprecise), sigma_d = 214,000 x sqrt(2 (1 - rho)): at rho = 0.5 the
+    formula gives 1,328 and at rho = 0.25 about 1,990, so the 2,000 floor binds for any paired
+    correlation of 0.25 or more and in particular at 0.5 or more. N = 2,000 is registered.
+  minimum_detectable_difference: >
+    Reported, not tuned: at 80 percent power for a two-sided paired t, delta_80 = (z_(1 - a/2) +
+    z_0.80) x sd_d / sqrt(N), sd_d the measured sd of that comparison's paired differences. At N =
+    2,000: 0.0627 x sd_d at a = 0.05 (BH when every test is significant) and 0.0800 x sd_d at a =
+    0.05 / 8 (BH when this test alone is); at N = 1,000 (sensitivity rows, descriptive) 0.0886 and
+    0.1131 x sd_d. The summary prints sd_d and delta_80 for every comparison.
+  spent_and_not_used: >
+    The 20 recorded sessions of AUDIT-11 to AUDIT-25, the five April 2026 sessions of AUDIT-26,
+    and every session under seed bases 5,000,000 and 8,000,000. The pilot base 29,000,000 and the
+    acceptance base 28,000,000 support no claim.
+
+prior_looks: []
+
+test: >
+  Paired, common random numbers: within a row every arm replays one journal written once per
+  session from the seed, against its own fresh model of the same seed, so the exogenous path, the
+  RFQs and every attribute, the competitors' quotes and the clients' reserves are bit for bit the
+  same; what differs is only what the arm does and what its own orders cause (SessionExecutor).
+  Per comparison and session d_n = P&L(treatment, n) - P&L(baseline, n), central row, n = 0 to
+  1,999. Registered test: two-sided paired t on d_n (Stats.pairedT). Reported with it: the 95
+  percent moving-block bootstrap interval of the mean of d_n, blocks of 21 sessions (one cycle of
+  day types), 2,000 resamples, bootstrap seed 5 (Stats.pairedBlockBootstrapCi). Family error
+  control: Benjamini-Hochberg at q = 0.05 across H1 to H8 (LedgerCli --bh family:R5-FAM-001,
+  python -m ratesresearch.prereg bh). The unpaired Welch test is not used.
+
+success_threshold: >
+  A hypothesis is supported only if all hold, fixed now: (1) its Benjamini-Hochberg adjusted
+  paired-t p across H1 to H8 is below 0.05; (2) the bootstrap interval of its mean paired
+  difference lies entirely above zero; (3) every guard metric below is inside its bound. Reversed:
+  adjusted p below 0.05 and the interval entirely below zero. A failed guard makes the verdict
+  'trading less' whatever the P&L. Otherwise inconclusive. Size reported whatever the verdict:
+  the mean paired difference with its interval, in USD per session and in bp of the baseline's
+  client DV01. The sensitivity rows do not enter any verdict (assumption_band below).
+
+guard_metrics: >
+  Each treatment over its own baseline on the central row, summed over the set, the drafts' marks:
+  H1 and H8 (R5-007, R5-001) quoted share (quotes / RFQs) at least 0.8, hit rate (fills /
+  quotes) at least 0.25, client DV01 traded at least 0.25; H2 (no draft; R5-001's marks, because
+  cover pricing is expected to win less) 0.8, 0.25, 0.25; H3, H4, H6, H7 (R5-002, R5-003, R5-005,
+  R5-006) 0.8, 0.5, 0.6; H5 (R5-004) 0.9, 0.8, 0.8. For every hypothesis also: the treatment's
+  client DV01 traded at least 0.25 of the default arm's, and the treatment declines no more RFQs
+  for a structural reason (an instrument outside its universe) than its baseline. Every guard is
+  reported whatever happens. Known in advance: the default and cover_only arms run the recorded
+  universe, so they decline the 3, 7 and 20-year swap RFQs (about 18 percent of swap flow by the
+  calibrated tenor mix); the v2 arms decline none. The structural-decline count of every arm is
+  in the summary.
+
+assumption_band:
+  preset: sim_v2_params
+  parameters: [all_in_cost, winner_half_spread]
+  points: [low, central, high]
+  run: >
+    The central row (data/calibration/sim_v2_params.json as committed) for all arms at N = 2,000,
+    and two sensitivity rows, chosen now, before any result, for the arms default and v2 only at N
+    = 1,000: all_in_cost:low (competitors' all-in cost 0.05 bp, the adverse move re-solved for zero
+    competitor profit to 0.089 bp) and winner_half_spread:low (competitor median half-spread 0.1228
+    bp, adverse move re-solved).
+  why_these_two: >
+    SIM_V2_CALIBRATION.md lists what the public prints could not identify; of those, two decide
+    whether market making is viable on this market at all, because the desk's room is the
+    expected winning half-spread less the adverse move less its hedge cost (STRATEGY_V2.md Section
+    1). (a) The level of adverse selection: the data give only its sign-robust consequence, a
+    positive realised spread (Section 8 of the calibration); the simulator sets the average adverse
+    move by the zero-profit identity from the competitors' all-in cost, an assumption with band 0.05
+    to 0.15 bp, so all_in_cost is the parameter that moves the adverse-selection level (at 0.05 the
+    10-year room on the average client falls from 0.032 to 0.002 bp, STRATEGY_V2.md Section 9).
+    The informed fraction (band 0.2 to 1.0) is held at a fixed average move by the design and
+    changes only how concentrated the information is, not its level. (b) The competitors' winning
+    half-spread: only bounded, 0.103 to 0.227 bp root mean square (calibration Sections 6.2 and
+    9), "the simulator's economics are sensitive to it and the band must be run" (Section 11); at
+    the low median the expected winning half-spread falls from 0.139 to 0.094 bp, below the
+    average client's break-even at the 10-year.
+  excluded: >
+    all_in_cost:high and winner_half_spread:high are refused at start-up by the simulator's own
+    consistency checks (config: excluded_band_points gives each reason: a negative adverse move;
+    informed variance above 60 percent of the level factor's, SIM_V2_DESIGN.md Section 14 D14),
+    so both sensitivity rows that remain lie on the side that makes market making harder. The
+    runner checks at start that each excluded point is in fact refused.
+  what_it_means: >
+    "H1 holds across the band" is a secondary, descriptive statement: the sign and the bootstrap
+    interval of the v2-minus-default difference at each sensitivity row. It is not part of the
+    family's error control, it changes no verdict, and no p-value from a sensitivity row enters
+    Benjamini-Hochberg. The cost of this design, stated plainly: the full band of SIM_V2_DESIGN.md
+    Section 12 (15 rows: drift time constant, informed fraction, level volatility, spread factor,
+    impact, and the high points of the two parameters run here) is not tested; a result here says
+    nothing about robustness to those parameters, and the ablations H2 to H8 are read at the
+    central parameters only.
+
+descriptive_baseline: >
+  Replaces SIM3-BASE-001 (no hypothesis, no p-value): the default arm on the central row, mean P&L
+  per session with its sd and 95 percent block-bootstrap interval of the mean, and each
+  attribution line in USD per session and in bp of client DV01; counts of RFQs, quotes, wins,
+  hedge fills and structural declines. Written once, with the family, as its own ledger row.
+
+known_limits: >
+  (1) The client markout store starts empty in every session: sessions run in parallel worker
+  processes, so a store carried from session to session in seed order would serialise the run;
+  H6 therefore measures markouts learnt within one day, not across 2,000 days. (2) At the
+  declared tick costs the factor hedge planner may never choose the Treasury future (DESK_V2_WIRING
+  Section 5: half a 1/64 tick of TY is 0.109 bp of its DV01 against 0.048 bp for the 10-year
+  note); the v2 universe offers TY, it is not forced. (3) Swap-spread risk is visible to the v2
+  desk and neither limited nor hedged; no Treasury removes it. (4) In the back-test the desk's
+  curve, under either pricing version, comes from the published swap rates of the session journal,
+  which carry no impact of the desk's own orders; marks and fills do (SIM_V2_DESIGN.md Section 14
+  D18). Under pricing v2 the round's front end follows SimV2CurveRound's declared rules from the
+  published two-year rate. (5) The back-tester publishes no trade prints, so the ladder router's
+  queue estimates see book changes only. (6) The default and cover_only arms run the recorded
+  universe and decline the 3, 7 and 20-year swap RFQs; H1 compares the two desks as built, not
+  two strategies on one universe. (7) Every number is a statement about the simulator under the
+  declared assumptions of P (DR-008). It is never to be called edge, and a simulated P&L is not an
+  estimate of desk P&L.
+
+compute_budget: >
+  At 25 s of CPU per arm per full-day session (the pilot of the default desk run alone), with the
+  default worker pool (cores less four: 8 workers) on an otherwise idle 12-core machine:
+  central row, 9 arms x 2,000 sessions = 18,000 arm-sessions;
+  all_in_cost:low, 2 arms x 1,000 = 2,000; winner_half_spread:low, 2 x 1,000 = 2,000;
+  total 22,000 arm-sessions = 550,000 CPU-seconds = 152.8 CPU-hours = 19.1 hours of wall-clock
+  at 8 workers, plus 4,000 journal generations. The full 15-row band for nine arms would be 270,000
+  arm-sessions (about 234 hours at 8 workers). The timing-only pilot on the pilot base
+  (tools/sim-v2/README.md) measures each arm; its figures are in the round's report.
+
+limitations: >
+  Simulated sessions only: every number is a statement about the Round 3 simulator under the
+  calibration, which ties competitor dispersion, the product of informed fraction and move,
+  intraday volatility, arrivals, sizes and the curve factors to public data and assumes the rest
+  (SIM_V2_CALIBRATION.md). It is not an estimate of desk P&L. One data set and one look: the seed
+  base is read by this family only, and a second run of R5-FAM-001 on it is refused.
+
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-23
+config: research/prereg/R5-FAM-001.config.yaml
+config_sha256: 9b6a2fc2ec6d70340aac25d02fc075913f984599bba402ef158e7b250773dcdc

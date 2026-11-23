@@ -2,12 +2,13 @@ package io.ratesalgo.app.backtest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.ratesalgo.app.loop.DeskProfile;
 import io.ratesalgo.app.loop.DeskSettings;
-import io.ratesalgo.app.pricing.PricingBindings;
 import io.ratesalgo.app.pricing.UsdUniverse;
 import io.ratesalgo.backtest.BacktestConfig;
 import io.ratesalgo.backtest.BacktestResult;
@@ -98,53 +99,115 @@ class DeskSimV2Test {
       assertEquals(bond.instrumentId(), b.deskId(b.simId(bond.instrumentId())));
     }
     assertThrows(IllegalArgumentException.class, () -> b.simId(999_999));
-    // one fixed desk client id per tier, ids the V2 tier table places in tiers A, B and C
+    // one desk client id per tier: the ids the simulator sends on the wire (design D12)
     assertEquals(2001, b.clientIdOfTier(1));
-    assertEquals(2003, b.clientIdOfTier(2));
-    assertEquals(2005, b.clientIdOfTier(3));
+    assertEquals(2002, b.clientIdOfTier(2));
+    assertEquals(2003, b.clientIdOfTier(3));
     for (int t = 1; t <= 3; t++) {
       assertEquals(t - 1, DeskSettings.V2_CLIENT_TIERS.get(b.clientIdOfTier(t)));
+      assertEquals(DeskSettings.v2ClientId(t - 1), b.clientIdOfTier(t));
     }
     assertEquals(7, b.withClientIds(List.of(7, 8, 9)).clientIdOfTier(1));
     assertThrows(IllegalArgumentException.class, () -> b.withClientIds(List.of(1)));
     assertThrows(IllegalArgumentException.class, () -> b.clientIdOfTier(4));
+    assertThrows(IllegalArgumentException.class, () -> b.clientIdOfTier(0));
+    assertThrows(IllegalArgumentException.class, () -> DeskSettings.v2ClientId(3));
+    assertThrows(IllegalArgumentException.class, () -> DeskSettings.v2ClientId(-1));
+    assertThrows(IllegalArgumentException.class, () -> b.simInstrument(999));
   }
 
   @Test
-  void theArmsAreNamedExactlyAndUnwiredOnesRefuse() {
-    final DeskArms arms = new DeskArms();
-    assertNull(arms.refusal("default"));
-    assertNull(arms.refusal("engine"));
-    assertNull(arms.refusal("v2"));
-    assertTrue(arms.refusal("nobody").startsWith("unknown desk arm"));
-    for (final String a : List.of("cover_pricing", "v2_without_reservation", "v2_without_factor", "v2_hedge_at_trigger",
-        "v2_without_markouts", "v2_without_protection")) {
-      assertEquals(DeskArms.W1, arms.refusal(a), a);
-      assertThrows(IllegalStateException.class, () -> DeskArms.settings(a));
+  void theV2UniverseHoldsEveryModelInstrument() {
+    final UsdUniverse universe = UsdUniverse.simV2();
+    final SimBinding b = SimBinding.of(spec, universe);
+    // seven swaps, four Treasuries and TY: nothing of the model is hidden from the v2 desk
+    assertEquals(spec.instruments(), b.boundInstruments());
+    for (int i = 0; i < spec.instruments(); i++) {
+      final int sim = spec.instrument(i).id();
+      assertTrue(b.deskId(sim) != 0, "model instrument " + sim);
+      assertEquals(sim, b.simId(b.deskId(sim)));
     }
-    assertEquals(DeskArms.W2, arms.refusal("v2_pricing_v2"));
-    assertEquals(PricingBindings.Version.V2, DeskArms.arm("default_pricing_v2").pricing());
-    assertEquals(DeskArms.W3, arms.refusal("default_router_ladder"));
-    assertEquals(DeskArms.Router.LADDER, DeskArms.arm("v2_router_ladder").router());
+    assertEquals(universe.futureIds()[0], b.deskId(InstrumentSet.TY_FUTURE));
+  }
+
+  @Test
+  void theArmsAreTheFamilysNineAndEachIsBuildable() {
+    final DeskArms arms = new DeskArms();
+    for (final String a : DeskArms.names()) {
+      assertNull(arms.refusal(a), a);
+      assertNotNull(arms.configurationHash(a), a);
+    }
+    assertTrue(arms.refusal("nobody").startsWith("unknown desk arm"));
+    assertThrows(IllegalArgumentException.class, () -> DeskArms.profile("nobody"));
+    assertEquals(9, DeskArms.FAMILY.size());
+    assertTrue(DeskArms.names().containsAll(DeskArms.FAMILY));
+    assertEquals(DeskArms.FAMILY.size() + 1, DeskArms.names().size(), "the family's nine and the old name 'engine'");
     assertEquals(DeskSettings.StrategyPreset.V2, DeskArms.settings("v2").strategyPreset());
     assertEquals(DeskSettings.StrategyPreset.DEFAULT, DeskArms.settings("engine").strategyPreset());
-    assertThrows(IllegalArgumentException.class, () -> DeskArms.arm("nobody"));
-    assertEquals(13, DeskArms.names().size());
-    // each ablation turns off exactly its own switches
-    final StrategyConfig r = DeskArms.arm("v2_without_reservation").quoting().apply(StrategyConfig.allOn());
+    assertEquals(DeskArms.profile("default"), DeskArms.profile("engine"));
+    assertEquals(DeskProfile.v2(), DeskArms.profile("v2"));
+    assertEquals(DeskProfile.defaults(), DeskArms.profile("default"));
+    assertEquals(DeskSettings.StrategyPreset.CUSTOM, DeskArms.settings("cover_only").strategyPreset());
+  }
+
+  /** The keys of {@code arm}'s resolved configuration whose value differs from {@code reference}'s. */
+  private static Set<String> differences(final String reference, final String arm) {
+    final Map<String, String> a = DeskArms.profile(reference).resolved();
+    final Map<String, String> b = DeskArms.profile(arm).resolved();
+    assertEquals(a.keySet(), b.keySet());
+    final Set<String> out = new TreeSet<>();
+    for (final String k : a.keySet()) {
+      if (!a.get(k).equals(b.get(k))) {
+        out.add(k);
+      }
+    }
+    return out;
+  }
+
+  @Test
+  void eachAblationDiffersFromV2InExactlyItsOwnSwitches() {
+    assertEquals(Set.of("strategy.coverPricing"), differences("v2", "v2_minus_cover_pricing"));
+    assertEquals(Set.of("strategy.reservationPrice"), differences("v2", "v2_minus_reservation_price"));
+    assertEquals(
+        Set.of("strategy.factorCovariance", "strategy.factorHedging", "strategy.tickHedgeCost"),
+        differences("v2", "v2_minus_factor_hedging"));
+    assertEquals(Set.of("strategy.internalisingHedger"), differences("v2", "v2_minus_internalisation"));
+    assertEquals(Set.of("strategy.markoutStore"), differences("v2", "v2_minus_markouts"));
+    assertEquals(
+        Set.of("strategy.tickRounding", "strategy.volatilityTtl", "strategy.pullFraction"),
+        differences("v2", "v2_minus_quote_protection"));
+    // cover_only is the default desk with one switch on
+    assertEquals(Set.of("strategy.coverPricing"), differences("default", "cover_only"));
+    // the headline: every component of the desk differs, the shared settings do not
+    final Set<String> headline = differences("default", "v2");
+    assertTrue(headline.containsAll(Set.of("pricing", "router", "market", "strategy.clientTiers", "strategy.pullFraction")));
+    for (final String k : headline) {
+      assertFalse(k.startsWith("settings."), k);
+    }
+    // the resolved configuration is what each arm builds: the quoting engine's switches, the hedger
+    final StrategyConfig r = DeskArms.settings("v2_minus_reservation_price").quoting().strategy();
     assertFalse(r.reservationPrice());
     assertTrue(r.coverPricing() && r.factorCovariance() && r.factorHedging() && r.markoutStore() && r.tickRounding());
-    final StrategyConfig f = DeskArms.arm("v2_without_factor").quoting().apply(StrategyConfig.allOn());
+    final StrategyConfig f = DeskArms.settings("v2_minus_factor_hedging").quoting().strategy();
     assertFalse(f.factorCovariance() || f.factorHedging() || f.tickHedgeCost());
-    assertTrue(f.reservationPrice() && f.coverPricing());
-    final StrategyConfig p = DeskArms.arm("v2_without_protection").quoting().apply(StrategyConfig.allOn());
+    final StrategyConfig p = DeskArms.settings("v2_minus_quote_protection").quoting().strategy();
     assertFalse(p.tickRounding() || p.volatilityTtl());
-    assertEquals(0.0, DeskArms.arm("v2_without_protection").pullFraction(), 0.0);
-    final StrategyConfig c = DeskArms.arm("cover_pricing").quoting().apply(StrategyConfig.allOn());
+    assertTrue(p.coverPricing());
+    assertFalse(DeskArms.settings("v2_minus_internalisation").hedger().internalising());
+    assertTrue(DeskArms.settings("v2").hedger().internalising());
+    assertFalse(DeskArms.settings("v2_minus_markouts").quoting().strategy().markoutStore());
+    assertFalse(DeskArms.settings("v2_minus_cover_pricing").quoting().strategy().coverPricing());
+    final StrategyConfig c = DeskArms.settings("cover_only").quoting().strategy();
     assertTrue(c.coverPricing());
-    assertFalse(c.reservationPrice() || c.factorHedging() || c.markoutStore());
-    assertTrue(DeskArms.arm("v2_hedge_at_trigger").defaultHedger());
-    assertFalse(DeskArms.arm("v2_without_markouts").quoting().apply(StrategyConfig.allOn()).markoutStore());
+    assertFalse(c.reservationPrice() || c.factorHedging() || c.markoutStore() || c.tickRounding());
+    assertFalse(DeskArms.settings("cover_only").hedger().internalising());
+    // nine distinct configurations
+    final Set<String> hashes = new TreeSet<>();
+    for (final String a : DeskArms.FAMILY) {
+      hashes.add(DeskArms.profile(a).configurationHash());
+    }
+    assertEquals(9, hashes.size());
+    assertEquals(DeskProfile.v2().configurationHash(), DeskArms.profile("v2").configurationHash());
   }
 
   /** The desk with a recorder of its decisions, and a kill switch thrown at one RFQ. */
@@ -244,7 +307,10 @@ class DeskSimV2Test {
     }
     assertTrue(day.levelOffset(day.closeEpochNanos()) != 0.0, "the desk's own orders moved the level factor");
     // clients reach the desk with their tier's fixed id
-    assertTrue(Set.of(2001, 2003, 2005).containsAll(w.clients) && !w.clients.isEmpty(), w.clients.toString());
+    assertTrue(Set.of(2001, 2002, 2003).containsAll(w.clients) && !w.clients.isEmpty(), w.clients.toString());
+    // the recorded universe holds four swap tenors: the other three are declined for that reason
+    assertTrue(w.desk.structuralDeclines() > 0);
+    assertEquals(w.desk.rfqsSeen(), r.rfqs().size());
     // RFQs on instruments the desk does not hold are not shown to it
     for (final RfqRecord q : r.rfqs()) {
       if (Set.of(105, 106, 107).contains(q.instrumentId())) {
@@ -288,14 +354,56 @@ class DeskSimV2Test {
   }
 
   @Test
-  void theDeskArmsRunASessionThroughTheFactory() {
+  void theV2ArmRunsTheWholeV2DeskOnTheModelsMarket() {
     final DeskArms arms = new DeskArms();
     final SimDay day = day();
-    final Strategy s = arms.create("v2", day);
-    assertTrue(s instanceof DeskStrategy);
-    final BacktestResult r = run(day, s);
-    assertTrue(((DeskStrategy) s).quotes() > 0);
+    final DeskStrategy desk = (DeskStrategy) arms.create("v2", day);
+    final Watched w = new Watched(desk, Long.MAX_VALUE);
+    final BacktestResult r = run(day, w);
+    assertTrue(desk.quotes() > 0);
     // every quote the V2 desk sent was settled by the model, and every other RFQ declined
     assertEquals(r.rfqs().size(), r.rfqs().stream().filter(q -> q.quoted() && q.settled()).count() + r.declines());
+    // pricing v2, fed whole: one round per published second, and never short of a fair value
+    assertTrue(desk.curveRounds() > 3_000, "rounds " + desk.curveRounds());
+    assertEquals(0L, desk.desk().pricingV2().unfedInputs());
+    for (final PassReason bad : List.of(PassReason.UNHEALTHY, PassReason.STALE_INPUT, PassReason.NO_FAIR_VALUE,
+        PassReason.UNKNOWN_INSTRUMENT)) {
+      assertFalse(w.reasons.containsKey(bad.name()), w.reasons.toString());
+    }
+    // the full simulator v2 universe: no RFQ is declined for its instrument, every tenor is quoted
+    assertEquals(0L, desk.structuralDeclines());
+    final Set<Integer> quotedSwaps = new TreeSet<>();
+    for (final RfqRecord q : r.rfqs()) {
+      if (q.quoted() && q.instrumentId() < 200) {
+        quotedSwaps.add(q.instrumentId());
+      }
+    }
+    assertTrue(quotedSwaps.stream().anyMatch(id -> Set.of(105, 106, 107).contains(id)), quotedSwaps.toString());
+    // hedges went to the model's books through both Treasury CLOBs, every fill reported back
+    assertTrue(desk.orders() > 0 && r.hedgeFills() > 0, "orders " + desk.orders() + " hedges " + r.hedgeFills());
+    assertEquals(0L, desk.desk().unroutedReports());
+    assertEquals(0L, desk.desk().feedGaps());
+    // every tier reached the desk's own tier for it
+    for (int t = 0; t < 3; t++) {
+      for (int k = 0; k < 8; k++) {
+        if (k != DeskSettings.V2_TIERS.get(t)) {
+          assertEquals(0L, desk.tierRoutes(t, k), "model tier " + t + " reached desk tier " + k);
+        }
+      }
+    }
+    assertTrue(desk.tierRoutes(0, DeskSettings.V2_TIERS.get(0)) + desk.tierRoutes(1, DeskSettings.V2_TIERS.get(1)) > 0);
+    // the same seed is the same run
+    final DeskStrategy again = (DeskStrategy) arms.create("v2", day());
+    final BacktestResult second = run(day(), again);
+    assertEquals(r.outputChainHash(), second.outputChainHash());
+    assertEquals(desk.counters(), again.counters());
+  }
+
+  @Test
+  void aV2ProfileNeedsTheSimulatorsBinding() {
+    assertThrows(IllegalArgumentException.class, () -> new DeskStrategy(DeskProfile.v2(), UsdUniverse.simV2(), null));
+    assertEquals(25_000_000L, DeskStrategy.roundTo(24_999_000L, 2_500_000L));
+    assertEquals(-25_000_000L, DeskStrategy.roundTo(-23_750_000L, 2_500_000L));
+    assertEquals(0L, DeskStrategy.roundTo(1_249_999L, 2_500_000L));
   }
 }

@@ -22,6 +22,14 @@ public interface ArmFactory {
   /** A fresh strategy for {@code arm} on {@code day}, the session's own model. */
   Strategy create(String arm, SimDay day);
 
+  /**
+   * A hash of everything the arm is configured with, or null when the factory keeps none. The
+   * runner records it per arm, so two arms meant to differ can be seen to, without a run.
+   */
+  default String configurationHash(final String arm) {
+    return null;
+  }
+
   /** Loads a factory by class name. */
   static ArmFactory load(final String className) {
     try {
