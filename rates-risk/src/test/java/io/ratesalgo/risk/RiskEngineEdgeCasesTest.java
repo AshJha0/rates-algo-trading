@@ -137,12 +137,19 @@ class RiskEngineEdgeCasesTest {
   }
 
   @Test
-  void growthInsideTheRoundingToleranceOfABreachedFigureIsAccepted() {
-    // 10Y at -82k against 50k: one more cent of face adds 8.2e-6, inside the 1e-9 * 82k tolerance
+  void aBreachedFigureMayNotGrowByEvenOneMinorUnit() {
+    // 10Y at -82k against 50k: one more cent of face adds 8.2e-6, which a 1e-9 * 82k rounding
+    // allowance used to let through
     final RiskFixture f = new RiskFixture(new RiskLimits().bucketPv01(50_000.0));
     f.risk.onFill(BOND10, 100 * M, f.fairMid(BOND10));
-    assertEquals(RiskEngine.OK, f.risk.checkOrder(BOND10, Side.Buy, 1L, f.fairMid(BOND10), 1));
-    assertEquals(LimitKind.BucketDv01.value(), f.risk.checkOrder(BOND10, Side.Buy, 100L, f.fairMid(BOND10), 2), "a whole unit is not");
+    assertEquals(LimitKind.BucketDv01.value(), f.risk.checkOrder(BOND10, Side.Buy, 1L, f.fairMid(BOND10), 1));
+    assertEquals(0L, f.risk.headroom(BOND10, Side.Buy));
+    // with reservations on the pillar too, an order that adds nothing still passes exactly
+    f.risk.reserve(BOND10, 3 * M, 7 * M);
+    f.risk.reserve(FUT10, 11 * M, 13 * M);
+    assertEquals(RiskEngine.OK, f.risk.checkQuote(BOND10, 0L, 0L, 0L, 0L, 2), "nothing added");
+    assertEquals(LimitKind.BucketDv01.value(), f.risk.checkOrder(BOND10, Side.Buy, 1L, f.fairMid(BOND10), 3));
+    assertEquals(0L, f.risk.headroom(BOND10, Side.Buy));
   }
 
   // ---------------------------------------------------------------- post-trade alerts
