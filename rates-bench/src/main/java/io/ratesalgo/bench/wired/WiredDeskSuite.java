@@ -53,7 +53,7 @@ public final class WiredDeskSuite {
     final Path out = Path.of(a.getOrDefault("out", "target/wired"));
     Files.createDirectories(out);
     final List<String> configs =
-        a.containsKey("configs") ? List.of(a.get("configs").split(",")) : ALL;
+        a.containsKey("configs") ? List.of(a.get("configs").split(",", -1)) : ALL;
     final boolean linux = System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("linux");
     final List<String[]> runs = new ArrayList<>();
     for (final String name : configs) {
@@ -64,7 +64,7 @@ public final class WiredDeskSuite {
     }
     int failed = 0;
     for (final String[] run : runs) {
-      final String[] parts = run[0].split("-");
+      final String[] parts = run[0].split("-", -1);
       final List<String> cmd = new ArrayList<>();
       cmd.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
       for (final String flag : shippedFlags(linux)) {

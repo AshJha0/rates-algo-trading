@@ -81,8 +81,17 @@ class TcpInitiatorBoundsTest {
         tcp.send(direct, 4, 12);
         assertEquals(0, backing.position());
         assertEquals(64, backing.limit());
-        final byte[] got = accepted.getInputStream().readNBytes(12 + 5 + 4 + 12);
-        assertEquals("hello-directhelloheaphello-direct", new String(got, StandardCharsets.US_ASCII));
+        // the session's Logon went out on connect; our four windows follow it
+        final String expected = "hello-directhelloheaphello-direct";
+        final StringBuilder got = new StringBuilder();
+        final java.io.InputStream in = accepted.getInputStream();
+        while (got.length() < expected.length() || !got.toString().endsWith(expected)) {
+          final int b = in.read();
+          assertTrue(b >= 0, "stream ended after: " + got);
+          got.append((char) b);
+          assertTrue(got.length() < 4096, "the windows never arrived: " + got);
+        }
+        assertTrue(got.toString().startsWith("8=FIX.4.4"), "only the Logon came before them: " + got);
       } finally {
         tcp.close();
       }

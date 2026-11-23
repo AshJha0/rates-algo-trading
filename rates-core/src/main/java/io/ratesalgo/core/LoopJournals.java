@@ -107,11 +107,6 @@ public final class LoopJournals implements AutoCloseable {
     this.mode = mode;
     this.inbound = inbound;
     this.outbound = outbound;
-    if (inbound.ring != null && outbound.ring != null) {
-      // an outbound frame never reaches its file before the inbound frame that caused it, so a
-      // crash in ring mode leaves journals a restart can replay (RingJournal, DR-R6-L04)
-      outbound.ring.follow(inbound.ring);
-    }
   }
 
   /**
@@ -146,12 +141,12 @@ public final class LoopJournals implements AutoCloseable {
       final int segmentBytes,
       final EventClock clock,
       final Settings settings) {
-    final Sink in = Sink.create(dir, inboundName, segmentBytes, clock, settings);
+    final Sink in = Sink.create(dir, inboundName, segmentBytes, clock, settings, null);
     boolean opened = false;
     try {
       final LoopJournals journals =
           new LoopJournals(
-              settings.mode(), in, Sink.create(dir, outboundName, segmentBytes, clock, settings));
+              settings.mode(), in, Sink.create(dir, outboundName, segmentBytes, clock, settings, in.ring));
       opened = true;
       return journals;
     } finally {
@@ -216,11 +211,11 @@ public final class LoopJournals implements AutoCloseable {
       final int segmentBytes,
       final EventClock clock,
       final Settings settings) {
-    final Sink in = Sink.open(dir, inboundName, segmentBytes, clock, settings);
+    final Sink in = Sink.open(dir, inboundName, segmentBytes, clock, settings, null);
     boolean opened = false;
     try {
       final LoopJournals journals =
-          new LoopJournals(settings.mode(), in, Sink.open(dir, outboundName, segmentBytes, clock, settings));
+          new LoopJournals(settings.mode(), in, Sink.open(dir, outboundName, segmentBytes, clock, settings, in.ring));
       opened = true;
       return journals;
     } finally {
@@ -321,20 +316,23 @@ public final class LoopJournals implements AutoCloseable {
       this.ring = ring;
     }
 
-    static Sink create(
-        final Path dir, final String name, final int segmentBytes, final EventClock clock, final Settings settings) {
+    // the outbound sink follows the inbound ring: an outbound frame never reaches its file before
+    // the inbound frame that caused it, so a crash in ring mode leaves journals a restart can
+    // replay (RingJournal, DR-R6-L04)
+    static Sink create(final Path dir, final String name, final int segmentBytes, final EventClock clock,
+        final Settings settings, final RingJournal leader) {
       return wrap(name, SegmentedJournal.create(dir, name, segmentBytes, clock, true, settings.segments()), clock,
-          settings);
+          settings, leader);
     }
 
-    static Sink open(
-        final Path dir, final String name, final int segmentBytes, final EventClock clock, final Settings settings) {
+    static Sink open(final Path dir, final String name, final int segmentBytes, final EventClock clock,
+        final Settings settings, final RingJournal leader) {
       return wrap(name, SegmentedJournal.open(dir, name, segmentBytes, clock, true, settings.segments()), clock,
-          settings);
+          settings, leader);
     }
 
-    private static Sink wrap(
-        final String name, final SegmentedJournal journal, final EventClock clock, final Settings settings) {
+    private static Sink wrap(final String name, final SegmentedJournal journal, final EventClock clock,
+        final Settings settings, final RingJournal leader) {
       if (settings.mode() == JournalMode.DIRECT) {
         return new Sink(journal, null);
       }
@@ -342,7 +340,7 @@ public final class LoopJournals implements AutoCloseable {
       try {
         final Sink sink =
             new Sink(journal, RingJournal.start(name, journal, clock, settings.ringCapacity(),
-                IdleStrategies.of(settings.journalIdle()), settings.journalStallNanos()));
+                IdleStrategies.of(settings.journalIdle()), settings.journalStallNanos(), leader));
         started = true;
         return sink;
       } finally {

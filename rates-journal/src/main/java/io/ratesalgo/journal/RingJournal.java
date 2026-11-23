@@ -53,7 +53,7 @@ import org.agrona.concurrent.ringbuffer.RingBufferDescriptor;
  * either mode, because the files are the same. {@link #close()} drains the ring, then closes the
  * segmented journal.
  *
- * <p>Order between two journals ({@link #follow}). A loop's outbound frames are consequences of its
+ * <p>Order between two journals ({@link #start(String, SegmentedJournal, Clock, int, IdleStrategy, long, RingJournal)}). A loop's outbound frames are consequences of its
  * inbound frames. In direct mode the inbound frame is in the file before its handler runs, so the
  * outbound journal can never be ahead of the inbound one, and a restart that replays the inbound
  * journal produces at least every recorded outbound frame. With two rings and two journal threads
@@ -97,7 +97,7 @@ public final class RingJournal implements AutoCloseable {
   private long nextSequence;
 
   /** The journal whose frames this one's must not overtake in the files, or null. */
-  private RingJournal leader;
+  private final RingJournal leader;
 
   /** The last sequence the journal thread has written to the file. Written by it; read by followers. */
   private final AtomicLong written = new AtomicLong();
@@ -121,10 +121,12 @@ public final class RingJournal implements AutoCloseable {
       final Clock clock,
       final int ringCapacity,
       final IdleStrategy drainIdle,
-      final long stallNanos) {
+      final long stallNanos,
+      final RingJournal leader) {
     this.journal = journal;
     this.clock = clock;
     this.stallNanos = stallNanos;
+    this.leader = leader;
     final int bytes = ringCapacity + RingBufferDescriptor.TRAILER_LENGTH;
     this.ring = new OneToOneRingBuffer(new UnsafeBuffer(ByteBuffer.allocateDirect(bytes)));
     this.ringBuffer = ring.buffer();
@@ -165,13 +167,32 @@ public final class RingJournal implements AutoCloseable {
       final int ringCapacity,
       final IdleStrategy drainIdle,
       final long stallNanos) {
+    return start(name, journal, clock, ringCapacity, drainIdle, stallNanos, null);
+  }
+
+  /**
+   * {@link #start(String, SegmentedJournal, Clock, int, IdleStrategy, long)} for a journal that
+   * follows {@code leader}: a frame appended here after leader frame {@code n} reaches the file only
+   * once the leader's journal thread has written frame {@code n} (see the class comment). Both
+   * journals must be appended to on the same thread.
+   *
+   * @param leader the journal to follow, or null for none
+   */
+  public static RingJournal start(
+      final String name,
+      final SegmentedJournal journal,
+      final Clock clock,
+      final int ringCapacity,
+      final IdleStrategy drainIdle,
+      final long stallNanos,
+      final RingJournal leader) {
     if (!BitUtil.isPowerOfTwo(ringCapacity) || ringCapacity < (64 << 10)) {
       throw new IllegalArgumentException("ring capacity must be a power of two >= 64 KiB: " + ringCapacity);
     }
     if (stallNanos <= 0) {
       throw new IllegalArgumentException("stall limit must be positive: " + stallNanos);
     }
-    return new RingJournal(name, journal, clock, ringCapacity, drainIdle, stallNanos);
+    return new RingJournal(name, journal, clock, ringCapacity, drainIdle, stallNanos, leader);
   }
 
   /** How long a producer on a full ring waits with no progress before {@code append} fails, by default. */
@@ -268,19 +289,6 @@ public final class RingJournal implements AutoCloseable {
   /** The largest backlog the journal thread has found before a read, in bytes. Readable from any thread. */
   public long backlogHighWater() {
     return backlogHighWater.get();
-  }
-
-  /**
-   * Makes this journal follow {@code inbound}: a frame appended here after inbound frame {@code n}
-   * reaches the file only once {@code inbound}'s journal thread has written frame {@code n} (see
-   * the class comment). Both journals must be appended to on the same thread. Call before the
-   * first append.
-   */
-  public void follow(final RingJournal inbound) {
-    if (inbound == this) {
-      throw new IllegalArgumentException("a journal cannot follow itself");
-    }
-    this.leader = inbound;
   }
 
   /** The last sequence written to the file by the journal thread. Readable from any thread. */

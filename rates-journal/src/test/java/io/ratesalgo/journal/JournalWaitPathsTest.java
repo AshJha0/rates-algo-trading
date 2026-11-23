@@ -339,11 +339,11 @@ class JournalWaitPathsTest {
     final GateClock held = GateClock.holding();
     final ManualClock free = new ManualClock(1_000L);
     final RingJournal in = RingJournal.start("lead", SegmentedJournal.create(dir, "lead", SEGMENT, held, true), held, 64 << 10);
-    final RingJournal out = RingJournal.start("follow", SegmentedJournal.create(dir, "follow", SEGMENT, free, true), free, 64 << 10);
-    assertThrows(IllegalArgumentException.class, () -> in.follow(in));
-    out.follow(in);
+    final RingJournal out =
+        RingJournal.start("follow", SegmentedJournal.create(dir, "follow", SEGMENT, free, true), free, 64 << 10,
+            RingJournal.defaultDrainIdle(), RingJournal.STALL_NANOS, in);
     final UnsafeBuffer p = payload();
-    out.append(1, 0, p, 0, PAYLOAD); // follows nothing yet: written at once
+    out.append(1, 0, p, 0, PAYLOAD); // follows no inbound frame yet: written at once
     await("the unordered first frame is written", () -> out.writtenSequence() == 1);
     // fill the inbound segment: the inbound journal thread stops at its roll (the next segment is held)
     final int inbound = 200; // about seven segments' worth

@@ -135,10 +135,11 @@ public final class EventLoop {
         retryBuffers[g] = new UnsafeBuffer(ByteBuffer.allocateDirect(b.retryCapacityBytes));
       }
     }
-    final boolean conflate = b.conflating != null && !b.replay;
-    this.conflating = conflate ? b.conflating.clone() : null;
-    this.conflateKeyOffset = conflate ? b.conflateKeyOffset.clone() : null;
-    this.conflateKeyLength = conflate ? b.conflateKeyLength.clone() : null;
+    final Conflation c = b.replay ? null : b.conflation;
+    final boolean conflate = c != null;
+    this.conflating = conflate ? c.templates.clone() : null;
+    this.conflateKeyOffset = conflate ? c.keyOffset.clone() : null;
+    this.conflateKeyLength = conflate ? c.keyLength.clone() : null;
     this.conflatedPerCycle = b.conflatedPerCycle;
     this.heldSlotBytes = HELD_HEADER + b.conflateSlotBytes;
     final int slots = conflate ? b.conflateSlots : 0;
@@ -595,6 +596,13 @@ public final class EventLoop {
         ControlMessages.LOOP_ERROR_TEMPLATE_ID, ControlMessages.SCHEMA_VERSION, scratch, 0, length);
   }
 
+  /** The conflated template ids and their keys, as the builder collects them. */
+  private static final class Conflation {
+    final boolean[] templates = new boolean[TEMPLATE_IDS];
+    final int[] keyOffset = new int[TEMPLATE_IDS];
+    final int[] keyLength = new int[TEMPLATE_IDS];
+  }
+
   /** Configuration of a loop. Rings and journals are set by the caller that owns them. */
   public static final class Builder {
 
@@ -610,9 +618,7 @@ public final class EventLoop {
     private int readLimit = DEFAULT_READ_LIMIT;
     private boolean[] retryTemplates;
     private int retryCapacityBytes = 64 * 1024;
-    private boolean[] conflating;
-    private int[] conflateKeyOffset;
-    private int[] conflateKeyLength;
+    private Conflation conflation;
     private int conflatedPerCycle = 1;
     private int conflateSlots = 64;
     private int conflateSlotBytes = 256;
@@ -728,14 +734,12 @@ public final class EventLoop {
       if (keyOffset < HEADER || keyLength < 1 || keyLength > Long.BYTES) {
         throw new IllegalArgumentException("a conflation key is 1 to 8 bytes after the SBE header");
       }
-      if (conflating == null) {
-        conflating = new boolean[TEMPLATE_IDS];
-        conflateKeyOffset = new int[TEMPLATE_IDS];
-        conflateKeyLength = new int[TEMPLATE_IDS];
+      if (conflation == null) {
+        conflation = new Conflation();
       }
-      conflating[templateId] = true;
-      conflateKeyOffset[templateId] = keyOffset;
-      conflateKeyLength[templateId] = keyLength;
+      conflation.templates[templateId] = true;
+      conflation.keyOffset[templateId] = keyOffset;
+      conflation.keyLength[templateId] = keyLength;
       return this;
     }
 
