@@ -161,7 +161,7 @@ class PairedSessionsTest {
     assertEquals(92, (long) Math.ceil(PairedSessions.SESSIONS_PER_VARIANCE_RATIO * Math.pow(sdOfDifference / 30_000.0, 2)));
     assertEquals(2000, PairedSessions.impliedSessions(sdOfDifference, 30_000.0));
     // uncorrelated arms: 916 per the table, still under the floor; a difference sd of 20 effects needs 6,680
-    assertEquals(916, Math.round(PairedSessions.SESSIONS_PER_VARIANCE_RATIO * 2.0 * Math.pow(157.0 / 30.0, 2)), 2);
+    assertEquals(916.0, PairedSessions.SESSIONS_PER_VARIANCE_RATIO * 2.0 * Math.pow(157.0 / 30.0, 2), 2.0);
     assertEquals(6680, PairedSessions.impliedSessions(600_000.0, 30_000.0));
     assertThrows(IllegalArgumentException.class, () -> PairedSessions.impliedSessions(1.0, 0.0));
     assertThrows(IllegalArgumentException.class, () -> PairedSessions.impliedSessions(-1.0, 1.0));

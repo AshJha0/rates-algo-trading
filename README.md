@@ -132,6 +132,7 @@ Other checks CI runs: `ruff check research`, `mypy research`, `python -m ratesre
 
 ```
 rates-common/        Clock, ManualClock, TimerWheel                 (P0)
+rates-sim/           Simulator v2 market model, shared by venues and back-test (round 3)
 rates-messages/      SBE schema v1 and generated codecs             (P0)
 rates-journal/       Journal writer, reader, segments, replayer     (P0, P2, round 2)
 rates-analytics/     Curves, swaps, bonds, futures, DV01 ladders    (P1)

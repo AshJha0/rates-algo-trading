@@ -71,6 +71,9 @@ class SimParamsTest {
     assertEquals(-1, p.eventEndMinuteNy(DayType.NONE));
     assertEquals(12, p.instruments().size());
     assertEquals("UST-10Y", p.depthReferenceKey());
+    assertEquals(2, p.treasuryVenues());
+    assertEquals(0.6, p.treasuryVenueShare(0));
+    assertEquals(0.4, p.treasuryVenueShare(1));
     assertEquals(0.7, p.get(Scalar.IMPACT_Y));
     assertEquals(800.0, p.get(Scalar.DEALER_DELAY_MEDIAN_MS));
   }
@@ -130,6 +133,7 @@ class SimParamsTest {
     assertTrue(refused(swap(P, "0.0193,", "0.0393,"), S).contains("time_of_day_share"));
     assertTrue(refused(P, swap(S, "[0.25, 0.60, 0.975]", "[0.25, 0.60, 0.9]")).contains("tier-weighted informed probability"));
     assertTrue(refused(P, swap(S, "[50.0, 0.02]", "[50.0, 0.12]")).contains("ladder"));
+    assertTrue(refused(P, swap(S, "[0.6, 0.4]", "[0.6, 0.5]")).contains("venue shares"));
     assertTrue(refused(P, swap(S, "\"bin_minutes\": 30.0", "\"bin_minutes\": 20.0")).contains("arrival bins"));
     assertTrue(refused(P, swap(S, "\"step_seconds\": 1.0", "\"step_seconds\": 0.5")).contains("grid step"));
     assertTrue(refused(P, swap(S, "\"depth_reference_instrument\": \"UST-10Y\"", "\"depth_reference_instrument\": \"TY\""))

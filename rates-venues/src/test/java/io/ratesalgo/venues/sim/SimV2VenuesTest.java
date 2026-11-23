@@ -7,6 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.fix.codec.FixParser;
+import io.ratesalgo.fix.codec.FixTags;
+import io.ratesalgo.fix.codec.MsgType;
+import io.ratesalgo.fix.session.FixSession;
+import io.ratesalgo.refdata.RefData;
 import io.ratesalgo.sim.BookModel;
 import io.ratesalgo.sim.DayType;
 import io.ratesalgo.sim.MarketModel;
@@ -20,6 +25,7 @@ import io.ratesalgo.venues.Venues;
 import io.ratesalgo.venues.clob.ClobBook;
 import io.ratesalgo.venues.clob.ClobConfig;
 import io.ratesalgo.venues.clob.ClobSimulator;
+import io.ratesalgo.venues.d2c.D2cRfqSimulator;
 import io.ratesalgo.venues.d2c.RfqOutcome;
 import io.ratesalgo.venues.d2c.TradeRecord;
 import io.ratesalgo.venues.feed.FeedChannel;
@@ -318,6 +324,85 @@ class SimV2VenuesTest {
     for (final ClobSimulator c : v.treasuryBooks()) {
       c.close();
     }
+  }
+
+  /**
+   * A7 with a desk: an engine session quotes the first RFQs over FIX one tick from the published
+   * reference price. Each is decided as the shared model decides it for that quote: the desk wins
+   * when it is the best price inside the client's reserve and the client does not trade away.
+   */
+  @Test
+  void a7_deskQuoteOverFixIsDecidedByTheSharedModel() {
+    final long seed = SessionSeeds.seed(SessionSeeds.ACCEPTANCE, 70_400);
+    final ManualClock clock = new ManualClock(OPEN);
+    final MarketModel model = SessionSeeds.session(spec, seed);
+    final MarketModel twin = SessionSeeds.session(spec, seed);
+    final SimV2Session session =
+        new SimV2Session(model, SimV2Session.instruments(spec, RefData.loadDefault(), Venues.TRADE_DATE), clock);
+    final D2cRfqSimulator sim = new D2cRfqSimulator(session, List.of("RALGO"), clock);
+    final List<String> inbound = new ArrayList<>();
+    int won = 0;
+    try (VenueHarness h = new VenueHarness(sim, clock);
+        EngineSession e = h.connect("RALGO", (FixSession s, FixParser m, boolean d) -> inbound.add(m.toString()))) {
+      sim.startAutoFlow();
+      int quoted = 0;
+      for (int n = 1; quoted < 12; n++) {
+        final SimRfq r = model.rfqs().get(n);
+        // only RFQs with six clear seconds either side, so one response window is open at a time
+        if (r.arrivalNanos() - model.rfqs().get(n - 1).arrivalNanos() < 6 * SECOND
+            || model.rfqs().get(n + 1).arrivalNanos() - r.arrivalNanos() < 6 * SECOND) {
+          continue;
+        }
+        quoted++;
+        final Instrument inst = session.instrument(r.instrument());
+        h.advance(Math.max(0, session.nanoTimeOf(r.arrivalNanos()) - clock.nanoTime()));
+        e.quiesce();
+        final String id = "|131=" + (n + 1) + "|";
+        final String request = inbound.stream().filter(m -> m.contains("|35=R|") && m.contains(id)).findFirst().orElseThrow();
+        assertTrue(request.contains("|48=" + inst.securityId() + "|"), request);
+        assertTrue(request.contains("|54=" + (r.clientBuys() ? "1" : "2") + "|"), request);
+        assertTrue(request.contains("|38=" + (long) r.quantityUnits() + "|"), request);
+        assertTrue(request.contains("|9501=" + r.dealersAsked() + "|"), request);
+        assertTrue(request.contains("|448=" + (2001 + r.tier()) + "|"), request);
+
+        final long reference = sim.mid(inst.securityId());
+        final long price = r.clientBuys() ? reference + inst.tick() : reference - inst.tick();
+        final long bid = r.clientBuys() ? price - 20 * inst.tick() : price;
+        final long offer = r.clientBuys() ? price : price + 20 * inst.tick();
+        e.session().begin(MsgType.QUOTE).put(FixTags.QUOTE_REQ_ID, n + 1).put(FixTags.QUOTE_ID, 100 + n)
+            .putText(55, inst.securityId()).putText(48, inst.securityId()).putChar(22, (byte) '4')
+            .putDecimal(FixTags.BID_PX, bid, 9).putDecimal(FixTags.OFFER_PX, offer, 9)
+            .put(FixTags.BID_SIZE, (long) r.quantityUnits()).put(FixTags.OFFER_SIZE, (long) r.quantityUnits());
+        e.session().send();
+        e.quiesce();
+        // through the response window, one event at a time
+        final long windowEnd = clock.nanoTime() + 5_100_000_000L;
+        while (clock.nanoTime() < windowEnd) {
+          h.advance(Math.min(windowEnd, Math.max(clock.nanoTime() + 1, sim.nextEventNanos())) - clock.nanoTime());
+          e.quiesce();
+        }
+        final RfqDecision expected = twin.decide(twin.rfqs().get(n), price / 1e9, 0L);
+        final String response = inbound.stream().filter(m -> m.contains("|35=AJ|") && m.contains(id)).findFirst().orElseThrow();
+        if (expected.deskWon()) {
+          won++;
+          assertTrue(response.contains("|694=1|") && response.contains("|44=" + Px.text(price) + "|"), response);
+          assertTrue(inbound.stream().anyMatch(m -> m.contains("|35=8|") && m.contains(id) && m.contains("|150=F|")));
+        } else {
+          assertFalse(response.contains("|694=1|"), response);
+          final String type =
+              switch (expected.outcome()) {
+                case DONE -> "|694=5|";
+                case DONE_AWAY -> "|9503=DA|";
+                case PASSED -> "|694=6|";
+                case EXPIRED -> "|694=3|";
+              };
+          assertTrue(response.contains(type), response + " for " + expected);
+        }
+      }
+      assertEquals(0, e.session().stats().sequenceErrors());
+    }
+    assertTrue(won >= 3, "desk wins " + won);
+    assertEquals(won, sim.trades().stream().filter(t -> "RALGO".equals(t.winner())).count());
   }
 
   @Test

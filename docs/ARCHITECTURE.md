@@ -79,6 +79,8 @@ Since 1.1.0 (API_SPEC.md Section 18.9): the kill and any supervisor halt act on 
 
 ```
 rates-common      io.ratesalgo.common.time     Clock, SystemClock, ManualClock, TimerWheel
+rates-common      io.ratesalgo.common.random   SplitMix64 (moved from rates-backtest so the simulator and the back-test share it)
+rates-sim         io.ratesalgo.sim             SimParams, MarketSpec, MarketModel, RfqFlow, BookModel, SessionSeeds (round 3)
 rates-messages    io.ratesalgo.messages.sbe    generated from rates-schema-v1.xml by sbe-tool
 rates-journal     io.ratesalgo.journal         JournalWriter, JournalReader, Replayer, exceptions;
                                                SegmentedJournal, SegmentedJournalReader, FrameSource (P2)
@@ -141,7 +143,7 @@ rates-backtest    io.ratesalgo.backtest           BacktestRunner, Strategy, Stra
                   io.ratesalgo.backtest.report    DailyReport, ReportCli
 ```
 
-Dependencies: `rates-common`, `rates-messages`, `rates-journal`, Agrona, and SnakeYAML for presets, pre-registrations and ledger lines (DR-P5-07). The back-tester is off the hot path: it is single-threaded, allocates per event and is not covered by the allocation rule.
+Dependencies: `rates-common`, `rates-sim` (the simulator v2 market model, docs/research/SIM_V2_DESIGN.md), `rates-messages`, `rates-journal`, Agrona, and SnakeYAML for presets, pre-registrations and ledger lines (DR-P5-07). The back-tester is off the hot path: it is single-threaded, allocates per event and is not covered by the allocation rule.
 
 Flow of one run. `BacktestRunner` reads journals with `JournalReader` (chain verified), drives a `ManualClock`, decodes the SBE payloads and calls the `Strategy`. The strategy acts through `StrategyContext`: quotes go to `RfqOutcomeModel` (competitors from `CompetitorModel`, win probability from `HitRateModel` at the run's band point, random draws keyed by RFQ id), market orders to `HedgeCostModel`, limit orders to `ClobFillModel`. Fills are booked in `PositionBook`, which keeps cash and position and the attribution lines side by side; their difference is the residual, checked below one cent. Every output message is SBE-encoded and folded into the output chain hash, which is what the determinism test compares (API_SPEC.md Section 16.1).
 
@@ -269,7 +271,7 @@ rates-venues    io.ratesalgo.venues.sim       VenueSimulator (QuickFIX/J base), 
                 io.ratesalgo.venues.cert      CertRunner and the certification scripts
 ```
 
-Dependencies: `rates-fix` depends on `rates-common`, `rates-messages` and Agrona only. `rates-venues` depends on `rates-fix`, `rates-refdata`, `rates-journal`, QuickFIX/J 3.0.2 (simulators only) and SLF4J's no-op binding. `rates-refdata` depends on nothing outside the JDK. The engine never links QuickFIX/J: its side of every connection is `rates-fix` (DR-P2V-01).
+Dependencies: `rates-fix` depends on `rates-common`, `rates-messages` and Agrona only. `rates-venues` depends on `rates-fix`, `rates-refdata`, `rates-sim` (simulator v2 presets only), `rates-journal`, QuickFIX/J 3.0.2 (simulators only) and SLF4J's no-op binding. `rates-refdata` depends on nothing outside the JDK. The engine never links QuickFIX/J: its side of every connection is `rates-fix` (DR-P2V-01).
 
 How the pieces connect to the event core. A gateway thread owns one `TcpInitiator`, its `FixSession` and a `VenueGateway`. Inbound FIX becomes SBE messages offered to a `MessageSink`; outbound SBE messages taken from a `MessageSource` become FIX. The coordinator wires the sink to the inbound ring buffer and the source to the outbound ring buffer of API_SPEC.md Section 9; the gateway never sees the ring buffers directly. The book feed consumer is itself a `MessageSink` of `BookUpdate` frames, and the market data composite writes `MarketDataReject` through a `RejectJournal` whose sink can be a `JournalSink` on the journal.
 
