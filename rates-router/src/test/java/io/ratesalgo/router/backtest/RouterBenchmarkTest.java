@@ -39,7 +39,9 @@ class RouterBenchmarkTest {
     System.out.print(body);
     final String path = System.getProperty("router.benchmark.report");
     if (path != null && !path.isBlank()) {
-      Files.writeString(Path.of(path), intro(sc) + body, StandardCharsets.UTF_8);
+      // the report is LF like every file in the repository, whatever %n is here
+      Files.writeString(
+          Path.of(path), (intro(sc) + body).replace("\r\n", "\n"), StandardCharsets.UTF_8);
     }
     for (int s = 0; s < r.strategies(); s++) {
       assertEquals(1.0, r.fillRate(s), 1e-12, r.name(s) + " left parents unfilled");
