@@ -70,6 +70,21 @@ Rules that follow from this:
 
 Since 1.1.0 (API_SPEC.md Section 18.9): the kill and any supervisor halt act on the gateway thread first, which withdraws from its own record of live quotes and orders and needs neither the loop nor ring space; the journaled KillSwitch keeps replay equal. The feed binding turns a refused or gapped book delta into DISCONNECTED, a snapshot and CONNECTED (Section 18.5). A session message the loop's ring will not take after 2^20 spins halts the process. A venue's cancel reject reaches the router as template 45.
 
+Start-up on existing journals (1.1.0, review L6, API_SPEC.md Section 18.9; diagram `docs/diagrams/replay_determinism.mmd`):
+
+```
+ journal dir --> JournalRecovery.repair --> LoopRecovery: inbound journal --> live EventLoop (RecoveryClock)
+   (cut torn tail;        |                    produced messages checked against outbound journal
+    refuse other damage)  |                    mismatch, outbound past inbound, trailing LoopError --> refuse to start
+                          v
+ RecoveryClock goes live --> GatewayStatus DISCONNECTED for both sessions (journaled) --> feed rebuild required
+   --> sessions log on, resuming sequence numbers (MappedSequenceStore, <journalDir>/fix)
+   --> CLOB: RECONCILING (4) --> OrderMassStatusRequest --> answers to the loop --> RECONCILED (5)
+   --> snapshot on the feed --> /health/ready 200
+```
+
+The loop keeps the CLOB down from DISCONNECTED until RECONCILED. A dropped session reconnects under `fix.reconnect` and goes through the same RECONCILING step; a halted one does not reconnect. FIX runs over TLS 1.3 (`TcpInitiator`, `SSLEngine` on the gateway thread) unless the venue is on loopback; the control endpoint serves HTTPS with `http.tls` (DR-RV-X06).
+
 - One loop per instrument group; a group is a currency (DR-R2W-03), so the USD universe runs one loop, `usd`, journaling to `<journal dir>/usd/in`, `out` and `route`.
 - The gateways, the feed, the curve feed and the simulated venues share one driver thread, which also paces simulated time; it reaches loop state only through the rings.
 - The desk's graph on the loop: pricing binding, composite book, P3 desk, one router per hedge instrument (Section 18.4). The status agent is the loop's only agent and only reads.
@@ -232,7 +247,7 @@ Deployment (`deploy/`, topology in `docs/diagrams/deployment_topology.mmd`):
 - a blue/green switch that checks the target is ready, kills quoting on the active colour, and records the switch only when that kill answered 200 with zero live quotes, or when the operator overrides with `RATES_OLD_COLOUR_CONFIRMED_DOWN=1`, which is recorded (1.1.0, review E8);
 - a deployment rehearsal that starts the processes (as containers, or as local JVMs in CI), checks readiness, exercises the kill switch through the control endpoint and checks every quote is pulled and the kill journaled (`.github/workflows/ops.yml`).
 
-Recovery: the restart procedure replays the journal, reconciles with every venue's order and quote status, and enables quoting only when nothing blocks (API_SPEC.md Section 17.9). The warm standby over Aeron is designed in `docs/runbooks/warm-standby-design.md` (DR-P6-06) and built at integration. Runbooks per incident class are under `docs/runbooks/`; the compliance control inventory is `docs/compliance/RTS6_INVENTORY.md`.
+Recovery: the restart procedure replays the journal, reconciles with every venue's order and quote status, and enables quoting only when nothing blocks (API_SPEC.md Section 17.9). Since 1.1.0 the trading process itself restarts on its journals: it cuts a torn tail, rebuilds each loop by replay through the live loop, resumes the FIX sequence numbers and reconciles the CLOB before using it, and refuses to start on journals it cannot reproduce (Process topology above; DR-RV-X01 to X05; `docs/runbooks/restart.md`). The rehearsal's process mode kills the trading JVM hard and checks that it recovers. The warm standby over Aeron is designed in `docs/runbooks/warm-standby-design.md` (DR-P6-06) and built at integration. Runbooks per incident class are under `docs/runbooks/`; the compliance control inventory is `docs/compliance/RTS6_INVENTORY.md`.
 
 ## Forward log (paper trading)
 

@@ -148,7 +148,7 @@ The order of a two-curve build: the OIS curve is bootstrapped alone, then held f
 
 ## Replay and determinism
 
-What is journaled in a live run, how `LoopReplay` rebuilds a loop and feeds it the inbound journal at the recorded times, and how the chain hash of what it produces is compared frame by frame with the recorded outbound journal ([API contract](api-spec.md) Section 9.7).
+What is journaled in a live run, how `LoopReplay` rebuilds a loop and feeds it the inbound journal at the recorded times, and how the chain hash of what it produces is compared frame by frame with the recorded outbound journal ([API contract](api-spec.md) Section 9.7). Since 1.1.0 the same path restarts the process: a torn tail is cut, the inbound journal is replayed through the live loop, and the CLOB session reconciles before the venue is used (Section 18.9, DR-RV-X01 to X05).
 
 ```mermaid
 --8<-- "docs/diagrams/replay_determinism.mmd"
