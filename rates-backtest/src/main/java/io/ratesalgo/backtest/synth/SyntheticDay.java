@@ -414,6 +414,16 @@ public final class SyntheticDay {
    * same seed, so generating a journal never disturbs the session a run will use.
    */
   public static Summary generateSimV2(final SimDay day, final Publication publication, final Path journal, final Path truthCsv) {
+    return generateSimV2(day, publication, journal, truthCsv, Long.MAX_VALUE);
+  }
+
+  /**
+   * The same journal cut at {@code windowNanos} after the open: only events before the cut are
+   * written. For tests and smoke runs that need the full-day model but not the full day's
+   * replay; the experiment protocol always uses the whole session.
+   */
+  public static Summary generateSimV2(
+      final SimDay day, final Publication publication, final Path journal, final Path truthCsv, final long windowNanos) {
     final MarketSpec spec = day.model().spec();
     final MarketModel model = new MarketModel(spec, day.model().seed(), day.model().dayType());
     final long open = day.openEpochNanos();
@@ -463,21 +473,25 @@ public final class SyntheticDay {
       }
     }
 
-    int informed = 0;
     for (final SimRfq r : model.rfqs()) {
-      informed += r.informed() ? 1 : 0;
       events.add(
           new Event(open + r.arrivalNanos(), order++, Type.RFQ, spec.instrument(r.instrument()).id(), 0,
               Math.round(r.quantityUnits() * 100.0), r.clientBuys(), r.tier() + 1, r.dealersAsked(), r.informed(),
               null, null));
     }
 
+    if (windowNanos != Long.MAX_VALUE) {
+      final long cut = open + windowNanos;
+      events.removeIf(e -> e.time() >= cut);
+    }
     events.sort(Comparator.comparingLong(Event::time).thenComparingLong(Event::order));
     final long capacity = capacityFor(events);
     if (capacity > Integer.MAX_VALUE) {
       throw new IllegalStateException("simulator v2 day too large for one segment: " + capacity);
     }
-    return write(day.date(), model.seed(), journal, truthCsv, events, (int) capacity, model.rfqs().size(), informed);
+    final int rfqCount = (int) events.stream().filter(e -> e.type() == Type.RFQ).count();
+    final int informedCount = (int) events.stream().filter(e -> e.type() == Type.RFQ && e.informed()).count();
+    return write(day.date(), model.seed(), journal, truthCsv, events, (int) capacity, rfqCount, informedCount);
   }
 
   private static Summary write(
