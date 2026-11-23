@@ -17,3 +17,5 @@ band:
   informed_fraction: "informed_flow.informed_fraction at 0.2 and 1.0 (central 0.5) at fixed average move"
   drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s (central 10 s)"
   winner_half_spread: "competitors.median_half_spread at 0.1228 and 0.2719 bp (central 0.1827), informed_flow.expected_adverse_move re-solved for zero profit"
+# guard_metrics of the pre-registration, treatment over baseline, summed over the set
+guards: {quoted_share: 0.8, hit_rate: 0.5, client_dv01: 0.6}

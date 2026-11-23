@@ -18,3 +18,5 @@ band:
   impact: "clob.impact_coefficient_Y at 0.3 and 1.5 (central 0.7)"
   impact_half_life: "clob.impact_half_life at 5 s and 120 s (central 30 s)"
   drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s (central 10 s)"
+# guard_metrics of the pre-registration, treatment over baseline, summed over the set
+guards: {quoted_share: 0.9, hit_rate: 0.8, client_dv01: 0.8}

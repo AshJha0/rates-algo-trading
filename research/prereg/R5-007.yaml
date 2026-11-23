@@ -2,11 +2,11 @@
 # Design: docs/research/STRATEGY_V2.md Section 8; ablation table in Section 8.
 # DRAFT: not signed and not to be run. It follows the Round 3 protocol (SIM_V2_DESIGN.md
 # Section 12): seeded full-day sessions, a paired primary test and looks counted per data
-# set. The date keys of prereg_version 1 (period, fitting_period, holdout) do not describe
-# seeded sessions and are left out until the Round 3 harness extends the schema with the
-# data_set block below, so this file does not validate as prereg_version 1 yet. Written
+# set. Format: prereg_version 2, the session-seed design (SessionDesignRules in rates-backtest,
+# ratesresearch.prereg); it validates as a draft and no harness runs it while status is draft.
+# guards in the config are guard_metrics below in machine-readable form. Written
 # from theory and the calibration; no desk P&L under any simulator was looked at.
-prereg_version: 1
+prereg_version: 2
 status: draft
 id: R5-007
 title: "The Round 5 desk against the default desk"
@@ -67,7 +67,7 @@ assumption_band:
 author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
 date: 2026-11-23
 config: research/prereg/R5-007.config.yaml
-config_sha256: 724b09c4c000d3e3bcd0f063fd7a3c9d688740e79a366af0dac3fc1d3ee06e56
+config_sha256: bf2bc13eecc7de9edcef738939c0f7e40e125a58fb757afaf2477399ccb35510
 limitations: >
   Simulated sessions only: every number is a statement about the Round 3 simulator under the
   calibration, which ties competitor dispersion, the product of informed fraction and move,

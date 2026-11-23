@@ -2,11 +2,11 @@
 # Design: docs/research/STRATEGY_V2.md Section 4; ablation table in Section 8.
 # DRAFT: not signed and not to be run. It follows the Round 3 protocol (SIM_V2_DESIGN.md
 # Section 12): seeded full-day sessions, a paired primary test and looks counted per data
-# set. The date keys of prereg_version 1 (period, fitting_period, holdout) do not describe
-# seeded sessions and are left out until the Round 3 harness extends the schema with the
-# data_set block below, so this file does not validate as prereg_version 1 yet. Written
+# set. Format: prereg_version 2, the session-seed design (SessionDesignRules in rates-backtest,
+# ratesresearch.prereg); it validates as a draft and no harness runs it while status is draft.
+# guards in the config are guard_metrics below in machine-readable form. Written
 # from theory and the calibration; no desk P&L under any simulator was looked at.
-prereg_version: 1
+prereg_version: 2
 status: draft
 id: R5-003
 title: "Fitted factor covariance, factor hedging and tick hedge cost, inside the Round 5 desk"
@@ -69,7 +69,7 @@ assumption_band:
 author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
 date: 2026-11-23
 config: research/prereg/R5-003.config.yaml
-config_sha256: a4d276a941fcf9132d75be9db62876aee51563ddfd5bc7729ebb23ac469c7eb5
+config_sha256: 32ecfcd4ec42c1e3a70348679d4ee65412444c59fe2df30e4744460641af28b9
 limitations: >
   Simulated sessions only: every number is a statement about the Round 3 simulator under the
   calibration, which ties competitor dispersion, the product of informed fraction and move,
