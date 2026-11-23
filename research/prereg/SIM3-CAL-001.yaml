@@ -1,0 +1,104 @@
+# Pre-analysis note SIM3-CAL-001: calibration of the Round 3 simulator specification.
+#
+# This is a calibration plan, not a back-test pre-registration: it has no baseline, treatments
+# or config hash, so it does not follow API_SPEC.md Section 16.8 and is not read by
+# ratesresearch.prereg.validate. It is committed before any raw DTCC file is opened by the
+# ratesresearch.simcal code and before that code exists. Its purpose is to fix the calibration
+# and validation periods, the filters, the estimators and the pass marks in advance.
+kind: pre_analysis_note
+id: SIM3-CAL-001
+title: Calibration and held-out validation of the simulator parameters (factor model, swap print microstructure, competitor zero-profit spread)
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-23
+
+what_was_known_when_this_was_written: >
+  The review of 2026-11-23 (sections 2 and 9). The committed fixtures and their provenance
+  files. The published results of EDGE-E1 to EDGE-E6 (docs/research/EDGE_STUDIES.md), which
+  read DTCC prints of 2025-01-02 to 2026-06-30 for other statistics (5-minute-bucket variance
+  and intensity ratios around events, size by tenor, a daily 10Y level). So the validation
+  period below is unread for the statistics of this note, but it is not unread by the
+  repository. No estimate named under `estimates` had been computed on any period. The raw DTCC
+  zips were no longer on disk (searched C:\Work\Claude and the user profile); they are
+  downloaded again from the same public endpoint and each file's SHA-256 is checked against
+  data/manifests/edge_dtcc.json. A range request on 2026-11-23 showed that files before about
+  2024-11-23 now answer HTTP 403 (moved to archive storage), so the sample starts later than the
+  436-file manifest; the files actually read are listed in the new manifest.
+
+split:
+  rule: by the date in the DTCC file name (New York trading day); fixed here, before reading
+  dtcc_calibration: {start: 2024-11-25, end: 2025-12-31}
+  dtcc_validation: {start: 2026-01-02, end: 2026-06-30}
+  par_curve_calibration: {start: 2015-01-02, end: 2025-12-31}
+  par_curve_validation: {start: 2026-01-02, end: 2026-06-30}
+  reserve_not_read: after 2026-06-30 (the fixtures already stop there)
+  no_tuning: >
+    Filters, windows, buckets and model choices are fixed on synthetic data and on the
+    calibration period. The validation period is evaluated once with the frozen code and the
+    frozen calibration-period parameter file. If a defect is found afterwards, the fix and a
+    second validation read are reported as look 2, not as a replacement.
+
+filters:
+  dtcc_prints: >
+    Action type NEWT, Event type TRAD, USD, UPI FISN "NA/Swap OIS USD" with a SOFR underlier,
+    Package indicator false, effective date 0 to 7 days after execution, maturity within 0.15
+    years of 2, 3, 5, 7, 10, 20 or 30 years, a numeric fixed rate, positive notional, executed
+    07:00 to 17:00 New York time on the file's day. Further exclusions, each counted: prints with
+    a non-zero other (upfront) payment, prints flagged non-standard or with a non-zero spread on
+    the floating leg where the file has those columns, and off-market prints more than 5 bp from
+    the centred median of the 20 nearest prints of the same tenor and day (sensitivity: 3 bp and
+    10 bp). Prints of one tenor with the same execution second and the same rate are merged into
+    one trade (notional summed, capped if any part is capped).
+  size_buckets_usd_dv01: [under 5k, 5k to 25k, 25k and over (not capped), capped]
+  dv01: notional times the par annuity at the print's own rate (annual, to maturity) times 1e-4
+
+estimates:
+  factor_model: >
+    PCA of the covariance of daily changes (bp) of the Treasury par yields at 2, 3, 5, 7, 10, 20,
+    30 years; first three components kept; loadings, daily factor standard deviations, and the
+    same on three subperiods (2015-2018, 2019-2021, 2022-2025).
+  swap_spread: >
+    Daily swap level per tenor = median fixed rate of prints 14:30 to 16:00 New York (at least 5
+    prints), converted to a semi-annual bond basis; spread = swap level minus par yield. Daily
+    spread changes, their residual after regression on the three curve factors, first principal
+    component of the residuals across tenors, and the measurement-noise share from the lag-1
+    autocovariance of changes.
+  print_noise_and_volatility: >
+    Per tenor, least squares of squared rate differences of print pairs (lags 1 to 5, gap up to
+    30 minutes, same day) on the time gap: intercept = 2 x noise variance (the noise standard
+    deviation is the dispersion estimate of the effective half-spread), slope = mid variance per
+    minute. The same regression with time-of-day bins and event windows (08:30 to 08:35 on
+    release days, 13:00 to 13:05 on coupon auction days, 14:00 to 14:30 on FOMC days) gives the
+    seasonality multipliers; with size-bucket indicators it gives noise by bucket.
+  arrival_and_size: mean prints per 30-minute bin by tenor; size distribution with capped prints treated as right-censored
+  markouts: >
+    Direction = sign of (print rate minus trailing mid), trailing mid = median of the last 5
+    prints of the tenor within the previous 10 minutes; second classification: tick rule. Signed
+    change from the print rate to the first later print at or after 1 s, 5 s, 30 s, 60 s and
+    5 min (search windows 4 s, 10 s, 30 s, 60 s, 120 s), by size bucket, reported raw and after
+    the stated model-based correction for classification error.
+  competitor_model: >
+    Half-spread distribution of N competing dealers (lognormal, N and log-sd from the current
+    presets unless the data identifies them) whose winner (lowest quote) earns zero on average
+    after the measured adverse drift and a stated hedge cost.
+  intervals: percentile bootstrap, whole days resampled, 1000 resamples, 95 percent, seed 20261123
+
+validation_pass_marks:
+  scale_parameters: >
+    Each calibration-period volatility, noise, intensity and factor standard deviation is said to
+    describe the validation period if the validation estimate is within a factor 1.5 of it
+    (ratio in [0.667, 1.5]). The ratio is reported for every parameter whatever the outcome.
+  factor_loadings: >
+    Absolute cosine between calibration and validation loadings at least 0.90 for each of the
+    first three components, and the variance explained in the validation period by the three
+    calibration loadings within 5 percentage points of the validation period's own first three.
+  markouts: validation and calibration 95 percent intervals overlap, and the 5-minute estimate has the same sign
+
+limitations_known_in_advance: >
+  The swap data repository reports executions, not quotes or RFQs; it does not flag direction or
+  client type; notionals are capped; block prints are delayed but carry their execution time;
+  timestamps have one-second resolution at best. Prints of one tenor arrive minutes apart, so
+  the 1 s and 5 s markouts are expected to be weakly identified or not identified; the count of
+  usable prints per horizon is reported and nothing is filled in. There is no futures data
+  (CME terms forbid scripted access), so the futures basis factor is an assumption with a
+  sensitivity band. There is no Treasury trade or quote data, so central-limit-order-book
+  impact and resilience are assumptions tied to cited literature with a sensitivity band.
