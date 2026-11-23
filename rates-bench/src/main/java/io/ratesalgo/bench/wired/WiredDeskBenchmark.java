@@ -379,7 +379,8 @@ public final class WiredDeskBenchmark {
 
   private static String quote(final String s) {
     final StringBuilder b = new StringBuilder(s.length() + 2).append('"');
-    for (final char ch : s.toCharArray()) {
+    for (int i = 0; i < s.length(); i++) {
+      final char ch = s.charAt(i);
       if (ch == '"' || ch == '\\') {
         b.append('\\').append(ch);
       } else if (ch < 0x20) {

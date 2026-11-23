@@ -2,6 +2,7 @@ package io.ratesalgo.bench.jmh;
 
 import io.ratesalgo.fix.codec.AsciiNumbers;
 import io.ratesalgo.fix.codec.FixParser;
+import io.ratesalgo.fix.codec.FixTags;
 import io.ratesalgo.fix.codec.FixTime;
 import java.nio.ByteBuffer;
 import org.agrona.DirectBuffer;
