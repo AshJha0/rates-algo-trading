@@ -20,5 +20,5 @@ band:
   informed_fraction: "informed_flow.informed_fraction at 0.2 and 1.0 at fixed average move"
   drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s"
   level_vol: "curve factor sds scaled by 0.76 and 1.29"
-  spread_factor: "swap_spread_factor.sd_per_sqrt_minute at 0.0072 and 0.0311"
+  spread_factor: "swap_spread_factor.sd_per_sqrt_minute at 0.0072 and 0.0312"
   impact: "clob.impact_coefficient_Y at 0.3 and 1.5"

@@ -1,3 +1,4 @@
+# SUPERSEDED BEFORE SIGNING on 2026-11-23 by research/prereg/R5-FAM-001.yaml; see superseded_reason.
 # DRAFT pre-registration SIM3-BASE-001: the baseline desk on simulator v2.
 #
 # Status: DRAFT. Not signed, not committed as a pre-registration, not run. No session of the
@@ -14,7 +15,17 @@
 # their bands. This note describes; it does not test.
 prereg_version: 2
 kind: pre_registration_draft
-status: draft_unsigned_not_run
+status: draft_superseded_before_signing
+superseded_by: R5-FAM-001
+superseded_on: 2026-11-23
+superseded_reason: >
+  Replaced before signing, before any of its sessions was generated or any result existed. The
+  eight drafts (SIM3-BASE-001, R5-001 to R5-007) each named their own seed base and up to 15
+  parameter rows: weeks of compute for eight separate looks. The owner's decision, taken by the
+  maintainer on the owner's delegation on 2026-11-23, is one registered family on shared
+  sessions (research/prereg/R5-FAM-001.yaml): one new data set, every arm on the same seeds,
+  Benjamini-Hochberg across its eight hypotheses. This file is kept as written for the record;
+  it is never signed and never run (the runner refuses a superseded file).
 id: SIM3-BASE-001
 title: "Baseline: the production desk on simulator v2, P&L per session with attribution, at the low, central and high band of the unidentified parameters"
 
@@ -66,7 +77,7 @@ assumption_band:
     - {parameter: informed_flow.informed_fraction, low: 0.2, high: 1.0, rule: fixed average adverse move}
     - {parameter: informed_flow.drift_time_constant, low: 2.0, high: 60.0}
     - {parameter: curve factor sds, low: x0.76, high: x1.29, rule: 2015-2018 and 2022-2025 levels}
-    - {parameter: swap_spread_factor.sd_per_sqrt_minute, low: 0.0072, high: 0.0311}
+    - {parameter: swap_spread_factor.sd_per_sqrt_minute, low: 0.0072, high: 0.0312}
     - {parameter: clob.impact_coefficient_Y, low: 0.3, high: 1.5}
 
 success_threshold: >
@@ -111,4 +122,4 @@ limitations: >
 author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
 date: 2026-11-23
 config: research/prereg/SIM3-BASE-001.config.yaml
-config_sha256: 7617434b781bb0f48f23f070755676e6bfd7cc5099091336a31c954a6eb0e409
+config_sha256: edc7b2c4b0213e1e37bad88ec1d4e8ab2bd3699024cccfe53ddec2bcf89bdc01

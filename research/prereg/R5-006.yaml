@@ -1,3 +1,4 @@
+# SUPERSEDED BEFORE SIGNING on 2026-11-23 by research/prereg/R5-FAM-001.yaml; see superseded_reason.
 # Pre-registration R5-006 (DRAFT, Round 5): Venue ticks, volatility time to live and the pull at half the quoted distance, inside the Round 5 desk.
 # Design: docs/research/STRATEGY_V2.md Section 7; ablation table in Section 8.
 # DRAFT: not signed and not to be run. It follows the Round 3 protocol (SIM_V2_DESIGN.md
@@ -7,7 +8,17 @@
 # guards in the config are guard_metrics below in machine-readable form. Written
 # from theory and the calibration; no desk P&L under any simulator was looked at.
 prereg_version: 2
-status: draft
+status: draft_superseded_before_signing
+superseded_by: R5-FAM-001
+superseded_on: 2026-11-23
+superseded_reason: >
+  Replaced before signing, before any of its sessions was generated or any result existed. The
+  eight drafts (SIM3-BASE-001, R5-001 to R5-007) each named their own seed base and up to 15
+  parameter rows: weeks of compute for eight separate looks. The owner's decision, taken by the
+  maintainer on the owner's delegation on 2026-11-23, is one registered family on shared
+  sessions (research/prereg/R5-FAM-001.yaml): one new data set, every arm on the same seeds,
+  Benjamini-Hochberg across its eight hypotheses. This file is kept as written for the record;
+  it is never signed and never run (the runner refuses a superseded file).
 id: R5-006
 title: "Venue ticks, volatility time to live and the pull at half the quoted distance, inside the Round 5 desk"
 hypothesis: >
