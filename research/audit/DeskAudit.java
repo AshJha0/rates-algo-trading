@@ -31,6 +31,7 @@ import io.ratesalgo.backtest.model.Presets;
 import io.ratesalgo.backtest.model.RfqOutcomeModel;
 import io.ratesalgo.backtest.pnl.Attribution;
 import io.ratesalgo.backtest.pnl.CarryModel;
+import io.ratesalgo.backtest.prereg.DataSets;
 import io.ratesalgo.backtest.prereg.Ledger;
 import io.ratesalgo.backtest.prereg.PreRegistration;
 import io.ratesalgo.backtest.stats.Stats;
@@ -106,6 +107,15 @@ public final class DeskAudit {
       System.exit(2);
     }
     final Map<String, Object> config = Yaml.loadMap(repo.resolve(prereg.config()));
+    // looks are counted per data set across pre-registrations: an undeclared earlier look refuses the run
+    final List<Map<String, Object>> before = ledger.entries();
+    final long seedBase = Yaml.integer(Yaml.map(config, "session", "audit config"), "day_seed_base", "session");
+    final String undeclared =
+        pilot ? null : DataSets.refusal(before, DataSets.key(days, d -> seedBase + d.toEpochDay()), prereg, List.of());
+    if (undeclared != null) {
+      System.out.println("refused: " + undeclared);
+      System.exit(2);
+    }
     final DeskRun run = new DeskRun(repo, config, prereg.baseline(), prereg.treatments());
     final DeskRun.Outcome outcome =
         run.run(days, work, Integer.parseInt(opts.getOrDefault("threads", "10")));
@@ -128,6 +138,7 @@ public final class DeskAudit {
     record.put("recorded_utc", Instant.ofEpochSecond(Instant.now().getEpochSecond()).toString());
     record.put("results", outcome.results());
     record.put("verdict", outcome.verdict());
+    DataSets.stamp(record, before, prereg);
     ledger.append(record);
     if (opts.containsKey("out")) {
       final Path out = repo.resolve(opts.get("out"));

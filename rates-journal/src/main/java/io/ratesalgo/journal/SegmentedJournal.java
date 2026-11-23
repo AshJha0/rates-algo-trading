@@ -44,7 +44,9 @@ import org.agrona.DirectBuffer;
  *   <li>a roll takes the prepared writer through a volatile field, hands the full segment back to
  *       the background thread, which forces and unmaps it, and allocates nothing;
  *   <li>if the next segment is not ready when the current one is full, the roll waits for it and
- *       counts the wait ({@link #rollWaits()}).
+ *       counts the wait ({@link #rollWaits()}). The wait ends with an {@link IllegalStateException}
+ *       if the background thread has failed, has stopped, or has made no progress for {@link
+ *       #STALL_NANOS}, so a dead preparer fails the appender instead of spinning it for ever.
  * </ul>
  *
  * <p>The appending thread never calls {@code force}, never maps or unmaps a file and never takes a
@@ -83,14 +85,15 @@ public final class SegmentedJournal implements AutoCloseable {
       final Clock clock,
       final JournalWriter current,
       final int segmentIndex,
-      final boolean preallocate) {
+      final boolean preallocate,
+      final long stallNanos) {
     this.dir = dir;
     this.name = name;
     this.segmentCapacity = segmentCapacity;
     this.clock = clock;
     this.current = current;
     this.segmentIndex = segmentIndex;
-    this.preparer = preallocate ? new Preparer(segmentIndex) : null;
+    this.preparer = preallocate ? new Preparer(segmentIndex, stallNanos) : null;
     if (preparer != null) {
       current.pretouch();
       preparer.thread.start();
@@ -149,12 +152,23 @@ public final class SegmentedJournal implements AutoCloseable {
       final int segmentCapacity,
       final Clock clock,
       final boolean preallocate) {
+    return create(dir, name, segmentCapacity, clock, preallocate, STALL_NANOS);
+  }
+
+  /** {@link #create(Path, String, int, Clock, boolean)} with a given stall limit; for tests. */
+  static SegmentedJournal create(
+      final Path dir,
+      final String name,
+      final int segmentCapacity,
+      final Clock clock,
+      final boolean preallocate,
+      final long stallNanos) {
     if (segmentIndices(dir, name).length != 0) {
       throw new IllegalArgumentException("journal " + name + " already exists in " + dir);
     }
     final JournalWriter first =
         JournalWriter.create(segmentPath(dir, name, 1), segmentCapacity, clock, 1L, GENESIS_HASH);
-    return new SegmentedJournal(dir, name, segmentCapacity, clock, first, 1, preallocate);
+    return new SegmentedJournal(dir, name, segmentCapacity, clock, first, 1, preallocate, stallNanos);
   }
 
   /**
@@ -182,7 +196,7 @@ public final class SegmentedJournal implements AutoCloseable {
     }
     final JournalWriter writer =
         JournalWriter.open(segmentPath(dir, name, last), clock, nextSequence, hash);
-    return new SegmentedJournal(dir, name, segmentCapacity, clock, writer, last, false);
+    return new SegmentedJournal(dir, name, segmentCapacity, clock, writer, last, false, STALL_NANOS);
   }
 
   /**
@@ -293,7 +307,10 @@ public final class SegmentedJournal implements AutoCloseable {
     return preparer == null ? 0L : preparer.progress();
   }
 
-  /** How long a shutdown wait tolerates no progress at all before it gives up (DR-INT-10). */
+  /**
+   * How long a shutdown wait, or a roll waiting for the next segment, tolerates no progress at
+   * all before it gives up (DR-INT-10).
+   */
   static final long STALL_NANOS = TimeUnit.SECONDS.toNanos(60);
 
   /** How often a shutdown wait checks for progress. */
@@ -362,8 +379,12 @@ public final class SegmentedJournal implements AutoCloseable {
     /** Pages this thread has touched and segments it has created or closed; read from any thread. */
     private final AtomicLong progress = new AtomicLong();
 
-    Preparer(final int currentIndex) {
+    /** No progress for this long ends a wait on this thread, in {@link #take} and {@link #stop}. */
+    private final long stallNanos;
+
+    Preparer(final int currentIndex, final long stallNanos) {
       this.currentIndex = currentIndex;
+      this.stallNanos = stallNanos;
       this.thread = new Thread(this, "journal-prepare-" + name);
       this.thread.setDaemon(true);
     }
@@ -434,17 +455,35 @@ public final class SegmentedJournal implements AutoCloseable {
       return w;
     }
 
-    /** Called by the appender at a roll; waits, counted, if the next segment is not ready. */
     boolean hasReady() {
       return ready != null;
     }
 
+    /**
+     * Called by the appender at a roll; waits, counted, if the next segment is not ready. The wait
+     * is bounded: it throws if this thread has failed or stopped, or if its progress count has not
+     * moved for the stall limit. Without the bound a preparer that died (or hung on a dead disk)
+     * left the appender, and with it the loop or the journal thread, spinning for ever. Reading
+     * the time and the thread state allocates nothing.
+     */
     JournalWriter take() {
       JournalWriter next = ready;
       if (next == null) {
         rollWaits.lazySet(rollWaits.get() + 1);
+        long seen = progress.get();
+        long since = System.nanoTime();
         while ((next = ready) == null) {
-          checkFailure();
+          checkAlive();
+          final long count = progress.get();
+          final long now = System.nanoTime();
+          if (count != seen) {
+            seen = count;
+            since = now;
+          } else if (now - since >= stallNanos) {
+            throw new IllegalStateException(
+                "journal " + name + ": the next segment was not prepared and the background thread made no "
+                    + "progress for " + TimeUnit.NANOSECONDS.toMillis(stallNanos) + " ms (progress " + count + ")");
+          }
           LockSupport.unpark(thread);
           Thread.onSpinWait();
         }
@@ -456,10 +495,20 @@ public final class SegmentedJournal implements AutoCloseable {
     /** Called by the appender at a roll to hand over the full segment. */
     void retire(final JournalWriter full) {
       while (retiring != null) {
-        checkFailure();
+        checkAlive();
         Thread.onSpinWait();
       }
       retiring = full;
+    }
+
+    /** Throws if this thread failed, or ended, with the appender still waiting on it. */
+    private void checkAlive() {
+      checkFailure();
+      if (!thread.isAlive() && ready == null) {
+        checkFailure(); // a failure recorded just before the thread ended is the better message
+        throw new IllegalStateException(
+            "journal " + name + ": the background thread has stopped; no next segment will be prepared");
+      }
     }
 
     /** Called by the appender after a roll; the thread prepares the segment after this one. */
@@ -483,7 +532,7 @@ public final class SegmentedJournal implements AutoCloseable {
       stopping = true;
       LockSupport.unpark(thread);
       // wait while the thread makes progress; give up only after STALL_NANOS without any (DR-INT-10)
-      final ShutdownProgress watch = new ShutdownProgress(STALL_NANOS);
+      final ShutdownProgress watch = new ShutdownProgress(stallNanos);
       while (thread.isAlive()) {
         try {
           thread.join(JOIN_STEP_MILLIS);
@@ -498,7 +547,7 @@ public final class SegmentedJournal implements AutoCloseable {
       if (thread.isAlive()) {
         throw new IllegalStateException(
             "journal " + name + ": background thread made no progress for "
-                + TimeUnit.NANOSECONDS.toSeconds(STALL_NANOS) + " s and did not stop (progress " + progress.get()
+                + TimeUnit.NANOSECONDS.toMillis(stallNanos) + " ms and did not stop (progress " + progress.get()
                 + ", roll waits " + rollWaits.get() + ")");
       }
       final JournalWriter unused = ready;
