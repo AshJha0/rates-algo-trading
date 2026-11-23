@@ -86,9 +86,16 @@ jobs:
           done
           docker image ls 'rates-*'
       - name: Compose file resolves
+        # The file refuses to resolve without the key-store directory and the passwords; the
+        # values here only let it resolve, nothing is started with them.
         run: docker compose -f deploy/compose.yaml config --quiet
         env:
           RATES_CONTROL_TOKEN: ci-only-not-a-secret
+          RATES_CERTS_DIR: ${{ runner.temp }}/certs
+          RATES_FIX_PASSWORD: ci-only-not-a-secret
+          RATES_FIX_TRUSTSTORE_PASSWORD: ci-only-not-a-secret
+          RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD: ci-only-not-a-secret
+          RATES_HTTP_KEYSTORE_PASSWORD: ci-only-not-a-secret
       - name: Report image starts and checks its arguments
         # With no arguments EodReportMain prints "missing --journal" and exits 2, which proves
         # the JRE, the class path and the main class inside the image.
