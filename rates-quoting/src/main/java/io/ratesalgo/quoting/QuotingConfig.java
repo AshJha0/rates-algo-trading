@@ -59,6 +59,7 @@ public final class QuotingConfig {
   long volDayNanos = 8L * 3_600_000_000_000L;
   double volDecay = 0.97;
   int volWarmupSamples = 30;
+  StrategyConfig strategy = new StrategyConfig();
 
   /**
    * The default release calendar: 08:30 and 10:00 New York on every weekday from {@code from} to
@@ -334,6 +335,20 @@ public final class QuotingConfig {
     volDecay = decay;
     volWarmupSamples = warmupSamples;
     return this;
+  }
+
+  /**
+   * The Round 5 strategy capabilities (docs/research/STRATEGY_V2.md); every switch off by
+   * default. {@code null} restores the default.
+   */
+  public QuotingConfig strategy(final StrategyConfig v) {
+    strategy = v == null ? new StrategyConfig() : v;
+    return this;
+  }
+
+  /** The strategy capabilities in force. */
+  public StrategyConfig strategy() {
+    return strategy;
   }
 
   /** Whether any currency has a volatility reference instrument. */

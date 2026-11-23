@@ -1,0 +1,20 @@
+# Configuration of R5-004 (DRAFT). Hashed into research/prereg/R5-004.yaml.
+study: R5-004
+design: docs/research/STRATEGY_V2.md Section 5
+simulator: Round 3 MarketModel (docs/research/SIM_V2_DESIGN.md)
+simulator_params: data/calibration/sim_v2_params.json
+simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+client_rule: best_price (headline); the logistic hit-rate rule only as a sensitivity
+arms:
+  v2: "DeskSettings.strategyV2()"
+  v2_hedge_at_trigger: "DeskSettings.strategyV2() with the hedger of DeskSettings.defaults() (no internalise, no passiveFirst)"
+seeds: {confirmation_base: 35000000, pilot_base: 29000000, pilot_sessions: 200, minimum_sessions: 2000}
+smallest_effect: {usd_per_session: 12000, bp_of_client_dv01: 0.01}
+session: {start_ny: "07:00", end_ny: "17:00", step_seconds: 1, day_type: "index mod 21: 0-3 release, 4 FOMC, 5-10 auction, else none"}
+marking: latent mid (SIM_V2_DESIGN.md Section 4)
+statistics: {test: paired_t, interval: moving_block_bootstrap, block_sessions: 21, resamples: 2000, bootstrap_seed: 5, family: benjamini_hochberg_q_0.05}
+band:
+  taker_skill: "clob.taker_sign_skill at 0.0 and 0.2 (central 0.1)"
+  impact: "clob.impact_coefficient_Y at 0.3 and 1.5 (central 0.7)"
+  impact_half_life: "clob.impact_half_life at 5 s and 120 s (central 30 s)"
+  drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s (central 10 s)"

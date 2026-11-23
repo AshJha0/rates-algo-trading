@@ -22,7 +22,7 @@ import io.ratesalgo.risk.RiskEngine;
  *
  * <p>Allocation-free after construction.
  */
-public final class HedgePlanner {
+public final class HedgePlanner implements HedgePlanning {
 
   private static final int K = KeyRateTenors.COUNT;
 
@@ -76,6 +76,7 @@ public final class HedgePlanner {
   }
 
   /** Plans a hedge of {@code residual}; read the result with {@link #lots(int)}. */
+  @Override
   public boolean plan(final Dv01Vector residual) {
     residual.copyTo(r);
     for (int j = 0; j < m; j++) {
@@ -137,6 +138,7 @@ public final class HedgePlanner {
   }
 
   /** Planned lots of hedge instrument {@code j} (signed: positive buys). */
+  @Override
   public double lots(final int j) {
     return lots[j];
   }
@@ -182,15 +184,22 @@ public final class HedgePlanner {
     return s;
   }
 
+  @Override
+  public double plannedCost() {
+    return cost(lots);
+  }
+
   /** Copies the last plan into {@code out}. */
   public void copyLots(final double[] out) {
     System.arraycopy(lots, 0, out, 0, m);
   }
 
+  @Override
   public HedgeUniverse universe() {
     return universe;
   }
 
+  @Override
   public KeyRateCovariance covariance() {
     return covariance;
   }

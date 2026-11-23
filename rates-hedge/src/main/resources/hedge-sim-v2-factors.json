@@ -1,0 +1,30 @@
+{
+  "schema": "sim_v2_params/1",
+  "copied_from": "data/calibration/sim_v2_params.json (Round 3, branch round3/simulator commit 20e8b72, sha256 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4); only the entries FactorModel reads, values unchanged",
+  "curve_factors": {
+    "loadings": {
+      "value": {
+        "2y": [0.3383, -0.5378, 0.6533],
+        "3y": [0.3785, -0.4176, -0.0498],
+        "5y": [0.4097, -0.1897, -0.4024],
+        "7y": [0.4177, 0.0127, -0.4127],
+        "10y": [0.3945, 0.1986, -0.1959],
+        "20y": [0.3583, 0.445, 0.2255],
+        "30y": [0.3406, 0.5125, 0.3864]
+      },
+      "unit": "bp of par yield per unit of factor (columns: level, slope, curvature; unit-length columns)"
+    },
+    "daily_sd": {"value": [13.27695, 4.46964, 1.51051], "unit": "bp per day (factor units)"},
+    "sd_per_sqrt_minute": {"value": [0.3178, 0.107, 0.0362], "unit": "bp per sqrt-minute (factor units)"},
+    "idiosyncratic_sd_per_sqrt_minute": {
+      "value": {"2y": 0.0094, "3y": 0.0187, "5y": 0.013, "7y": 0.0122, "10y": 0.0136, "20y": 0.0129, "30y": 0.0118},
+      "unit": "bp per sqrt-minute, independent per tenor"
+    }
+  },
+  "swap_spread_factor": {
+    "daily_sd": {"value": 0.7, "unit": "bp per day, added to every swap rate with loading 1"}
+  },
+  "futures_basis": {
+    "stationary_sd": {"value": 0.15, "unit": "bp of yield of the cheapest-to-deliver (net basis in yield terms)"}
+  }
+}

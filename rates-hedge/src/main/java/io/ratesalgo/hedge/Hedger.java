@@ -1,5 +1,6 @@
 package io.ratesalgo.hedge;
 
+import io.ratesalgo.api.BookSource;
 import io.ratesalgo.api.CurrencyCode;
 import io.ratesalgo.api.Decimal9;
 import io.ratesalgo.api.Dv01Vector;
@@ -58,6 +59,9 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     long maxMidAgeNanos = 5_000_000_000L;
     long parentTimeoutNanos = 60_000_000_000L;
     boolean carryFractionalLots;
+    double budgetStdDev = Double.NaN;
+    long timeStopNanos;
+    boolean passiveFirst;
 
     /** Fraction of the plan sent at the start of an episode. */
     public Config firstTranche(final double f) {
@@ -139,6 +143,40 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       return this;
     }
 
+    /**
+     * Opt-in internalisation (review 2026-11-23, design change 5): hold the residual inside a
+     * variance budget instead of hedging it at the trigger. While the residual's daily sd is
+     * between {@code triggerStdDev} and the budget the hedger holds it (and, with {@link
+     * #passiveFirst}, works a passive hedge at the touch); it crosses the spread only once the sd
+     * reaches the budget or the residual has been above the trigger for {@code stopNanos}.
+     * The budget must be at least the trigger. Off (NaN budget) by default: it changes when the
+     * back-tested desk hedges.
+     */
+    public Config internalise(final double budgetSdUsd, final long stopNanos) {
+      if (!(budgetSdUsd > 0.0) || Double.isInfinite(budgetSdUsd) || stopNanos <= 0) {
+        throw new IllegalArgumentException("budget " + budgetSdUsd + ", time stop " + stopNanos);
+      }
+      budgetStdDev = budgetSdUsd;
+      timeStopNanos = stopNanos;
+      return this;
+    }
+
+    /**
+     * With {@link #internalise}: while holding, rest the planned hedge at our own side's touch
+     * (bid for a buy, offer for a sell) so a passive fill can take the risk down for the half
+     * spread instead of paying it. The passive orders do not count as hedges, and are withdrawn
+     * when the residual is back under the trigger or when the hedger crosses.
+     */
+    public Config passiveFirst(final boolean on) {
+      passiveFirst = on;
+      return this;
+    }
+
+    /** Whether internalisation is configured. */
+    public boolean internalising() {
+      return !Double.isNaN(budgetStdDev);
+    }
+
     /** Parent order ids start above this value. */
     public Config parentIdBase(final long base) {
       parentIdBase = base;
@@ -147,7 +185,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   }
 
   private final CurrencyCode currency;
-  private final HedgePlanner planner;
+  private final HedgePlanning planner;
   private final RiskEngine risk;
   private final HedgeOrderSink sink;
   private final FairValueSource fair;
@@ -162,6 +200,21 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private final long[] parentArrival;
   private final long[] parentSent;
   private final boolean[] parentStalled;
+  // AGGRESSIVE parents count as hedges; PASSIVE ones rest at the touch and do not; WITHDRAWN ones
+  // were passive and have been cancelled, and stay only until the router reports them done
+  private static final byte AGGRESSIVE = 0;
+  private static final byte PASSIVE = 1;
+  private static final byte WITHDRAWN = 2;
+  private static final long NOT_HELD = Long.MIN_VALUE;
+  private final byte[] parentMode;
+  private BookSource touch;
+  private long heldSince = NOT_HELD;
+  private long internalisedTimers;
+  private long passiveSent;
+  private long passiveWithdrawn;
+  private long passiveRefusals;
+  private long budgetBreaches;
+  private long timeStops;
   private int parentCount;
   private long nextParentId;
   // parents dropped by the last kill: a fill that raced the cancel-all is still booked (DR-R2R-13)
@@ -201,7 +254,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   /** A hedger for {@code currency}. */
   public Hedger(
       final CurrencyCode currency,
-      final HedgePlanner planner,
+      final HedgePlanning planner,
       final RiskEngine risk,
       final HedgeOrderSink sink,
       final FairValueSource fair,
@@ -223,6 +276,11 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentArrival = new long[config.maxParents];
     parentSent = new long[config.maxParents];
     parentStalled = new boolean[config.maxParents];
+    parentMode = new byte[config.maxParents];
+    if (config.internalising() && config.budgetStdDev < config.triggerStdDev) {
+      throw new IllegalArgumentException(
+          "internalisation budget " + config.budgetStdDev + " below the trigger " + config.triggerStdDev);
+    }
     carry = new double[universe.size()];
     killedId = new long[config.maxParents];
     killedInstrument = new int[config.maxParents];
@@ -241,6 +299,14 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     gate = inputGate == null ? HedgeInputGate.ALWAYS : inputGate;
   }
 
+  /**
+   * Sets the book whose touch prices passive hedges ({@link Config#passiveFirst}); {@code null}
+   * removes it, and passive hedges are then not sent (the time stop still crosses).
+   */
+  public void touch(final BookSource book) {
+    touch = book;
+  }
+
   /** Sets the listener told of stalled parents; {@code null} removes it. */
   public void stallListener(final StallListener listener) {
     stallListener = listener == null ? StallListener.NONE : listener;
@@ -253,6 +319,9 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     measure();
     analytics.recordResidual(epochNanos, residualVariance, residual.parallel());
     final boolean allowed = risk.killSwitch().isActive() || risk.flattenOnly();
+    if (config.internalising()) {
+      return internalise(epochNanos, now, allowed);
+    }
     if (!allowed || Math.sqrt(residualVariance) < config.triggerStdDev) {
       endEpisode();
       return 0;
@@ -263,6 +332,60 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       unhealthyTimers++;
       return 0;
     }
+    return sendTranches(epochNanos);
+  }
+
+  /**
+   * The internalising timer: hold inside the budget, rest passively at the touch if configured,
+   * cross on a budget breach or at the time stop. The input gate, the stale-mid check and the
+   * stalled-parent timeout apply as on the default path; the time stop's clock keeps running
+   * while the inputs are unhealthy, so a desk that recovers past its time stop crosses at once.
+   */
+  private int internalise(final long epochNanos, final long now, final boolean allowed) {
+    final double sd = Math.sqrt(residualVariance);
+    if (!allowed || sd < config.triggerStdDev) {
+      // back inside tolerance: a resting hedge would now add risk
+      withdrawPassive();
+      heldSince = NOT_HELD;
+      endEpisode();
+      return 0;
+    }
+    if (heldSince == NOT_HELD) {
+      heldSince = now;
+    }
+    if (!gate.healthy(now)) {
+      unhealthyTimers++;
+      return 0;
+    }
+    final boolean breach = sd >= config.budgetStdDev;
+    if (breach || now - heldSince >= config.timeStopNanos) {
+      if (!episode) {
+        if (breach) {
+          budgetBreaches++;
+        } else {
+          timeStops++;
+        }
+      }
+      withdrawPassive();
+      return sendTranches(epochNanos);
+    }
+    internalisedTimers++;
+    if (!config.passiveFirst || livePassive() > 0) {
+      return 0;
+    }
+    planner.plan(residual);
+    int sent = 0;
+    for (int j = 0; j < universe.size(); j++) {
+      final long whole = Math.round(planner.lots(j));
+      if (whole != 0 && submit(j, whole, heldSince + config.timeStopNanos, true)) {
+        sent++;
+      }
+    }
+    return sent;
+  }
+
+  /** Plans and sends this timer's tranche of the hedge: the default path's schedule. */
+  private int sendTranches(final long epochNanos) {
     planner.plan(residual);
     final boolean first = !episode;
     final double fraction;
@@ -299,7 +422,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       if (Math.abs(lots) > Math.abs(whole)) {
         lots = whole;
       }
-      if (submit(j, lots, first ? 0L : epochNanos + config.halfLifeNanos)) {
+      if (submit(j, lots, first ? 0L : epochNanos + config.halfLifeNanos, false)) {
         sent++;
       }
     }
@@ -352,6 +475,66 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       }
     }
     return false;
+  }
+
+  /**
+   * Adds to {@code out} the PV01 of every working parent that counts as a hedge (not timed out,
+   * not resting passively), at its remaining quantity now. The quoting engine's reservation price
+   * reads the book through this, so a hedge already sent is not hedged again through the skew.
+   * Allocation-free.
+   */
+  public void addWorking(final Dv01Vector out) {
+    for (int p = 0; p < parentCount; p++) {
+      if (parentStalled[p] || parentMode[p] != AGGRESSIVE) {
+        continue;
+      }
+      final int id = parentInstrument[p];
+      final double qty = risk.directory().byId(id).major(parentRemaining[p]);
+      for (int k = 0; k < K; k++) {
+        out.add(k, risk.unitPv01(id, k) * qty);
+      }
+    }
+  }
+
+  /** Timers on which the hedger held the residual inside the budget. */
+  public long internalisedTimers() {
+    return internalisedTimers;
+  }
+
+  /** Passive parents sent at the touch. */
+  public long passiveSent() {
+    return passiveSent;
+  }
+
+  /** Passive parents withdrawn (back under the trigger, or the hedger crossed). */
+  public long passiveWithdrawn() {
+    return passiveWithdrawn;
+  }
+
+  /** Passive parents not sent for want of a fresh touch. */
+  public long passiveRefusals() {
+    return passiveRefusals;
+  }
+
+  /** Hedging episodes started by a budget breach. */
+  public long budgetBreaches() {
+    return budgetBreaches;
+  }
+
+  /** Hedging episodes started by the time stop. */
+  public long timeStops() {
+    return timeStops;
+  }
+
+  /** Passive parents resting now. */
+  public int livePassive() {
+    int n = 0;
+    for (int p = 0; p < parentCount; p++) {
+      if (parentMode[p] == PASSIVE) {
+        n++;
+      }
+    }
+    return n;
   }
 
   /** Fills booked on parents after a kill had dropped them. */
@@ -500,8 +683,8 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private void measure() {
     risk.ladder(currency, residual);
     for (int p = 0; p < parentCount; p++) {
-      if (parentStalled[p]) {
-        continue; // timed out: its remainder is open risk until a fill says otherwise
+      if (parentStalled[p] || parentMode[p] != AGGRESSIVE) {
+        continue; // timed out, or resting passively: open risk until a fill says otherwise
       }
       final int id = parentInstrument[p];
       final double qty = risk.directory().byId(id).major(parentRemaining[p]);
@@ -524,7 +707,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     residualVariance = v;
   }
 
-  private boolean submit(final int j, final long lots, final long urgency) {
+  private boolean submit(final int j, final long lots, final long urgency, final boolean passive) {
     if (parentCount == parentId.length) {
       parentsRefused++;
       return false;
@@ -545,9 +728,23 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     }
     final Side side = lots > 0 ? Side.Buy : Side.Sell;
     final long qty = Math.abs(lots) * universe.lotMinor(j);
-    final double offset = config.limitBp * risk.quotePerBp(instrumentId);
-    final double mid = Decimal9.toDouble(arrival);
-    final long limit = side == Side.Buy ? Decimal9.ceil(mid + offset) : Decimal9.floor(mid - offset);
+    final long limit;
+    if (passive) {
+      // join our own side of the book: it cannot cross, and it earns the half spread if filled
+      final long price =
+          touch == null ? FairValueSource.NO_VALUE : side == Side.Buy ? touch.bestBid(instrumentId) : touch.bestAsk(instrumentId);
+      final long updated = touch == null ? FairValueSource.NO_VALUE : touch.updateNanos(instrumentId);
+      if (price == FairValueSource.NO_VALUE || updated == FairValueSource.NO_VALUE || now - updated > config.maxMidAgeNanos) {
+        passiveRefusals++;
+        parentsRefused++;
+        return false;
+      }
+      limit = price;
+    } else {
+      final double offset = config.limitBp * risk.quotePerBp(instrumentId);
+      final double mid = Decimal9.toDouble(arrival);
+      limit = side == Side.Buy ? Decimal9.ceil(mid + offset) : Decimal9.floor(mid - offset);
+    }
     if (risk.checkOrder(instrumentId, side, qty, limit, 0L) != RiskEngine.OK) {
       parentsRefused++;
       return false;
@@ -567,8 +764,12 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentArrival[parentCount] = arrival;
     parentSent[parentCount] = now;
     parentStalled[parentCount] = false;
+    parentMode[parentCount] = passive ? PASSIVE : AGGRESSIVE;
     parentCount++;
     parentsSent++;
+    if (passive) {
+      passiveSent++;
+    }
     return true;
   }
 
@@ -586,6 +787,18 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       stalledParents++;
       stallListener.onParentStalled(id, parentInstrument[p], parentRemaining[p], now - parentSent[p]);
       sink.cancel(id);
+    }
+  }
+
+  /** Cancels every resting passive parent; it stops counting at once, its reservation stays. */
+  private void withdrawPassive() {
+    for (int p = parentCount - 1; p >= 0; p--) {
+      if (p >= parentCount || parentMode[p] != PASSIVE) {
+        continue;
+      }
+      parentMode[p] = WITHDRAWN;
+      passiveWithdrawn++;
+      sink.cancel(parentId[p]);
     }
   }
 
@@ -617,6 +830,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentArrival[p] = parentArrival[last];
     parentSent[p] = parentSent[last];
     parentStalled[p] = parentStalled[last];
+    parentMode[p] = parentMode[last];
     parentCount = last;
   }
 }

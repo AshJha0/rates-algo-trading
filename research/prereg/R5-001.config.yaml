@@ -1,0 +1,20 @@
+# Configuration of R5-001 (DRAFT). Hashed into research/prereg/R5-001.yaml.
+study: R5-001
+design: docs/research/STRATEGY_V2.md Section 2
+simulator: Round 3 MarketModel (docs/research/SIM_V2_DESIGN.md)
+simulator_params: data/calibration/sim_v2_params.json
+simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+client_rule: best_price (headline); the logistic hit-rate rule only as a sensitivity
+arms:
+  default: "DeskSettings.defaults()"
+  cover_pricing: "DeskSettings.defaults() with quoting().strategy(new StrategyConfig().coverPricing(true))"
+seeds: {confirmation_base: 32000000, pilot_base: 29000000, pilot_sessions: 200, minimum_sessions: 2000}
+smallest_effect: {usd_per_session: 24000, bp_of_client_dv01: 0.02}
+session: {start_ny: "07:00", end_ny: "17:00", step_seconds: 1, day_type: "index mod 21: 0-3 release, 4 FOMC, 5-10 auction, else none"}
+marking: latent mid (SIM_V2_DESIGN.md Section 4)
+statistics: {test: paired_t, interval: moving_block_bootstrap, block_sessions: 21, resamples: 2000, bootstrap_seed: 5, family: benjamini_hochberg_q_0.05}
+band:
+  winner_half_spread: "competitors.median_half_spread at 0.1228 and 0.2719 bp (central 0.1827), informed_flow.expected_adverse_move re-solved for zero profit"
+  all_in_cost: "competitors.all_in_cost at 0.05 and 0.15 bp (central 0.08), adverse move re-solved"
+  informed_fraction: "informed_flow.informed_fraction at 0.2 and 1.0 (central 0.5) at fixed average move"
+  drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s (central 10 s)"

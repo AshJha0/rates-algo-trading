@@ -1,0 +1,26 @@
+# Configuration of R5-007 (DRAFT). Hashed into research/prereg/R5-007.yaml.
+study: R5-007
+design: docs/research/STRATEGY_V2.md Section 8
+simulator: Round 3 MarketModel (docs/research/SIM_V2_DESIGN.md)
+simulator_params: data/calibration/sim_v2_params.json
+simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+client_rule: best_price (headline); the logistic hit-rate rule only as a sensitivity
+arms:
+  default: "DeskSettings.defaults()"
+  v2: "DeskSettings.strategyV2()"
+seeds: {confirmation_base: 38000000, pilot_base: 29000000, pilot_sessions: 200, minimum_sessions: 2000}
+smallest_effect: {usd_per_session: 24000, bp_of_client_dv01: 0.02}
+session: {start_ny: "07:00", end_ny: "17:00", step_seconds: 1, day_type: "index mod 21: 0-3 release, 4 FOMC, 5-10 auction, else none"}
+marking: latent mid (SIM_V2_DESIGN.md Section 4)
+statistics: {test: paired_t, interval: moving_block_bootstrap, block_sessions: 21, resamples: 2000, bootstrap_seed: 5, family: benjamini_hochberg_q_0.05}
+band:
+  winner_half_spread: "competitors.median_half_spread at 0.1228 and 0.2719 bp (central 0.1827), informed_flow.expected_adverse_move re-solved for zero profit"
+  all_in_cost: "competitors.all_in_cost at 0.05 and 0.15 bp (central 0.08), adverse move re-solved"
+  informed_fraction: "informed_flow.informed_fraction at 0.2 and 1.0 (central 0.5) at fixed average move"
+  drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s (central 10 s)"
+  level_vol: "curve factor sds scaled by 0.76 and 1.29 (the 2015-2018 and 2022-2025 values)"
+  spread_factor: "swap_spread_factor.daily_sd at 0.3 and 1.3 bp (central 0.7)"
+  impact: "clob.impact_coefficient_Y at 0.3 and 1.5 (central 0.7)"
+  basis: "futures_basis.stationary_sd at 0.05 and 0.4 bp (central 0.15), when a futures book is wired"
+  taker_skill: "clob.taker_sign_skill at 0.0 and 0.2 (central 0.1)"
+  impact_half_life: "clob.impact_half_life at 5 s and 120 s (central 30 s)"
