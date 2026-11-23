@@ -105,6 +105,8 @@ public final class DeskGroup {
   private long hedgeFills;
   private long unroutedReports;
   private long duplicateBusts;
+  private long duplicateFills;
+  private final ClobReconciler reconciler = new ClobReconciler();
   private long unknownBusts;
   private long venueOverfills;
   private long venueOverfillQuantity;
@@ -377,8 +379,9 @@ public final class DeskGroup {
   private void onExecutionReport(final int templateId, final DirectBuffer buffer, final int offset, final int length) {
     start();
     execution.wrapAndApplyHeader(buffer, offset, header);
+    boolean seenBefore = false;
     if (execution.lastQuantity() > 0) {
-      tradesSeen.add(tradeKey(execution.venueId(), execution.execId()));
+      seenBefore = !tradesSeen.add(tradeKey(execution.venueId(), execution.execId()));
     }
     if (execution.venueId() == AppIds.D2C_VENUE) {
       // the RFQ venue's fill confirmation repeats the QuoteResponse that booked the trade
@@ -387,6 +390,14 @@ public final class DeskGroup {
     }
     final long clOrdId = execution.clOrdId();
     if (!AppIds.isRouterOrder(clOrdId)) {
+      if (seenBefore) {
+        // The same fill again: a venue resends fills after a reconnect, and after a restart the
+        // gateway no longer remembers which it has passed on. The quoting engine books a fill
+        // each time it is shown one, so the repeat stops here. (The routers drop repeats
+        // themselves, by the same venue and execution id.)
+        duplicateFills++;
+        return;
+      }
       desk.handler().onMessage(buffer, offset, journalSeq());
       return;
     }
@@ -397,6 +408,11 @@ public final class DeskGroup {
     }
     final SmartOrderRouter router = routers[r];
     final long child = clOrdId & ~AppIds.CANCEL_FLAG;
+    if (reconciler.isOpen() && execution.venueId() == AppIds.CLOB_VENUE) {
+      // a line of the venue's answer, whether or not the router still knows the order: one it
+      // does not know and the venue still works is an orphan the reconciliation cancels
+      reconciler.onReport(child, execution.ordStatus(), execution.cumQuantity());
+    }
     final ChildOrderBook children = router.children();
     final int slot = children.slotOf(child);
     if (slot < 0) {
@@ -483,10 +499,22 @@ public final class DeskGroup {
   private void onGatewayStatus(final int templateId, final DirectBuffer buffer, final int offset, final int length) {
     start();
     final int gateway = ControlMessages.gatewayStatusGateway(buffer, offset);
-    final boolean up = ControlMessages.gatewayStatus(buffer, offset) == ControlMessages.STATUS_CONNECTED;
+    final byte status = ControlMessages.gatewayStatus(buffer, offset);
+    final boolean up = status == ControlMessages.STATUS_CONNECTED || status == ControlMessages.STATUS_RECONCILED;
     switch (gateway) {
       case AppIds.D2C_GATEWAY -> desk.health().onSession(AppIds.D2C_VENUE, up);
       case AppIds.CLOB_GATEWAY -> {
+        // A session that came back is not usable yet: RECONCILING opens the window in which the
+        // venue says what it holds for us, and only RECONCILED, after the routers have settled
+        // their children against that, brings the venue up. Quoting stays pulled in between,
+        // because the input health counts the session as down.
+        if (status == ControlMessages.STATUS_RECONCILING) {
+          reconciler.begin();
+        } else if (status == ControlMessages.STATUS_RECONCILED) {
+          reconciler.finish(AppIds.CLOB_VENUE, routers);
+        } else {
+          reconciler.abandon();
+        }
         desk.health().onSession(AppIds.CLOB_VENUE, up);
         clobSessionUp = up;
         applyClobHealth();
@@ -499,6 +527,12 @@ public final class DeskGroup {
         if (up) {
           if (clobSeq != 0) {
             desk.health().onBookSequence(AppIds.CLOB_VENUE, clobSeq);
+          } else {
+            // The rebuild delivered no frame (an empty book): there is no sequence to be seated
+            // on, and the last one from before the gap may belong to a venue that has restarted
+            // and counts from the beginning. The next frame is taken as it comes; the feed
+            // binding has already checked that it follows the snapshot.
+            desk.health().onFeedRestart(AppIds.CLOB_VENUE);
           }
           desk.health().onFeedRecovered(AppIds.CLOB_VENUE);
           clobBookNanos = loop.clock().epochNanos();
@@ -509,6 +543,7 @@ public final class DeskGroup {
           if (clobFeedWhole) {
             feedGaps++;
           }
+          clobSeq = 0; // the snapshot that follows says where the sequence stands
         }
         clobFeedWhole = up;
         applyClobHealth();
@@ -584,6 +619,41 @@ public final class DeskGroup {
     return duplicateBusts;
   }
 
+  /** Repeated fills on the quoting engine's own orders, dropped by venue and execution id. */
+  public long duplicateFills() {
+    return duplicateFills;
+  }
+
+  /** Order reconciliations with the CLOB completed after its session came back. */
+  public long reconciliations() {
+    return reconciler.runs();
+  }
+
+  /** Router children a reconciliation found the CLOB did not list; each was sent a cancel. */
+  public long reconcileMissing() {
+    return reconciler.missingAtVenue();
+  }
+
+  /** Router children checked against the CLOB, over every reconciliation. */
+  public long reconcileChecked() {
+    return reconciler.checked();
+  }
+
+  /** Orders the CLOB worked that no router held, cancelled by a reconciliation. */
+  public long reconcileOrphans() {
+    return reconciler.orphansCancelled();
+  }
+
+  /** Quantity reconciliations released for re-routing. */
+  public long reconcileReleased() {
+    return reconciler.releasedQuantity();
+  }
+
+  /** True while the CLOB's order status is being collected. */
+  public boolean reconciling() {
+    return reconciler.isOpen();
+  }
+
   /** TradeBusts ignored because this desk never booked the execution they name. */
   public long unknownBusts() {
     return unknownBusts;
@@ -646,6 +716,55 @@ public final class DeskGroup {
       }
     }
     return n;
+  }
+
+  /**
+   * A digest of what this desk would trade on: positions and pending quantity per instrument, the
+   * quoting engine's counts, the kill switch, the hedger's working parents with what each still
+   * has to fill, every router child and whether it is live or finished, the session and feed flags and the number of
+   * timers armed. Two desks with the same digest have been through the same inputs; the restart
+   * test compares a desk rebuilt from its journals with the desk as it stood. Loop thread, or a
+   * loop that is not running.
+   */
+  public long stateDigest(final int[] instrumentIds) {
+    long h = 0x9E3779B97F4A7C15L;
+    for (final int id : instrumentIds) {
+      h = mix(h, desk.risk().position(id));
+      h = mix(h, desk.risk().pendingBuy(id));
+      h = mix(h, desk.risk().pendingSell(id));
+    }
+    h = mix(h, desk.quoting().liveQuotes());
+    h = mix(h, desk.quoting().quotesSent());
+    h = mix(h, desk.quoting().fills());
+    h = mix(h, desk.killSwitch().isActive() ? 1L : 0L);
+    h = mix(h, desk.risk().flattenOnly() ? 1L : 0L);
+    h = mix(h, hedger.workingParents());
+    for (int i = 0; i < hedger.workingParents(); i++) {
+      final long parent = hedger.workingParentId(i);
+      h = mix(h, parent);
+      h = mix(h, hedger.remaining(parent));
+    }
+    h = mix(h, hedgeSink.accepted());
+    h = mix(h, hedgeFills);
+    h = mix(h, rfqConfirmations);
+    for (final SmartOrderRouter router : routers) {
+      final ChildOrderBook children = router.children();
+      h = mix(h, children.highWater());
+      for (int cs = 0; cs < children.highWater(); cs++) {
+        if (children.inUse(cs)) {
+          h = mix(h, children.clOrdId(cs));
+          h = mix(h, ChildOrderBook.isLive(children.state(cs)) ? 1L : ChildOrderBook.isTerminal(children.state(cs)) ? 2L : 3L);
+        }
+      }
+    }
+    h = mix(h, (clobSessionUp ? 1L : 0L) | (clobFeedWhole ? 2L : 0L) | (started ? 4L : 0L));
+    h = mix(h, clobSeq);
+    return mix(h, loop.timers().liveCount());
+  }
+
+  private static long mix(final long h, final long value) {
+    final long x = (h ^ value) * 0x100000001B3L;
+    return x ^ (x >>> 29);
   }
 
   /** The loop this desk runs on. */

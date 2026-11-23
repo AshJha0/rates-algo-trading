@@ -178,6 +178,33 @@ public final class InboundRouter implements MessageSink {
     return publish(g, buffer, offset, length, marketData);
   }
 
+  /**
+   * Shows the router one inbound frame a group's loop is replaying after a restart, so that it
+   * knows again which group each open RFQ belongs to: a QuoteResponse the venue resends, or sends
+   * late, for an RFQ received before the stop would otherwise have no group to go to. Nothing is
+   * published. Call on the thread that builds the process, before the gateway thread runs.
+   */
+  public void restore(final int group, final DirectBuffer buffer, final int offset, final int length) {
+    if (RingBufferContract.schemaId(buffer, offset) == ControlMessages.SCHEMA_ID) {
+      return;
+    }
+    final int templateId = RingBufferContract.templateId(buffer, offset);
+    if (templateId == QuoteRequestDecoder.TEMPLATE_ID) {
+      quoteRequest.wrapAndApplyHeader(buffer, offset, header);
+      rfqGroup.put(rfqKey(quoteRequest.venueId(), quoteRequest.rfqId()), group);
+    } else if (templateId == QuoteResponseDecoder.TEMPLATE_ID) {
+      quoteResponse.wrapAndApplyHeader(buffer, offset, header);
+      if (quoteResponse.status() != QuoteStatus.Rejected) {
+        rfqGroup.remove(rfqKey(quoteResponse.venueId(), quoteResponse.rfqId()));
+      }
+    }
+  }
+
+  /** RFQs whose group is remembered: those still waiting for a final response. */
+  public int openRfqs() {
+    return rfqGroup.size();
+  }
+
   private static long rfqKey(final int venueId, final long rfqId) {
     return ((long) venueId << 48) ^ rfqId;
   }

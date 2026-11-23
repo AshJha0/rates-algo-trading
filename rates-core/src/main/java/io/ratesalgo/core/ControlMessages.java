@@ -49,6 +49,15 @@ public final class ControlMessages {
    */
   public static final byte STATUS_RECONNECTING = 3;
 
+  /**
+   * The session is logged on again after a drop or a restart and is asking the venue what it holds
+   * for us. The loop keeps the venue down until {@link #STATUS_RECONCILED}.
+   */
+  public static final byte STATUS_RECONCILING = 4;
+
+  /** The venue has answered: every order status it holds for us precedes this in the ring. */
+  public static final byte STATUS_RECONCILED = 5;
+
   private static final ByteOrder LE = ByteOrder.LITTLE_ENDIAN;
 
   private ControlMessages() {}

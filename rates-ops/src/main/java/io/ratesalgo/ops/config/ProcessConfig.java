@@ -1,5 +1,7 @@
 package io.ratesalgo.ops.config;
 
+import io.ratesalgo.common.security.Secret;
+import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.ops.http.OpsHttpServer;
 import java.io.IOException;
 import java.io.Reader;
@@ -22,7 +24,13 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * process-mode runs: {@code RATES_HTTP_PORT}, {@code RATES_HTTP_BIND} and {@code
  * RATES_JOURNAL_DIR}. Overrides are applied before validation. The files bind loopback; a
  * container, whose published port reaches only a non-loopback address, sets {@code
- * RATES_HTTP_BIND=0.0.0.0}, and the server then insists on a control token.
+ * RATES_HTTP_BIND=0.0.0.0}, and the server then insists on a control token and on {@code http.tls}.
+ *
+ * <p>No password is ever part of a configuration file. A key store password, a trust store
+ * password and the FIX logon password are each named by an environment variable ({@code ...Env})
+ * or a file ({@code ...File}), exactly one of the two, and read when the process starts ({@link
+ * #securityProblem}). This record therefore holds names and paths only, and so does its {@code
+ * toString}.
  *
  * @param name process name
  * @param role {@code trading} or {@code venue-sim}
@@ -39,6 +47,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * @param loopIdleStrategy idle strategy of the loop threads: {@code busy-spin}, {@code yield} or
  *     {@code backoff} (the default when the {@code runtime} section is absent)
  * @param loopCpu CPU the loop thread is pinned to on Linux, or -1 for none (the default)
+ * @param httpKeyStore key store of the HTTPS endpoints ({@code http.tls}), or null for plain HTTP
+ * @param fix the {@code fix} section; {@link FixSettings#SIMULATOR} when it is absent
  */
 public record ProcessConfig(
     String name,
@@ -54,10 +64,113 @@ public record ProcessConfig(
     int maxMessagesPerSecond,
     int retentionYears,
     String loopIdleStrategy,
-    int loopCpu) {
+    int loopCpu,
+    StoreRef httpKeyStore,
+    FixSettings fix) {
 
   /** Idle strategy when the configuration names none: what the process always used. */
   public static final String DEFAULT_LOOP_IDLE_STRATEGY = "backoff";
+
+  /**
+   * Where a password comes from: an environment variable or a file, exactly one of the two.
+   *
+   * @param envName the environment variable, or null
+   * @param file the file, or null
+   */
+  public record SecretRef(String envName, String file) {
+
+    public SecretRef {
+      if ((envName == null) == (file == null)) {
+        throw new IllegalArgumentException("a password is named by an environment variable or a file, exactly one");
+      }
+    }
+
+    Secret read(final Map<String, String> env) {
+      return Secret.fromEnvOrFile(env, envName, file);
+    }
+
+    /** Why the password cannot be read, or null. Names the variable or the file, never a value. */
+    String problem(final String key, final Map<String, String> env) {
+      if (envName != null) {
+        final String value = env.get(envName);
+        return value == null || value.isEmpty() ? key + "Env names " + envName + ", which is not set" : null;
+      }
+      return readable(file) ? null : key + "File " + file + " cannot be read";
+    }
+  }
+
+  /**
+   * A PKCS#12 store and where its password comes from.
+   *
+   * @param path the store file
+   * @param password its password
+   */
+  public record StoreRef(String path, SecretRef password) {
+
+    String problem(final String key, final Map<String, String> env) {
+      if (!readable(path)) {
+        return key + "Path " + path + " cannot be read";
+      }
+      return password.problem(key + "Password", env);
+    }
+  }
+
+  /**
+   * The {@code fix} section: how the FIX sessions between the trading process and its in-process
+   * venue simulators run.
+   *
+   * @param resetOnLogon true to restart sequence numbers at every logon, false to resume them
+   * @param tls true for transport {@code tls}, false for {@code plain-loopback}
+   * @param clientTrustStore initiator: whom it believes ({@code fix.tls.trustStore*})
+   * @param clientKeyStore initiator: its client certificate, or null
+   * @param verifyHostname initiator: whether the certificate must name the host dialled
+   * @param handshakeTimeoutMillis initiator: time allowed for a handshake
+   * @param acceptorKeyStore acceptors: their certificate ({@code fix.acceptor.keyStore*})
+   * @param acceptorTrustStore acceptors: the client certificates they accept, or null
+   * @param requireClientCertificate acceptors: refuse a client with no accepted certificate
+   * @param username Logon Username(553), or null for no credentials
+   * @param password where Logon Password(554) comes from, or null
+   * @param reconnectMaxAttempts reconnection attempts before the session is given up
+   * @param reconnectInitialBackoffMillis wait before the first reconnection attempt
+   * @param reconnectMaxBackoffMillis cap of the doubling wait
+   */
+  public record FixSettings(
+      boolean resetOnLogon,
+      boolean tls,
+      StoreRef clientTrustStore,
+      StoreRef clientKeyStore,
+      boolean verifyHostname,
+      long handshakeTimeoutMillis,
+      StoreRef acceptorKeyStore,
+      StoreRef acceptorTrustStore,
+      boolean requireClientCertificate,
+      String username,
+      SecretRef password,
+      int reconnectMaxAttempts,
+      long reconnectInitialBackoffMillis,
+      long reconnectMaxBackoffMillis) {
+
+    /** What a configuration with no {@code fix} section runs: the simulator preset. */
+    public static final FixSettings SIMULATOR =
+        new FixSettings(true, false, null, null, true, 5000, null, null, false, null, null, 5, 100, 2000);
+
+    /** What transport {@code tls} still lacks, or null. The loader refuses the same cases. */
+    String incomplete() {
+      if (!tls) {
+        return null;
+      }
+      if (clientTrustStore == null) {
+        return "fix.transport is tls but fix.tls.trustStorePath is missing";
+      }
+      if (acceptorKeyStore == null) {
+        return "fix.transport is tls but fix.acceptor.keyStorePath is missing";
+      }
+      if (requireClientCertificate && (acceptorTrustStore == null || clientKeyStore == null)) {
+        return "fix.acceptor.requireClientCertificate needs fix.acceptor.trustStorePath and fix.tls.keyStorePath";
+      }
+      return null;
+    }
+  }
 
   public ProcessConfig {
     final List<int[]> copy = new ArrayList<>();
@@ -85,15 +198,137 @@ public record ProcessConfig(
 
   /**
    * Why this process may not serve its control endpoints, or null if it may: a bind address that is
-   * not loopback needs a control token. Checked before anything is started, so the refusal reads
-   * like any other configuration error.
+   * not loopback needs a control token and {@code http.tls}. Checked before anything is started, so
+   * the refusal reads like any other configuration error.
    */
   public String controlBindProblem(final Map<String, String> env) {
-    if (controlToken(env) != null || OpsHttpServer.isLoopback(bindAddress)) {
+    if (OpsHttpServer.isLoopback(bindAddress)) {
       return null;
     }
-    return "http.bindAddress " + bindAddress + " is not loopback and " + controlTokenEnv
-        + " is not set: the control endpoints would be open to the network";
+    if (controlToken(env) == null) {
+      return "http.bindAddress " + bindAddress + " is not loopback and " + controlTokenEnv
+          + " is not set: the control endpoints would be open to the network";
+    }
+    return httpKeyStore == null ? noHttpTls() : null;
+  }
+
+  private String noHttpTls() {
+    return "http.bindAddress " + bindAddress + " is not loopback and http.tls is not configured: "
+        + "the control token would cross the network in clear text";
+  }
+
+  /**
+   * Why this process may not start with its TLS and credential settings, or null if it may. One
+   * message for the first of: a bind address that is not loopback without {@code http.tls}; TLS
+   * transport with a part missing; a store or password file that cannot be read; a password
+   * variable that is not set. The message names the key and the variable or file, never a value.
+   */
+  public String securityProblem(final Map<String, String> env) {
+    if (httpKeyStore == null && !OpsHttpServer.isLoopback(bindAddress)) {
+      return noHttpTls();
+    }
+    String problem = fix.incomplete();
+    if (problem == null && httpKeyStore != null) {
+      problem = httpKeyStore.problem("http.tls.keyStore", env);
+    }
+    if (problem == null && fix.tls()) {
+      problem = firstProblem(env, "fix.tls.trustStore", fix.clientTrustStore(), "fix.tls.keyStore",
+          fix.clientKeyStore(), "fix.acceptor.keyStore", fix.acceptorKeyStore(), "fix.acceptor.trustStore",
+          fix.acceptorTrustStore());
+    }
+    if (problem == null && fix.password() != null) {
+      problem = fix.password().problem("fix.credentials.password", env);
+    }
+    return problem;
+  }
+
+  private static String firstProblem(final Map<String, String> env, final Object... keysAndStores) {
+    for (int i = 0; i < keysAndStores.length; i += 2) {
+      if (keysAndStores[i + 1] instanceof StoreRef store) {
+        final String problem = store.problem((String) keysAndStores[i], env);
+        if (problem != null) {
+          return problem;
+        }
+      }
+    }
+    return null;
+  }
+
+  private static boolean readable(final String file) {
+    final Path path = Path.of(file);
+    return Files.isRegularFile(path) && Files.isReadable(path);
+  }
+
+  /** TLS for the HTTP endpoints, or null when {@code http.tls} is absent (plain HTTP, loopback only). */
+  public TlsConfig httpTls(final Map<String, String> env) {
+    if (httpKeyStore == null) {
+      return null;
+    }
+    return TlsConfig.builder().keyStore(Path.of(httpKeyStore.path()), httpKeyStore.password().read(env)).build();
+  }
+
+  /** True to restart FIX sequence numbers at every logon; false to resume them after a restart. */
+  public boolean fixResetOnLogon() {
+    return fix.resetOnLogon();
+  }
+
+  /** True when the FIX transport is TLS; false for plain loopback. */
+  public boolean fixTls() {
+    return fix.tls();
+  }
+
+  /** TLS for the FIX initiators, or null when the transport is plain loopback. */
+  public TlsConfig fixClientTls(final Map<String, String> env) {
+    if (!fix.tls()) {
+      return null;
+    }
+    final TlsConfig.Builder b = TlsConfig.builder()
+        .trustStore(Path.of(fix.clientTrustStore().path()), fix.clientTrustStore().password().read(env))
+        .verifyHostname(fix.verifyHostname())
+        .handshakeTimeoutNanos(fix.handshakeTimeoutMillis() * 1_000_000L);
+    if (fix.clientKeyStore() != null) {
+      b.keyStore(Path.of(fix.clientKeyStore().path()), fix.clientKeyStore().password().read(env));
+    }
+    return b.build();
+  }
+
+  /** TLS for the in-process venue simulators' acceptors, or null when the transport is plain loopback. */
+  public TlsConfig fixAcceptorTls(final Map<String, String> env) {
+    if (!fix.tls()) {
+      return null;
+    }
+    final TlsConfig.Builder b = TlsConfig.builder()
+        .keyStore(Path.of(fix.acceptorKeyStore().path()), fix.acceptorKeyStore().password().read(env))
+        .requireClientCertificate(fix.requireClientCertificate());
+    if (fix.acceptorTrustStore() != null) {
+      b.trustStore(Path.of(fix.acceptorTrustStore().path()), fix.acceptorTrustStore().password().read(env));
+    }
+    return b.build();
+  }
+
+  /** FIX Logon Username(553), or null when no credentials are configured. */
+  public String fixUsername() {
+    return fix.username();
+  }
+
+  /** FIX Logon Password(554), or null when no credentials are configured. */
+  public Secret fixPassword(final Map<String, String> env) {
+    return fix.password() == null ? null : fix.password().read(env);
+  }
+
+  /** Reconnection attempts before a FIX session is given up. */
+  public int fixReconnectMaxAttempts() {
+    return fix.reconnectMaxAttempts();
+  }
+
+  /** Wait before the first FIX reconnection attempt. */
+  public long fixReconnectInitialBackoffNanos() {
+    return fix.reconnectInitialBackoffMillis() * 1_000_000L;
+  }
+
+  /** Cap of the doubling wait between FIX reconnection attempts. */
+  public long fixReconnectMaxBackoffNanos() {
+    return fix.reconnectMaxBackoffMillis() * 1_000_000L;
   }
 
   /** Raised when a configuration does not validate; carries every violation. */
@@ -128,8 +363,109 @@ public record ProcessConfig(
   /** Validates a configuration file without overrides; the list is empty when valid. */
   public static List<String> check(final Path configFile, final JsonSchema schema) throws IOException {
     try (Reader r = Files.newBufferedReader(configFile, StandardCharsets.UTF_8)) {
-      return schema.validate(parse(r));
+      return validate(parse(r), schema);
     }
+  }
+
+  /** The schema's violations, or, for a document of the right shape, the rules a schema cannot state. */
+  private static List<String> validate(final Object doc, final JsonSchema schema) {
+    final List<String> errors = schema.validate(doc);
+    return errors.isEmpty() ? structuralErrors((Map<?, ?>) doc) : errors;
+  }
+
+  /**
+   * The rules the schema subset cannot express: each password by exactly one of {@code ...Env} and
+   * {@code ...File}, and the parts transport {@code tls} needs. An inline password never gets this
+   * far: the schema allows no such key.
+   */
+  private static List<String> structuralErrors(final Map<?, ?> root) {
+    final List<String> errors = new ArrayList<>();
+    checkStore(section(section(root, "http"), "tls"), "$.http.tls", "keyStore", errors);
+    final Map<?, ?> fix = section(root, "fix");
+    final Map<?, ?> tls = section(fix, "tls");
+    final Map<?, ?> acceptor = section(fix, "acceptor");
+    checkStore(tls, "$.fix.tls", "trustStore", errors);
+    checkStore(tls, "$.fix.tls", "keyStore", errors);
+    checkStore(acceptor, "$.fix.acceptor", "keyStore", errors);
+    checkStore(acceptor, "$.fix.acceptor", "trustStore", errors);
+    if ("tls".equals(fix.get("transport"))) {
+      if (!tls.containsKey("trustStorePath")) {
+        errors.add("$.fix: transport tls needs tls.trustStorePath");
+      }
+      if (!acceptor.containsKey("keyStorePath")) {
+        errors.add("$.fix: transport tls needs acceptor.keyStorePath");
+      }
+    }
+    if (Boolean.TRUE.equals(acceptor.get("requireClientCertificate"))
+        && !(acceptor.containsKey("trustStorePath") && tls.containsKey("keyStorePath"))) {
+      errors.add("$.fix.acceptor: requireClientCertificate needs acceptor.trustStorePath and tls.keyStorePath");
+    }
+    if (fix.get("credentials") instanceof Map<?, ?> c && c.containsKey("passwordEnv") == c.containsKey("passwordFile")) {
+      errors.add("$.fix.credentials: give exactly one of passwordEnv and passwordFile");
+    }
+    final Map<?, ?> reconnect = section(fix, "reconnect");
+    if (number(reconnect, "initialBackoffMillis", 100) > number(reconnect, "maxBackoffMillis", 2000)) {
+      errors.add("$.fix.reconnect: initialBackoffMillis is above maxBackoffMillis");
+    }
+    return errors;
+  }
+
+  private static void checkStore(final Map<?, ?> section, final String where, final String kind,
+      final List<String> errors) {
+    final boolean byEnv = section.containsKey(kind + "PasswordEnv");
+    final boolean byFile = section.containsKey(kind + "PasswordFile");
+    if (section.containsKey(kind + "Path")) {
+      if (byEnv == byFile) {
+        errors.add(where + ": give exactly one of " + kind + "PasswordEnv and " + kind + "PasswordFile");
+      }
+    } else if (byEnv || byFile) {
+      errors.add(where + ": a " + kind + " password is named but " + kind + "Path is missing");
+    }
+  }
+
+  private static Map<?, ?> section(final Map<?, ?> parent, final String key) {
+    return parent.get(key) instanceof Map<?, ?> m ? m : Map.of();
+  }
+
+  private static long number(final Map<?, ?> section, final String key, final long fallback) {
+    return section.get(key) instanceof Number n ? n.longValue() : fallback;
+  }
+
+  private static boolean flag(final Map<?, ?> section, final String key, final boolean fallback) {
+    return section.get(key) instanceof Boolean b ? b : fallback;
+  }
+
+  private static SecretRef secretRef(final Map<?, ?> section, final String key) {
+    return new SecretRef((String) section.get(key + "Env"), (String) section.get(key + "File"));
+  }
+
+  private static StoreRef store(final Map<?, ?> section, final String kind) {
+    return section.get(kind + "Path") instanceof String path
+        ? new StoreRef(path, secretRef(section, kind + "Password"))
+        : null;
+  }
+
+  private static FixSettings fixSettings(final Map<?, ?> fix) {
+    final FixSettings d = FixSettings.SIMULATOR;
+    final Map<?, ?> tls = section(fix, "tls");
+    final Map<?, ?> acceptor = section(fix, "acceptor");
+    final Map<?, ?> credentials = section(fix, "credentials");
+    final Map<?, ?> reconnect = section(fix, "reconnect");
+    return new FixSettings(
+        flag(fix, "resetOnLogon", d.resetOnLogon()),
+        "tls".equals(fix.get("transport")),
+        store(tls, "trustStore"),
+        store(tls, "keyStore"),
+        flag(tls, "verifyHostname", d.verifyHostname()),
+        number(tls, "handshakeTimeoutMillis", d.handshakeTimeoutMillis()),
+        store(acceptor, "keyStore"),
+        store(acceptor, "trustStore"),
+        flag(acceptor, "requireClientCertificate", false),
+        (String) credentials.get("username"),
+        credentials.isEmpty() ? null : secretRef(credentials, "password"),
+        (int) number(reconnect, "maxAttempts", d.reconnectMaxAttempts()),
+        number(reconnect, "initialBackoffMillis", d.reconnectInitialBackoffMillis()),
+        number(reconnect, "maxBackoffMillis", d.reconnectMaxBackoffMillis()));
   }
 
   /** Loads, applies environment overrides, validates and returns the typed view. */
@@ -144,7 +480,7 @@ public record ProcessConfig(
       override(m, "http", "bindAddress", env.get("RATES_HTTP_BIND"), false);
       override(m, "journal", "directory", env.get("RATES_JOURNAL_DIR"), false);
     }
-    final List<String> errors = schema.validate(doc);
+    final List<String> errors = validate(doc, schema);
     if (!errors.isEmpty()) {
       throw new InvalidConfigException(configFile, errors);
     }
@@ -175,7 +511,9 @@ public record ProcessConfig(
         ((Number) limits.get("maxMessagesPerSecond")).intValue(),
         ((Number) retention.get("years")).intValue(),
         runtime.get("loopIdleStrategy") instanceof String s ? s : DEFAULT_LOOP_IDLE_STRATEGY,
-        runtime.get("loopCpu") instanceof Number n ? n.intValue() : -1);
+        runtime.get("loopCpu") instanceof Number n ? n.intValue() : -1,
+        store(section(http, "tls"), "keyStore"),
+        fixSettings(section(root, "fix")));
   }
 
   @SuppressWarnings("unchecked")

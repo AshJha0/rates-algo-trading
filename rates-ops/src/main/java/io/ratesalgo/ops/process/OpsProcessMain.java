@@ -1,5 +1,6 @@
 package io.ratesalgo.ops.process;
 
+import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.common.time.SystemClock;
 import io.ratesalgo.journal.JournalWriter;
 import io.ratesalgo.ops.config.JsonSchema;
@@ -23,7 +24,8 @@ import java.util.concurrent.CountDownLatch;
  * OpsProcessMain --config deploy/config/trading-blue.yaml --schema deploy/config/schema/process-config.schema.json
  * </pre>
  *
- * <p>Validates the configuration first and exits 2 if it is invalid. Role {@code trading} opens
+ * <p>Validates the configuration first and exits 2 if it is invalid, or if a key store or a
+ * password it names cannot be read. With {@code http.tls} the endpoints are served over HTTPS. Role {@code trading} opens
  * the journal, starts the simulated quoter (P3's engine at integration) and serves the health,
  * metrics and control endpoints. Role {@code venue-sim} serves health and metrics only, as the
  * placeholder the coordinator replaces with P2's simulator main. The process runs until it is
@@ -88,12 +90,14 @@ public final class OpsProcessMain {
       return null;
     }
     final String bindProblem = cfg.controlBindProblem(env);
-    if (bindProblem != null) {
+    final String problem = bindProblem != null ? bindProblem : cfg.securityProblem(env);
+    if (problem != null) {
       err.println("configuration refused, process not started:");
-      err.println("  " + bindProblem);
+      err.println("  " + problem);
       return null;
     }
     final String token = cfg.controlToken(env);
+    final TlsConfig tls = cfg.httpTls(env);
 
     final MetricsRegistry metrics = new MetricsRegistry();
     metrics.gauge(MetricNames.PROCESS_INFO, "Process identity", "name", cfg.name(), "role", cfg.role(),
@@ -124,7 +128,7 @@ public final class OpsProcessMain {
             public String statusJson() {
               return "{\"role\":\"" + cfg.role() + "\"}";
             }
-          }, token);
+          }, token, tls);
       out.println(cfg.name() + " (" + cfg.role() + ") listening on " + cfg.bindAddress() + ":" + server.port());
       return new Started(server, null, null, metrics);
     }
@@ -154,7 +158,7 @@ public final class OpsProcessMain {
           public String statusJson() {
             return quoter.statusJson();
           }
-        }, token);
+        }, token, tls);
     out.println(cfg.name() + " (" + cfg.role() + ", " + cfg.colour() + ") listening on " + cfg.bindAddress() + ":"
         + server.port() + ", journal " + file);
     return new Started(server, quoter, journal, metrics);

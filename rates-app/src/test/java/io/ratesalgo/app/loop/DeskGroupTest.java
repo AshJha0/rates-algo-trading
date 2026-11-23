@@ -269,4 +269,83 @@ class DeskGroupTest {
     assertEquals(2 * lot, group.venueOverfillQuantity());
     assertFalse(router.isActive(10));
   }
+
+  private void clobSession(final byte status) {
+    run(ControlMessages.encodeGatewayStatus(buffer, 0, source.epochNanos(), AppIds.CLOB_GATEWAY, status));
+  }
+
+  @Test
+  void aReturningClobSessionStaysDownUntilItsOrdersAreReconciled() {
+    book();
+    router.submit(9, bond, Side.Buy, 2 * lot, 1.0, 0L);
+    final long child = onlyChild();
+    report(child, OrdStatus.New, 0, 0);
+    clobSession(ControlMessages.STATUS_DISCONNECTED);
+    assertFalse(group.clobUsable());
+
+    // logged on again: not usable yet, the venue is being asked what it holds
+    clobSession(ControlMessages.STATUS_RECONCILING);
+    assertTrue(group.reconciling());
+    assertFalse(group.clobUsable(), "RECONCILING is not CONNECTED");
+    assertFalse(router.venueUsable(CLOB));
+    assertFalse(group.desk().health().healthy(source.epochNanos()), "quoting stays pulled while reconciling");
+    // the venue's answer: nothing of ours, but an order under a router id that no router holds
+    final long orphan = child + 77;
+    report(orphan, OrdStatus.New, 0, 0);
+    assertEquals(0, group.reconciliations());
+
+    clobSession(ControlMessages.STATUS_RECONCILED);
+    assertFalse(group.reconciling());
+    assertEquals(1, group.reconciliations());
+    assertTrue(group.clobUsable(), "RECONCILED brings the venue up");
+    assertTrue(router.venueUsable(CLOB));
+    assertEquals(group.reconcileChecked(), group.reconcileMissing(), "the venue listed none of the router's children");
+    assertEquals(1, group.reconcileOrphans(), "the order the venue works and no router holds was cancelled");
+    assertEquals(0, group.reconcileReleased(), "absence from the list frees nothing by itself");
+
+    // a drop in the middle of an answer throws the half-collected list away
+    clobSession(ControlMessages.STATUS_RECONCILING);
+    report(orphan, OrdStatus.New, 0, 0);
+    clobSession(ControlMessages.STATUS_DISCONNECTED);
+    assertFalse(group.reconciling());
+    clobSession(ControlMessages.STATUS_RECONCILED);
+    assertEquals(1, group.reconciliations(), "a RECONCILED with no open window reconciles nothing");
+    assertEquals(1, group.reconcileOrphans());
+  }
+
+  @Test
+  void aFillOnTheQuotingEnginesOwnOrderIsShownToItOnce() {
+    book();
+    final long ownOrder = 4_242L; // not a router id
+    assertFalse(AppIds.isRouterOrder(ownOrder));
+    report(ownOrder, OrdStatus.Filled, lot, lot);
+    assertEquals(0, group.duplicateFills());
+    final long digest = group.stateDigest(UNIVERSE.instrumentIds());
+    // the venue resends the fill after a reconnect: same venue, same execution id
+    execId--;
+    report(ownOrder, OrdStatus.Filled, lot, lot);
+    assertEquals(1, group.duplicateFills());
+    assertEquals(digest, group.stateDigest(UNIVERSE.instrumentIds()), "the repeat changed nothing");
+    // a different execution id is a different fill
+    report(ownOrder, OrdStatus.Filled, lot, 2 * lot);
+    assertEquals(1, group.duplicateFills());
+  }
+
+  @Test
+  void anEmptyRebuildSeatsTheFeedOnTheNextFrameWhateverItsNumber() {
+    book();
+    assertTrue(group.clobUsable());
+    // the venue restarted with an empty book: a rebuild with no frame, then numbers from the start
+    feedStatus(ControlMessages.STATUS_DISCONNECTED);
+    assertFalse(group.clobUsable());
+    feedStatus(ControlMessages.STATUS_CONNECTED);
+    assertTrue(group.clobUsable());
+    assertTrue(group.desk().health().healthy(source.epochNanos()));
+    final long gaps = group.feedGaps();
+    level(1, Side.Buy, BookAction.Add, BID);
+    level(2, Side.Sell, BookAction.Add, BID + tick);
+    assertEquals(gaps, group.feedGaps(), "a new run of sequence numbers after a rebuild is not a gap");
+    assertTrue(group.clobUsable());
+    assertTrue(group.desk().health().healthy(source.epochNanos()));
+  }
 }

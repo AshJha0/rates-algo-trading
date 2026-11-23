@@ -1,8 +1,11 @@
 package io.ratesalgo.app;
 
+import io.ratesalgo.app.gateway.ReconnectPolicy;
 import io.ratesalgo.app.loop.DeskLoopFactory;
 import io.ratesalgo.app.loop.DeskSettings;
 import io.ratesalgo.app.pricing.UsdUniverse;
+import io.ratesalgo.common.security.TlsConfig;
+import io.ratesalgo.core.LoopRecovery;
 import io.ratesalgo.core.LoopReplay;
 import io.ratesalgo.core.ReplayResult;
 import io.ratesalgo.ops.config.JsonSchema;
@@ -33,8 +36,13 @@ import java.util.concurrent.CountDownLatch;
  * with simulated time paced at {@code --time-scale} times real time from 08:30 New York, and serves
  * health, readiness, metrics and the kill switch on the configured port until it is terminated. A
  * bind address that is not loopback is refused, like any invalid configuration, unless the control
- * token is set; the loop threads' idle strategy and CPU come from the optional {@code runtime}
- * section. A
+ * token and {@code http.tls} are set, and then the endpoints are served over HTTPS; the loop
+ * threads' idle strategy and CPU come from the optional {@code runtime} section. The optional
+ * {@code fix} section sets TLS and logon credentials for the FIX sessions (and for the in-process
+ * simulators that accept them), whether sequence numbers resume or reset at logon, and the
+ * reconnect policy; a password is named there by environment variable or file and read here.
+ * Started on a journal directory that already holds journals, the process rebuilds itself from
+ * them before it connects and prints what it found ({@link TradingProcess}). A
  * process with role {@code venue-sim} serves health and metrics only: the simulators run inside
  * the trading process. Replay mode replays each group's journals in {@code JOURNAL_DIR} through the
  * desk and prints whether the outbound hash matches (exit 0) or not (exit 1).
@@ -146,6 +154,13 @@ public final class TradingProcessMain {
       err.println("  " + bindProblem);
       return null;
     }
+    final String securityProblem = cfg.securityProblem(env);
+    if (securityProblem != null) {
+      err.println("configuration refused, process not started:");
+      err.println("  " + securityProblem);
+      return null;
+    }
+    final TlsConfig httpTls = cfg.httpTls(env);
     final String token = cfg.controlToken(env);
     final MetricsRegistry metrics = new MetricsRegistry();
     metrics.gauge(MetricNames.PROCESS_INFO, "Process identity", "name", cfg.name(), "role", cfg.role(),
@@ -163,19 +178,36 @@ public final class TradingProcessMain {
             public String statusJson() {
               return "{\"role\":\"" + cfg.role() + "\"}";
             }
-          }, token);
+          }, token, httpTls);
       out.println(cfg.name() + " (" + cfg.role() + ") listening on " + cfg.bindAddress() + ":" + server.port());
       return new Started(null, server);
     }
     final Path journalDir = Path.of(cfg.journalDirectory());
     Files.createDirectories(journalDir);
-    final TradingProcess process =
-        TradingProcess.start(
-            new TradingProcess.Options(journalDir, seed, DeskSettings.defaults())
-                .withTuning(TradingProcess.Tuning.DEFAULT.withLoopThread(cfg.loopIdleStrategy(), cfg.loopCpu())));
+    final TradingProcess.Fix fix =
+        new TradingProcess.Fix(
+            cfg.fixClientTls(env), cfg.fixAcceptorTls(env), cfg.fixUsername(), cfg.fixPassword(env),
+            cfg.fixResetOnLogon(),
+            new ReconnectPolicy(
+                cfg.fixReconnectMaxAttempts(), cfg.fixReconnectInitialBackoffNanos(), cfg.fixReconnectMaxBackoffNanos()));
+    final TradingProcess process;
+    try {
+      process =
+          TradingProcess.start(
+              new TradingProcess.Options(journalDir, seed, DeskSettings.defaults())
+                  .withTuning(TradingProcess.Tuning.DEFAULT.withLoopThread(cfg.loopIdleStrategy(), cfg.loopCpu()))
+                  .withFix(fix));
+    } catch (final io.ratesalgo.journal.JournalCorruptionException | LoopRecovery.RecoveryException e) {
+      // the journals do not allow a restart: say why and stay down
+      err.println("restart refused, process not started:");
+      err.println("  " + e.getMessage());
+      return null;
+    }
+    // what a restart found: frames replayed, a torn tail cut, how long the process was down
+    process.recoveryLog().forEach(line -> out.println("recovery: " + line));
     final OpsHttpServer server;
     try {
-      server = serve(process, metrics, cfg.bindAddress(), cfg.port(), token);
+      server = serve(process, metrics, cfg.bindAddress(), cfg.port(), token, httpTls);
     } catch (final IOException | RuntimeException e) {
       process.close();
       throw e;
@@ -189,6 +221,12 @@ public final class TradingProcessMain {
   /** Binds the rates-ops endpoints to a process: readiness, metrics, status and the kill switch. */
   public static OpsHttpServer serve(final TradingProcess process, final MetricsRegistry metrics, final String bind,
       final int port, final String token) throws IOException {
+    return serve(process, metrics, bind, port, token, null);
+  }
+
+  /** As {@link #serve(TradingProcess, MetricsRegistry, String, int, String)}, over HTTPS when {@code tls} is given. */
+  public static OpsHttpServer serve(final TradingProcess process, final MetricsRegistry metrics, final String bind,
+      final int port, final String token, final TlsConfig tls) throws IOException {
     metrics.gauge(MetricNames.QUOTES_LIVE, "Quotes live at venues").bind(process::liveQuotes);
     metrics.gauge(MetricNames.KILL_SWITCH, "1 when the kill switch is engaged")
         .bind(() -> process.killSwitchEngaged() ? 1 : 0);
@@ -204,6 +242,6 @@ public final class TradingProcessMain {
       public String statusJson() {
         return process.statusJson();
       }
-    }, token);
+    }, token, tls);
   }
 }

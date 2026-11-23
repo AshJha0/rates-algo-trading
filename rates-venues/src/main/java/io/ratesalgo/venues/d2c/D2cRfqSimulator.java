@@ -217,7 +217,7 @@ public final class D2cRfqSimulator extends VenueSimulator {
 
   private long createRfq(final Instrument inst, final boolean buy, final long quantity, final int clientId,
       final int dealerCount, final List<Long> scripted, final ClientDecision decision, final boolean informed) {
-    final long id = ++rfqSeq;
+    final long id = idBase() + ++rfqSeq;
     final List<String> engines = new ArrayList<>(loggedOn());
     final int simulated = scripted != null ? scripted.size() : Math.max(0, dealerCount - engines.size());
     final Rfq rfq = new Rfq(id, inst, buy, quantity, clientId, Math.max(dealerCount, engines.size()),

@@ -88,11 +88,14 @@ class TcpInitiatorBoundsTest {
   void aConnectThatIsNotAnsweredFailsAtItsDeadline() {
     // 192.0.2.1 is TEST-NET-1 (RFC 5737): never routed, so the connect is either left unanswered
     // or refused at once by the local stack. Both must surface as a failed connect, quickly.
-    final TcpInitiator tcp = new TcpInitiator("192.0.2.1", 9, 1 << 12, 200_000_000L, 10);
+    // Not loopback, so the initiator must be given TLS settings; the connect fails before any handshake.
+    final TcpInitiator tcp =
+        new TcpInitiator("192.0.2.1", 9, 1 << 12, 200_000_000L, 10, TestCerts.client("server"));
     attach(tcp);
     assertTimeoutPreemptively(
         Duration.ofSeconds(10), () -> assertThrows(UncheckedIOException.class, tcp::connect));
     assertFalse(tcp.isConnected());
+    assertEquals(0, tcp.handshakeTimeouts() + tcp.handshakeFailures(), "the handshake was never reached");
   }
 
   @Test

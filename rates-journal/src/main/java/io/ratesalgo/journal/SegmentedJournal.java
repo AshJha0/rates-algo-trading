@@ -180,6 +180,25 @@ public final class SegmentedJournal implements AutoCloseable {
    */
   public static SegmentedJournal open(
       final Path dir, final String name, final int segmentCapacity, final Clock clock) {
+    return open(dir, name, segmentCapacity, clock, false);
+  }
+
+  /**
+   * {@link #open(Path, String, int, Clock)} with preallocation, for a process that restarts on its
+   * journals: the rest of the current segment is touched before this returns and each next segment
+   * is prepared on the background thread, as after {@link #create(Path, String, int, Clock,
+   * boolean)}. A journal left by a crash is checked and repaired first with {@link
+   * JournalRecovery#repair}; this method refuses a torn tail like any other broken chain.
+   *
+   * @throws IllegalArgumentException if no segment exists
+   * @throws JournalCorruptionException if a segment is missing or a chain breaks
+   */
+  public static SegmentedJournal open(
+      final Path dir,
+      final String name,
+      final int segmentCapacity,
+      final Clock clock,
+      final boolean preallocate) {
     final int[] indices = segmentIndices(dir, name);
     if (indices.length == 0) {
       throw new IllegalArgumentException("journal " + name + " not found in " + dir);
@@ -196,7 +215,7 @@ public final class SegmentedJournal implements AutoCloseable {
     }
     final JournalWriter writer =
         JournalWriter.open(segmentPath(dir, name, last), clock, nextSequence, hash);
-    return new SegmentedJournal(dir, name, segmentCapacity, clock, writer, last, false, STALL_NANOS);
+    return new SegmentedJournal(dir, name, segmentCapacity, clock, writer, last, preallocate, STALL_NANOS);
   }
 
   /**

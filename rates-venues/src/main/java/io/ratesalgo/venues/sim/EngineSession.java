@@ -1,5 +1,7 @@
 package io.ratesalgo.venues.sim;
 
+import io.ratesalgo.common.security.Secret;
+import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.common.time.Clock;
 import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.common.time.SystemClock;
@@ -30,6 +32,28 @@ public final class EngineSession implements AutoCloseable {
       final int port,
       final String compId,
       final FixSessionHandler handler) {
+    this(simulator, venueClock, port, compId, handler, null, null, null, true);
+  }
+
+  /**
+   * A session with TLS, logon credentials or resume.
+   *
+   * @param tls client TLS settings, or null for plain TCP
+   * @param username Username (553) for the Logon, or null
+   * @param password Password (554) for the Logon, or null
+   * @param resetOnLogon false to keep the sequence numbers across connections and have the venue
+   *     resend what was missed
+   */
+  EngineSession(
+      final VenueSimulator simulator,
+      final ManualClock venueClock,
+      final int port,
+      final String compId,
+      final FixSessionHandler handler,
+      final TlsConfig tls,
+      final String username,
+      final Secret password,
+      final boolean resetOnLogon) {
     this.simulator = simulator;
     this.compId = compId;
     final Clock clock =
@@ -44,9 +68,19 @@ public final class EngineSession implements AutoCloseable {
             return venueClock.epochNanos();
           }
         };
-    this.tcp = new TcpInitiator("127.0.0.1", port, 1 << 20);
-    this.session =
-        new FixSession(new FixSessionConfig(compId, simulator.compId(), 30, true), clock, tcp, handler);
+    this.tcp =
+        new TcpInitiator(
+            "127.0.0.1",
+            port,
+            1 << 20,
+            TcpInitiator.DEFAULT_CONNECT_TIMEOUT_NANOS,
+            TcpInitiator.DEFAULT_MAX_WRITE_SPINS,
+            tls);
+    FixSessionConfig config = new FixSessionConfig(compId, simulator.compId(), 30, resetOnLogon);
+    if (username != null) {
+      config = config.withCredentials(username, password);
+    }
+    this.session = new FixSession(config, clock, tcp, handler);
     tcp.attach(session);
   }
 

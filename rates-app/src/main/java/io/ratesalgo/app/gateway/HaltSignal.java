@@ -1,13 +1,14 @@
 package io.ratesalgo.app.gateway;
 
 /**
- * A venue session's halt state as other threads see it: written by the session's owner thread when
+ * A venue session's halt and reconciliation state as other threads see it: written by the session's owner thread when
  * a value changes, read by the supervisor, the kill call and the status endpoint.
  */
 final class HaltSignal {
 
   private volatile int state;
   private volatile int unconfirmed;
+  private volatile boolean reconciling;
 
   void state(final int value) {
     state = value;
@@ -23,5 +24,13 @@ final class HaltSignal {
 
   int unconfirmed() {
     return unconfirmed;
+  }
+
+  void reconciling(final boolean value) {
+    reconciling = value;
+  }
+
+  boolean reconciling() {
+    return reconciling;
   }
 }
