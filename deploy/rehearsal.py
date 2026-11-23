@@ -179,7 +179,10 @@ def tls_version(url: str) -> str:
     """The protocol a verified handshake with the endpoint settles on, or the reason it failed."""
     host, port = url.split("://", 1)[1].split(":")
     try:
-        context = TLS_CONTEXT or ssl.create_default_context()
+        context = TLS_CONTEXT
+        if context is None:
+            context = ssl.create_default_context()
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
         with (socket.create_connection((host, int(port)), timeout=10) as raw,
               context.wrap_socket(raw, server_hostname=host) as tls):
             return str(tls.version())
