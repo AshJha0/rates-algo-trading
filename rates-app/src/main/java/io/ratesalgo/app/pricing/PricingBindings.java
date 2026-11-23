@@ -29,6 +29,13 @@ public final class PricingBindings {
   /**
    * Creates a binding.
    *
+   * <p>Version 2 is built as of the start of the clock's business day, the last New York cut,
+   * and not as of the instant of the call. The binding stamps its start-of-day marks with the
+   * time it is built at, and the residuals it carries afterwards depend on that stamp. A live
+   * loop is built before its first input and its replay on the first journaled frame, so the
+   * instant differs between the two; the start of the business day does not, and two desks built
+   * at any two instants of one business day hold the same pricing state after the same inputs.
+   *
    * @param version which binding
    * @param universe the instruments
    * @param clock the loop's clock; version 2 takes its business date from it, version 1 ignores it
@@ -37,7 +44,26 @@ public final class PricingBindings {
       final Version version, final UsdUniverse universe, final Clock clock) {
     return switch (version) {
       case V1 -> new AnalyticsPricing(universe, FairValueSource.NO_VALUE);
-      case V2 -> new PricingV2(universe, clock, PricingV2.Options.defaults());
+      case V2 -> {
+        final PricingV2.Options options = PricingV2.Options.defaults();
+        yield new PricingV2(universe, businessDayStart(clock, options.cutHour()), options);
+      }
+    };
+  }
+
+  /** A clock standing at the last cut at or before {@code clock}'s time. */
+  public static Clock businessDayStart(final Clock clock, final int cutHour) {
+    final long start = BusinessDate.lastCut(clock.epochNanos(), cutHour);
+    return new Clock() {
+      @Override
+      public long nanoTime() {
+        return start;
+      }
+
+      @Override
+      public long epochNanos() {
+        return start;
+      }
     };
   }
 }

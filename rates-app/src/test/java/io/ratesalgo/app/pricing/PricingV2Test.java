@@ -669,7 +669,8 @@ class PricingV2Test {
     for (int i = 0; i < v1.directory().size(); i++) {
       assertEquals(v1.directory().byIndex(i).id(), v2.directory().byIndex(i).id());
     }
-    assertEquals(V2Feed.T0, v2.referenceNanos(SWAP_10Y));
+    // built as of the start of the business day, so that a replay built at another instant agrees
+    assertEquals(BusinessDate.lastCut(V2Feed.T0, BusinessDate.DEFAULT_CUT_HOUR), v2.referenceNanos(SWAP_10Y));
     assertTrue(v2.onCurveInput(SWAP_10Y, 3_701_000_000L, V2Feed.T0 + 1));
     assertEquals(UNIVERSE, v2.universe());
   }

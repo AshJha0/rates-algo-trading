@@ -77,6 +77,18 @@ public final class BusinessDate {
         Math.multiplyExact(cut.toEpochSecond(), NANOS_PER_SECOND), cut.getNano());
   }
 
+  /** Epoch nanoseconds of the last cut at or before the instant: the start of its business day. */
+  public static long lastCut(final long epochNanos, final int cutHour) {
+    requireHour(cutHour);
+    final ZonedDateTime t = newYork(epochNanos);
+    ZonedDateTime cut = ZonedDateTime.of(t.toLocalDate(), LocalTime.of(cutHour, 0), NEW_YORK);
+    if (cut.isAfter(t)) {
+      cut = ZonedDateTime.of(t.toLocalDate().minusDays(1), LocalTime.of(cutHour, 0), NEW_YORK);
+    }
+    return Math.addExact(
+        Math.multiplyExact(cut.toEpochSecond(), NANOS_PER_SECOND), cut.getNano());
+  }
+
   private static void requireHour(final int cutHour) {
     // the cut is in the afternoon or evening; hours 2 and 3 are excluded with the rest of the
     // night because daylight saving makes them ambiguous or absent

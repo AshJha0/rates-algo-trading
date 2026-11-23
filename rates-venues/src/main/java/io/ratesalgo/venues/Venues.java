@@ -28,7 +28,11 @@ public final class Venues {
   /** Trading date of the fixtures used by the simulators: 2026-11-02. */
   public static final LocalDate TRADE_DATE = LocalDate.of(2026, 11, 2);
 
-  /** 2026-11-02T13:30:00Z, which is 08:30 in New York: the start time the scripts use. */
+  /**
+   * The start time the scripts use: 2026-11-02T14:30:00Z, which is 09:30 in New York. Daylight
+   * saving ended on 1 November 2026, so New York is five hours behind UTC on this date; earlier
+   * comments read this value as 13:30Z and 08:30. The value is unchanged.
+   */
   public static final long T0 = 1_793_629_800_000_000_000L;
 
   private Venues() {}
@@ -110,14 +114,24 @@ public final class Venues {
     for (int v = 0; v < p.treasuryVenues(); v++) {
       treasuryBooks.add(
           new ClobSimulator(
-              "CLOB" + (v + 1), config, session, session.instruments(io.ratesalgo.sim.SimInstrument.Kind.TREASURY),
+              simV2TreasuryVenueId(v), "CLOB" + (v + 1), config, session, session.instruments(io.ratesalgo.sim.SimInstrument.Kind.TREASURY),
               p.treasuryVenueShare(v), ENGINES, feeds.get(v), clock));
     }
     final ClobSimulator futures =
         new ClobSimulator(
-            "FUT", config, session, session.instruments(io.ratesalgo.sim.SimInstrument.Kind.FUTURE), 1.0, ENGINES,
+            simV2FuturesVenueId(p.treasuryVenues()), "FUT", config, session, session.instruments(io.ratesalgo.sim.SimInstrument.Kind.FUTURE), 1.0, ENGINES,
             feeds.get(p.treasuryVenues()), clock);
     return new SimV2(session, new D2cRfqSimulator(session, ENGINES, clock), treasuryBooks, futures);
+  }
+
+  /** Feed venue id of simulator v2 Treasury order book {@code v}: 102, 103, ... */
+  public static int simV2TreasuryVenueId(final int v) {
+    return ClobSimulator.VENUE_ID + v;
+  }
+
+  /** Feed venue id of the simulator v2 futures order book: the one after the Treasury books'. */
+  public static int simV2FuturesVenueId(final int treasuryVenues) {
+    return ClobSimulator.VENUE_ID + treasuryVenues;
   }
 
   /** Creates a simulator of a kind: {@code d2c}, {@code clob} or {@code sef}. */

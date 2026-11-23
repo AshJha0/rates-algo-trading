@@ -30,6 +30,37 @@ public final class AppIds {
   /** GatewayStatus id for the CLOB book feed: CONNECTED after a snapshot rebuild clears a gap. */
   public static final int CLOB_FEED_STATUS = 3;
 
+  /**
+   * Venue id of the second Treasury CLOB of the v2 desk profile (simulator v2 shows shares of one
+   * book on two venues, SIM_V2_DESIGN.md D10).
+   */
+  public static final int CLOB2_VENUE = CLOB_VENUE + 1;
+
+  /** Venue id of the futures order book of the v2 desk profile. */
+  public static final int FUTURES_VENUE = CLOB_VENUE + 2;
+
+  /**
+   * Outbound gateway id of the second CLOB session. Gateway ids and feed status ids share the
+   * GatewayStatus id space, and 3 is the first CLOB's feed, so the v2 sessions start at 4; the
+   * v2 loop's outbound ring 3 exists and is never written.
+   */
+  public static final int CLOB2_GATEWAY = 4;
+
+  /** Outbound gateway id of the futures session. */
+  public static final int FUTURES_GATEWAY = 5;
+
+  /** Number of outbound rings per loop in the v2 desk profile. */
+  public static final int V2_OUTBOUND_RINGS = 6;
+
+  /** GatewayStatus id for the second CLOB's book feed. */
+  public static final int CLOB2_FEED_STATUS = 6;
+
+  /** GatewayStatus id for the futures book feed. */
+  public static final int FUTURES_FEED_STATUS = 7;
+
+  /** Instrument id of the 1-year SOFR swap of the v2 universe: priced and risk-managed, listed on no venue. */
+  public static final int SWAP_1Y = io.ratesalgo.app.pricing.UsdUniverse.SWAP_1Y_ID;
+
   /** Heartbeat source id of the curve feed; input health requires it. */
   public static final int CURVE_HEARTBEAT_SOURCE = 900;
 
@@ -54,6 +85,12 @@ public final class AppIds {
     }
     if (venueId == CLOB_VENUE) {
       return CLOB_GATEWAY;
+    }
+    if (venueId == CLOB2_VENUE) {
+      return CLOB2_GATEWAY;
+    }
+    if (venueId == FUTURES_VENUE) {
+      return FUTURES_GATEWAY;
     }
     return -1;
   }

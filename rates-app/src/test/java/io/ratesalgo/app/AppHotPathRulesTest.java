@@ -22,6 +22,7 @@ import io.ratesalgo.app.gateway.VenueSession;
 import io.ratesalgo.app.loop.DeskGroup;
 import io.ratesalgo.app.loop.RouterHedgeSink;
 import io.ratesalgo.app.market.LoopBook;
+import io.ratesalgo.app.pricing.FuturesOverlay;
 import io.ratesalgo.core.HotPath;
 import java.util.Collection;
 import java.util.List;
@@ -110,7 +111,7 @@ class AppHotPathRulesTest {
         new ClassFileImporter().withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS).importPackages("io.ratesalgo.app");
     for (final Class<?> hot :
         List.of(DeskGroup.class, RouterHedgeSink.class, LoopBook.class, InboundRouter.class, VenueSession.class,
-            FeedBinding.class)) {
+            FeedBinding.class, FuturesOverlay.class)) {
       assertTrue(classes.get(hot).isAnnotatedWith(HotPath.class), hot + " is marked");
     }
     for (final ArchRule rule : RULES) {

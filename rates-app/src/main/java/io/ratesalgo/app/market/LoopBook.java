@@ -48,6 +48,8 @@ public final class LoopBook implements BookSource {
   private final double[] tradeSum;
   private final long[] tradeNanos;
   private final long[] firstTrade;
+  // desk minor units per venue minor unit, per instrument: 1 except for futures
+  private final long[] quantityScale;
 
   /** A book for every instrument in {@code directory} on each of {@code venueIds}. */
   public LoopBook(final InstrumentDirectory directory, final int[] venueIds) {
@@ -64,6 +66,23 @@ public final class LoopBook implements BookSource {
     this.tradeNanos = new long[pairs];
     this.firstTrade = new long[pairs];
     java.util.Arrays.fill(firstTrade, Long.MIN_VALUE);
+    this.quantityScale = new long[directory.size()];
+    java.util.Arrays.fill(quantityScale, 1L);
+  }
+
+  /**
+   * Sets what a venue quantity of an instrument is multiplied by to give the desk's quantity. A
+   * futures venue counts contracts and the desk counts face (API_SPEC.md Section 0), so a future's
+   * book and prints are scaled by the contract size as they come in; every other instrument keeps
+   * 1. Call before the first update. Returns false for an unknown instrument or a scale below 1.
+   */
+  public boolean quantityScale(final int instrumentId, final long deskPerVenue) {
+    final int index = directory.indexOf(instrumentId);
+    if (index < 0 || deskPerVenue < 1) {
+      return false;
+    }
+    quantityScale[index] = deskPerVenue;
+    return true;
   }
 
   /**
@@ -87,7 +106,7 @@ public final class LoopBook implements BookSource {
       tradeSum[i] *= StrictMath.exp(-(double) dt / TRADE_RATE_TAU_NANOS);
       tradeNanos[i] = now;
     }
-    tradeSum[i] += d.quantity();
+    tradeSum[i] += (double) d.quantity() * quantityScale[index];
     return true;
   }
 
@@ -149,7 +168,7 @@ public final class LoopBook implements BookSource {
     if (action == BookAction.Delete || d.quantity() <= 0) {
       remove(l, px);
     } else {
-      set(l, bid, px, d.quantity());
+      set(l, bid, px, d.quantity() * quantityScale[index]);
     }
     return true;
   }
