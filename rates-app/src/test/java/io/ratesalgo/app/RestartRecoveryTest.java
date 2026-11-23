@@ -16,6 +16,7 @@ import io.ratesalgo.journal.SegmentedJournalReader;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
@@ -55,7 +56,14 @@ class RestartRecoveryTest {
         if (Files.isDirectory(f)) {
           Files.createDirectories(target);
         } else {
-          Files.copy(f, target);
+          try {
+            Files.copy(f, target);
+          } catch (final NoSuchFileException renamed) {
+            // The preparing thread renamed a half-prepared next segment (.pending) between the
+            // listing and the copy. The image then holds neither name, which is what a crash just
+            // before the preparation started leaves; recovery treats a missing next segment as
+            // not yet prepared.
+          }
         }
       }
     }
