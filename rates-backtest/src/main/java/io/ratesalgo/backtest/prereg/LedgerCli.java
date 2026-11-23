@@ -11,7 +11,7 @@ import java.util.Map;
  * Verifies an experiment ledger and prints its looks per data set.
  *
  * <pre>
- *   LedgerCli [--ledger data/ledger/ledger.jsonl] [--bh research/prereg/families/R5.yaml | --bh data_set:KEY]
+ *   LedgerCli [--ledger data/ledger/ledger.jsonl] [--bh FAMILY_FILE | --bh family:ID | --bh data_set:KEY]
  * </pre>
  *
  * <p>{@code --bh} prints the Benjamini-Hochberg adjusted p and the verdict of every primary test

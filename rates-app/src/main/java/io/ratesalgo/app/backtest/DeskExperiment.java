@@ -12,10 +12,10 @@ import java.util.List;
  * as {@link ExperimentRunner}, with {@code --factory} set to the desk unless given.
  *
  * <pre>
- *   DeskExperiment run    --prereg research/prereg/R5-007.yaml --out D:/runs/R5-007 [--workers 8]
- *   DeskExperiment pilot  --prereg research/prereg/SIM3-BASE-001.yaml --pilot 8 --out D:/runs/pilot
- *   DeskExperiment status --out D:/runs/R5-007
- *   DeskExperiment validate --prereg research/prereg/R5-001.yaml
+ *   DeskExperiment run    --prereg research/prereg/R5-FAM-001.yaml --out C:/Work/Claude/rates-runs/R5-FAM-001 --workers 8
+ *   DeskExperiment pilot  --prereg research/prereg/R5-FAM-001.yaml --pilot 4 --timing-only --out C:/Work/Claude/rates-runs/timing
+ *   DeskExperiment status --out C:/Work/Claude/rates-runs/R5-FAM-001
+ *   DeskExperiment validate --prereg research/prereg/R5-FAM-001.yaml
  * </pre>
  */
 public final class DeskExperiment {

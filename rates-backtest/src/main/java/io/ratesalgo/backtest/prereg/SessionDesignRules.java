@@ -43,7 +43,11 @@ import java.util.Set;
  *   assumption_band: {preset: sim_v2_params, parameters: [names of BandParameters], points: [low, central, high]}
  *   prior_looks       optional list of pre-registration ids
  *   guard_metrics, limitations, open_before_signing   optional text
+ *   superseded_by, superseded_on, superseded_reason   optional; the runner never runs such a file
  * </pre>
+ *
+ * <p>A config with {@code family}, {@code rows} or {@code excluded_band_points} is a registered
+ * family and must also pass {@link FamilyRules}.
  *
  * <p>The version 1 date keys ({@code period}, {@code fitting_period}, {@code holdout}) are
  * refused: they do not describe seeded sessions. The configuration file must name every arm under
