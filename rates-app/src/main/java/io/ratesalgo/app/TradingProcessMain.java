@@ -32,6 +32,9 @@ import java.util.concurrent.CountDownLatch;
  * trading process with its simulators ({@link TradingProcess}), runs the loops on their own threads
  * with simulated time paced at {@code --time-scale} times real time from 08:30 New York, and serves
  * health, readiness, metrics and the kill switch on the configured port until it is terminated. A
+ * bind address that is not loopback is refused, like any invalid configuration, unless the control
+ * token is set; the loop threads' idle strategy and CPU come from the optional {@code runtime}
+ * section. A
  * process with role {@code venue-sim} serves health and metrics only: the simulators run inside
  * the trading process. Replay mode replays each group's journals in {@code JOURNAL_DIR} through the
  * desk and prints whether the outbound hash matches (exit 0) or not (exit 1).
@@ -137,6 +140,13 @@ public final class TradingProcessMain {
       e.errors().forEach(x -> err.println("  " + x));
       return null;
     }
+    final String bindProblem = cfg.controlBindProblem(env);
+    if (bindProblem != null) {
+      err.println("configuration refused, process not started:");
+      err.println("  " + bindProblem);
+      return null;
+    }
+    final String token = cfg.controlToken(env);
     final MetricsRegistry metrics = new MetricsRegistry();
     metrics.gauge(MetricNames.PROCESS_INFO, "Process identity", "name", cfg.name(), "role", cfg.role(),
         "colour", cfg.colour()).set(1);
@@ -144,26 +154,28 @@ public final class TradingProcessMain {
       final OpsHttpServer server = new OpsHttpServer(cfg.bindAddress(), cfg.port(), metrics, () -> null,
           new OpsHttpServer.Control() {
             @Override
-            public void kill(final int requestedBy) {
+            public String kill(final int requestedBy) {
               // the simulators run inside the trading process; nothing to kill here
+              return null;
             }
 
             @Override
             public String statusJson() {
               return "{\"role\":\"" + cfg.role() + "\"}";
             }
-          }, null);
+          }, token);
       out.println(cfg.name() + " (" + cfg.role() + ") listening on " + cfg.bindAddress() + ":" + server.port());
       return new Started(null, server);
     }
     final Path journalDir = Path.of(cfg.journalDirectory());
     Files.createDirectories(journalDir);
     final TradingProcess process =
-        TradingProcess.start(new TradingProcess.Options(journalDir, seed, DeskSettings.defaults()));
+        TradingProcess.start(
+            new TradingProcess.Options(journalDir, seed, DeskSettings.defaults())
+                .withTuning(TradingProcess.Tuning.DEFAULT.withLoopThread(cfg.loopIdleStrategy(), cfg.loopCpu())));
     final OpsHttpServer server;
     try {
-      server = serve(process, metrics, cfg.bindAddress(), cfg.port(),
-          cfg.controlTokenEnv() == null ? null : env.get(cfg.controlTokenEnv()));
+      server = serve(process, metrics, cfg.bindAddress(), cfg.port(), token);
     } catch (final IOException | RuntimeException e) {
       process.close();
       throw e;
@@ -177,13 +189,15 @@ public final class TradingProcessMain {
   /** Binds the rates-ops endpoints to a process: readiness, metrics, status and the kill switch. */
   public static OpsHttpServer serve(final TradingProcess process, final MetricsRegistry metrics, final String bind,
       final int port, final String token) throws IOException {
-    metrics.gauge(MetricNames.QUOTES_LIVE, "Quotes live at venues").bind(() -> liveQuotes(process));
-    metrics.gauge(MetricNames.KILL_SWITCH, "1 when the kill switch is engaged").bind(() -> killed(process) ? 1 : 0);
-    metrics.gauge(MetricNames.QUOTING_ENABLED, "1 when quoting is enabled").bind(() -> killed(process) ? 0 : 1);
+    metrics.gauge(MetricNames.QUOTES_LIVE, "Quotes live at venues").bind(process::liveQuotes);
+    metrics.gauge(MetricNames.KILL_SWITCH, "1 when the kill switch is engaged")
+        .bind(() -> process.killSwitchEngaged() ? 1 : 0);
+    metrics.gauge(MetricNames.QUOTING_ENABLED, "1 when quoting is enabled")
+        .bind(() -> process.killSwitchEngaged() ? 0 : 1);
     return new OpsHttpServer(bind, port, metrics, process::notReadyReason, new OpsHttpServer.Control() {
       @Override
-      public void kill(final int requestedBy) {
-        process.kill(requestedBy);
+      public String kill(final int requestedBy) {
+        return process.kill(requestedBy).reason();
       }
 
       @Override
@@ -191,22 +205,5 @@ public final class TradingProcessMain {
         return process.statusJson();
       }
     }, token);
-  }
-
-  private static double liveQuotes(final TradingProcess p) {
-    int n = 0;
-    for (int g = 0; g < p.groupCount(); g++) {
-      n += p.group(g).liveQuotes();
-    }
-    return n;
-  }
-
-  private static boolean killed(final TradingProcess p) {
-    for (int g = 0; g < p.groupCount(); g++) {
-      if (!p.group(g).killed()) {
-        return false;
-      }
-    }
-    return true;
   }
 }

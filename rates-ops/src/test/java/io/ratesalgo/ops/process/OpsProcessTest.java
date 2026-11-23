@@ -34,9 +34,12 @@ class OpsProcessTest {
   private final ByteArrayOutputStream out = new ByteArrayOutputStream();
   private final ByteArrayOutputStream err = new ByteArrayOutputStream();
 
-  private HttpResponse<String> get(final int port, final String path) throws Exception {
-    return http.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).GET().build(),
-        HttpResponse.BodyHandlers.ofString());
+  private HttpResponse<String> get(final int port, final String path, final String... headers) throws Exception {
+    final HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).GET();
+    for (int i = 0; i < headers.length; i += 2) {
+      b.header(headers[i], headers[i + 1]);
+    }
+    return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
   }
 
   private HttpResponse<String> post(final int port, final String path, final String... headers) throws Exception {
@@ -62,7 +65,8 @@ class OpsProcessTest {
       assertEquals(200, get(port, "/health/live").statusCode());
       assertEquals(200, get(port, "/health/ready").statusCode());
       assertTrue(get(port, "/metrics").body().contains("rates_quotes_live 2"));
-      assertTrue(get(port, "/control/status").body().contains("\"liveQuotes\":2"));
+      assertEquals(403, get(port, "/control/status").statusCode(), "status needs the token too");
+      assertTrue(get(port, "/control/status", "X-Control-Token", "s3cret").body().contains("\"liveQuotes\":2"));
       assertEquals(405, get(port, "/control/kill").statusCode());
       assertEquals(403, post(port, "/control/kill").statusCode());
       assertEquals(400, post(port, "/control/kill", "X-Control-Token", "s3cret", "X-Requested-By", "x").statusCode());
@@ -109,9 +113,30 @@ class OpsProcessTest {
       assertNull(s.quoter());
       final int port = s.server().port();
       assertEquals(200, get(port, "/health/ready").statusCode());
-      assertEquals("{\"role\":\"venue-sim\"}", post(port, "/control/kill").body());
+      assertEquals(403, post(port, "/control/kill").statusCode(), "no token configured: control is closed");
       assertTrue(get(port, "/metrics").body().contains("rates_process_info{name=\"venue-sim\""));
     }
     assertTrue(List.of(out.toString(StandardCharsets.UTF_8).split("\n")).get(0).contains("listening"));
+    try (OpsProcessMain.Started s = start(new String[] {"--config", "../deploy/config/venue-sim.yaml", "--schema",
+        ARGS[3]}, Map.of("RATES_HTTP_PORT", "0", "RATES_CONTROL_TOKEN", "v"))) {
+      assertEquals("{\"role\":\"venue-sim\"}",
+          post(s.server().port(), "/control/kill", "X-Control-Token", "v").body());
+    }
+  }
+
+  @Test
+  void aNonLoopbackBindWithoutATokenRefusesToStart() throws Exception {
+    final Map<String, String> open = Map.of("RATES_HTTP_PORT", "0", "RATES_JOURNAL_DIR", dir.toString(),
+        "RATES_HTTP_BIND", "0.0.0.0");
+    assertNull(start(ARGS, open));
+    final String refused = err.toString(StandardCharsets.UTF_8);
+    assertTrue(refused.contains("configuration refused") && refused.contains("RATES_CONTROL_TOKEN is not set"),
+        refused);
+    // the same bind with a token starts
+    final Map<String, String> closed = Map.of("RATES_HTTP_PORT", "0", "RATES_JOURNAL_DIR", dir.toString(),
+        "RATES_HTTP_BIND", "0.0.0.0", "RATES_CONTROL_TOKEN", "s3cret");
+    try (OpsProcessMain.Started s = start(ARGS, closed)) {
+      assertEquals(200, get(s.server().port(), "/health/live").statusCode());
+    }
   }
 }

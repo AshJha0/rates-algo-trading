@@ -11,13 +11,30 @@ public final class FixFramer {
   /** Returned when the bytes at the start are not the beginning of a FIX message. */
   public static final int GARBAGE = -1;
 
+  /**
+   * Largest BodyLength accepted by default. The engine's own messages are under 64 KiB; a larger
+   * declared length is a corrupt or hostile stream, and waiting for that many bytes would stall the
+   * session until the read buffer filled.
+   */
+  public static final int MAX_BODY_LENGTH = 256 * 1024;
+
   private FixFramer() {}
 
   /**
    * Length of the complete message starting at {@code offset}, 0 if more bytes are needed, or
-   * {@link #GARBAGE}.
+   * {@link #GARBAGE}. A BodyLength above {@link #MAX_BODY_LENGTH} is garbage.
    */
   public static int frame(final DirectBuffer buffer, final int offset, final int available) {
+    return frame(buffer, offset, available, MAX_BODY_LENGTH);
+  }
+
+  /**
+   * As {@link #frame(DirectBuffer, int, int)} with the caller's limit on BodyLength: a declared
+   * length above {@code maxBodyLength} is {@link #GARBAGE} as soon as its digits are read, before
+   * any of the body arrives.
+   */
+  public static int frame(
+      final DirectBuffer buffer, final int offset, final int available, final int maxBodyLength) {
     if (available < 2) {
       return 0;
     }
@@ -51,6 +68,9 @@ public final class FixFramer {
         return GARBAGE;
       }
       bodyLength = bodyLength * 10 + (c - '0');
+      if (bodyLength > maxBodyLength) {
+        return GARBAGE;
+      }
       p++;
     }
     if (p >= end) {

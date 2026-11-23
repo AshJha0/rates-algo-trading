@@ -26,6 +26,10 @@ import org.agrona.concurrent.UnsafeBuffer;
  *       to our next sequence number: the engine never resends application messages, because a
  *       resent quote or order would be stale (DR-P2V-03).
  *   <li>SequenceReset in reset mode sets the expected number regardless of MsgSeqNum.
+ *   <li>A ResendRequest that is not answered within the resend timeout is sent again; after the
+ *       configured number of repeats the session logs out and disconnects. Without this a venue
+ *       that ignores the request leaves the session up on heartbeats while every later message,
+ *       fills included, is dropped as out of sequence.
  *   <li>Heartbeat when nothing was sent for HeartBtInt; TestRequest when nothing was received for
  *       1.2 HeartBtInt; disconnect when nothing was received for 2 HeartBtInt.
  * </ul>
@@ -42,6 +46,8 @@ public final class FixSession {
   private final long heartbeatNanos;
   private final int heartbeatSeconds;
   private final boolean resetOnLogon;
+  private final long resendTimeoutNanos;
+  private final int maxResendRetries;
   private final FixParser parser = new FixParser();
   private final FixWriter writer = new FixWriter(64 * 1024);
   private final UnsafeBuffer out = new UnsafeBuffer(ByteBuffer.allocateDirect(64 * 1024 + 64));
@@ -53,6 +59,8 @@ public final class FixSession {
   private long expectedInSeq = 1;
   private boolean resendPending;
   private long resendUntil;
+  private long resendSentNanos;
+  private int resendRetries;
   private long lastSentNanos;
   private long lastReceivedNanos;
   private long logonSentNanos;
@@ -75,6 +83,8 @@ public final class FixSession {
     this.heartbeatSeconds = config.heartbeatIntervalSeconds();
     this.heartbeatNanos = config.heartbeatIntervalSeconds() * 1_000_000_000L;
     this.resetOnLogon = config.resetOnLogon();
+    this.resendTimeoutNanos = config.resendTimeoutNanos();
+    this.maxResendRetries = config.maxResendRetries();
   }
 
   /** Current state. */
@@ -266,16 +276,27 @@ public final class FixSession {
     final long seq = parser.getLong(FixTags.MSG_SEQ_NUM);
     if (!resendPending) {
       stats.gapsDetected++;
-      stats.resendRequestsSent++;
       resendPending = true;
-      beginAdmin(MsgType.RESEND_REQUEST)
-          .put(FixTags.BEGIN_SEQ_NO, expectedInSeq)
-          .put(FixTags.END_SEQ_NO, 0);
-      send();
+      resendRetries = 0;
+      sendResendRequest();
     }
     if (seq > resendUntil) {
       resendUntil = seq;
     }
+  }
+
+  private void sendResendRequest() {
+    stats.resendRequestsSent++;
+    resendSentNanos = clock.nanoTime();
+    beginAdmin(MsgType.RESEND_REQUEST)
+        .put(FixTags.BEGIN_SEQ_NO, expectedInSeq)
+        .put(FixTags.END_SEQ_NO, 0);
+    send();
+  }
+
+  /** True while a gap is open and its ResendRequest is unanswered. */
+  public boolean resendPending() {
+    return resendPending;
   }
 
   private void dispatch(final int type) {
@@ -370,6 +391,18 @@ public final class FixSession {
       stats.timeouts++;
       transport.disconnect();
       return true;
+    }
+    if (resendPending && now - resendSentNanos >= resendTimeoutNanos) {
+      if (resendRetries >= maxResendRetries) {
+        // The venue will not fill the gap: everything behind it is being dropped, so the session
+        // is worse than down. Leave it, and let the venue cancel on disconnect.
+        stats.resendTimeouts++;
+        logout();
+        transport.disconnect();
+        return true;
+      }
+      resendRetries++;
+      sendResendRequest();
     }
     if (!testRequestPending && silent >= heartbeatNanos + heartbeatNanos / 5) {
       testRequestPending = true;

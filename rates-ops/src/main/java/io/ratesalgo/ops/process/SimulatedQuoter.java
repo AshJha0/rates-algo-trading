@@ -44,9 +44,9 @@ public final class SimulatedQuoter implements OpsHttpServer.Control {
   }
 
   @Override
-  public synchronized void kill(final int requestedBy) {
+  public synchronized String kill(final int requestedBy) {
     if (killed) {
-      return;
+      return null;
     }
     kill.wrapAndApplyHeader(buffer, 0, header).reason(KillReason.Manual).scopeId(0).requestedBy(requestedBy)
         .timestampNanos(clock.epochNanos());
@@ -57,6 +57,8 @@ public final class SimulatedQuoter implements OpsHttpServer.Control {
     liveQuotes = 0;
     quoting = false;
     killed = true;
+    // the simulated quotes are pulled in this call, under the same lock: always confirmed
+    return null;
   }
 
   @Override

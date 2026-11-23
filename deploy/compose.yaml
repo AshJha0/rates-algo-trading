@@ -5,6 +5,9 @@
 #   docker compose -f deploy/compose.yaml --profile green up -d trading-green
 #   docker compose -f deploy/compose.yaml --profile batch run --rm report --help
 # The control token comes from the shell environment and is never committed.
+# The configuration files bind loopback. Inside a container the published port reaches the
+# process only on a non-loopback address, so each service sets RATES_HTTP_BIND=0.0.0.0; the process
+# then refuses to start without the token. The ports are published on the host's loopback only.
 name: rates-sim
 
 x-trading: &trading
@@ -26,6 +29,7 @@ services:
     environment:
       RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
       RATES_HTTP_PORT: "8081"
+      RATES_HTTP_BIND: "0.0.0.0"
     ports:
       - "127.0.0.1:8081:8081"
     depends_on:
@@ -40,6 +44,7 @@ services:
     environment:
       RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
       RATES_HTTP_PORT: "8082"
+      RATES_HTTP_BIND: "0.0.0.0"
     ports:
       - "127.0.0.1:8082:8082"
 
@@ -49,7 +54,9 @@ services:
       dockerfile: deploy/venue-sim/Dockerfile
     image: rates-venue-sim:dev
     environment:
+      RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
       RATES_HTTP_PORT: "8090"
+      RATES_HTTP_BIND: "0.0.0.0"
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
