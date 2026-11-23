@@ -83,7 +83,8 @@ public final class ChildRandomiser {
 
   /**
    * A gamma variate of unit scale by Marsaglia and Tsang (ACM TOMS 26(3), 2000), with the
-   * {@code U^(1/shape)} boost below shape 1. Normals by Box-Muller from the same source.
+   * {@code U^(1/shape)} boost below shape 1. Normals by the polar method from the same source
+   * (StrictMath.cos allocates on JDK 25, and Math.cos may differ by platform).
    */
   double gamma(final double shape) {
     if (shape < 1.0) {
@@ -93,9 +94,7 @@ public final class ChildRandomiser {
     final double d = shape - 1.0 / 3.0;
     final double c = 1.0 / StrictMath.sqrt(9.0 * d);
     while (true) {
-      final double u1 = Math.max(Double.MIN_NORMAL, random.nextDouble());
-      final double u2 = random.nextDouble();
-      final double x = StrictMath.sqrt(-2.0 * StrictMath.log(u1)) * StrictMath.cos(2.0 * Math.PI * u2);
+      final double x = normal();
       final double v0 = 1.0 + c * x;
       if (v0 <= 0.0) {
         continue;
@@ -106,5 +105,16 @@ public final class ChildRandomiser {
         return d * v;
       }
     }
+  }
+
+  private double normal() {
+    double u;
+    double s;
+    do {
+      u = 2.0 * random.nextDouble() - 1.0;
+      final double v = 2.0 * random.nextDouble() - 1.0;
+      s = u * u + v * v;
+    } while (s >= 1.0 || s == 0.0);
+    return u * StrictMath.sqrt(-2.0 * StrictMath.log(s) / s);
   }
 }

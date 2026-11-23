@@ -30,8 +30,8 @@ import org.agrona.collections.Long2LongHashMap;
  * venue may reject an order with a fixed probability. Every trade is published as a print.
  *
  * <p>Common random numbers: the efficient-price path, the arrival of other participants' orders
- * and their sizes, and the book's cancellations and refills each draw a fixed number of uniforms
- * per step from their own streams whatever we do, so two strategies run on one seed face the
+ * and their sizes, and the book's cancellations and refills each draw from their own streams in a
+ * way that does not depend on what we do, so two strategies run on one seed face the
  * same exogenous market and differ only by their own orders' effects. Nothing allocates after
  * construction.
  */
@@ -197,11 +197,16 @@ public final class ImpactMarket implements SimulatedMarket {
   @Override
   public void step() {
     processArrivals(clock.nanoTime());
-    // the efficient price: one normal per step, whatever happens
-    final double u1 = Math.max(Double.MIN_NORMAL, pricePath.nextDouble());
-    final double u2 = pricePath.nextDouble();
-    mid += cfg.sigmaTicksPerSqrtSecond() * sqrtDt
-        * StrictMath.sqrt(-2.0 * StrictMath.log(u1)) * StrictMath.cos(2.0 * Math.PI * u2);
+    // the efficient price: one normal per step from its own stream, whatever happens. Polar
+    // method: StrictMath.cos allocates on JDK 25 (FdLibm), and Math.cos may differ by platform
+    double u;
+    double w;
+    do {
+      u = 2.0 * pricePath.nextDouble() - 1.0;
+      w = 2.0 * pricePath.nextDouble() - 1.0;
+      w = u * u + w * w;
+    } while (w >= 1.0 || w == 0.0);
+    mid += cfg.sigmaTicksPerSqrtSecond() * sqrtDt * u * StrictMath.sqrt(-2.0 * StrictMath.log(w) / w);
     for (int v = 0; v < n; v++) {
       tradedLots[v] = 0.0;
     }
@@ -210,9 +215,9 @@ public final class ImpactMarket implements SimulatedMarket {
       for (int side = 0; side < 2; side++) {
         final int count = poisson(flow.nextDouble(), moRate[v]);
         for (int i = 0; i < count; i++) {
-          final double u = Math.max(Double.MIN_NORMAL, flow.nextDouble());
+          final double us = Math.max(Double.MIN_NORMAL, flow.nextDouble());
           final long size =
-              1L + (geoQ[v] > 0.0 ? (long) Math.floor(StrictMath.log(u) / StrictMath.log(geoQ[v])) : 0L);
+              1L + (geoQ[v] > 0.0 ? (long) Math.floor(StrictMath.log(us) / StrictMath.log(geoQ[v])) : 0L);
           othersMarketOrder(v, side == 0, Math.min(size, 1_000L));
         }
       }
