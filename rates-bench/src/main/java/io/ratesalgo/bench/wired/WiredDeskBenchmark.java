@@ -97,7 +97,7 @@ public final class WiredDeskBenchmark {
     }
   }
 
-  public static void main(final String[] args) throws Exception {
+  public static void main(final String[] args) throws IOException, InterruptedException {
     final Path report = run(Config.parse(args));
     System.out.println("report: " + report);
   }
@@ -110,7 +110,7 @@ public final class WiredDeskBenchmark {
   }
 
   /** Runs one configuration and writes its JSON report; returns the report's path. */
-  static Path run(final Config c) throws Exception {
+  static Path run(final Config c) throws IOException, InterruptedException {
     if (!LoopProbe.ENABLED || !GatewayProbe.ENABLED) {
       throw new IllegalStateException("start the JVM with -Drates.probes=true: the stage stamps are off");
     }
