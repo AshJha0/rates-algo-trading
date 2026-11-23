@@ -234,7 +234,8 @@ public final class D2cRfqSimulator extends VenueSimulator {
   /** Client id sent for a model RFQ: 2001, 2002, 2003 for tiers A, B, C. */
   static final int CLIENT_ID_BASE = 2001;
 
-  private void createModelRfq(final SimRfq r) {
+  // synchronized although every caller already holds the lock: the event queue runs it
+  private synchronized void createModelRfq(final SimRfq r) {
     final Instrument inst = session.instrument(r.instrument());
     final long id = ++rfqSeq;
     final List<String> engines = new ArrayList<>(loggedOn());

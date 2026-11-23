@@ -133,19 +133,15 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final List<String> engineCompIds,
       final FeedChannel feedChannel,
       final Clock clock) {
+    // checked before the object exists, so a refused venue is never half built
+    checkModelVenue(session, instruments, share);
     super(compId, engineCompIds, clock, session.model().seed());
-    if (!(share > 0.0 && share <= 1.0)) {
-      throw new IllegalArgumentException("venue share must be in (0, 1]: " + share);
-    }
     this.config = config;
     this.session = session;
     this.share = share;
     final MarketSpec spec = session.model().spec();
     for (final Instrument i : instruments) {
       final int index = session.index(i.securityId());
-      if (index < 0 || !spec.instrument(index).hasBook()) {
-        throw new IllegalArgumentException(i.securityId() + " has no order book in the model");
-      }
       final SimInstrument s = spec.instrument(index);
       final long lot = (long) s.minQuantity();
       bySecurityId.put(i.securityId(), i);
@@ -161,6 +157,19 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       modelBooks.put(i.instrumentId(), new ModelBook(session.model().book(index), lot));
     }
     this.feed = new BookFeedPublisher(VENUE_ID, feedChannel, clock);
+  }
+
+  private static void checkModelVenue(
+      final io.ratesalgo.venues.sim.SimV2Session session, final List<Instrument> instruments, final double share) {
+    if (!(share > 0.0 && share <= 1.0)) {
+      throw new IllegalArgumentException("venue share must be in (0, 1]: " + share);
+    }
+    for (final Instrument i : instruments) {
+      final int index = session.index(i.securityId());
+      if (index < 0 || !session.model().spec().instrument(index).hasBook()) {
+        throw new IllegalArgumentException(i.securityId() + " has no order book in the model");
+      }
+    }
   }
 
   /** Starts the model's liquidity and taker flow on this venue: one pass now, then one per grid step. */
