@@ -118,8 +118,11 @@ public final class SimConfig {
   }
 
   /**
-   * Router venue parameters consistent with this market: the same fees, latencies and lot, the
-   * cancellation rate, and daily volume equal to both sides' arrival rate over the trading day.
+   * Router venue parameters that copy this market's generating parameters: the same fees,
+   * latencies and lot, the simulator's own cancellation rate, and daily volume equal to both
+   * sides' arrival rate over the trading day. The router is told how the simulator works, which
+   * is a leak (review section 5.1): kept only for the touch model's recorded results (the v1
+   * regression check, COOKBOOK recipes 17 and 29). Use {@link #declaredVenues} for anything else.
    */
   public VenueParams[] routerVenues(final double participationCap, final int depthLevels) {
     final VenueParams[] out = new VenueParams[venues.length];
@@ -137,6 +140,37 @@ public final class SimConfig {
               v.latencyNanos(),
               cancelRatePerSecond,
               Math.round(2.0 * v.arrivalLotsPerSecond() * tradingSecondsPerDay) * lotSize,
+              participationCap,
+              depthLevels);
+    }
+    return out;
+  }
+
+  /** Cancellation rate a desk declares before it has seen a venue: a prior, not a fit. */
+  public static final double DECLARED_CANCEL_RATE = 0.2;
+
+  /**
+   * Router venue parameters a desk would know without seeing inside the simulator: the venue's
+   * published fees, its lot and tick, our measured one-way latency, the clob preset's daily volume
+   * and a declared cancellation-rate prior of {@link #DECLARED_CANCEL_RATE}. Nothing comes from
+   * the simulator's order arrival or cancellation rates; the ladder model learns those.
+   */
+  public VenueParams[] declaredVenues(final double participationCap, final int depthLevels) {
+    final VenueParams[] out = new VenueParams[venues.length];
+    for (int i = 0; i < venues.length; i++) {
+      final SimVenueSpec v = venues[i];
+      out[i] =
+          new VenueParams(
+              v.venueId(),
+              VenueKind.Clob,
+              tickMantissa,
+              lotSize,
+              lotSize,
+              v.takerFee(),
+              v.makerFee(),
+              v.latencyNanos(),
+              DECLARED_CANCEL_RATE,
+              RouterPresets.clob(v.venueId()).adv(),
               participationCap,
               depthLevels);
     }

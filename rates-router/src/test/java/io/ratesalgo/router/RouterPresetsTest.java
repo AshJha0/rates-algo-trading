@@ -110,4 +110,20 @@ class RouterPresetsTest {
     same(v, "participation_cap", p.participationCap());
     same(v, "depth_levels", p.depthLevels());
   }
+
+  /** The ladder preset is the touch preset with the round-2 controls and a 2-tick collar. */
+  @Test
+  void ladderPresetDiffersFromGlobalOnlyWhereDeclared() {
+    final RouterParams g = RouterPresets.global();
+    final RouterParams l = RouterPresets.ladder();
+    assertEquals(RouterPresets.LADDER_CONFIG_VERSION, l.configVersion());
+    assertEquals(2, l.aggressiveCollarTicks());
+    assertEquals(8, g.aggressiveCollarTicks(), "the touch model keeps its recorded collar");
+    assertEquals(0.75, l.filledAdverseFactor());
+    assertEquals(0.0001, l.messageCostPoints());
+    assertEquals(g.impactY(), l.impactY());
+    assertEquals(g.maxSlices(), l.maxSlices());
+    assertEquals(g.scheduleHorizonNanos(), l.scheduleHorizonNanos());
+    assertTrue(l.configVersion() != g.configVersion());
+  }
 }

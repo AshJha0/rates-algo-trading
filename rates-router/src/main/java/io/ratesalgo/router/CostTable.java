@@ -22,6 +22,9 @@ public final class CostTable {
   /** Most venues one decision can consider. */
   public static final int MAX_VENUES = 8;
 
+  /** Most opposite-side levels per venue the ladder model reads (LoopBook keeps 16). */
+  public static final int MAX_LEVELS = 16;
+
   // header
   long decisionId;
   long parentId;
@@ -59,6 +62,32 @@ public final class CostTable {
   final boolean[] passiveAllowed = new boolean[MAX_VENUES];
   final boolean[] aggressiveAllowed = new boolean[MAX_VENUES];
   final VenueExclusion[] exclusion = new VenueExclusion[MAX_VENUES];
+
+  // ladder model (RouteDecisionModel and RouteDecisionLadder frames); off for the touch model
+  boolean ladder;
+  int modelVersion;
+  final int[] levelCount = new int[MAX_VENUES];
+  final long[] levelPrice = new long[MAX_VENUES * MAX_LEVELS];
+  final long[] levelDisplayed = new long[MAX_VENUES * MAX_LEVELS];
+  final long[] levelOwn = new long[MAX_VENUES * MAX_LEVELS];
+  final long[] limitPrice = new long[MAX_VENUES];
+  final long[] ownOpposite = new long[MAX_VENUES];
+  final long[] rejectRate = new long[MAX_VENUES];
+  final long[] cancelRejectRate = new long[MAX_VENUES];
+  final long[] fillRatio = new long[MAX_VENUES];
+  final long[] markout1s = new long[MAX_VENUES];
+  final long[] markout5s = new long[MAX_VENUES];
+  final long[] markout30s = new long[MAX_VENUES];
+  final long[] ackLatencyNanos = new long[MAX_VENUES];
+  final long[] cancelRate = new long[MAX_VENUES];
+  final long[] calObserved = new long[MAX_VENUES];
+  final long[] calPredicted = new long[MAX_VENUES];
+  final int[] queueBucket = new int[MAX_VENUES];
+  final long[] penalty = new long[MAX_VENUES];
+  final long[] sweepQuantity = new long[MAX_VENUES];
+  final long[] childLimit = new long[MAX_VENUES];
+  final long[] walkCost = new long[MAX_VENUES];
+  final long[] riskCost = new long[MAX_VENUES];
 
   // outputs per row
   final long[] evaluatedQuantity = new long[MAX_VENUES];
@@ -132,6 +161,81 @@ public final class CostTable {
     return chosenCost[row];
   }
 
+  /** Quantity-weighted expected cost per unit of the decision, price points mantissa. */
+  public long expectedCost() {
+    return expectedCost;
+  }
+
+  /** True if the ladder model took the decision. */
+  public boolean isLadder() {
+    return ladder;
+  }
+
+  /** Aggressive cost per unit of a row, price points mantissa. */
+  public long aggressiveCost(final int row) {
+    return aggressiveCost[row];
+  }
+
+  /** Passive cost per unit of a row, price points mantissa. */
+  public long passiveCost(final int row) {
+    return passiveCost[row];
+  }
+
+  /** Post-trade impact per unit of a row, price points mantissa. */
+  public long impactCost(final int row) {
+    return impactCost[row];
+  }
+
+  /** Fill probability of a row's passive child, mantissa. */
+  public long fillProbability(final int row) {
+    return fillProbability[row];
+  }
+
+  /** Ladder levels journaled for a row. */
+  public int levelCount(final int row) {
+    return levelCount[row];
+  }
+
+  /** Price of a row's ladder level. */
+  public long levelPrice(final int row, final int level) {
+    return levelPrice[row * MAX_LEVELS + level];
+  }
+
+  /** Most aggressive price allowed on a row (ladder model), 0 if none. */
+  public long limitPrice(final int row) {
+    return limitPrice[row];
+  }
+
+  /** Limit of a row's aggressive child under the ladder model: the last level it needs. */
+  public long childLimit(final int row) {
+    return childLimit[row];
+  }
+
+  /** Quantity the consolidated sweep takes on a row. */
+  public long sweepQuantity(final int row) {
+    return sweepQuantity[row];
+  }
+
+  /** Mean all-in cost per unit of a row's sweep levels, price points mantissa. */
+  public long walkCost(final int row) {
+    return walkCost[row];
+  }
+
+  /** Scorecard penalty of a row, price points per unit mantissa. */
+  public long penalty(final int row) {
+    return penalty[row];
+  }
+
+  /** Risk charge per unit of a row's passive leg, price points mantissa. */
+  public long riskCost(final int row) {
+    return riskCost[row];
+  }
+
+  /** Learned cancellation rate of a row, per unit per second mantissa. */
+  public long cancelRate(final int row) {
+    return cancelRate[row];
+  }
+
   /** Clears the outputs of every row, keeping the inputs; used to re-evaluate a decoded table. */
   public void clearOutputs() {
     allocatedQuantity = 0;
@@ -146,6 +250,11 @@ public final class CostTable {
       passiveCost[r] = 0;
       aggressiveCost[r] = 0;
       chosenCost[r] = 0;
+      penalty[r] = 0;
+      sweepQuantity[r] = 0;
+      childLimit[r] = 0;
+      walkCost[r] = 0;
+      riskCost[r] = 0;
       if (exclusion[r] == VenueExclusion.BelowMinimum
           || exclusion[r] == VenueExclusion.CapReached) {
         exclusion[r] = VenueExclusion.None;
@@ -171,7 +280,9 @@ public final class CostTable {
         || sliceIntervalNanos != o.sliceIntervalNanos
         || arrivalMid != o.arrivalMid
         || expectedCost != o.expectedCost
-        || timestampNanos != o.timestampNanos) {
+        || timestampNanos != o.timestampNanos
+        || ladder != o.ladder
+        || modelVersion != o.modelVersion) {
       return false;
     }
     for (int r = 0; r < venueCount; r++) {
@@ -208,7 +319,40 @@ public final class CostTable {
         && impactCost[r] == o.impactCost[r]
         && passiveCost[r] == o.passiveCost[r]
         && aggressiveCost[r] == o.aggressiveCost[r]
-        && chosenCost[r] == o.chosenCost[r];
+        && chosenCost[r] == o.chosenCost[r]
+        && (!ladder || ladderRowEquals(o, r));
+  }
+
+  private boolean ladderRowEquals(final CostTable o, final int r) {
+    if (levelCount[r] != o.levelCount[r]) {
+      return false;
+    }
+    for (int k = 0; k < levelCount[r]; k++) {
+      final int i = r * MAX_LEVELS + k;
+      if (levelPrice[i] != o.levelPrice[i]
+          || levelDisplayed[i] != o.levelDisplayed[i]
+          || levelOwn[i] != o.levelOwn[i]) {
+        return false;
+      }
+    }
+    return limitPrice[r] == o.limitPrice[r]
+        && ownOpposite[r] == o.ownOpposite[r]
+        && rejectRate[r] == o.rejectRate[r]
+        && cancelRejectRate[r] == o.cancelRejectRate[r]
+        && fillRatio[r] == o.fillRatio[r]
+        && markout1s[r] == o.markout1s[r]
+        && markout5s[r] == o.markout5s[r]
+        && markout30s[r] == o.markout30s[r]
+        && ackLatencyNanos[r] == o.ackLatencyNanos[r]
+        && cancelRate[r] == o.cancelRate[r]
+        && calObserved[r] == o.calObserved[r]
+        && calPredicted[r] == o.calPredicted[r]
+        && queueBucket[r] == o.queueBucket[r]
+        && penalty[r] == o.penalty[r]
+        && sweepQuantity[r] == o.sweepQuantity[r]
+        && childLimit[r] == o.childLimit[r]
+        && walkCost[r] == o.walkCost[r]
+        && riskCost[r] == o.riskCost[r];
   }
 
   /** Copies everything from another table. */
@@ -256,6 +400,30 @@ public final class CostTable {
     System.arraycopy(o.passiveCost, 0, passiveCost, 0, MAX_VENUES);
     System.arraycopy(o.aggressiveCost, 0, aggressiveCost, 0, MAX_VENUES);
     System.arraycopy(o.chosenCost, 0, chosenCost, 0, MAX_VENUES);
+    ladder = o.ladder;
+    modelVersion = o.modelVersion;
+    System.arraycopy(o.levelCount, 0, levelCount, 0, MAX_VENUES);
+    System.arraycopy(o.levelPrice, 0, levelPrice, 0, levelPrice.length);
+    System.arraycopy(o.levelDisplayed, 0, levelDisplayed, 0, levelDisplayed.length);
+    System.arraycopy(o.levelOwn, 0, levelOwn, 0, levelOwn.length);
+    System.arraycopy(o.limitPrice, 0, limitPrice, 0, MAX_VENUES);
+    System.arraycopy(o.ownOpposite, 0, ownOpposite, 0, MAX_VENUES);
+    System.arraycopy(o.rejectRate, 0, rejectRate, 0, MAX_VENUES);
+    System.arraycopy(o.cancelRejectRate, 0, cancelRejectRate, 0, MAX_VENUES);
+    System.arraycopy(o.fillRatio, 0, fillRatio, 0, MAX_VENUES);
+    System.arraycopy(o.markout1s, 0, markout1s, 0, MAX_VENUES);
+    System.arraycopy(o.markout5s, 0, markout5s, 0, MAX_VENUES);
+    System.arraycopy(o.markout30s, 0, markout30s, 0, MAX_VENUES);
+    System.arraycopy(o.ackLatencyNanos, 0, ackLatencyNanos, 0, MAX_VENUES);
+    System.arraycopy(o.cancelRate, 0, cancelRate, 0, MAX_VENUES);
+    System.arraycopy(o.calObserved, 0, calObserved, 0, MAX_VENUES);
+    System.arraycopy(o.calPredicted, 0, calPredicted, 0, MAX_VENUES);
+    System.arraycopy(o.queueBucket, 0, queueBucket, 0, MAX_VENUES);
+    System.arraycopy(o.penalty, 0, penalty, 0, MAX_VENUES);
+    System.arraycopy(o.sweepQuantity, 0, sweepQuantity, 0, MAX_VENUES);
+    System.arraycopy(o.childLimit, 0, childLimit, 0, MAX_VENUES);
+    System.arraycopy(o.walkCost, 0, walkCost, 0, MAX_VENUES);
+    System.arraycopy(o.riskCost, 0, riskCost, 0, MAX_VENUES);
   }
 
   /**
@@ -317,6 +485,30 @@ public final class CostTable {
               mm(allocated[r]),
               allocated[r] == 0 ? "-" : passive[r] ? "pass" : "aggr",
               exclusion[r]));
+    }
+    if (ladder) {
+      for (int r = 0; r < venueCount; r++) {
+        sb.append(
+            String.format(
+                Locale.ROOT,
+                "  ladder %d: limit %s penalty %s sweep %s to %s walk %s risk %s theta %.4f levels",
+                venueId[r],
+                price(limitPrice[r]),
+                pts(penalty[r]),
+                mm(sweepQuantity[r]),
+                price(childLimit[r]),
+                pts(walkCost[r]),
+                pts(riskCost[r]),
+                cancelRate[r] / 1e9));
+        for (int k = 0; k < levelCount[r]; k++) {
+          final int i = r * MAX_LEVELS + k;
+          sb.append(' ')
+              .append(price(levelPrice[i]))
+              .append('x')
+              .append(mm(levelDisplayed[i] - levelOwn[i]));
+        }
+        sb.append(System.lineSeparator());
+      }
     }
     return sb.toString();
   }

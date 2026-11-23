@@ -59,4 +59,65 @@ public final class ChildRandomiser {
     final double factor = 1.0 + intervalJitter * (2.0 * random.nextDouble() - 1.0);
     return Math.max(1L, Math.round(baseNanos * factor));
   }
+
+  /** Shortest and longest gap, as multiples of the mean, of {@link #gammaGap}. */
+  public static final double GAP_MIN = 0.1;
+
+  /** See {@link #GAP_MIN}. */
+  public static final double GAP_MAX = 3.0;
+
+  /**
+   * A slice gap of the ladder model: {@code meanNanos * G / shape} with {@code G} gamma
+   * distributed with that shape (mean {@code meanNanos}, coefficient of variation {@code
+   * 1 / sqrt(shape)}, 0.71 at the default shape 2), clamped to {@code [0.1, 3]} times the mean.
+   * A uniform jitter of plus or minus a quarter around a fixed period leaves the period visible
+   * in the gaps (every gap within 25% of it); gamma gaps have no period to find, a long right
+   * tail, and independent draws, while the router re-centres the mean on the time left in the
+   * schedule at each slice, so the parent still finishes near its horizon. Seeded, so replayable.
+   */
+  public long gammaGap(final long meanNanos, final double shape) {
+    final double g = gamma(shape) / shape;
+    final double clamped = Math.min(GAP_MAX, Math.max(GAP_MIN, g));
+    return Math.max(1L, Math.round(meanNanos * clamped));
+  }
+
+  /**
+   * A gamma variate of unit scale by Marsaglia and Tsang (ACM TOMS 26(3), 2000), with the
+   * {@code U^(1/shape)} boost below shape 1. Normals by the polar method from the same source
+   * (StrictMath.cos allocates on JDK 25, and Math.cos may differ by platform).
+   */
+  double gamma(final double shape) {
+    if (shape < 1.0) {
+      final double u = Math.max(Double.MIN_NORMAL, random.nextDouble());
+      return gamma(shape + 1.0) * StrictMath.pow(u, 1.0 / shape);
+    }
+    final double d = shape - 1.0 / 3.0;
+    final double c = 1.0 / StrictMath.sqrt(9.0 * d);
+    while (true) {
+      final double x = normal();
+      final double v0 = 1.0 + c * x;
+      if (v0 <= 0.0) {
+        continue;
+      }
+      final double v = v0 * v0 * v0;
+      final double u = Math.max(Double.MIN_NORMAL, random.nextDouble());
+      if (StrictMath.log(u) < 0.5 * x * x + d - d * v + d * StrictMath.log(v)) {
+        return d * v;
+      }
+    }
+  }
+
+  private double normal() {
+    // a point in the unit disc is found with probability pi / 4 per try; the bound only makes the
+    // loop visibly finite
+    for (int i = 0; i < 1_000; i++) {
+      final double u = 2.0 * random.nextDouble() - 1.0;
+      final double v = 2.0 * random.nextDouble() - 1.0;
+      final double s = u * u + v * v;
+      if (s < 1.0 && s > 0.0) {
+        return u * StrictMath.sqrt(-2.0 * StrictMath.log(s) / s);
+      }
+    }
+    return 0.0;
+  }
 }
