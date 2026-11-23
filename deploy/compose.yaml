@@ -4,10 +4,18 @@
 #   docker compose -f deploy/compose.yaml up -d --build
 #   docker compose -f deploy/compose.yaml --profile green up -d trading-green
 #   docker compose -f deploy/compose.yaml --profile batch run --rm report --help
-# The control token comes from the shell environment and is never committed.
+# The control token and the store and FIX passwords come from the shell environment; the compose
+# file names the variables and holds no value. The key stores come from the directory named by
+# RATES_CERTS_DIR, mounted read-only at /run/rates/certs, where the configuration files expect
+#   server-keystore.p12  the certificate of the HTTP endpoints and of the in-process FIX acceptors
+#   truststore.p12       what the FIX initiators believe
+#   ca.pem               the same certificate (or its issuer) as PEM, for curl and Prometheus
+# None of these files is committed. deploy/rehearsal.py --mode docker makes a throwaway set and
+# sets every variable itself; deploy/README.md says how to make one by hand.
 # The configuration files bind loopback. Inside a container the published port reaches the
 # process only on a non-loopback address, so each service sets RATES_HTTP_BIND=0.0.0.0; the process
-# then refuses to start without the token. The ports are published on the host's loopback only.
+# then refuses to start without the token and http.tls, so every endpoint is HTTPS. The ports are
+# published on the host's loopback only.
 name: rates-sim
 
 x-trading: &trading
@@ -19,6 +27,7 @@ x-trading: &trading
     RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
   volumes:
     - journal:/var/lib/rates
+    - ${RATES_CERTS_DIR:?set RATES_CERTS_DIR to the directory holding the key stores}:/run/rates/certs:ro
   restart: "no"
 
 services:
@@ -28,10 +37,20 @@ services:
               "--schema", "/opt/rates/config/schema/process-config.schema.json"]
     environment:
       RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
+      RATES_HTTP_KEYSTORE_PASSWORD: ${RATES_HTTP_KEYSTORE_PASSWORD:?set RATES_HTTP_KEYSTORE_PASSWORD in the shell}
+      RATES_FIX_TRUSTSTORE_PASSWORD: ${RATES_FIX_TRUSTSTORE_PASSWORD:?set RATES_FIX_TRUSTSTORE_PASSWORD in the shell}
+      RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD: ${RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD:?set RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD in the shell}
+      RATES_FIX_PASSWORD: ${RATES_FIX_PASSWORD:?set RATES_FIX_PASSWORD in the shell}
       RATES_HTTP_PORT: "8081"
       RATES_HTTP_BIND: "0.0.0.0"
     ports:
       - "127.0.0.1:8081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--cacert", "/run/rates/certs/ca.pem", "https://127.0.0.1:8081/health/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
     depends_on:
       venue-sim:
         condition: service_healthy
@@ -43,10 +62,20 @@ services:
               "--schema", "/opt/rates/config/schema/process-config.schema.json"]
     environment:
       RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
+      RATES_HTTP_KEYSTORE_PASSWORD: ${RATES_HTTP_KEYSTORE_PASSWORD:?set RATES_HTTP_KEYSTORE_PASSWORD in the shell}
+      RATES_FIX_TRUSTSTORE_PASSWORD: ${RATES_FIX_TRUSTSTORE_PASSWORD:?set RATES_FIX_TRUSTSTORE_PASSWORD in the shell}
+      RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD: ${RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD:?set RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD in the shell}
+      RATES_FIX_PASSWORD: ${RATES_FIX_PASSWORD:?set RATES_FIX_PASSWORD in the shell}
       RATES_HTTP_PORT: "8082"
       RATES_HTTP_BIND: "0.0.0.0"
     ports:
       - "127.0.0.1:8082:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--cacert", "/run/rates/certs/ca.pem", "https://127.0.0.1:8082/health/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
 
   venue-sim:
     build:
@@ -55,12 +84,20 @@ services:
     image: rates-venue-sim:dev
     environment:
       RATES_CONTROL_TOKEN: ${RATES_CONTROL_TOKEN:?set RATES_CONTROL_TOKEN in the shell}
+      RATES_HTTP_KEYSTORE_PASSWORD: ${RATES_HTTP_KEYSTORE_PASSWORD:?set RATES_HTTP_KEYSTORE_PASSWORD in the shell}
       RATES_HTTP_PORT: "8090"
       RATES_HTTP_BIND: "0.0.0.0"
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
       - venue-journal:/var/lib/rates
+      - ${RATES_CERTS_DIR:?set RATES_CERTS_DIR to the directory holding the key stores}:/run/rates/certs:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--cacert", "/run/rates/certs/ca.pem", "https://127.0.0.1:8090/health/ready"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
 
   report:
     profiles: ["batch"]
@@ -78,6 +115,8 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # the certificate only: Prometheus has no business with the key store
+      - ${RATES_CERTS_DIR:?set RATES_CERTS_DIR to the directory holding the key stores}/ca.pem:/etc/prometheus/certs/ca.pem:ro
     ports:
       - "127.0.0.1:9090:9090"
 

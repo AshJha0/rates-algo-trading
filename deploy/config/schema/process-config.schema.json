@@ -25,7 +25,76 @@
       "properties": {
         "bindAddress": {"type": "string", "minLength": 1},
         "port": {"type": "integer", "minimum": 0, "maximum": 65535},
-        "controlTokenEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}
+        "controlTokenEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+        "tls": {
+          "type": "object",
+          "description": "Serves the endpoints over HTTPS. Required when bindAddress is not loopback. The password is named by exactly one of keyStorePasswordEnv and keyStorePasswordFile (checked by ProcessConfig and tools/validate_config.py); it is never written here.",
+          "additionalProperties": false,
+          "required": ["keyStorePath"],
+          "properties": {
+            "keyStorePath": {"type": "string", "minLength": 1},
+            "keyStorePasswordEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+            "keyStorePasswordFile": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "fix": {
+      "type": "object",
+      "description": "FIX sessions between the trading process and its in-process venue simulators. Absent: plain loopback, sequence numbers reset on logon.",
+      "additionalProperties": false,
+      "properties": {
+        "resetOnLogon": {"type": "boolean"},
+        "transport": {"type": "string", "enum": ["tls", "plain-loopback"]},
+        "tls": {
+          "type": "object",
+          "description": "Initiator side. trustStorePath is required when transport is tls.",
+          "additionalProperties": false,
+          "properties": {
+            "trustStorePath": {"type": "string", "minLength": 1},
+            "trustStorePasswordEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+            "trustStorePasswordFile": {"type": "string", "minLength": 1},
+            "keyStorePath": {"type": "string", "minLength": 1},
+            "keyStorePasswordEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+            "keyStorePasswordFile": {"type": "string", "minLength": 1},
+            "verifyHostname": {"type": "boolean"},
+            "handshakeTimeoutMillis": {"type": "integer", "minimum": 1, "maximum": 60000}
+          }
+        },
+        "acceptor": {
+          "type": "object",
+          "description": "The in-process venue simulators' side. keyStorePath is required when transport is tls.",
+          "additionalProperties": false,
+          "properties": {
+            "keyStorePath": {"type": "string", "minLength": 1},
+            "keyStorePasswordEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+            "keyStorePasswordFile": {"type": "string", "minLength": 1},
+            "requireClientCertificate": {"type": "boolean"},
+            "trustStorePath": {"type": "string", "minLength": 1},
+            "trustStorePasswordEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+            "trustStorePasswordFile": {"type": "string", "minLength": 1}
+          }
+        },
+        "credentials": {
+          "type": "object",
+          "description": "FIX Logon Username(553) and Password(554). The password is named by exactly one of passwordEnv and passwordFile.",
+          "additionalProperties": false,
+          "required": ["username"],
+          "properties": {
+            "username": {"type": "string", "minLength": 1},
+            "passwordEnv": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
+            "passwordFile": {"type": "string", "minLength": 1}
+          }
+        },
+        "reconnect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxAttempts": {"type": "integer", "minimum": 0, "maximum": 1000},
+            "initialBackoffMillis": {"type": "integer", "minimum": 1, "maximum": 600000},
+            "maxBackoffMillis": {"type": "integer", "minimum": 1, "maximum": 600000}
+          }
+        }
       }
     },
     "journal": {

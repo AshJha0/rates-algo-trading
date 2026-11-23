@@ -1,0 +1,51 @@
+# expect: a bindAddress that is not loopback needs http.tls
+# Deliberately invalid: tools/validate_config.py checks that it is refused. A bind address beyond loopback served in clear text.
+schemaVersion: 1
+process:
+  name: trading-blue
+  role: trading
+  colour: blue
+http:
+  bindAddress: 0.0.0.0
+  port: 8081
+  controlTokenEnv: RATES_CONTROL_TOKEN
+journal:
+  directory: /var/lib/rates/journal
+  capacityBytes: 67108864
+quoting:
+  enabledAtStart: true
+  instruments:
+    - instrumentId: 2001
+      venueId: 2
+      maxQuoteSizeMinor: 10000000000
+    - instrumentId: 1001
+      venueId: 1
+      maxQuoteSizeMinor: 5000000000
+limits:
+  maxOrderNotionalMinor: 25000000000
+  maxNetDv01Minor: 5000000
+  maxMessagesPerSecond: 200
+recon:
+  cutTimeUtc: "17:00"
+  timingToleranceMillis: 1000
+retention:
+  years: 5
+fix:
+  resetOnLogon: false
+  transport: tls
+  tls:
+    trustStorePath: /run/rates/certs/truststore.p12
+    trustStorePasswordEnv: RATES_FIX_TRUSTSTORE_PASSWORD
+    verifyHostname: true
+    handshakeTimeoutMillis: 5000
+  acceptor:
+    keyStorePath: /run/rates/certs/server-keystore.p12
+    keyStorePasswordEnv: RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD
+    requireClientCertificate: false
+  credentials:
+    username: RATESMM
+    passwordEnv: RATES_FIX_PASSWORD
+  reconnect:
+    maxAttempts: 5
+    initialBackoffMillis: 100
+    maxBackoffMillis: 2000

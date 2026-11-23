@@ -4,9 +4,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.ratesalgo.common.security.KeytoolCertificates;
 import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.journal.Replayer;
 import io.ratesalgo.messages.sbe.KillSwitchDecoder;
+import io.ratesalgo.ops.TestConfigs;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.net.URI;
@@ -51,6 +53,11 @@ class OpsProcessTest {
     return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
   }
 
+  /** Arguments for a copy of a committed configuration without its TLS sections: plain loopback. */
+  private String[] plain(final String name) throws Exception {
+    return new String[] {"--config", TestConfigs.plain(name, dir).toString(), "--schema", ARGS[3]};
+  }
+
   private OpsProcessMain.Started start(final String[] args, final Map<String, String> env) throws Exception {
     return OpsProcessMain.start(args, env, new PrintStream(out, true, StandardCharsets.UTF_8),
         new PrintStream(err, true, StandardCharsets.UTF_8));
@@ -60,7 +67,7 @@ class OpsProcessTest {
   void killSwitchPullsEveryQuoteAndIsJournaled() throws Exception {
     final Map<String, String> env = Map.of("RATES_HTTP_PORT", "0", "RATES_JOURNAL_DIR", dir.toString(),
         "RATES_CONTROL_TOKEN", "s3cret");
-    try (OpsProcessMain.Started s = start(ARGS, env)) {
+    try (OpsProcessMain.Started s = start(plain("trading-blue"), env)) {
       final int port = s.server().port();
       assertEquals(200, get(port, "/health/live").statusCode());
       assertEquals(200, get(port, "/health/ready").statusCode());
@@ -108,8 +115,7 @@ class OpsProcessTest {
 
   @Test
   void venueSimulatorRoleServesHealthOnly() throws Exception {
-    try (OpsProcessMain.Started s = start(new String[] {"--config", "../deploy/config/venue-sim.yaml", "--schema",
-        ARGS[3]}, Map.of("RATES_HTTP_PORT", "0"))) {
+    try (OpsProcessMain.Started s = start(plain("venue-sim"), Map.of("RATES_HTTP_PORT", "0"))) {
       assertNull(s.quoter());
       final int port = s.server().port();
       assertEquals(200, get(port, "/health/ready").statusCode());
@@ -117,26 +123,58 @@ class OpsProcessTest {
       assertTrue(get(port, "/metrics").body().contains("rates_process_info{name=\"venue-sim\""));
     }
     assertTrue(List.of(out.toString(StandardCharsets.UTF_8).split("\n")).get(0).contains("listening"));
-    try (OpsProcessMain.Started s = start(new String[] {"--config", "../deploy/config/venue-sim.yaml", "--schema",
-        ARGS[3]}, Map.of("RATES_HTTP_PORT", "0", "RATES_CONTROL_TOKEN", "v"))) {
+    try (OpsProcessMain.Started s =
+        start(plain("venue-sim"), Map.of("RATES_HTTP_PORT", "0", "RATES_CONTROL_TOKEN", "v"))) {
       assertEquals("{\"role\":\"venue-sim\"}",
           post(s.server().port(), "/control/kill", "X-Control-Token", "v").body());
     }
   }
 
   @Test
-  void aNonLoopbackBindWithoutATokenRefusesToStart() throws Exception {
+  void aNonLoopbackBindNeedsTheTokenAndTls() throws Exception {
     final Map<String, String> open = Map.of("RATES_HTTP_PORT", "0", "RATES_JOURNAL_DIR", dir.toString(),
         "RATES_HTTP_BIND", "0.0.0.0");
-    assertNull(start(ARGS, open));
+    assertNull(start(plain("trading-blue"), open));
     final String refused = err.toString(StandardCharsets.UTF_8);
     assertTrue(refused.contains("configuration refused") && refused.contains("RATES_CONTROL_TOKEN is not set"),
         refused);
-    // the same bind with a token starts
+    // a token alone used to be enough; the token would cross the network in clear text
+    err.reset();
     final Map<String, String> closed = Map.of("RATES_HTTP_PORT", "0", "RATES_JOURNAL_DIR", dir.toString(),
         "RATES_HTTP_BIND", "0.0.0.0", "RATES_CONTROL_TOKEN", "s3cret");
-    try (OpsProcessMain.Started s = start(ARGS, closed)) {
-      assertEquals(200, get(s.server().port(), "/health/live").statusCode());
+    assertNull(start(plain("trading-blue"), closed));
+    assertTrue(err.toString(StandardCharsets.UTF_8).contains("http.tls is not configured"), err::toString);
+  }
+
+  @Test
+  void withHttpTlsTheProcessServesHttpsBeyondLoopback() throws Exception {
+    final KeytoolCertificates.Identity id = TestConfigs.identity(dir, "process");
+    final String[] args =
+        {"--config", TestConfigs.secured("trading-blue", dir, id).toString(), "--schema", ARGS[3]};
+    final Map<String, String> env = TestConfigs.passwords(id.password(), "RATES_HTTP_PORT", "0", "RATES_JOURNAL_DIR",
+        dir.toString(), "RATES_HTTP_BIND", "0.0.0.0", "RATES_CONTROL_TOKEN", "s3cret");
+    final HttpClient https = TestConfigs.client(id.trustStore(), id.password());
+    try (OpsProcessMain.Started s = start(args, env)) {
+      assertTrue(s.server().isHttps());
+      final URI status = URI.create("https://127.0.0.1:" + s.server().port() + "/control/status");
+      final HttpResponse<String> r = https.send(
+          HttpRequest.newBuilder(status).header("X-Control-Token", "s3cret").GET().build(),
+          HttpResponse.BodyHandlers.ofString());
+      assertTrue(r.body().contains("\"liveQuotes\":2"), r.body());
     }
+    // a password variable that is not set stops the start, and the refusal names it
+    err.reset();
+    final Map<String, String> missing = new java.util.HashMap<>(env);
+    missing.remove("RATES_HTTP_KEYSTORE_PASSWORD");
+    assertNull(start(args, missing));
+    assertTrue(err.toString(StandardCharsets.UTF_8).contains("RATES_HTTP_KEYSTORE_PASSWORD, which is not set"),
+        err::toString);
+  }
+
+  @Test
+  void theCommittedConfigurationDoesNotStartWithoutItsStores() throws Exception {
+    assertNull(start(ARGS, Map.of("RATES_HTTP_PORT", "0", "RATES_JOURNAL_DIR", dir.toString())));
+    final String refused = err.toString(StandardCharsets.UTF_8);
+    assertTrue(refused.contains("http.tls.keyStorePath") && refused.contains("cannot be read"), refused);
   }
 }

@@ -6,10 +6,15 @@ process:
   colour: blue
 http:
   # Loopback by default. A container sets RATES_HTTP_BIND=0.0.0.0 (deploy/compose.yaml); the
-  # process then refuses to start unless the control token is set.
+  # process then refuses to start unless the control token is set and http.tls is configured.
   bindAddress: 127.0.0.1
   port: 8090
   controlTokenEnv: RATES_CONTROL_TOKEN
+  # HTTPS for health, metrics and control. The key store is provided at deploy time (a mounted
+  # directory or a secret mount) and is never committed; its password is named, not written.
+  tls:
+    keyStorePath: /run/rates/certs/server-keystore.p12
+    keyStorePasswordEnv: RATES_HTTP_KEYSTORE_PASSWORD
 journal:
   directory: /var/lib/rates/venue-journal
   capacityBytes: 67108864

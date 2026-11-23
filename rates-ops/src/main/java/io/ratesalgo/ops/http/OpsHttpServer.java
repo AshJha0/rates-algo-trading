@@ -2,6 +2,10 @@ package io.ratesalgo.ops.http;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsParameters;
+import com.sun.net.httpserver.HttpsServer;
+import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.ops.metrics.MetricsRegistry;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -12,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import javax.net.ssl.SSLParameters;
 
 /**
  * Health, readiness, metrics and control endpoints on the JDK's built-in HTTP server, one thread,
@@ -29,10 +34,13 @@ import java.util.concurrent.Executors;
  * <p>Every {@code /control/*} request must carry the header {@code X-Control-Token} equal to the
  * configured token. With no token configured the control endpoints answer 403 to everyone, and
  * the server refuses to start on an address that is not loopback: an unset variable must not
- * leave the kill switch open to the network. Health and metrics need no token. The transport is
- * plain HTTP, so anything beyond loopback belongs behind a management network or a TLS proxy. The
- * requester's party id comes from {@code X-Requested-By} and is journaled with the KillSwitch
- * message.
+ * leave the kill switch open to the network. Health and metrics need no token. The requester's
+ * party id comes from {@code X-Requested-By} and is journaled with the KillSwitch message.
+ *
+ * <p>Given a {@link TlsConfig} the server speaks HTTPS: TLS 1.3 only unless the configuration lists
+ * other protocols, with a client certificate demanded if the configuration says so. Plain HTTP is
+ * for loopback only. An address that is not loopback needs both the token and TLS, or the server
+ * refuses to start: the token must not cross a network in clear text.
  */
 public final class OpsHttpServer implements AutoCloseable {
 
@@ -58,22 +66,43 @@ public final class OpsHttpServer implements AutoCloseable {
 
   private final HttpServer server;
   private final ExecutorService executor;
+  private final boolean https;
+
+  /**
+   * Starts the server on plain HTTP, which only a loopback address may serve.
+   *
+   * @param controlToken the control token; null or empty disables the control endpoints
+   * @throws IllegalArgumentException if the address is not loopback
+   */
+  public OpsHttpServer(final String bindAddress, final int port, final MetricsRegistry metrics,
+      final ReadinessProbe readiness, final Control control, final String controlToken) throws IOException {
+    this(bindAddress, port, metrics, readiness, control, controlToken, null);
+  }
 
   /**
    * Starts the server.
    *
    * @param controlToken the control token; null or empty disables the control endpoints
-   * @throws IllegalArgumentException if no token is given and the address is not loopback
+   * @param tls the server's key store and protocols for HTTPS; null for plain HTTP
+   * @throws IllegalArgumentException if the address is not loopback and the token or TLS is missing
+   * @throws IllegalStateException if the key store cannot be opened
    */
   public OpsHttpServer(final String bindAddress, final int port, final MetricsRegistry metrics,
-      final ReadinessProbe readiness, final Control control, final String controlToken) throws IOException {
+      final ReadinessProbe readiness, final Control control, final String controlToken, final TlsConfig tls)
+      throws IOException {
     final boolean hasToken = controlToken != null && !controlToken.isEmpty();
     if (!hasToken && !isLoopback(bindAddress)) {
       throw new IllegalArgumentException(
           "refusing to serve control endpoints on " + bindAddress + " without a control token; "
               + "set the token or bind a loopback address");
     }
-    server = HttpServer.create(new InetSocketAddress(bindAddress, port), 16);
+    if (tls == null && !isLoopback(bindAddress)) {
+      throw new IllegalArgumentException(
+          "refusing to serve plain HTTP on " + bindAddress + "; configure TLS (http.tls) or bind a loopback address");
+    }
+    https = tls != null;
+    server = https ? secure(new InetSocketAddress(bindAddress, port), tls)
+        : HttpServer.create(new InetSocketAddress(bindAddress, port), 16);
     executor = Executors.newSingleThreadExecutor(r -> {
       final Thread t = new Thread(r, "ops-http");
       t.setDaemon(true);
@@ -128,6 +157,27 @@ public final class OpsHttpServer implements AutoCloseable {
       }
     });
     server.start();
+  }
+
+  private static HttpServer secure(final InetSocketAddress address, final TlsConfig tls) throws IOException {
+    // built before the socket is bound: a store that cannot be opened must not leave a port taken
+    final HttpsConfigurator configurator = new HttpsConfigurator(tls.context()) {
+      @Override
+      public void configure(final HttpsParameters params) {
+        final SSLParameters p = getSSLContext().getDefaultSSLParameters();
+        p.setProtocols(tls.protocols().toArray(new String[0]));
+        p.setNeedClientAuth(tls.requireClientCertificate());
+        params.setSSLParameters(p);
+      }
+    };
+    final HttpsServer secure = HttpsServer.create(address, 16);
+    secure.setHttpsConfigurator(configurator);
+    return secure;
+  }
+
+  /** True when the endpoints are served over HTTPS. */
+  public boolean isHttps() {
+    return https;
   }
 
   /** The bound port (useful when started on port 0). */
