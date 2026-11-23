@@ -134,10 +134,17 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final List<String> engineCompIds,
       final FeedChannel feedChannel,
       final Clock clock) {
-    // checked here too, before the object exists: a constructor that only delegates would otherwise
-    // let the refusal out of a half-built venue
+    // checked before the object exists, so a refused venue is never half built. Written out here
+    // and not delegated to the constructor below: SpotBugs reads a refusal that passes through a
+    // delegating constructor as leaving a half-built object
     checkModelVenue(session, instruments, share);
-    this(VENUE_ID, compId, config, session, instruments, share, engineCompIds, feedChannel, clock);
+    super(compId, engineCompIds, clock, session.model().seed());
+    this.venueId = VENUE_ID;
+    this.config = config;
+    this.session = session;
+    this.share = share;
+    listModelInstruments(instruments);
+    this.feed = new BookFeedPublisher(VENUE_ID, feedChannel, clock);
   }
 
   /**
@@ -162,6 +169,12 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
     this.config = config;
     this.session = session;
     this.share = share;
+    listModelInstruments(instruments);
+    this.feed = new BookFeedPublisher(venueId, feedChannel, clock);
+  }
+
+  /** One book per instrument, each with its own tick and minimum size, linked to the model's book. */
+  private void listModelInstruments(final List<Instrument> instruments) {
     final MarketSpec spec = session.model().spec();
     for (final Instrument i : instruments) {
       final int index = session.index(i.securityId());
@@ -179,7 +192,6 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
               this));
       modelBooks.put(i.instrumentId(), new ModelBook(session.model().book(index), lot));
     }
-    this.feed = new BookFeedPublisher(venueId, feedChannel, clock);
   }
 
   private static void checkModelVenue(
