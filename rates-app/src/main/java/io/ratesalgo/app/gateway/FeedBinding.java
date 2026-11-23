@@ -7,6 +7,7 @@ import io.ratesalgo.fix.gateway.MessageSink;
 import io.ratesalgo.fix.gateway.MessageSource;
 import io.ratesalgo.messages.sbe.BookUpdateDecoder;
 import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
+import io.ratesalgo.messages.sbe.TradePrintDecoder;
 import io.ratesalgo.venues.feed.SnapshotService;
 import java.nio.ByteBuffer;
 import org.agrona.DirectBuffer;
@@ -33,6 +34,8 @@ import org.agrona.concurrent.UnsafeBuffer;
  *       whole again (DECISIONS.md DR-R2W-05). Any step the inbound side refuses leaves the binding
  *       unsynchronised, and the whole rebuild is tried again on the next {@link #doWork}; the book
  *       is declared whole only after every snapshot frame was taken.
+ *   <li>A TradePrint on the same channel (simulator v2 venues publish them) is forwarded as it
+ *       comes while the book is whole; see {@link #prints()}.
  * </ul>
  */
 @HotPath
@@ -64,6 +67,8 @@ public final class FeedBinding {
   private long skipped;
   private long rebuilds;
   private long failedRebuilds;
+  private long prints;
+  private long printsDropped;
 
   /**
    * A binding into any sink; a false return from the sink means the frame was not taken.
@@ -129,6 +134,9 @@ public final class FeedBinding {
 
   private boolean onFrame(final DirectBuffer buffer, final int offset, final int length) {
     header.wrap(buffer, offset);
+    if (header.templateId() == TradePrintDecoder.TEMPLATE_ID) {
+      return onPrint(buffer, offset, length);
+    }
     if (header.templateId() != BookUpdateDecoder.TEMPLATE_ID) {
       return false;
     }
@@ -159,6 +167,25 @@ public final class FeedBinding {
       frames++;
     }
     lastSeq = seq;
+    return true;
+  }
+
+  /**
+   * A trade print is forwarded while the book is whole and passed over while it is being rebuilt.
+   * It is not part of the delta stream: it has its own sequence and changes no level, so a print
+   * the loop did not get costs a sample of the traded rate and is counted, never a rebuild.
+   */
+  private boolean onPrint(final DirectBuffer buffer, final int offset, final int length) {
+    if (!synced) {
+      printsDropped++;
+      return true;
+    }
+    final int result = deliver(buffer, offset, length);
+    if (result == InboundRouter.FULL) {
+      printsDropped++;
+    } else if (result == InboundRouter.DELIVERED) {
+      prints++;
+    }
     return true;
   }
 
@@ -255,6 +282,16 @@ public final class FeedBinding {
   /** Live frames passed over while waiting for a rebuild; the snapshot covered them. */
   public long skipped() {
     return skipped;
+  }
+
+  /** Trade prints forwarded. */
+  public long prints() {
+    return prints;
+  }
+
+  /** Trade prints not forwarded: the book was being rebuilt, or the inbound side was full. */
+  public long printsDropped() {
+    return printsDropped;
   }
 
   /** Snapshot rebuilds completed, the initial one included. */

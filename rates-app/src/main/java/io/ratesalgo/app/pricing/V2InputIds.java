@@ -24,6 +24,29 @@ public final class V2InputIds {
 
   private V2InputIds() {}
 
+  /** True for an id of this class: a curve input that is no tradable instrument and belongs to no one group. */
+  public static boolean isCurveOnly(final int instrumentId) {
+    return instrumentId >= 4_000_000 && instrumentId < 5_000_000;
+  }
+
+  /** True for a one-month SOFR future's id. */
+  public static boolean isSr1(final int instrumentId) {
+    return instrumentId >= SR1_BASE && instrumentId < SR3_BASE;
+  }
+
+  /** True for a three-month SOFR future's id. */
+  public static boolean isSr3(final int instrumentId) {
+    return instrumentId >= SR3_BASE && instrumentId < SR3_BASE + 100_000;
+  }
+
+  /** Tenor in months of a {@link #parSwap} id. */
+  public static int parSwapMonths(final int instrumentId) {
+    if (instrumentId < PAR_SWAP_BASE || instrumentId >= SR1_BASE) {
+      throw new IllegalArgumentException("not a par swap input id: " + instrumentId);
+    }
+    return instrumentId - PAR_SWAP_BASE;
+  }
+
   /**
    * A spot-starting SOFR par swap of a tenor in months: kind ParSwap, value the par rate in
    * percent as a Decimal9 mantissa.

@@ -22,13 +22,22 @@ public final class DeskLoopFactory implements LoopFactory {
   public static final long TIMER_TICK_NANOS = 1_000_000L;
 
   private final UsdUniverse universe;
-  private final DeskSettings settings;
+  private final DeskProfile profile;
   private final FrameSink routeJournal;
   private final List<DeskGroup> built = new ArrayList<>();
 
+  /** A factory for the recorded profile with these settings. */
   public DeskLoopFactory(final UsdUniverse universe, final DeskSettings settings, final FrameSink routeJournal) {
+    this(DeskProfile.defaults(settings), universe, routeJournal);
+  }
+
+  /**
+   * A factory for any profile. {@code universe} must be the profile's market's ({@link
+   * DeskProfile#newUniverse}); it is passed in so that the process and the factory share one.
+   */
+  public DeskLoopFactory(final DeskProfile profile, final UsdUniverse universe, final FrameSink routeJournal) {
     this.universe = universe;
-    this.settings = settings;
+    this.profile = profile;
     this.routeJournal = routeJournal;
   }
 
@@ -37,7 +46,7 @@ public final class DeskLoopFactory implements LoopFactory {
     builder.timers(TIMER_TICK_NANOS, 1024, 4096);
     final EventLoop loop = builder.build();
     final DeskGroup group =
-        new DeskGroup(loop, universe, settings, builder.isReplay() ? FrameSink.NONE : routeJournal);
+        new DeskGroup(loop, profile, universe, builder.isReplay() ? FrameSink.NONE : routeJournal);
     group.register();
     built.add(group);
     return loop;

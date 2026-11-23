@@ -23,9 +23,9 @@ import java.util.List;
  *
  * <p>This is the simulator v2 counterpart of {@link SimulatedVenues}. It needs no
  * {@link ClobLiquidity}: the books' liquidity, the other takers and the impact of the desk's own
- * orders come from the model, and the step size of the driver no longer changes the market. The
- * trading process is not wired to it yet; {@link SimulatedVenues} stays the default so that the
- * recorded smoke figures do not change.
+ * orders come from the model, and the step size of the driver no longer changes the market.
+ * {@link V2DeskProcess} runs the v2 desk profile on it; the trading process still starts {@link
+ * SimulatedVenues}, so the recorded smoke figures do not change.
  */
 public final class SimulatedVenuesV2 implements AutoCloseable {
 
@@ -74,6 +74,24 @@ public final class SimulatedVenuesV2 implements AutoCloseable {
     }
     final Runnable all = move;
     venues.d2c().locked(all);
+  }
+
+  /**
+   * Runs the venues alone for {@code nanos} of session time, one grid second at a time: the
+   * market before the desk connects. The feed frames of that time are discarded, as a
+   * subscriber that was not there never saw them; a feed binding starts from a snapshot.
+   */
+  public void runAlone(final SimClock sim, final long nanos) {
+    final long step = io.ratesalgo.sim.MarketSpec.STEP_NANOS;
+    for (long done = 0; done < nanos; done += step) {
+      advance(sim, Math.min(step, nanos - done));
+      onTime();
+      for (final InProcessFeedChannel feed : feeds) {
+        while (feed.poll((buffer, offset, length) -> true, 4096) > 0) {
+          // every frame
+        }
+      }
+    }
   }
 
   /** The session the venues share. */

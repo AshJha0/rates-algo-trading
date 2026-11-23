@@ -108,6 +108,7 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
   }
 
   private final io.ratesalgo.venues.sim.SimV2Session session;
+  private final int venueId;
   private final double share;
   private final Map<Integer, ModelBook> modelBooks = new LinkedHashMap<>();
   private int lastStep = -1;
@@ -133,9 +134,28 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final List<String> engineCompIds,
       final FeedChannel feedChannel,
       final Clock clock) {
+    this(VENUE_ID, compId, config, session, instruments, share, engineCompIds, feedChannel, clock);
+  }
+
+  /**
+   * The same venue under its own feed venue id. A desk that reads several order books tells them
+   * apart by the id on each frame, so every simulator v2 venue of a session needs a different
+   * one. The feed also carries a TradePrint (template 4) for every trade on this venue.
+   */
+  public ClobSimulator(
+      final int venueId,
+      final String compId,
+      final ClobConfig config,
+      final io.ratesalgo.venues.sim.SimV2Session session,
+      final List<Instrument> instruments,
+      final double share,
+      final List<String> engineCompIds,
+      final FeedChannel feedChannel,
+      final Clock clock) {
     // checked before the object exists, so a refused venue is never half built
     checkModelVenue(session, instruments, share);
     super(compId, engineCompIds, clock, session.model().seed());
+    this.venueId = venueId;
     this.config = config;
     this.session = session;
     this.share = share;
@@ -156,7 +176,7 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
               this));
       modelBooks.put(i.instrumentId(), new ModelBook(session.model().book(index), lot));
     }
-    this.feed = new BookFeedPublisher(VENUE_ID, feedChannel, clock);
+    this.feed = new BookFeedPublisher(venueId, feedChannel, clock);
   }
 
   private static void checkModelVenue(
@@ -300,6 +320,7 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final Clock clock,
       final long seed) {
     super(compId, engineCompIds, clock, seed);
+    this.venueId = VENUE_ID;
     this.config = config;
     this.session = null;
     this.share = 1.0;
@@ -309,6 +330,11 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       books.put(i.instrumentId(), new ClobBook(i.instrumentId(), config, this));
     }
     this.feed = new BookFeedPublisher(VENUE_ID, feedChannel, clock);
+  }
+
+  /** The venue id on this venue's feed frames. */
+  public int venueId() {
+    return venueId;
   }
 
   /** The feed publisher, which is also the snapshot service. */
@@ -431,6 +457,11 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final char workup) {
     trades++;
     log("trade " + quantity + " @ " + Px.text(price) + " " + aggressor.owner + "/" + passive.owner + " " + workup);
+    if (session != null) {
+      // simulator v2 venues publish every trade; the version 1 venue's feed stays books only, so
+      // its recorded runs are unchanged
+      feed.trade(orderInstrument(passive), aggressor.buy ? Side.Buy : Side.Sell, price, quantity);
+    }
     if (session != null && PROVIDERS.equals(passive.owner) && !TAKERS.equals(aggressor.owner)) {
       // the desk took provider size: it is consumed in the shared model, and moves it once matching is done
       final ModelBook mb = modelBooks.get(orderInstrument(passive));

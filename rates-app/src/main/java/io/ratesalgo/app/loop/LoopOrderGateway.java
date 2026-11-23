@@ -32,6 +32,7 @@ final class LoopOrderGateway implements OrderGateway {
 
   private final EventLoop loop;
   private final int instrumentId;
+  private final long deskPerVenue;
   private final UnsafeBuffer buffer = new UnsafeBuffer(ByteBuffer.allocateDirect(128));
   private final MessageHeaderEncoder header = new MessageHeaderEncoder();
   private final NewOrderEncoder newOrder = new NewOrderEncoder();
@@ -53,8 +54,21 @@ final class LoopOrderGateway implements OrderGateway {
   private ChildLookup childLookup = UNBOUND;
 
   LoopOrderGateway(final EventLoop loop, final int instrumentId) {
+    this(loop, instrumentId, 1L);
+  }
+
+  /**
+   * A gateway for an instrument whose venue counts in another unit than the desk: a futures venue
+   * counts contracts, the desk face. The router's quantities are divided by {@code deskPerVenue}
+   * on the way out; they are whole contracts, because the router's lot is one contract.
+   */
+  LoopOrderGateway(final EventLoop loop, final int instrumentId, final long deskPerVenue) {
+    if (deskPerVenue < 1) {
+      throw new IllegalArgumentException("deskPerVenue must be >= 1: " + deskPerVenue);
+    }
     this.loop = loop;
     this.instrumentId = instrumentId;
+    this.deskPerVenue = deskPerVenue;
   }
 
   /** Binds the router's child book; set once the router exists. */
@@ -83,7 +97,7 @@ final class LoopOrderGateway implements OrderGateway {
         .side(side)
         .ordType(ordType)
         .timeInForce(timeInForce)
-        .quantity(quantity)
+        .quantity(quantity / deskPerVenue)
         .expireNanos(0L)
         .sentNanos(now);
     newOrder.price().mantissa(price);
@@ -99,7 +113,7 @@ final class LoopOrderGateway implements OrderGateway {
         .origClOrdId(clOrdId)
         .instrumentId(instrumentId)
         .side(childLookup.side(clOrdId))
-        .quantity(childLookup.quantity(clOrdId))
+        .quantity(childLookup.quantity(clOrdId) / deskPerVenue)
         .sentNanos(loop.clock().epochNanos());
     loop.publish(AppIds.gatewayFor(venueId), buffer, 0, MessageHeaderEncoder.ENCODED_LENGTH + cancel.encodedLength());
   }

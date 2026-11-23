@@ -6,6 +6,7 @@ import io.ratesalgo.messages.sbe.BookAction;
 import io.ratesalgo.messages.sbe.BookUpdateEncoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.messages.sbe.TradePrintEncoder;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.TreeMap;
@@ -33,7 +34,9 @@ public final class BookFeedPublisher implements SnapshotService {
   private final BookUpdateEncoder encoder = new BookUpdateEncoder();
   private final Map<Integer, TreeMap<Long, long[]>> bids = new TreeMap<>();
   private final Map<Integer, TreeMap<Long, long[]>> asks = new TreeMap<>();
+  private final TradePrintEncoder print = new TradePrintEncoder();
   private long seq;
+  private long printSeq;
 
   /** Creates a publisher. */
   public BookFeedPublisher(final int venueId, final FeedChannel channel, final Clock clock) {
@@ -82,6 +85,30 @@ public final class BookFeedPublisher implements SnapshotService {
     }
     final int rank = quantity == 0 ? 0 : levels.headMap(price, true).size();
     channel.publish(buffer, 0, encode(instrumentId, ++seq, side, action, rank, price, quantity, orders));
+  }
+
+  /**
+   * Publishes one trade as a TradePrint (template 4). Prints count on their own sequence, from 1:
+   * the book sequence says which deltas a snapshot covers, and a print changes no level, so it
+   * must not move that sequence.
+   */
+  public synchronized void trade(
+      final int instrumentId, final Side aggressorSide, final long price, final long quantity) {
+    print
+        .wrapAndApplyHeader(buffer, 0, header)
+        .venueId(venueId)
+        .instrumentId(instrumentId)
+        .venueSeqNo(++printSeq)
+        .aggressorSide(aggressorSide)
+        .quantity(quantity * MINOR_UNITS)
+        .timestampNanos(clock.epochNanos());
+    print.price().mantissa(price);
+    channel.publish(buffer, 0, MessageHeaderEncoder.ENCODED_LENGTH + print.encodedLength());
+  }
+
+  /** Trade prints published. */
+  public synchronized long lastPrintSequence() {
+    return printSeq;
   }
 
   private int encode(final int instrumentId, final long sequence, final Side side, final BookAction action,
