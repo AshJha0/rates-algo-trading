@@ -134,6 +134,9 @@ public class ClobSimulator extends VenueSimulator implements ClobBook.Listener {
       final List<String> engineCompIds,
       final FeedChannel feedChannel,
       final Clock clock) {
+    // checked here too, before the object exists: a constructor that only delegates would otherwise
+    // let the refusal out of a half-built venue
+    checkModelVenue(session, instruments, share);
     this(VENUE_ID, compId, config, session, instruments, share, engineCompIds, feedChannel, clock);
   }
 
