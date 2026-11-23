@@ -42,11 +42,14 @@ public final class SimulatedVenues implements AutoCloseable {
     d2c = new D2cRfqSimulator(D2cConfig.defaults(), rfqInstruments, Venues.ENGINES, clock, seed);
     clob = new ClobSimulator("CLOB", ClobConfig.defaults(), Venues.treasuries(), Venues.ENGINES, feed, clock, seed + 1);
     d2c.start(VenueHarness.freePort(), d2cOptions);
+    boolean started = false;
     try {
       clob.start(VenueHarness.freePort(), clobOptions);
-    } catch (final RuntimeException e) {
-      d2c.close();
-      throw e;
+      started = true;
+    } finally {
+      if (!started) {
+        d2c.close();
+      }
     }
   }
 

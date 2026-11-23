@@ -34,7 +34,7 @@ public final class RecoveryClock implements Clock {
   }
 
   /** The clock the replayer drives until {@link #goLive}. */
-  public ManualClock replayClock() {
+  ManualClock replayClock() {
     return replay;
   }
 

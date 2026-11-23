@@ -522,6 +522,7 @@ public final class TradingProcess implements AutoCloseable {
     final Int2IntHashMap groupOf = new Int2IntHashMap(-1);
     final RecoveryClock[] recoveryClocks = new RecoveryClock[names.length];
     final RouteSink[] routeSinks = new RouteSink[names.length];
+    boolean built = false;
     try {
       // DR-INT-06: run the journals' wait paths (a roll that waits for its segment, an append to a
       // full ring) on scratch journals before any loop starts, so that the first real wait does not
@@ -554,22 +555,24 @@ public final class TradingProcess implements AutoCloseable {
             restart.existing[g]
                 ? LoopJournals.open(dir, "in", "out", SEGMENT_BYTES, loopClock)
                 : LoopJournals.create(dir, "in", "out", SEGMENT_BYTES, loopClock);
-        final SegmentedJournal route;
+        SegmentedJournal opened = null;
         try {
-          route =
+          opened =
               JournalRecovery.exists(dir, "route")
                   ? SegmentedJournal.open(dir, "route", SEGMENT_BYTES, loopClock, true)
                   : SegmentedJournal.create(dir, "route", SEGMENT_BYTES, loopClock, true);
-        } catch (final RuntimeException e) {
-          journals.close();
-          throw e;
+        } finally {
+          if (opened == null) {
+            journals.close();
+          }
         }
+        final SegmentedJournal route = opened;
         // The router journal already holds the decisions replay will make again; it is not
         // compared with anything, so they are not written twice. A decision the stopped process
         // made and had not written is therefore missing from it, which is the cost.
         routeSinks[g] = new RouteSink(route, recoveryClocks[g] != null);
         final DeskLoopFactory factory = new DeskLoopFactory(universe, options.settings(), routeSinks[g]);
-        final Group group;
+        Group group = null;
         try {
           final EventLoop loop =
               factory.create(
@@ -587,10 +590,11 @@ public final class TradingProcess implements AutoCloseable {
                           OrderWithdrawEncoder.TEMPLATE_ID)
                       .journals(journals));
           group = new Group(names[g], dir, loop, factory.last(), journals, route);
-        } catch (final RuntimeException e) {
-          journals.close();
-          route.close();
-          throw e;
+        } finally {
+          if (group == null) {
+            journals.close();
+            route.close();
+          }
         }
         groups[g] = group;
         for (final int id : universe.instrumentIds()) {
@@ -665,12 +669,15 @@ public final class TradingProcess implements AutoCloseable {
         clob.recovered();
         feed.requireRebuild();
       }
+      built = true;
     } catch (final IOException e) {
-      closeBuilt();
       throw new UncheckedIOException(e);
-    } catch (final RuntimeException e) {
-      closeBuilt();
-      throw e;
+    } finally {
+      if (!built) {
+        // a journal refused, a replay that diverged, a store that would not open: release what
+        // was built and let the failure through
+        closeBuilt();
+      }
     }
   }
 
