@@ -20,8 +20,10 @@ import java.util.Arrays;
  * The two sets are declared separately. Where a risk tenor is also a build swap the mapping is
  * the identity for it; where it is not, the mapping is the Jacobian of {@link SofrCurve}.
  *
- * <p>Futures convexity: Hull-White one factor with {@link #hwA()} and {@link #hwSigma()}. These
- * are assumptions (DECISIONS.md DR-P1-05), not calibrated: the repository holds no option prices.
+ * <p>Futures convexity: Hull-White one factor with {@link #hwA()} and {@link #hwSigma()}, by the
+ * in-arrears formulas {@link HullWhite#compoundedFuturesConvexity} (SR3) and {@link
+ * HullWhite#averageFuturesConvexity} (SR1). The parameters are assumptions (DECISIONS.md
+ * DR-P1-05), not calibrated: the repository holds no option prices.
  * {@code SofrCurveTest.convexityAssumptionSensitivity} states what a 20 percent error in sigma
  * moves.
  */
@@ -112,6 +114,12 @@ public final class SofrCurveSpec {
   /** A copy with other build swaps. */
   public SofrCurveSpec withSwapTenors(final int... months) {
     return new SofrCurveSpec(meetings, sr3Contracts, months, riskTenorMonths, hwA, hwSigma,
+        interpolation, tension, turnStart, turnEnd, turnSpread);
+  }
+
+  /** A copy with other risk tenors, in months. */
+  public SofrCurveSpec withRiskTenors(final int... months) {
+    return new SofrCurveSpec(meetings, sr3Contracts, swapTenorMonths, months, hwA, hwSigma,
         interpolation, tension, turnStart, turnEnd, turnSpread);
   }
 

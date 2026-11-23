@@ -62,7 +62,7 @@ import java.util.List;
  * nothing allocates: the bootstrap, the pricers' gradients and the Jacobian solve all work in
  * preallocated arrays. Single-threaded: the loop thread owns it.
  */
-public final class AnalyticsPricing implements FairValueSource, SensitivityProvider {
+public final class AnalyticsPricing implements PricingBinding {
 
   /**
    * Settings of the binding.
@@ -243,16 +243,19 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
   }
 
   /** The instruments, with swap annuities from the starting curve. */
+  @Override
   public InstrumentDirectory directory() {
     return directory;
   }
 
   /** The universe the binding was built from. */
+  @Override
   public UsdUniverse universe() {
     return universe;
   }
 
   /** The composite book bonds take their fair mid from. */
+  @Override
   public void book(final BookSource composite) {
     this.book = composite;
   }
@@ -298,6 +301,7 @@ public final class AnalyticsPricing implements FairValueSource, SensitivityProvi
    * one the bootstrap cannot solve, is counted in {@link #rejectedInputs()} and changes nothing.
    * Returns true if the instrument is a curve pillar, whether or not the quote was accepted.
    */
+  @Override
   public boolean onCurveInput(final int instrumentId, final long valueMantissa, final long timestampNanos) {
     final int i = directory.indexOf(instrumentId);
     if (i < 0 || !isSwap[i] || pillarOfSwap[kindIndex[i]] < 0) {

@@ -53,6 +53,12 @@
       <version>${project.version}</version>
     </dependency>
     <dependency>
+      <!-- The pricing bindings, for PricingV2RepriceBenchmark. -->
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-app</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.agrona</groupId>
       <artifactId>agrona</artifactId>
     </dependency>

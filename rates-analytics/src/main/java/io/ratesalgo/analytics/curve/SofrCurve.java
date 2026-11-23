@@ -406,7 +406,7 @@ public final class SofrCurve {
           first = Dates.addMonths(first, 1);
         }
         final int end = Dates.endOfMonth(first) + 1;
-        final double ca = convexity(spec, today, first, end);
+        final double ca = convexity(spec, today, first, end, false);
         final OisFutureInstrument future =
             OisFutureInstrument.oneMonth(
                 "SR1 " + yearMonth(first), Dates.year(first), Dates.month(first), cal,
@@ -445,7 +445,7 @@ public final class SofrCurve {
             past = true;
             break;
           }
-          final double ca = convexity(spec, today, start, end);
+          final double ca = convexity(spec, today, start, end, true);
           instruments.add(
               OisFutureInstrument.threeMonth(
                   "SR3 " + yearMonth(start), y, m, cal, DayCount.ACT_360, ca,
@@ -500,11 +500,15 @@ public final class SofrCurve {
       return b;
     }
 
+    /** The in-arrears adjustments: compounded for a three-month contract, average for a one-month. */
     private static double convexity(
-        final SofrCurveSpec spec, final int today, final int start, final int end) {
-      final double t1 = Math.max(0.0, (start - today) / 365.0);
+        final SofrCurveSpec spec, final int today, final int start, final int end,
+        final boolean compounded) {
+      final double t1 = (start - today) / 365.0;
       final double t2 = (end - today) / 365.0;
-      return t2 > t1 ? HullWhite.futuresConvexity(spec.hwA(), spec.hwSigma(), t1, t2) : 0.0;
+      return compounded
+          ? HullWhite.compoundedFuturesConvexity(spec.hwA(), spec.hwSigma(), t1, t2)
+          : HullWhite.averageFuturesConvexity(spec.hwA(), spec.hwSigma(), t1, t2);
     }
 
     private static String yearMonth(final int date) {

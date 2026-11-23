@@ -482,8 +482,8 @@ class SofrCurveTest {
         assertEquals(0.0, base.convexity(i), 0.0);
       }
     }
-    // the furthest contract ends ten months out: under a quarter of a basis point
-    assertTrue(largest < 0.25 * BP, "largest convexity " + largest);
+    // the furthest contract ends ten months out: about a quarter of a basis point
+    assertTrue(largest < 0.35 * BP, "largest convexity " + largest);
     // same futures rates, so prices differ by the adjustment; here the same prices are fed to
     // both, which is the error made by a wrong sigma
     final double[] q = SofrMarket.quotes(base);
@@ -516,7 +516,8 @@ class SofrCurveTest {
     final int december = Dates.of(2026, 12, 3);
     final SofrCurve started = SofrMarket.build(december, SofrCurveSpec.usd());
     assertEquals("SR1 2026-12", started.label(1));
-    assertEquals(0.0, started.convexity(1), 0.0, "a started contract has no adjustment left");
+    // a started contract is adjusted for the four weeks that remain of it: a thousandth of a bp
+    assertTrue(started.convexity(1) > 0.0 && started.convexity(1) < 0.01 * BP);
     assertTrue(started.builder().maxRepricingError() <= 1e-10);
     // without the fixings the started contract cannot be priced: no silent default
     assertThrows(IllegalStateException.class,
