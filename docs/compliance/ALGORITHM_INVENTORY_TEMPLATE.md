@@ -29,3 +29,10 @@ One row per algorithm (PRA SS5/18, RTS 6 Article 1 and MAR 7A records). The `id`
 | ALG-UST-MM-01 | Treasury order-book quoter | Places and manages resting orders in on-the-run Treasuries on a central limit order book. | US Treasuries | D2D CLOB (simulated) | high | owner | owner | `limits.*` | P3 and P4 tests | not deployed | not applicable | instrument group | development |
 | ALG-HEDGE-01 | DV01 hedger | Hedges residual DV01 into futures and benchmarks when the ladder exceeds its band. | Treasury futures, benchmarks | CLOB (simulated) | medium | owner | owner | `limits.maxNetDv01Minor` | P3 hedger tests | not deployed | not applicable | process | development |
 | ALG-ROUTE-01 | Smart order router | Chooses venue and size for hedge and client orders and records decision inputs. | All | All (simulated) | medium | owner | owner | `limits.maxMessagesPerSecond` | P4 router tests, markout report | not deployed | not applicable | process | development |
+
+Notes added 2026-11-23 (review docs/reviews/REVIEW_2026-11-23.md):
+
+- One person is both owner and approver of every row; there is no second approver (CONTRIBUTING.md).
+- ALG-UST-MM-01: the CLOB quoter is built but not enabled in the wired process (README "Limits").
+- ALG-HEDGE-01: the wired hedger trades Treasuries on the CLOB only; there is no futures simulator (DECISIONS.md DR-R2W-08).
+- ALG-ROUTE-01: in the wired process each router is given one venue, the CLOB (`rates-app/src/main/java/io/ratesalgo/app/loop/DeskGroup.java`), and routes hedge orders only.
