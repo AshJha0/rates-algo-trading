@@ -20,7 +20,8 @@ import net.jqwik.api.constraints.LongRange;
  * The child order state machine against an in-memory venue whose reports are duplicated,
  * arbitrarily reordered and delivered late. Properties: no lost quantity (the final cumulative
  * quantity equals what the venue filled), {@code cum + leaves + cancelled == ordered} after every
- * report, cumulative never above ordered, no anomaly, and every child ends terminal.
+ * report, cumulative never above ordered, no anomaly, and every child ends terminal, a child
+ * whose reject crossed our cancel included.
  */
 class ChildOrderBookPropertiesTest {
 
@@ -51,6 +52,9 @@ class ChildOrderBookPropertiesTest {
       final boolean reject = rnd.nextInt(10) == 0;
       if (reject) {
         reports.add(new Report(venue, id, execId++, OrdStatus.Rejected, 0, 0, 0));
+        // our cancel can cross the venue's reject on the wire; the venue then refuses the cancel
+        // and the reject is the only report that will ever free the child
+        cancelWanted[c] = rnd.nextBoolean();
         continue;
       }
       reports.add(new Report(venue, id, execId++, OrdStatus.New, 0, 0, 0));

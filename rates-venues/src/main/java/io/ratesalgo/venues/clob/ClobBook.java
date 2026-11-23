@@ -20,6 +20,10 @@ import java.util.TreeMap;
  * trade restarts the timer when {@code extendOnTrade} is set. When the workup ends, held orders
  * are processed in arrival order.
  *
+ * <p>An immediate-or-cancel order is never held and never rests, in or out of a workup: what it
+ * cannot trade at once (it arrived in the exclusive window as a non-participant, it is not
+ * marketable at the workup price, or it traded and has a remainder) is cancelled at once.
+ *
  * <p>Icebergs show {@code min(display, remaining)}; when the shown slice is filled, a new slice is
  * shown with new time priority at the back of its level.
  */
@@ -109,14 +113,28 @@ public final class ClobBook {
     if (workup) {
       if (marketable(o, workupPrice)) {
         if (now < exclusiveEnd && !participants.contains(o.owner)) {
-          held.add(o);
+          if (o.immediateOrCancel) {
+            cancelIoc(o, "immediate-or-cancel in the exclusive workup window");
+          } else {
+            held.add(o);
+          }
           return;
         }
         o.price = workupPrice;
         match(o, now, true);
         if (!o.done) {
-          rest(o);
+          if (o.immediateOrCancel) {
+            cancelIoc(o, "immediate-or-cancel remainder");
+          } else {
+            rest(o);
+          }
         }
+        return;
+      }
+      if (o.immediateOrCancel) {
+        // not marketable at the workup price: holding it for later would not be immediate, and
+        // resting it would leave an IOC on the book
+        cancelIoc(o, "immediate-or-cancel not marketable at the workup price");
         return;
       }
       if (wouldCross(o)) {
@@ -130,9 +148,7 @@ public final class ClobBook {
     final boolean traded = match(o, now, false);
     if (!o.done) {
       if (o.immediateOrCancel) {
-        o.done = true;
-        o.remaining = 0;
-        listener.onBookCancel(o, "immediate-or-cancel remainder");
+        cancelIoc(o, "immediate-or-cancel remainder");
       } else {
         rest(o);
       }
@@ -142,6 +158,12 @@ public final class ClobBook {
       exclusiveEnd = now + config.exclusiveNanos();
       workupEnd = now + config.workupNanos();
     }
+  }
+
+  private void cancelIoc(final ClobOrder o, final String reason) {
+    o.done = true;
+    o.remaining = 0;
+    listener.onBookCancel(o, reason);
   }
 
   private boolean wouldCross(final ClobOrder o) {

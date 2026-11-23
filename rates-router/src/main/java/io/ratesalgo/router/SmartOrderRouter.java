@@ -30,6 +30,17 @@ import org.agrona.collections.Long2LongHashMap;
  * child's limit is capped one tick inside our own resting orders on the other side, so the
  * router never crosses itself.
  *
+ * <p>Nothing waits for ever ({@link RouterTimeouts}). A child the venue does not acknowledge, an
+ * IOC child with no final report and a cancel with no answer are each chased with a cancel a
+ * bounded number of times; a child that still has no answer is flagged unresolved, keeps its
+ * quantity reserved, and its parent ends {@link ParentOutcome#Failed}. A parent that cannot place
+ * its remainder within a bounded number of retries after its deadline ends {@link
+ * ParentOutcome#Expired}. Every ending is reported once to the {@link ParentListener}.
+ *
+ * <p>A venue whose book is not trustworthy (a feed gap, a session down, a book older than the age
+ * limit) is excluded from every decision with {@code VenueExclusion.Stale}, and children resting
+ * there are cancelled ({@link #venueHealth}).
+ *
  * <p>Threading: one thread calls every method. The gateway must not call back into the router
  * from inside {@link OrderGateway#newOrder} or {@link OrderGateway#cancel}; reports are delivered
  * later through {@link ExecutionListener}. After warm-up, {@link #submit}, {@link #poll}, {@link
@@ -43,7 +54,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private static final long SLICE = 1L;
   private static final long RETRY = 2L;
   private static final long DEADLINE = 3L;
-  private static final long EXPIRY = 4L;
+  private static final long CHILD = 4L;
 
   private final RouterParams params;
   private final VenueParams[] venues;
@@ -60,6 +71,12 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private final Long2LongHashMap timerPayload;
   private final TimerHandler timerHandler = this::onTimer;
   private final long increment;
+  private final RouterTimeouts timeouts;
+  private ParentListener parentListener = ParentListener.NONE;
+
+  // per venue row: told unhealthy by the owner, and found too old at the last poll
+  private final boolean[] vDown = new boolean[CostTable.MAX_VENUES];
+  private final boolean[] vAged = new boolean[CostTable.MAX_VENUES];
 
   private final long[] joinPrice = new long[CostTable.MAX_VENUES];
   private final long[] aggressivePrice = new long[CostTable.MAX_VENUES];
@@ -73,6 +90,9 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private final int[] pInstrument;
   private final Side[] pSide;
   private final long[] pQty;
+  private final long[] pOrigQty;
+  private final int[] pDeadlineRetries;
+  private final ParentOutcome[] pOutcome;
   private final long[] pFilled;
   private final double[] pNotional;
   private final long[] pOutstanding;
@@ -94,6 +114,10 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private final int[] cParent;
   private final long[] cTimer;
   private final boolean[] cEscalate;
+  private final long[] cSent;
+  private final long[] cHorizon;
+  private final int[] cCancelTries;
+  private final boolean[] cUnresolved;
 
   private boolean polling;
   private long nextClOrdId;
@@ -101,6 +125,27 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private long decisions;
   private long childrenSent;
   private long parentsCompleted;
+  private long parentsExpired;
+  private long parentsFailed;
+  private long unresolvedChildren;
+  private long orphanFillQuantity;
+  private long staleExclusions;
+
+  /** A router with {@link RouterTimeouts#DEFAULT}. */
+  public SmartOrderRouter(
+      final RouterParams params,
+      final VenueParams[] venues,
+      final BookView book,
+      final OrderGateway gateway,
+      final FrameSink journal,
+      final Clock clock,
+      final RandomSource random,
+      final int maxParents,
+      final int maxChildren,
+      final long clOrdIdBase) {
+    this(params, venues, book, gateway, journal, clock, random, maxParents, maxChildren, clOrdIdBase,
+        RouterTimeouts.DEFAULT);
+  }
 
   /**
    * @param params router-wide parameters
@@ -114,6 +159,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
    * @param maxParents most parents live at once
    * @param maxChildren most child orders live at once
    * @param clOrdIdBase first child order id; ids increase by one
+   * @param timeouts bounds on waiting for venues and on retries past the deadline
    */
   public SmartOrderRouter(
       final RouterParams params,
@@ -125,7 +171,8 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       final RandomSource random,
       final int maxParents,
       final int maxChildren,
-      final long clOrdIdBase) {
+      final long clOrdIdBase,
+      final RouterTimeouts timeouts) {
     if (venues.length < 1 || venues.length > CostTable.MAX_VENUES) {
       throw new IllegalArgumentException(
           "between 1 and " + CostTable.MAX_VENUES + " venues, got " + venues.length);
@@ -149,6 +196,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       throw new IllegalArgumentException("capacities must be >= 1");
     }
     this.params = params;
+    this.timeouts = timeouts;
     this.venues = venues.clone();
     this.book = book;
     this.gateway = gateway;
@@ -170,6 +218,9 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     pInstrument = new int[maxParents];
     pSide = new Side[maxParents];
     pQty = new long[maxParents];
+    pOrigQty = new long[maxParents];
+    pDeadlineRetries = new int[maxParents];
+    pOutcome = new ParentOutcome[maxParents];
     pFilled = new long[maxParents];
     pNotional = new double[maxParents];
     pOutstanding = new long[maxParents];
@@ -189,6 +240,10 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     cParent = new int[maxChildren];
     cTimer = new long[maxChildren];
     cEscalate = new boolean[maxChildren];
+    cSent = new long[maxChildren];
+    cHorizon = new long[maxChildren];
+    cCancelTries = new int[maxChildren];
+    cUnresolved = new boolean[maxChildren];
     this.nextClOrdId = clOrdIdBase;
     this.nextDecisionId = 1;
   }
@@ -226,6 +281,9 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     pInstrument[ps] = instrumentId;
     pSide[ps] = side;
     pQty[ps] = quantity;
+    pOrigQty[ps] = quantity;
+    pDeadlineRetries[ps] = 0;
+    pOutcome[ps] = ParentOutcome.Filled;
     pFilled[ps] = 0;
     pNotional[ps] = 0.0;
     pOutstanding[ps] = 0;
@@ -266,10 +324,27 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     if (ps < 0) {
       return false;
     }
+    if (!pCancelled[ps]) {
+      stop(ps, ParentOutcome.Cancelled);
+    }
+    return true;
+  }
+
+  /**
+   * Stops routing a parent: no more slices or retries, every live child gets a cancel, and the
+   * parent finishes with {@code outcome} once its children have answered. A second call can only
+   * worsen the outcome to Failed.
+   */
+  private void stop(final int ps, final ParentOutcome outcome) {
     if (pCancelled[ps]) {
-      return true;
+      if (outcome == ParentOutcome.Failed) {
+        pOutcome[ps] = outcome;
+      }
+      maybeFinish(ps);
+      return;
     }
     pCancelled[ps] = true;
+    pOutcome[ps] = outcome;
     cancelTimer(pSliceTimer[ps]);
     cancelTimer(pRetryTimer[ps]);
     cancelTimer(pDeadlineTimer[ps]);
@@ -283,18 +358,84 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     for (int cs = 0; cs < hw; cs++) {
       if (children.inUse(cs)
           && cParent[cs] == ps
-          && children.parentId(cs) == parentId
-          && ChildOrderBook.isLive(children.state(cs))
-          && children.requestCancel(children.clOrdId(cs), false)) {
-        cancelTimer(cTimer[cs]);
-        cTimer[cs] = NONE;
-        gateway.cancel(children.venueId(cs), children.clOrdId(cs));
+          && !cUnresolved[cs]
+          && ChildOrderBook.isLive(children.state(cs))) {
+        cancelChild(cs, false, false);
       }
     }
-    if (pFilled[ps] == pQty[ps]) {
+    maybeFinish(ps);
+  }
+
+  /** Finishes the parent if nothing can still fill, or if only unresolved children remain. */
+  private void maybeFinish(final int ps) {
+    if (pOutstanding[ps] == 0) {
+      // after an overfill the parent can be filled past its quantity
+      if (pFilled[ps] >= pQty[ps]) {
+        finishParent(ps);
+      }
+    } else if (pOutcome[ps] == ParentOutcome.Failed && pOutstanding[ps] == unresolvedLeaves(ps)) {
       finishParent(ps);
     }
-    return true;
+  }
+
+  private long unresolvedLeaves(final int ps) {
+    long sum = 0;
+    final int hw = children.highWater();
+    for (int cs = 0; cs < hw; cs++) {
+      if (children.inUse(cs) && cParent[cs] == ps && cUnresolved[cs]) {
+        sum += children.leaves(cs);
+      }
+    }
+    return sum;
+  }
+
+  /** Sets who is told when a parent ends; {@link ParentListener#NONE} by default. */
+  public void parentListener(final ParentListener listener) {
+    this.parentListener = listener;
+  }
+
+  /**
+   * Tells the router whether a venue's book and session can be trusted (the owner knows: a feed
+   * gap, a snapshot in progress, a session down). An unhealthy venue is excluded from every
+   * decision with {@code VenueExclusion.Stale}, and children resting there are cancelled so their
+   * quantity can go elsewhere. Unknown venues are ignored.
+   */
+  public void venueHealth(final int venueId, final boolean healthy) {
+    final int r = rowOf(venueId);
+    if (r < 0 || vDown[r] == !healthy) {
+      return;
+    }
+    vDown[r] = !healthy;
+    if (!healthy) {
+      cancelResting(venueId);
+    }
+  }
+
+  private void cancelResting(final int venueId) {
+    final int hw = children.highWater();
+    for (int cs = 0; cs < hw; cs++) {
+      if (children.inUse(cs)
+          && children.passive(cs)
+          && children.venueId(cs) == venueId
+          && cParent[cs] >= 0
+          && !cUnresolved[cs]
+          && ChildOrderBook.isLive(children.state(cs))) {
+        cancelChild(cs, true, false);
+      }
+    }
+  }
+
+  private boolean tooOld(final int r) {
+    final long maxAge = timeouts.maxBookAgeNanos();
+    if (maxAge <= 0) {
+      return false;
+    }
+    final long last = book.lastUpdateNanos(venues[r].venueId());
+    return last != BookView.AGE_UNKNOWN && clock.epochNanos() - last > maxAge;
+  }
+
+  private boolean stale(final int r) {
+    return vDown[r] || tooOld(r);
   }
 
   /** Cancels every live parent, as {@link #cancel} does for one; the kill switch's path. */
@@ -310,12 +451,24 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
 
   /** Fires due timers. Call from the owning loop as often as it runs. */
   public int poll() {
+    final int fired;
     polling = true;
     try {
-      return wheel.poll(clock.nanoTime());
+      fired = wheel.poll(clock.nanoTime());
     } finally {
       polling = false;
     }
+    if (timeouts.maxBookAgeNanos() > 0) {
+      for (int r = 0; r < venues.length; r++) {
+        final boolean old = tooOld(r);
+        if (old && !vAged[r]) {
+          // once per episode: the book went quiet with our orders resting on it
+          cancelResting(venues[r].venueId());
+        }
+        vAged[r] = old;
+      }
+    }
+    return fired;
   }
 
   @Override
@@ -342,13 +495,17 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     final int cs = children.slotOf(clOrdId);
     if (cs >= 0 && children.onCancelReject(venueId, clOrdId)) {
       cEscalate[cs] = false;
+      // A venue usually refuses a cancel because the order has finished, and then its fills are
+      // on their way. They get one more wait; after it the child is cancelled again or flagged.
+      armChild(cs, clock.nanoTime() + timeouts.cancelNanos());
     }
   }
 
   @Override
   public void onBookUpdate(final int venueId) {
     final int r = rowOf(venueId);
-    if (r < 0) {
+    if (r < 0 || stale(r)) {
+      // an untrusted book is not a reason to chase the touch
       return;
     }
     final long bid = book.bestBid(venueId);
@@ -368,16 +525,22 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
               ? bid > 0 && bid - px >= threshold
               : ask > 0 && px - ask >= threshold;
       if (behind) {
-        cancelChild(cs, false);
+        cancelChild(cs, true, false);
       }
     }
   }
 
   /**
-   * Mass status reconciliation for one venue after a reconnect. Children the venue does not know
-   * are treated as cancelled; children the venue reports finished are closed; working orders the
-   * venue reports that we do not hold as live are cancelled. Released quantity is re-routed.
-   * Off the hot path: allocates.
+   * Mass status reconciliation for one venue after a reconnect. Children the venue reports
+   * finished are closed and their quantity re-routed; working orders the venue reports that we do
+   * not hold as live are cancelled.
+   *
+   * <p>A child the venue does not list frees nothing. A mass status lists live orders, so an
+   * order that filled while the session was down is absent from it exactly as one the venue never
+   * received; reading absence as cancelled with nothing filled would hedge that quantity twice.
+   * Such a child keeps its quantity reserved and is sent a cancel: the venue's answer for that one
+   * order (a cancel confirmation carrying its cumulative quantity, or a refusal) is what settles
+   * it, and with no answer it ends unresolved and fails its parent. Off the hot path: allocates.
    */
   public ReconcileReport reconcile(final int venueId, final List<VenueOrderStatus> statuses) {
     final Map<Long, VenueOrderStatus> byId = new HashMap<>();
@@ -401,6 +564,13 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       if (s == null) {
         missing++;
         freed = children.reconcile(children.clOrdId(cs), false, OrdStatus.Cancelled, 0);
+        if (cParent[cs] >= 0 && !cUnresolved[cs]) {
+          if (ChildOrderBook.isLive(children.state(cs))) {
+            cancelChild(cs, true, false);
+          } else if (cTimer[cs] == NONE) {
+            sendCancel(cs);
+          }
+        }
       } else {
         freed = children.reconcile(children.clOrdId(cs), true, s.status(), s.cumQuantity());
         if (ChildOrderBook.isTerminal(children.state(cs))) {
@@ -410,12 +580,21 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       released += freed;
       if (freed > 0) {
         final int ps = cParent[cs];
-        pOutstanding[ps] -= freed;
         cancelTimer(cTimer[cs]);
         cTimer[cs] = NONE;
-        final long done = decide(ps, freed, RouteReason.Reconcile, passiveAllowed(ps));
-        addRetry(ps, freed - done);
+        if (ps >= 0) {
+          pOutstanding[ps] -= freed;
+          if (pCancelled[ps]) {
+            pQty[ps] -= freed;
+          } else {
+            final long done = decide(ps, freed, RouteReason.Reconcile, passiveAllowed(ps));
+            addRetry(ps, freed - done);
+          }
+        }
         releaseIfDone(cs);
+        if (ps >= 0) {
+          maybeFinish(ps);
+        }
       }
     }
     int orphans = 0;
@@ -433,6 +612,13 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
   private void afterChildChange(final int cs) {
     final int ps = cParent[cs];
     final long fill = children.lastFill();
+    if (ps < 0) {
+      // the parent already ended Failed over this child: the fill is still a position, which the
+      // owner books from the child book; here it is only counted
+      orphanFillQuantity += fill;
+      releaseIfDone(cs);
+      return;
+    }
     if (fill > 0) {
       pFilled[ps] += fill;
       pNotional[ps] += (double) children.lastFillPrice() * fill;
@@ -447,11 +633,16 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       onFreed(cs, ps, freed);
     }
     releaseIfDone(cs);
-    // after an overfill the parent can be filled past its quantity; it finishes once nothing is
-    // left outstanding on its children, so no live child keeps a freed parent slot
-    if (pFilled[ps] >= pQty[ps] && pOutstanding[ps] == 0) {
-      finishParent(ps);
+    if (children.inUse(cs)
+        && cTimer[cs] == NONE
+        && !cUnresolved[cs]
+        && ChildOrderBook.isTerminal(children.state(cs))) {
+      // finished on the venue with fills still to be reported: they get one wait, like a cancel
+      armChild(cs, clock.nanoTime() + timeouts.cancelNanos());
     }
+    // the parent finishes once nothing is left outstanding on its children, so no live child
+    // keeps a freed parent slot
+    maybeFinish(ps);
   }
 
   private void onFreed(final int cs, final int ps, final long freed) {
@@ -476,11 +667,27 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     if (ChildOrderBook.isTerminal(children.state(cs)) && children.leaves(cs) == 0) {
       cancelTimer(cTimer[cs]);
       cTimer[cs] = NONE;
+      cUnresolved[cs] = false;
       children.release(cs);
     }
   }
 
   private void finishParent(final int ps) {
+    // children still in the book here are unresolved ones: they outlive the parent as orphans
+    long unresolved = 0;
+    final int hw = children.highWater();
+    for (int cs = 0; cs < hw; cs++) {
+      if (children.inUse(cs) && cParent[cs] == ps) {
+        unresolved += children.leaves(cs);
+        cParent[cs] = -1;
+      }
+    }
+    final ParentOutcome outcome = pOutcome[ps];
+    if (outcome == ParentOutcome.Expired) {
+      parentsExpired++;
+    } else if (outcome == ParentOutcome.Failed) {
+      parentsFailed++;
+    }
     cancelTimer(pSliceTimer[ps]);
     cancelTimer(pRetryTimer[ps]);
     cancelTimer(pDeadlineTimer[ps]);
@@ -490,6 +697,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     parentSlot.remove(pId[ps]);
     parentFree[parentFreeTop++] = ps;
     parentsCompleted++;
+    parentListener.onParentDone(pId[ps], outcome, pOrigQty[ps], pFilled[ps], unresolved);
   }
 
   private void runSlice(final int ps) {
@@ -533,6 +741,13 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
             want,
             pDeadlineMode[ps] ? RouteReason.Deadline : RouteReason.Retry,
             passiveAllowed(ps));
+    if (routed < want
+        && pDeadlineMode[ps]
+        && ++pDeadlineRetries[ps] > timeouts.maxDeadlineRetries()) {
+      // past the deadline and still unplaceable: stop, rather than decide and journal for ever
+      stop(ps, ParentOutcome.Expired);
+      return;
+    }
     addRetry(ps, want - routed);
   }
 
@@ -549,7 +764,7 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
           && children.parentId(cs) == pId[ps]
           && children.passive(cs)
           && ChildOrderBook.isLive(children.state(cs))) {
-        cancelChild(cs, true);
+        cancelChild(cs, true, true);
       }
     }
     final long want = unrouted(ps);
@@ -560,12 +775,83 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     addRetry(ps, want - routed);
   }
 
-  private void cancelChild(final int cs, final boolean escalate) {
-    if (children.requestCancel(children.clOrdId(cs), true)) {
+  /**
+   * Requests the cancel of a live child. {@code replace} marks the quantity for re-routing,
+   * {@code escalate} for re-routing aggressively.
+   */
+  private void cancelChild(final int cs, final boolean replace, final boolean escalate) {
+    if (children.requestCancel(children.clOrdId(cs), replace)) {
       cEscalate[cs] = escalate;
-      cancelTimer(cTimer[cs]);
-      cTimer[cs] = NONE;
-      gateway.cancel(children.venueId(cs), children.clOrdId(cs));
+      sendCancel(cs);
+    }
+  }
+
+  /** Sends a cancel and waits a bounded time for the venue's answer. */
+  private void sendCancel(final int cs) {
+    cCancelTries[cs]++;
+    gateway.cancel(children.venueId(cs), children.clOrdId(cs));
+    armChild(cs, clock.nanoTime() + timeouts.cancelNanos());
+  }
+
+  private void armChild(final int cs, final long deadline) {
+    cancelTimer(cTimer[cs]);
+    cTimer[cs] = schedule(deadline, CHILD, cs);
+  }
+
+  /**
+   * The one timer every child carries. What it means depends on where the child is: waiting for
+   * an acknowledgement, resting until its passive horizon, an IOC waiting for its final report,
+   * or waiting for the answer to a cancel.
+   */
+  private void onChildTimer(final int cs) {
+    cTimer[cs] = NONE;
+    if (!children.inUse(cs) || cUnresolved[cs]) {
+      return;
+    }
+    final ChildState st = children.state(cs);
+    if (ChildOrderBook.isTerminal(st)) {
+      // the venue said it finished with more filled than its reports have shown, and the
+      // missing reports have not come
+      unresolved(cs);
+      return;
+    }
+    if (st == ChildState.CancelRequested) {
+      if (cCancelTries[cs] < timeouts.maxCancelAttempts()) {
+        sendCancel(cs);
+      } else {
+        unresolved(cs);
+      }
+      return;
+    }
+    final int ps = cParent[cs];
+    final long elapsed = clock.nanoTime() - cSent[cs];
+    final boolean passive = children.passive(cs);
+    final long limit = passive ? cHorizon[cs] : timeouts.iocNanos();
+    final boolean unacknowledged = st == ChildState.New && elapsed >= timeouts.ackNanos();
+    final boolean stopped = ps < 0 || pCancelled[ps];
+    if (!unacknowledged && !stopped && elapsed < limit) {
+      armChild(cs, cSent[cs] + (st == ChildState.New ? Math.min(timeouts.ackNanos(), limit) : limit));
+      return;
+    }
+    if (cCancelTries[cs] >= timeouts.maxCancelAttempts()) {
+      unresolved(cs);
+    } else if (stopped) {
+      cancelChild(cs, false, false);
+    } else {
+      cancelChild(cs, true, passive && elapsed >= limit);
+    }
+  }
+
+  /**
+   * The venue has not answered for this child within every bound. Its quantity may have traded,
+   * so it stays reserved; the parent stops and ends Failed.
+   */
+  private void unresolved(final int cs) {
+    cUnresolved[cs] = true;
+    unresolvedChildren++;
+    final int ps = cParent[cs];
+    if (ps >= 0) {
+      stop(ps, ParentOutcome.Failed);
     }
   }
 
@@ -640,6 +926,12 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     t.passiveAllowed[r] = false;
     t.aggressiveAllowed[r] = false;
     t.participationCap[r] = 0;
+    if (stale(r)) {
+      // the row keeps what the book showed, for the audit; nothing is sent on it
+      t.exclusion[r] = VenueExclusion.Stale;
+      staleExclusions++;
+      return;
+    }
     if (bid <= 0 || ask <= bid) {
       t.exclusion[r] = VenueExclusion.NoQuote;
       return;
@@ -713,6 +1005,11 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     cParent[cs] = ps;
     cEscalate[cs] = false;
     cTimer[cs] = NONE;
+    cUnresolved[cs] = false;
+    cCancelTries[cs] = 0;
+    final long now = clock.nanoTime();
+    cSent[cs] = now;
+    cHorizon[cs] = passive ? horizon : 0;
     pOutstanding[ps] += qty;
     childrenSent++;
     gateway.newOrder(
@@ -725,16 +1022,16 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
         passive ? TimeInForce.Day : TimeInForce.ImmediateOrCancel,
         price,
         qty);
-    if (passive) {
-      cTimer[cs] = schedule(clock.nanoTime() + horizon, EXPIRY, cs);
-    }
+    final long limit = passive ? horizon : timeouts.iocNanos();
+    armChild(cs, now + Math.min(timeouts.ackNanos(), limit));
   }
 
   private long referenceMid() {
-    for (final VenueParams vp : venues) {
+    for (int r = 0; r < venues.length; r++) {
+      final VenueParams vp = venues[r];
       final long bid = book.bestBid(vp.venueId());
       final long ask = book.bestAsk(vp.venueId());
-      if (bid > 0 && ask > bid) {
+      if (bid > 0 && ask > bid && !stale(r)) {
         return (bid + ask) / 2;
       }
     }
@@ -771,11 +1068,8 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     }
     final long kind = payload >>> 32;
     final int slot = (int) payload;
-    if (kind == EXPIRY) {
-      cTimer[slot] = NONE;
-      if (children.inUse(slot) && ChildOrderBook.isLive(children.state(slot))) {
-        cancelChild(slot, true);
-      }
+    if (kind == CHILD) {
+      onChildTimer(slot);
     } else if (kind == SLICE) {
       runSlice(slot);
     } else if (kind == RETRY) {
@@ -837,9 +1131,50 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     return childrenSent;
   }
 
-  /** Parents completely filled. */
+  /** Parents ended, whatever the outcome. */
   public long parentsCompleted() {
     return parentsCompleted;
+  }
+
+  /** Parents ended {@link ParentOutcome#Expired}. */
+  public long parentsExpired() {
+    return parentsExpired;
+  }
+
+  /** Parents ended {@link ParentOutcome#Failed}. */
+  public long parentsFailed() {
+    return parentsFailed;
+  }
+
+  /** Children flagged unresolved since construction: the venue never answered for them. */
+  public long unresolvedChildren() {
+    return unresolvedChildren;
+  }
+
+  /** Whether the child in this slot is flagged unresolved. */
+  public boolean isUnresolved(final int slot) {
+    return cUnresolved[slot];
+  }
+
+  /** Quantity filled on children whose parent had already ended Failed. */
+  public long orphanFillQuantity() {
+    return orphanFillQuantity;
+  }
+
+  /** Venue rows excluded as stale, over every decision. */
+  public long staleExclusions() {
+    return staleExclusions;
+  }
+
+  /** False while the venue is flagged unhealthy or its book is older than the age limit. */
+  public boolean venueUsable(final int venueId) {
+    final int r = rowOf(venueId);
+    return r >= 0 && !stale(r);
+  }
+
+  /** The bounds on waiting in force. */
+  public RouterTimeouts timeouts() {
+    return timeouts;
   }
 
   /** The parameters in force. */

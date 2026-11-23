@@ -82,15 +82,56 @@ class ChildOrderBookTest {
         ChildOrderBook.ANOMALY, book.onExecutionReport(2, 2, 23, OrdStatus.New, 0, 0, 0));
     assertEquals(
         ChildOrderBook.ANOMALY,
-        book.onExecutionReport(1, 2, 24, OrdStatus.PartiallyFilled, 100, 500, 600) & 32);
-    assertEquals(
-        ChildOrderBook.ANOMALY,
         book.onExecutionReport(1, 2, 1L << 50, OrdStatus.PartiallyFilled, 100, 10, 110) & 32);
     assertEquals(
         ChildOrderBook.ANOMALY, book.onExecutionReport(1, 2, 25, OrdStatus.NULL_VAL, 0, 0, 0));
-    assertEquals(4, book.anomalies());
+    assertEquals(3, book.anomalies());
     assertEquals(100, book.cum(s));
     assertEquals(ChildOrderBook.STALE, book.onExecutionReport(1, 2, 26, OrdStatus.Rejected, 0, 0, 0));
+  }
+
+  @Test
+  void aFillAboveTheOrderedQuantityIsBookedAndFlagged() {
+    final int s = open(2, 200);
+    book.onExecutionReport(1, 2, 20, OrdStatus.PartiallyFilled, 100, 100, 100);
+    // the venue fills 500 more on an order with 100 left
+    final int f = book.onExecutionReport(1, 2, 24, OrdStatus.Filled, 101, 500, 600);
+    assertEquals(ChildOrderBook.FILL, f & ChildOrderBook.FILL);
+    assertEquals(ChildOrderBook.ANOMALY, f & ChildOrderBook.ANOMALY);
+    // the whole 500 is the position change, 400 of it above the order
+    assertEquals(500, book.lastFill());
+    assertEquals(101, book.lastFillPrice());
+    assertEquals(400, book.lastExcess());
+    assertEquals(400, book.lastOverfill());
+    assertEquals(400, book.excess(s));
+    assertEquals(400, book.excessFills());
+    assertEquals(1, book.anomalies());
+    // the child's own accounting still closes
+    assertEquals(200, book.cum(s));
+    assertEquals(0, book.leaves(s));
+    assertEquals(ChildState.Filled, book.state(s));
+    assertEquals(100.0 * 100 + 101.0 * 500, book.notional(s));
+    assertTrue(book.hasExecution(1, 24));
+    assertFalse(book.hasExecution(1, 99));
+    assertFalse(book.hasExecution(2, 24));
+    assertFalse(book.hasExecution(1, -1));
+    // the same execution again is a duplicate, not a second overfill
+    assertEquals(
+        ChildOrderBook.DUPLICATE, book.onExecutionReport(1, 2, 24, OrdStatus.Filled, 101, 500, 600));
+    assertEquals(400, book.excessFills());
+    assertEquals(0, book.lastExcess());
+  }
+
+  @Test
+  void aRejectWhileCancelRequestedFreesTheChild() {
+    final int s = open(3, 300);
+    assertTrue(book.requestCancel(3, true));
+    final int f = book.onExecutionReport(1, 3, 30, OrdStatus.Rejected, 0, 0, 0);
+    assertEquals(ChildOrderBook.STATE, f);
+    assertEquals(ChildState.Rejected, book.state(s));
+    assertEquals(300, book.lastFreed());
+    assertEquals(0, book.leaves(s));
+    assertTrue(book.release(s));
   }
 
   @Test
@@ -158,8 +199,11 @@ class ChildOrderBookTest {
     final int a = open(8, 300);
     final int b = open(9, 300);
     final int c = open(10, 300);
-    assertEquals(300, book.reconcile(8, false, OrdStatus.Cancelled, 0));
-    assertEquals(ChildState.Cancelled, book.state(a));
+    // absent from a live-orders list: it may have filled, so nothing is freed
+    assertEquals(0, book.reconcile(8, false, OrdStatus.Cancelled, 0));
+    assertEquals(ChildState.New, book.state(a));
+    assertEquals(300, book.leaves(a));
+    assertEquals(1, book.unconfirmed());
     assertEquals(200, book.reconcile(9, true, OrdStatus.Cancelled, 100));
     assertEquals(100, book.leaves(b));
     assertEquals(0, book.reconcile(10, true, OrdStatus.New, 0));
@@ -167,6 +211,7 @@ class ChildOrderBookTest {
     assertEquals(0, book.reconcile(10, true, OrdStatus.Filled, 300));
     assertEquals(300, book.leaves(c));
     assertEquals(0, book.reconcile(8, true, OrdStatus.New, 0));
+    assertEquals(ChildState.Acknowledged, book.state(a));
     assertEquals(0, book.reconcile(12345, true, OrdStatus.New, 0));
     final int d = book.slotOf(9);
     assertEquals(ChildState.Cancelled, book.state(d));

@@ -18,8 +18,11 @@ import org.agrona.concurrent.UnsafeBuffer;
  * cancelled} is quantity the venue has confirmed it will never fill and {@code leaves} is quantity
  * that may still fill (working on the venue, or filled there with the report not yet received).
  * Fills are counted once per {@code (venueId, execId)}, so duplicated and reordered reports cannot
- * change the cumulative quantity; a fill that would take {@code cum} above {@code ordered} is
- * refused and counted as an anomaly. Status reports that would move the state backwards are
+ * change the cumulative quantity. A fill that would take {@code cum} above {@code ordered} did
+ * trade on the venue, so it is applied: {@code cum} stops at {@code ordered}, the part above it is
+ * kept as {@link #excess}, the whole quantity is reported as the fill for the position, and the
+ * report is counted as an anomaly ({@link #lastExcess()}, {@link #excessFills()}) for the caller
+ * to alert on. Status reports that would move the state backwards are
  * stale and ignored. When a cancel is confirmed, {@code cancelled = ordered - max(cum,
  * venueCum)}, where {@code venueCum} is the largest cumulative quantity any report has carried,
  * so fills the venue made before the cancel but whose reports arrive late still count and are
@@ -62,6 +65,7 @@ public final class ChildOrderBook {
   private final long[] cum;
   private final long[] venueCum;
   private final long[] cancelled;
+  private final long[] excess;
   private final double[] notional;
   private final ChildState[] state;
   private final ChildState[] beforeCancel;
@@ -82,7 +86,10 @@ public final class ChildOrderBook {
   private int lastSlot = -1;
   private long lastFill;
   private long lastOverfill;
+  private long lastExcess;
   private long overfills;
+  private long excessFills;
+  private long unconfirmed;
   private long lastFillPrice;
   private long lastFreed;
 
@@ -115,6 +122,7 @@ public final class ChildOrderBook {
     cum = new long[capacity];
     venueCum = new long[capacity];
     cancelled = new long[capacity];
+    excess = new long[capacity];
     notional = new double[capacity];
     state = new ChildState[capacity];
     beforeCancel = new ChildState[capacity];
@@ -160,6 +168,7 @@ public final class ChildOrderBook {
     cum[s] = 0;
     venueCum[s] = 0;
     cancelled[s] = 0;
+    excess[s] = 0;
     notional[s] = 0.0;
     state[s] = ChildState.New;
     beforeCancel[s] = ChildState.New;
@@ -206,6 +215,7 @@ public final class ChildOrderBook {
       final long cumQuantity) {
     lastFill = 0;
     lastOverfill = 0;
+    lastExcess = 0;
     lastFreed = 0;
     lastSlot = -1;
     final int s = (int) slotById.get(id);
@@ -256,7 +266,11 @@ public final class ChildOrderBook {
         }
       }
       case Rejected -> {
-        if (state[s] == ChildState.New || state[s] == ChildState.Acknowledged) {
+        // a reject can cross our cancel on the wire: the order never rested, so the cancel will
+        // be refused and this report is the only one that frees the quantity
+        if (state[s] == ChildState.New
+            || state[s] == ChildState.Acknowledged
+            || state[s] == ChildState.CancelRequested) {
           flags |= finish(s, ChildState.Rejected, TransitionCause.Rejected, execId);
         } else {
           flags |= STALE;
@@ -298,7 +312,12 @@ public final class ChildOrderBook {
   /**
    * Mass-status reconciliation of one child after a reconnect.
    *
-   * @param venueKnows false if the venue has no record of the order
+   * <p>An order the venue does not list is not evidence that it never traded: a mass status
+   * lists live orders, and an order that filled while we were disconnected is absent from it too.
+   * So an absent order frees nothing and stays as it is ({@link #unconfirmed()} counts it); only a
+   * status for that order (a cancel confirmation, a reject, a fill) moves it.
+   *
+   * @param venueKnows false if the venue did not list the order
    * @param status the venue's status when it knows the order
    * @param venueCumQuantity the venue's cumulative quantity when it knows the order
    * @return the quantity this reconciliation released for re-routing
@@ -308,13 +327,14 @@ public final class ChildOrderBook {
     lastFreed = 0;
     lastFill = 0;
     lastOverfill = 0;
+    lastExcess = 0;
     final int s = (int) slotById.get(id);
     if (s < 0 || isTerminal(state[s])) {
       return 0;
     }
     if (!venueKnows) {
-      finish(s, cancelState(s), TransitionCause.Reconciled, 0);
-      return lastFreed;
+      unconfirmed++;
+      return 0;
     }
     if (venueCumQuantity > venueCum[s]) {
       venueCum[s] = Math.min(venueCumQuantity, ordered[s]);
@@ -359,9 +379,17 @@ public final class ChildOrderBook {
     if (execSeen.contains(key)) {
       return DUPLICATE;
     }
+    int flags = FILL;
+    long over = 0;
     if (cum[s] + qty > ordered[s]) {
+      // the venue traded more than we ordered: it is our position all the same, so it is booked
+      // and flagged rather than dropped (the position would then differ from the venue's)
+      over = cum[s] + qty - ordered[s];
+      excess[s] += over;
+      lastExcess = over;
+      excessFills += over;
       anomalies++;
-      return ANOMALY;
+      flags |= ANOMALY;
     }
     execSeen.add(key);
     // quantity beyond what the child still had outstanding was already freed by a cancel (and
@@ -372,13 +400,15 @@ public final class ChildOrderBook {
       lastOverfill = qty - outstanding;
       overfills += lastOverfill;
     }
-    cum[s] += qty;
+    cum[s] += qty - over;
     notional[s] += (double) lastPrice * qty;
     lastFill = qty;
     lastFillPrice = lastPrice;
     if (cancelled[s] > ordered[s] - cum[s]) {
       // A venue reported a cancel with a cumulative quantity below what it had filled.
-      anomalies++;
+      if (over == 0) {
+        anomalies++;
+      }
       cancelled[s] = ordered[s] - cum[s];
     }
     final ChildState from = state[s];
@@ -391,7 +421,7 @@ public final class ChildOrderBook {
       state[s] = ChildState.PartiallyFilled;
     }
     emit(s, from, TransitionCause.Fill, execId);
-    return FILL | (from != state[s] ? STATE : 0);
+    return flags | (from != state[s] ? STATE : 0);
   }
 
   private int finish(final int s, final ChildState to, final TransitionCause cause, final long ex) {
@@ -530,6 +560,20 @@ public final class ChildOrderBook {
     return cancelled[s];
   }
 
+  /** Quantity the venue filled above the ordered quantity; 0 for a well-behaved venue. */
+  public long excess(final int s) {
+    return excess[s];
+  }
+
+  /** True if a fill with this venue execution id has been applied today. */
+  public boolean hasExecution(final int venue, final long execId) {
+    return execId >= 0
+        && execId < MAX_EXEC_ID
+        && venue >= 0
+        && venue < MAX_VENUE_ID
+        && execSeen.contains(((long) venue << 43) | execId);
+  }
+
   /** Quantity that may still fill: {@code ordered - cum - cancelled}. */
   public long leaves(final int s) {
     return ordered[s] - cum[s] - cancelled[s];
@@ -581,6 +625,21 @@ public final class ChildOrderBook {
    */
   public long lastOverfill() {
     return lastOverfill;
+  }
+
+  /** Of the last report's fill, the quantity above the child's ordered quantity. */
+  public long lastExcess() {
+    return lastExcess;
+  }
+
+  /** Total quantity venues filled above ordered quantities, since construction. */
+  public long excessFills() {
+    return excessFills;
+  }
+
+  /** Reconciliations that found a child the venue did not list (nothing was freed). */
+  public long unconfirmed() {
+    return unconfirmed;
   }
 
   /** Total quantity filled after the venue had confirmed it cancelled, since construction. */
