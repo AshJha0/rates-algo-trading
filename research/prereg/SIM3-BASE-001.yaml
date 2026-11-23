@@ -1,0 +1,108 @@
+# DRAFT pre-registration SIM3-BASE-001: the baseline desk on simulator v2.
+#
+# Status: DRAFT. Not signed, not committed as a pre-registration, not run. No session of the
+# data sets named below has been generated for it. It becomes a pre-registration when the owner
+# has (1) settled the open items listed under `open_before_signing`, (2) fixed `config` and its
+# hash, and (3) signed and committed it before the run, as API_SPEC.md Section 16.8 requires.
+# Until then it is not read by ratesresearch.prereg.validate or by the Java requireValid (it has
+# no prereg_version on purpose).
+#
+# Why a baseline with no hypothesis: every simulated P&L figure the repository has published
+# came from the old simulators, whose constants fixed the answer (docs/reviews/REVIEW_2026-11-23.md
+# section 2). Before any change to the desk is tested on simulator v2, the level and the
+# attribution of the unchanged desk on the new market model have to be on record once, with
+# their bands. This note describes; it does not test.
+kind: pre_registration_draft
+status: draft_unsigned_not_run
+id: SIM3-BASE-001
+title: "Baseline: the production desk on simulator v2, P&L per session with attribution, at the low, central and high band of the unidentified parameters"
+
+hypothesis: >
+  None. This is a description. No comparison is made with zero, with any other strategy, with
+  any earlier result or between band points, and no p-value is computed. Results on the old
+  simulators (ledger rows up to AUDIT-26) are not comparable and are not compared.
+
+metric: >
+  Per session (one full day, 07:00 to 17:00 New York, 36,000 one-second steps): total position
+  P&L in USD (cash plus the final position at the final unrounded latent mid), and its lines:
+  spread capture, inventory marking, hedge cost, fees, carry and funding. Each is reported as a
+  mean per session with its standard deviation and the 95 percent moving-block bootstrap
+  interval of the mean (blocks of 21 sessions, one cycle of day types; 2,000 resamples; seed
+  11), in USD and in bp of client DV01 (the line's sum over sessions divided by the summed
+  client DV01 traded, |quantity| x DV01 per client fill). Also reported, as counts and rates: RFQs
+  received, quoted, won; outcome by kind (done, traded away, passed, done away, expired); hedge
+  executions and hedge quantity by instrument; the largest net DV01 held. By day type (none,
+  release, FOMC, auction) the same means, with no test between day types.
+
+baseline: engine
+treatments: []
+
+sessions:
+  simulator: v2 (rates-sim; docs/research/SIM_V2_DESIGN.md; parameters data/calibration/sim_v2_params.json)
+  seed_base: 30000000   # exploration set E; a descriptive baseline makes no claim, so it does not spend a confirmation set
+  first: 0
+  count: 2000
+  day_types: by seed, n modulo 21 (4 release, 1 FOMC, 6 auction, 10 none in 21)
+  data_set_key: computed by PairedSessions.dataSetKey(30000000, 0, 2000) and recorded in the ledger row
+  spent_and_not_used: >
+    The 20 recorded sessions of AUDIT-11 to AUDIT-25, the five April 2026 sessions of AUDIT-26,
+    and every session under seed bases 5,000,000 and 8,000,000. None is generated or read.
+
+band:
+  what: >
+    The parameters the calibration could only bound or had to assume. Each row is run on the
+    same seeds as the central row and is part of the same look. A sign that changes inside the
+    band is reported as "not robust". The rows are descriptions too: no test between them.
+  central: data/calibration/sim_v2_params.json as committed
+  low_high:
+    - {parameter: competitors.median_half_spread, low: 0.1228, high: 0.2719, rule: adverse move re-solved for zero competitor profit}
+    - {parameter: competitors.all_in_cost, low: 0.05, high: 0.15, rule: adverse move re-solved for zero competitor profit}
+    - {parameter: informed_flow.informed_fraction, low: 0.2, high: 1.0, rule: fixed average adverse move}
+    - {parameter: informed_flow.drift_time_constant, low: 2.0, high: 60.0}
+    - {parameter: curve factor sds, low: x0.76, high: x1.29, rule: 2015-2018 and 2022-2025 levels}
+    - {parameter: swap_spread_factor.sd_per_sqrt_minute, low: 0.0072, high: 0.0311}
+    - {parameter: clob.impact_coefficient_Y, low: 0.3, high: 1.5}
+
+success_threshold: >
+  None. There is no pass or fail. The row is void if any run's attribution residual exceeds one
+  cent, or if the replay hash of any session differs between two runs of the same seed.
+
+open_before_signing:
+  - >
+    The upper band of competitors.median_half_spread (0.2719 with the adverse move re-solved) is
+    refused by the simulator's own start-up check at informed fraction 0.5: informed flow would
+    supply 54 of the level factor's 60.6 bp^2 per session, above the 60 percent limit (design
+    section 3). The owner chooses: run that row at informed fraction 1.0 (27 bp^2), cap the row
+    at the largest median the check allows (about 0.24 at fraction 0.5), or drop it.
+  - >
+    Treasury RFQs: competitors quote half the swap median, so their winning half-spread (0.076
+    bp before tick rounding) does not cover the same all-in cost (0.08 bp): the zero-profit
+    condition holds for swaps only. Report swaps and Treasuries on separate lines in any case;
+    the owner decides whether the Treasury multiple or a Treasury all-in cost changes first.
+  - >
+    Which build of the desk is "engine": the commit of rates-app that wires the production desk
+    to simulator v2 (TradingProcess and DeskBacktest are not wired yet). Its hash goes in the
+    config file.
+  - >
+    The smallest effect a later comparison will care about, in USD per session, has to be
+    written down before the pilot (seed base 29,000,000, 200 sessions) is read. It is not
+    needed for this baseline but the pilot may be run from the same build.
+  - >
+    Cost: a replay of the production desk took about 3 s of CPU per simulated minute on the old
+    simulators, so 2,000 full days at 8 band rows is of the order of weeks of CPU unless the
+    desk runs under the back-test adapter. Measure on 5 sessions of the acceptance base
+    (28,000,000) before committing to the count.
+
+limitations: >
+  Every number is a statement about the simulator under its parameter file. The calibration
+  ties the parameters to public prints where it can (curve factors, arrival shape, sizes); the
+  competitor spread and the adverse move are bounded, not measured; the order-book impact,
+  resilience, taker flow, futures basis and the whole Treasury RFQ side are assumptions. A
+  simulated P&L is not an estimate of desk P&L. The baseline is one desk configuration; it says
+  nothing about what a better one would earn. Exploration set E stays readable after this run,
+  and nothing read from it supports a claim.
+
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-23
+config: not fixed (see open_before_signing)
+config_sha256: not fixed

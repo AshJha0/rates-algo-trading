@@ -1,5 +1,10 @@
 {
   "d2c": {
+    "sim_v2": {
+      "description": "D2C RFQ under simulator v2: reduced to transport and reporting. Arrivals, sizes, competitors, reserves and information come from the shared market model and data/calibration/sim_v2_params.json (docs/research/SIM_V2_DESIGN.md section 9).",
+      "markoutHorizonMillis": 300000,
+      "timeZone": "America/New_York"
+    },
     "default": {
       "description": "USD Treasuries and SOFR swaps, D2C multi-dealer RFQ. Declared assumptions, not fits (DR-P2V-05).",
       "responseWindowMillis": 5000,
@@ -33,6 +38,16 @@
     }
   },
   "clob": {
+    "sim_v2": {
+      "description": "Order book under simulator v2 (docs/research/SIM_V2_DESIGN.md section 8). Liquidity, other takers and impact come from the shared market model; tick and minimum size are each instrument's own, the two values here are placeholders the simulator replaces. Workup is off: the model's taker flow is specified against a book that matches continuously.",
+      "tickSize": "0.0078125",
+      "minQty": "1000000",
+      "workupMillis": 0,
+      "exclusiveMillis": 0,
+      "extendOnTrade": false,
+      "selfMatch": "CANCEL_RESTING",
+      "depth": 5
+    },
     "default": {
       "description": "D2D Treasury CLOB in the BrokerTec style. Tick 1/128, minimum size 1mm.",
       "tickSize": "0.0078125",

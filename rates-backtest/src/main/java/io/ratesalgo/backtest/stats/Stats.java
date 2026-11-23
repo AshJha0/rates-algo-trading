@@ -1,6 +1,6 @@
 package io.ratesalgo.backtest.stats;
 
-import io.ratesalgo.backtest.util.SplitMix64;
+import io.ratesalgo.common.random.SplitMix64;
 import java.util.Arrays;
 
 /**

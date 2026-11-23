@@ -1,5 +1,6 @@
 graph TD
-  common["rates-common<br/>Clock, ManualClock, TimerWheel<br/>(P0)"]
+  common["rates-common<br/>Clock, ManualClock, TimerWheel, SplitMix64<br/>(P0)"]
+  sim["rates-sim<br/>simulator v2 market model<br/>(round 3)"]
   messages["rates-messages<br/>SBE schema v1 codecs<br/>(P0)"]
   journal["rates-journal<br/>JournalWriter, SegmentedJournal, Replayer<br/>(P0, P2)"]
   agrona["Agrona (external)"]
@@ -36,6 +37,9 @@ graph TD
   bench --> core
   fix --> common
   fix --> messages
+  sim --> common
+  venues --> sim
+  backtest --> sim
   venues --> fix
   venues --> refdata
   venues --> quickfixj

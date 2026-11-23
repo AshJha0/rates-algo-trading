@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.backtest.stats.Stats;
 import io.ratesalgo.backtest.util.Json;
-import io.ratesalgo.backtest.util.SplitMix64;
+import io.ratesalgo.common.random.SplitMix64;
 import io.ratesalgo.backtest.util.Yaml;
 import java.util.HexFormat;
 import java.util.List;

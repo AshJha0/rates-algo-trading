@@ -114,6 +114,22 @@ public record D2cConfig(
         SizePreset.from(Json.list(Json.obj(p, "sizes"), "swap")));
   }
 
+  /**
+   * The simulator v2 preset: only transport and reporting are read from {@code presets.json};
+   * every market field of this record is unused (zero), because the shared market model supplies
+   * arrivals, sizes, competitors, reserves and information.
+   *
+   * @param responseWindowNanos the model's response window, so the venue and the model agree
+   */
+  public static D2cConfig simV2(final long responseWindowNanos) {
+    final Map<String, Object> p = Presets.get("d2c", "sim_v2");
+    final SizePreset none = SizePreset.from(List.of(List.of("1000000", java.math.BigDecimal.ONE)));
+    return new D2cConfig(
+        responseWindowNanos, 1, 1, 0.0, 0L, 0.0, 0L, 0L, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0L,
+        Json.num(p, "markoutHorizonMillis").longValue() * MS, 0L, 0L, ZoneId.of(Json.str(p, "timeZone")), 0.0,
+        List.of(), none, none);
+  }
+
   /** The default preset. */
   public static D2cConfig defaults() {
     return preset("default");

@@ -9,6 +9,7 @@ import io.ratesalgo.backtest.model.Preset;
 import io.ratesalgo.backtest.model.Presets;
 import io.ratesalgo.backtest.model.RfqOutcomeModel;
 import io.ratesalgo.backtest.pnl.CarryModel;
+import io.ratesalgo.backtest.sim.SimDay;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -127,6 +128,36 @@ public record BacktestConfig(
         CarryModel.NONE,
         CalendarSpec.fromPreset(presets.get("usd_rfq_flow")),
         (int) market.value("clients_per_tier"),
+        Math.round(market.value("quote_latency_ms") * 1e6),
+        Math.round(market.value("client_decision_ms") * 1e6),
+        Math.round(hedge.value("order_latency_ms") * 1e6),
+        DEFAULT_HORIZONS,
+        outputDir);
+  }
+
+  /**
+   * The configuration of one simulator v2 session (docs/research/SIM_V2_DESIGN.md section 10).
+   * The market comes from the shared model behind {@code day}: instruments, RFQ outcomes by best
+   * price, hedge fills and resting orders on the model's book. What stays in the presets file is
+   * desk side or transport: the desk's latencies, the venue fee, the fixing calendar strategies
+   * read, and the hit-rate model offered to strategies (a sensitivity, never the settlement).
+   */
+  public static BacktestConfig forSimV2(
+      final Presets presets, final SimDay day, final List<Path> journals, final Path outputDir) {
+    final Preset market = presets.get("usd_synthetic_market");
+    final Preset hedge = presets.get(HedgeCostModel.PRESET);
+    return new BacktestConfig(
+        journals,
+        InstrumentSet.simV2(day.model().spec().params()),
+        day.model().seed(),
+        BandPoint.CENTRAL,
+        RfqOutcomeModel.simV2(day),
+        HitRateModel.fromPreset(presets.get(HitRateModel.PRESET), BandPoint.CENTRAL),
+        HedgeCostModel.simV2(day, hedge.value("fee_per_lot")),
+        ClobFillModel.simV2(day),
+        CarryModel.NONE,
+        CalendarSpec.fromPreset(presets.get("usd_rfq_flow")),
+        1,
         Math.round(market.value("quote_latency_ms") * 1e6),
         Math.round(market.value("client_decision_ms") * 1e6),
         Math.round(hedge.value("order_latency_ms") * 1e6),

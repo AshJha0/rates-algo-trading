@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.ratesalgo</groupId>
+    <artifactId>rates-algo-trading</artifactId>
+    <version>1.1.0</version>
+  </parent>
+
+  <artifactId>rates-sim</artifactId>
+  <name>rates-sim</name>
+  <description>Simulator v2 market model (docs/research/SIM_V2_DESIGN.md): one calibrated specification of rates, RFQ flow, competitors and order books, shared by the venue simulators and the back-test day.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-common</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- The calibrated parameter file is packaged from its one home under data/calibration,
+           so the class path copy can never differ from the file the calibration wrote. -->
+      <resource>
+        <directory>${maven.multiModuleProjectDirectory}/data/calibration</directory>
+        <includes>
+          <include>sim_v2_params.json</include>
+        </includes>
+        <targetPath>io/ratesalgo/sim</targetPath>
+      </resource>
+    </resources>
+  </build>
+</project>
