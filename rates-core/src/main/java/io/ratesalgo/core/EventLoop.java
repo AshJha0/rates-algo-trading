@@ -60,7 +60,8 @@ public final class EventLoop {
   private final RingBuffer[] inbound;
   private final RingBuffer[] outbound;
   private final JournalSink inboundJournal;
-  private final JournalSink outboundJournal;
+  /** The outbound journal; during {@link LoopRecovery} the sink that checks what replay produces. */
+  private JournalSink outboundJournal;
   private final int readLimit;
   private final boolean replay;
   private final MessageHandler[] handlers = new MessageHandler[TEMPLATE_IDS];
@@ -84,6 +85,9 @@ public final class EventLoop {
   private BackpressureListener backpressureListener = event -> {};
   private int pendingCount;
   private boolean stopped;
+  /** True while a live loop replays its own journals before it goes live. */
+  private boolean recovering;
+  private JournalSink liveOutboundJournal;
 
   private EventLoop(final Builder b) {
     this.clock = b.clock;
@@ -264,7 +268,7 @@ public final class EventLoop {
     final int templateId = RingBufferContract.templateId(buffer, offset);
     outboundJournal.append(templateId, RingBufferContract.version(buffer, offset), buffer, offset, length);
     counters.increment(LoopCounters.OUTBOUND);
-    if (replay) {
+    if (replay || recovering) {
       return;
     }
     final boolean retry = retryTemplates != null && retryTemplates[templateId];
@@ -402,6 +406,36 @@ public final class EventLoop {
     } else {
       dispatch(templateId, buffer, offset, length);
     }
+  }
+
+  /**
+   * Puts a live loop into recovery: until {@link #endRecovery} every published message goes to
+   * {@code produced} instead of the outbound journal and no ring is written, exactly as in replay.
+   * {@link LoopRecovery} then feeds the loop its own inbound journal through {@link
+   * #onReplayFrame}, so the handlers rebuild their state by the same path that replay checks.
+   */
+  void beginRecovery(final JournalSink produced) {
+    if (replay || recovering) {
+      throw new IllegalStateException("recovery starts once, on a live loop");
+    }
+    recovering = true;
+    liveOutboundJournal = outboundJournal;
+    outboundJournal = produced;
+  }
+
+  /** Ends recovery: publishes are journaled and written to the rings again. */
+  void endRecovery() {
+    if (!recovering) {
+      throw new IllegalStateException("the loop is not recovering");
+    }
+    recovering = false;
+    outboundJournal = liveOutboundJournal;
+    liveOutboundJournal = null;
+  }
+
+  /** True between the start of a recovery and its end. */
+  public boolean isRecovering() {
+    return recovering;
   }
 
   /**
