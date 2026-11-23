@@ -60,6 +60,12 @@ public final class OisSwap {
   final int[] valueStart;
   final int[] valueEnd;
 
+  /**
+   * Per floating period: true if every compounding day telescopes and the days are contiguous,
+   * so that the period's compound factor is one ratio of discount factors.
+   */
+  final boolean[] wholePeriodTelescopes;
+
   private OisSwap(
       final SwapConvention convention,
       final int start,
@@ -185,6 +191,14 @@ public final class OisSwap {
               : convention.floatDayCount().yearFraction(interest[0], interest[n]);
     }
     dayOffset[np] = off;
+    wholePeriodTelescopes = new boolean[np];
+    for (int p = 0; p < np; p++) {
+      boolean whole = dayOffset[p + 1] > dayOffset[p];
+      for (int k = dayOffset[p]; whole && k < dayOffset[p + 1]; k++) {
+        whole = telescopic[k] && (k == dayOffset[p] || valueStart[k] == valueEnd[k - 1]);
+      }
+      wholePeriodTelescopes[p] = whole;
+    }
   }
 
   /**
