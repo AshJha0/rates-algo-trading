@@ -9,15 +9,17 @@ import org.junit.jupiter.api.Test;
 class FomcCalendarTest {
 
   @Test
-  void decisionDaysAreWednesdaysInOrderEightAYear() {
-    assertEquals(24, FomcCalendar.size());
+  void decisionDaysAreWednesdaysInOrderAsPublished() {
+    // eight a year in 2025 and 2026; seven policy meetings in 2027 (strategy meeting left out)
+    assertEquals(23, FomcCalendar.size());
+    assertEquals("2027-11-17", Dates.format(FomcCalendar.decisionDay(FomcCalendar.size() - 1)));
     for (int i = 0; i < FomcCalendar.size(); i++) {
       final int d = FomcCalendar.decisionDay(i);
       assertEquals(Dates.WEDNESDAY, Dates.dayOfWeek(d), Dates.format(d));
       if (i > 0) {
-        // scheduled meetings are five to eight weeks apart
+        // scheduled meetings are five to nine weeks apart (September to November 2027 is nine)
         final int gap = d - FomcCalendar.decisionDay(i - 1);
-        assertTrue(gap >= 35 && gap <= 56, Dates.format(d) + " gap " + gap);
+        assertTrue(gap >= 35 && gap <= 63, Dates.format(d) + " gap " + gap);
       }
     }
   }
@@ -35,7 +37,8 @@ class FomcCalendarTest {
     assertEquals(1, FomcCalendar.effectiveDatesAfter(out[0], Calendars.US_SOFR, one));
     assertEquals(out[1], one[0]);
     // the list runs out at the end of 2027
-    assertEquals(0, FomcCalendar.effectiveDatesAfter(Dates.of(2027, 12, 9), Calendars.US_SOFR, out));
-    assertEquals(1, FomcCalendar.effectiveDatesAfter(Dates.of(2027, 12, 8), Calendars.US_SOFR, out));
+    assertEquals(0, FomcCalendar.effectiveDatesAfter(Dates.of(2027, 11, 18), Calendars.US_SOFR, out));
+    assertEquals(1, FomcCalendar.effectiveDatesAfter(Dates.of(2027, 11, 17), Calendars.US_SOFR, out));
+    assertEquals("2027-11-18", Dates.format(out[0]));
   }
 }

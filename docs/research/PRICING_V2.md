@@ -34,7 +34,7 @@ The build set on a valuation date is fixed by rule (`SofrCurve.Layout`):
 3. `sr3Contracts` consecutive SR3 contracts (default 3), the first one ending at least 14 days after the last step, none ending within 30 days of the first swap pillar.
 4. Par swaps at `swapTenorMonths` (default: the eight risk tenors).
 
-Meeting dates are in `FomcCalendar`. They were typed from memory of the Board's published 2025 and 2026 schedules and its tentative 2027 schedule and are marked UNVERIFIED in the class; a wrong date moves one step by the error in days. Turns are optional: `SofrCurveSpec.withTurn(start, end, spread)` adds a simple Act/360 spread over a window before the bootstrap.
+Meeting dates are in `FomcCalendar`, checked on 2026-11-23 against the Board's calendar page (federalreserve.gov/monetarypolicy/fomccalendars.htm, last updated 2026-11-18) and the committed fixture `data/fixtures/edge/calendar.csv`. 2025 and 2026 matched. For 2027 the page lists November 16-17 and no December meeting, so the last date changed from 2027-12-08 to 2027-11-17; the October 26-27, 2027 entry, marked "Monetary Policy Strategy Meeting", is left out as not a scheduled policy decision (a reading of the page). 2027 dates are tentative until confirmed at the meeting before. No golden or recorded figure moves: the goldens use only the December 2026 and January 2027 meetings. A wrong date moves one step by the error in days. Turns are optional: `SofrCurveSpec.withTurn(start, end, spread)` adds a simple Act/360 spread over a window before the bootstrap.
 
 **Worked example** (`SofrCurveTest.theBuildSetOnTheReferenceDate`, and again from a hand-written list in the golden generator, `PricingV2GoldenTest.theBuildSetIsTheOneDeclaredInTheGenerator`). On Monday 2 November 2026:
 
@@ -256,14 +256,14 @@ Only a cross-language retyping, which catches a slip in one language and not a f
 
 ## 13. Known limits
 
-- Meeting dates unverified (Section 2). No unscheduled meetings.
+- Meeting dates checked 2026-11-23; 2027 is tentative and the October 2027 strategy meeting is left out (Section 2). No unscheduled meetings.
 - Hull-White parameters assumed (Section 4).
 - Four Treasuries: no premium, weak outlier detection (Section 6).
 - A persistent wrong quote is absorbed with a 5 minute half-life (Section 5).
 - The spline can overshoot; only measured on one market (Section 3). Its ladders for instruments between pillars are not local (Section 7).
 - A reprice is several hundred microseconds on the loop thread (Section 10).
 - Ten of fourteen inputs seeded with today's feed (Section 12).
-- CME contract terms (SR1: arithmetic average over the calendar month; SR3: daily compounding between third Wednesdays) are as the library already had them from the Rulebook chapters it cites; they were not re-read this round, and cmegroup.com refuses automated fetches. UNVERIFIED this round.
+- CME contract terms checked 2026-11-23 against the rule text filed with the CFTC (CME Submission No. 18-069, April 2018; cmegroup.com refused the fetch): SR3, Chapter 460, Rules 46002.B-C and 46003.A.1-2, daily compounded SOFR over the Reference Quarter from (and including) the third Wednesday of the contract month to (and excluding) the third Wednesday three months later, $25 per basis point, contract named for the month the quarter begins; SR1, Chapter 461, Rules 46102.B-C and 46103.A, arithmetic average of daily SOFR over the calendar month with non-publication days taking the last published rate, $41.67 per basis point. Confirmed; amendments after 2018 were not traced beyond Submission No. 24-204 (May 2024) still citing Rules 46002.B and 46003.A.1.
 - Bond carry uses the overnight rate as repo unless a repo curve is given.
 - Not done: swaption or futures-option calibration; a Treasury curve for bills; asset-swap or matched-maturity spread as the spread measure (z-spread is used throughout).
 
@@ -274,7 +274,7 @@ See the hand-over report of the round for CHANGELOG lines, DECISIONS records DR-
 ### CHANGELOG, Unreleased, Added
 
 - Pricing v2, selectable and off by default (`PricingBindings.Version.V2`; version 1 and every recorded figure unchanged): SOFR curve with overnight rate, FOMC-dated steps from SR1, SR3 with in-arrears Hull-White convexity and swaps at the eight risk tenors (`SofrCurve`); leave-one-out fair value with a half-life residual (`SofrLeaveOneOut`, `FairValueSmoother`); fitted Treasury spread curve with rich/cheap and on-the-run premium (`TreasurySpreadCurve`); bond risk at market and a spread ladder (`SpreadSensitivityProvider`, `SpreadRiskBook`); carry and roll-down (`CarrySource`); business date from the clock with a New York cut (`BusinessDate`). Design and evidence: `docs/research/PRICING_V2.md`.
-- `Interpolation.STEP_THEN_TENSION_SPLINE` and `STEP_THEN_MONOTONE_CONVEX`; `CurveBuilder.rebuildAll`; `PillarOverride`; `FomcCalendar` (dates unverified); `HullWhite.compoundedFuturesConvexity`, `averageFuturesConvexity`, `integratedVariance`; `BondPricer.spreadLadder`; `SwapCarryRoll`.
+- `Interpolation.STEP_THEN_TENSION_SPLINE` and `STEP_THEN_MONOTONE_CONVEX`; `CurveBuilder.rebuildAll`; `PillarOverride`; `FomcCalendar` (dates checked against the Board's calendar, 2026-11-23); `HullWhite.compoundedFuturesConvexity`, `averageFuturesConvexity`, `integratedVariance`; `BondPricer.spreadLadder`; `SwapCarryRoll`.
 - `data/golden/pricing_v2_golden.json` and `ratesresearch.goldens.pricing_v2`: QuantLib-priced golden for the v2 curve, monotone-convex forwards, in-arrears convexity and bond spread risk. `analytics_golden.json` regenerates unchanged.
 - `PricingV2RepriceBenchmark` (JMH) in rates-bench, which now depends on rates-app.
 
