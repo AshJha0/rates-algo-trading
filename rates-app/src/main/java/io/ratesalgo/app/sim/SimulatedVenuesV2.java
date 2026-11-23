@@ -10,6 +10,9 @@ import io.ratesalgo.venues.clob.ClobSimulator;
 import io.ratesalgo.venues.d2c.D2cRfqSimulator;
 import io.ratesalgo.venues.feed.FeedChannel;
 import io.ratesalgo.venues.feed.InProcessFeedChannel;
+import io.ratesalgo.venues.sim.AcceptorOptions;
+import io.ratesalgo.venues.sim.SimSequencer;
+import io.ratesalgo.venues.sim.VenueSimulator;
 import io.ratesalgo.venues.sim.SimV2Session;
 import io.ratesalgo.venues.sim.VenueHarness;
 import java.util.ArrayList;
@@ -24,32 +27,85 @@ import java.util.List;
  * <p>This is the simulator v2 counterpart of {@link SimulatedVenues}. It needs no
  * {@link ClobLiquidity}: the books' liquidity, the other takers and the impact of the desk's own
  * orders come from the model, and the step size of the driver no longer changes the market.
- * {@link V2DeskProcess} runs the v2 desk profile on it; the trading process still starts {@link
- * SimulatedVenues}, so the recorded smoke figures do not change.
+ * {@link V2DeskProcess} and the trading process under a simulator v2 profile run on it; the
+ * recorded profile still starts {@link SimulatedVenues}, so the recorded smoke figures do not
+ * change.
+ *
+ * <p>The venues share one market model, so they share one {@link SimSequencer}: their FIX threads
+ * queue what arrives and the thread that drives the venues ({@link #advance}, {@link #onTime},
+ * {@link #drain}) is the only one that touches the model. A driver must call {@link #drain}, or
+ * no logon and no order is ever handled.
  */
 public final class SimulatedVenuesV2 implements AutoCloseable {
 
   private final Clock clock;
   private final Venues.SimV2 venues;
   private final List<InProcessFeedChannel> feeds = new ArrayList<>();
+  private final SimSequencer sequencer = new SimSequencer();
 
   /**
    * Builds and starts the venues for the session with this seed. The session opens at the clock's
    * current time, which stands for 07:00 New York; the day type follows from the seed.
    */
   public SimulatedVenuesV2(final Clock clock, final long seed) {
+    this(clock, seed, new AcceptorOptions[] {
+      AcceptorOptions.PLAIN, AcceptorOptions.PLAIN, AcceptorOptions.PLAIN, AcceptorOptions.PLAIN
+    });
+  }
+
+  /**
+   * The same venues with acceptor settings, one per venue in the order D2C, Treasury books,
+   * futures book: TLS, logon credentials and the directory in which a venue keeps its sequence
+   * numbers, sent messages and id generation, so that a restarted process meets venues that
+   * resume their sessions and never reuse an execution id.
+   */
+  public SimulatedVenuesV2(final Clock clock, final long seed, final AcceptorOptions[] acceptors) {
     this.clock = clock;
     final MarketSpec spec = new MarketSpec(SimParams.loadDefault());
     final MarketModel model = SessionSeeds.session(spec, seed);
     for (int v = 0; v <= spec.params().treasuryVenues(); v++) {
       feeds.add(new InProcessFeedChannel());
     }
-    this.venues = Venues.simV2(model, clock, new ArrayList<FeedChannel>(feeds));
-    venues.d2c().start(VenueHarness.freePort());
-    for (final ClobSimulator c : venues.treasuryBooks()) {
-      c.start(VenueHarness.freePort());
+    if (acceptors.length != feeds.size() + 1) {
+      throw new IllegalArgumentException("one acceptor setting per venue is required: " + (feeds.size() + 1));
     }
-    venues.futuresBook().start(VenueHarness.freePort());
+    this.venues = Venues.simV2(model, clock, new ArrayList<FeedChannel>(feeds), sequencer);
+    final List<VenueSimulator> all = simulators();
+    int started = 0;
+    try {
+      for (; started < all.size(); started++) {
+        all.get(started).start(VenueHarness.freePort(), acceptors[started]);
+      }
+    } finally {
+      if (started < all.size()) {
+        // a venue refused to start: stop the ones that did
+        for (int v = 0; v < started; v++) {
+          all.get(v).close();
+        }
+      }
+    }
+  }
+
+  /** Every venue in sequencing order: the D2C venue, the Treasury books, the futures book. */
+  public List<VenueSimulator> simulators() {
+    final List<VenueSimulator> all = new ArrayList<>();
+    all.add(venues.d2c());
+    all.addAll(books());
+    return all;
+  }
+
+  /**
+   * Handles what the venues' FIX threads have queued, venue by venue in the order of {@link
+   * #simulators} and each venue's messages in arrival order. The driving thread only. Returns
+   * the number of logons, logouts and messages handled.
+   */
+  public int drain() {
+    return sequencer.drain();
+  }
+
+  /** Logons, logouts and messages queued by the FIX threads and not yet handled. */
+  public long pending() {
+    return sequencer.pending();
   }
 
   /** Starts the model's RFQ flow and its liquidity on every book. */
