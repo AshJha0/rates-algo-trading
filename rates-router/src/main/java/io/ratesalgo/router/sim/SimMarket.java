@@ -5,9 +5,7 @@ import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.OrdType;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TimeInForce;
-import io.ratesalgo.router.BookView;
 import io.ratesalgo.router.ExecutionListener;
-import io.ratesalgo.router.OrderGateway;
 import java.util.SplittableRandom;
 import org.agrona.collections.Long2LongHashMap;
 
@@ -36,7 +34,7 @@ import org.agrona.collections.Long2LongHashMap;
  * are queued and delivered by {@link #drain}; {@link #newOrder} and {@link #cancel} never call
  * back. Nothing allocates after construction.
  */
-public final class SimMarket implements BookView, OrderGateway {
+public final class SimMarket implements SimulatedMarket {
 
   private static final int MAX_ORDERS = 2_048;
   private static final int MAX_EVENTS = 16_384;
@@ -169,7 +167,7 @@ public final class SimMarket implements BookView, OrderGateway {
     resetBooks();
   }
 
-  /** Advances the market by one step to the clock's current time. */
+  @Override
   public void step() {
     final long now = clock.nanoTime();
     processArrivals(now);
@@ -202,7 +200,7 @@ public final class SimMarket implements BookView, OrderGateway {
     }
   }
 
-  /** Delivers queued execution events and book changes to the listener, in order. */
+  @Override
   public void drain(final ExecutionListener listener) {
     while (eCount > 0) {
       final int i = eHead;
@@ -350,29 +348,30 @@ public final class SimMarket implements BookView, OrderGateway {
   // ------------------------------------------------------------------ results
 
   /** Mid of the first venue, price mantissa; the arrival reference in the back-test. */
+  @Override
   public long referenceMid() {
     return bidTicks * tick + spread[0] * tick / 2;
   }
 
-  /** Quantity filled for a parent. */
+  @Override
   public long parentFilled(final long parentId) {
     final int i = (int) parentIndex.get(parentId);
     return i < 0 ? 0 : psFilled[i];
   }
 
-  /** Sum of fill price (price points) times quantity for a parent. */
+  @Override
   public double parentNotional(final long parentId) {
     final int i = (int) parentIndex.get(parentId);
     return i < 0 ? 0.0 : psNotional[i];
   }
 
-  /** Sum of fees (price points per unit) times quantity for a parent. */
+  @Override
   public double parentFees(final long parentId) {
     final int i = (int) parentIndex.get(parentId);
     return i < 0 ? 0.0 : psFees[i];
   }
 
-  /** Aggressive orders that would have traded against one of our resting orders. */
+  @Override
   public long selfCrosses() {
     return selfCrosses;
   }
@@ -382,9 +381,14 @@ public final class SimMarket implements BookView, OrderGateway {
     return executions;
   }
 
-  /** Our orders currently resting or in flight. */
+  @Override
   public int liveOrders() {
     return MAX_ORDERS - freeTop;
+  }
+
+  @Override
+  public int[] venueIds() {
+    return venueId.clone();
   }
 
   // ------------------------------------------------------------------ internals

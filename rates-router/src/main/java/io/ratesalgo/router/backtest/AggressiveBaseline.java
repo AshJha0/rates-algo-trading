@@ -5,7 +5,7 @@ import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.OrdType;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TimeInForce;
-import io.ratesalgo.router.sim.SimMarket;
+import io.ratesalgo.router.sim.SimulatedMarket;
 import org.agrona.collections.Long2LongHashMap;
 
 /**
@@ -28,7 +28,7 @@ public final class AggressiveBaseline implements ExecutionStrategy {
   private final Long2LongHashMap venueOf = new Long2LongHashMap(64, 0.65f, NONE);
   private final Long2LongHashMap orderedOf = new Long2LongHashMap(64, 0.65f, NONE);
 
-  private SimMarket market;
+  private SimulatedMarket market;
   private Clock clock;
   private long parentId = NONE;
   private Side side = Side.Buy;
@@ -75,7 +75,7 @@ public final class AggressiveBaseline implements ExecutionStrategy {
   }
 
   @Override
-  public void startDay(final SimMarket simMarket, final Clock simClock, final long seed) {
+  public void startDay(final SimulatedMarket simMarket, final Clock simClock, final long seed) {
     this.market = simMarket;
     this.clock = simClock;
     this.parentId = NONE;
