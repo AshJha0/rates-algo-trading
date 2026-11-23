@@ -2,8 +2,10 @@
 rem Starts a simulator v2 experiment run (or pilot) detached from this console, so closing the
 rem window, a Ctrl-C or a tool restart does not kill it. From the repository root:
 rem
-rem   tools\sim-v2\launch_detached.cmd OUTDIR run   --prereg research/prereg/R5-007.yaml [--workers 8]
-rem   tools\sim-v2\launch_detached.cmd OUTDIR pilot --prereg research/prereg/SIM3-BASE-001.yaml --pilot 8
+rem   tools\sim-v2\launch_detached.cmd OUTDIR run   --prereg research/prereg/R5-FAM-001.yaml --workers 8
+rem   tools\sim-v2\launch_detached.cmd OUTDIR pilot --prereg research/prereg/R5-FAM-001.yaml --pilot 4 --timing-only
+rem
+rem tools\sim-v2\README.md has the R5-FAM-001 steps and the output directory convention.
 rem
 rem OUTDIR must be outside git (the runner refuses otherwise). The class directories named in
 rem rates-app\target\sim-v2-cp.txt (tools/sim-v2/build_classpath.sh) are copied into OUTDIR\lib

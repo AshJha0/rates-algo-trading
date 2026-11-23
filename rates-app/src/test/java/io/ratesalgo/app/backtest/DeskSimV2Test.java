@@ -214,6 +214,7 @@ class DeskSimV2Test {
   private static final class Watched implements Strategy {
     final DeskStrategy desk;
     final Map<String, Integer> reasons = new TreeMap<>();
+    final Map<String, Integer> byInstrument = new TreeMap<>();
     final Set<Integer> clients = new TreeSet<>();
     final long killAtRfq;
     long killedRfq;
@@ -237,6 +238,7 @@ class DeskSimV2Test {
             @Override
             public void onDecision(final RfqOutcome o) {
               reasons.merge(String.valueOf(o.reason()), 1, Integer::sum);
+              byInstrument.merge(o.reason() + ":" + o.instrumentId(), 1, Integer::sum);
               clients.add(o.clientId());
             }
 
@@ -368,7 +370,7 @@ class DeskSimV2Test {
     assertEquals(0L, desk.desk().pricingV2().unfedInputs());
     for (final PassReason bad : List.of(PassReason.UNHEALTHY, PassReason.STALE_INPUT, PassReason.NO_FAIR_VALUE,
         PassReason.UNKNOWN_INSTRUMENT)) {
-      assertFalse(w.reasons.containsKey(bad.name()), w.reasons.toString());
+      assertFalse(w.reasons.containsKey(bad.name()), w.byInstrument.toString());
     }
     // the full simulator v2 universe: no RFQ is declined for its instrument, every tenor is quoted
     assertEquals(0L, desk.structuralDeclines());
@@ -397,6 +399,21 @@ class DeskSimV2Test {
     final BacktestResult second = run(day(), again);
     assertEquals(r.outputChainHash(), second.outputChainHash());
     assertEquals(desk.counters(), again.counters());
+  }
+
+  @Test
+  void everyArmIsPricedAsOfTheDesksOwnBusinessDateAndQuotesTreasuries() {
+    final DeskArms arms = new DeskArms();
+    for (final String arm : List.of("default", "cover_only")) {
+      final DeskStrategy desk = (DeskStrategy) arms.create(arm, day());
+      final Watched w = new Watched(desk, Long.MAX_VALUE);
+      run(day(), w);
+      // the session's label date is far past the reference data's on-the-run Treasuries; priced
+      // as of the label date every Treasury RFQ would be an unknown instrument
+      assertFalse(w.reasons.containsKey(PassReason.UNKNOWN_INSTRUMENT.name()), arm + " " + w.byInstrument);
+      assertTrue(w.byInstrument.keySet().stream().anyMatch(k -> k.startsWith("NONE:100")), arm + " " + w.byInstrument);
+      assertTrue(desk.desk().desk().quoting().rfqs() > 0);
+    }
   }
 
   @Test

@@ -94,7 +94,9 @@ public final class DeskArms implements ArmFactory {
   public Strategy create(final String name, final SimDay day) {
     final DeskProfile profile = profile(name);
     final UsdUniverse universe = profile.newUniverse();
-    return new DeskStrategy(profile, universe, SimBinding.of(day.model().spec(), universe));
+    // every arm is priced as of the simulator v2 desk's own business date, not the label date
+    return new DeskStrategy(profile, universe, SimBinding.of(day.model().spec(), universe))
+        .atSessionOpen(day.openEpochNanos());
   }
 
   @Override

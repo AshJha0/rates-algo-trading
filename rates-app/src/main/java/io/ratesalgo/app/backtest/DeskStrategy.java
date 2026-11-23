@@ -168,6 +168,11 @@ public final class DeskStrategy implements Strategy {
   // simulator v2 market: the venue each child order went to, and each order-book venue's sequence
   private final Long2LongHashMap venueOfOrder = new Long2LongHashMap(1024, 0.6f, 0L);
   private long dustFills;
+  /**
+   * Added to every back-tester time the desk sees: 0, or the distance from the session's open to
+   * the simulator v2 desk's own session open ({@link #atSessionOpen}).
+   */
+  private long shift;
   private final long[] venueSeq = new long[3];
   private final TierTable tiers;
   // RFQs by the model's tier (row) and the desk tier id they reached (column)
@@ -250,6 +255,20 @@ public final class DeskStrategy implements Strategy {
     }
   }
 
+  /**
+   * The desk's clock and every time it is shown stand at the simulator v2 desk's session open
+   * (V2DeskProcess.SESSION_OPEN_EPOCH_NANOS, 07:00 New York on the reference data's trade date)
+   * when the back-tester's session opens at {@code openEpochNanos}. A session's label date (2030
+   * onwards) is a name, not a market date: the on-the-run Treasuries the model maps onto are those
+   * of the reference data's date and have matured by the label dates, so pricing as of a label
+   * date has no Treasury to quote. Every session is priced as of the same business date, as the
+   * wired desk is; the model itself has no calendar date.
+   */
+  public DeskStrategy atSessionOpen(final long openEpochNanos) {
+    this.shift = V2DeskProcess.SESSION_OPEN_EPOCH_NANOS - openEpochNanos;
+    return this;
+  }
+
   @Override
   public String name() {
     return "desk";
@@ -258,7 +277,7 @@ public final class DeskStrategy implements Strategy {
   @Override
   public void onStart(final StrategyContext context) {
     this.ctx = context;
-    clock.setEpochNanos(context.nowEpochNanos());
+    clock.setEpochNanos(context.nowEpochNanos() + shift);
     for (int r = 0; r < outbound.length; r++) {
       outbound[r] = RingBufferContract.newOutbound(1 << 20);
     }
@@ -290,7 +309,7 @@ public final class DeskStrategy implements Strategy {
     }
     inCycle = true;
     try {
-      clock.setEpochNanos(Math.max(clock.epochNanos(), ctx.nowEpochNanos()));
+      clock.setEpochNanos(Math.max(clock.epochNanos(), ctx.nowEpochNanos() + shift));
       offer(buffer, offset, length);
       runAndDrain();
       while (!deferred.isEmpty()) {
@@ -380,7 +399,7 @@ public final class DeskStrategy implements Strategy {
         .instrumentId(deskInstrument)
         .ordStatus(OrdStatus.Filled)
         .responseTo((short) 1)
-        .timestampNanos(ctx.nowEpochNanos());
+        .timestampNanos(ctx.nowEpochNanos() + shift);
     cycle(scratch, 0, MessageHeaderEncoder.ENCODED_LENGTH + cancelReject.encodedLength());
   }
 
@@ -400,7 +419,8 @@ public final class DeskStrategy implements Strategy {
     final int client = binding.clientIdOfTier(rfq.clientId());
     tierRoutes[rfq.clientId() - 1][tiers.tierOf(client).tier()]++;
     final int body = copy(rfq.buffer(), rfq.offset(), rfq.encodedLength());
-    rfqPatch.wrap(scratch, body).venueId(AppIds.D2C_VENUE).instrumentId(desk).clientId(client);
+    rfqPatch.wrap(scratch, body).venueId(AppIds.D2C_VENUE).instrumentId(desk).clientId(client)
+        .receivedNanos(rfq.receivedNanos() + shift).expiryNanos(rfq.expiryNanos() + shift);
     forward(scratch, body, rfq.encodedLength());
   }
 
@@ -426,7 +446,7 @@ public final class DeskStrategy implements Strategy {
     if (previous != NO_TOP && previous != price) {
       final int body = copy(update.buffer(), update.offset(), update.encodedLength());
       bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk).venueSeqNo(++bookSeq)
-          .action(BookAction.Delete).quantity(0L);
+          .action(BookAction.Delete).quantity(0L).timestampNanos(update.timestampNanos() + shift);
       bookPatch.price().mantissa(previous);
       forward(scratch, body, update.encodedLength());
     }
@@ -434,7 +454,8 @@ public final class DeskStrategy implements Strategy {
     final int body = copy(update.buffer(), update.offset(), update.encodedLength());
     // the desk's feed check expects a gapless sequence; updates of instruments it does not hold are
     // not shown to it, so the sequence is renumbered over the updates it is shown
-    bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk).venueSeqNo(++bookSeq);
+    bookPatch.wrap(scratch, body).venueId(AppIds.CLOB_VENUE).instrumentId(desk).venueSeqNo(++bookSeq)
+        .timestampNanos(update.timestampNanos() + shift);
     forward(scratch, body, update.encodedLength());
   }
 
@@ -448,7 +469,7 @@ public final class DeskStrategy implements Strategy {
     final long price = update.price().mantissa();
     if (model.kind() == SimInstrument.Kind.FUTURE) {
       final long scale = venueScale(desk);
-      showTop(AppIds.FUTURES_VENUE, desk, update.side(), price, update.quantity() / scale, update.timestampNanos());
+      showTop(AppIds.FUTURES_VENUE, desk, update.side(), price, update.quantity() / scale, update.timestampNanos() + shift);
       return;
     }
     final long lot = Math.round(model.minQuantity() * model.unitFaceUsd() * 100.0);
@@ -457,7 +478,7 @@ public final class DeskStrategy implements Strategy {
     for (int v = 0; v < 2; v++) {
       final long shown = (long) Math.floor(spec.params().treasuryVenueShare(v) * lots) * lot;
       showTop(v == 0 ? AppIds.CLOB_VENUE : AppIds.CLOB2_VENUE, desk, update.side(), price, shown,
-          update.timestampNanos());
+          update.timestampNanos() + shift);
     }
   }
 
@@ -513,7 +534,8 @@ public final class DeskStrategy implements Strategy {
       final int desk = binding.deskId(input.instrumentId());
       if (desk != 0) {
         final int body = copy(input.buffer(), input.offset(), input.encodedLength());
-        curvePatch.wrap(scratch, body).curveId(AppIds.SOFR_CURVE).instrumentId(desk);
+        curvePatch.wrap(scratch, body).curveId(AppIds.SOFR_CURVE).instrumentId(desk)
+            .timestampNanos(input.timestampNanos() + shift);
         forward(scratch, body, input.encodedLength());
       }
     }
@@ -525,7 +547,7 @@ public final class DeskStrategy implements Strategy {
     }
     lastHeartbeatNanos = context.nowEpochNanos();
     heartbeat.wrapAndApplyHeader(scratch, 0, headerEncoder).sourceId(AppIds.CURVE_HEARTBEAT_SOURCE)
-        .timestampNanos(context.nowEpochNanos());
+        .timestampNanos(context.nowEpochNanos() + shift);
     cycle(scratch, 0, MessageHeaderEncoder.ENCODED_LENGTH + heartbeat.encodedLength());
   }
 
@@ -553,7 +575,7 @@ public final class DeskStrategy implements Strategy {
     }
     swapRate[k] = input.value().mantissa();
     if (swapsSeen == swapSimIds.length) {
-      sendRound(input.timestampNanos());
+      sendRound(input.timestampNanos() + shift);
       swapsSeen = 0;
       java.util.Arrays.fill(swapSeen, false);
     }
@@ -670,7 +692,7 @@ public final class DeskStrategy implements Strategy {
         .quoteId(quoteId)
         .status(r.status())
         .tradedQuantity(r.tradedQuantity())
-        .timestampNanos(r.timestampNanos());
+        .timestampNanos(r.timestampNanos() + shift);
     response.tradedPrice().mantissa(r.tradedPrice().mantissa());
     response.coverPrice().mantissa(r.coverPrice().mantissa());
     cycle(scratch, 0, MessageHeaderEncoder.ENCODED_LENGTH + response.encodedLength());
@@ -704,7 +726,7 @@ public final class DeskStrategy implements Strategy {
         .lastQuantity(last)
         .leavesQuantity(leaves)
         .cumQuantity(cum)
-        .transactNanos(r.transactNanos());
+        .transactNanos(r.transactNanos() + shift);
     report.lastPrice().mantissa(r.lastPrice().mantissa());
     cycle(scratch, 0, MessageHeaderEncoder.ENCODED_LENGTH + report.encodedLength());
   }
