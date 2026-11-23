@@ -192,7 +192,7 @@ class ExperimentHarnessTest {
     assertEquals("exploration", row.get("scope"));
     assertEquals("description", row.get("verdict"));
     assertEquals("abc123", row.get("code_commit"));
-    assertEquals(Boolean.FALSE, row.get("code_dirty"));
+    assertEquals(false, row.get("code_dirty"));
     assertEquals(List.of(), row.get("prior_looks"));
     assertTrue(String.valueOf(row.get("journal_sha256")).matches("[0-9a-f]{64}"));
     assertTrue(String.valueOf(row.get("output_sha256")).matches("[0-9a-f]{64}"));

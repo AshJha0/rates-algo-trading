@@ -48,14 +48,15 @@ presets:
       value: 1.0
       standard_error: null
     book_refresh_s:
-      value: 1.0
+      value: 0.0
       standard_error: null
   notes: Simulator v2 sessions publish swap reference prices once per one-second grid step, the
     step at which the latent state changes, so nothing the model knows is withheld and the curve
     heartbeat (3 s timeout on the desk) never lapses between publications. The live curve feed
-    publishes every 0.5 s (TradingProcess.CURVE_INTERVAL_NANOS). Each order book's top is also
-    written every second even when unchanged, as the live liquidity refresh did, because the desk
-    sends no hedge off a mid older than 5 s. Version 1 keeps
+    publishes every 0.5 s (TradingProcess.CURVE_INTERVAL_NANOS). book_refresh_s 0 writes the
+    journal's book tops on change only; in simulator v2 the back-tester shows a strategy the live
+    model's books every step instead (they carry its own impact), so the journal's books are not
+    read by a strategy. Version 1 keeps
     usd_synthetic_market.curve_input_interval_s (5 s) so that its recorded runs reproduce.
 - name: usd_hedge_cost
   superseded: 'version 1 only, kept so recorded ledger rows reproduce; superseded for new experiments by the order-book model of docs/research/SIM_V2_DESIGN.md section 8; fee_per_lot and order_latency_ms are still read by simulator v2 as desk-side settings'

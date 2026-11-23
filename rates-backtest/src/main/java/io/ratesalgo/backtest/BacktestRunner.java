@@ -16,6 +16,7 @@ import io.ratesalgo.journal.JournalReader;
 import io.ratesalgo.journal.JournalWriter;
 import io.ratesalgo.messages.sbe.BookAction;
 import io.ratesalgo.messages.sbe.BookUpdateDecoder;
+import io.ratesalgo.messages.sbe.BookUpdateEncoder;
 import io.ratesalgo.messages.sbe.CancelReason;
 import io.ratesalgo.messages.sbe.CurveInputDecoder;
 import io.ratesalgo.messages.sbe.CurveInputKind;
@@ -191,6 +192,14 @@ public final class BacktestRunner {
     private final SimDay simDay = config.outcomes().simDay();
     private int simMarkedStep = -1;
     private double simMarkedOffset = Double.NaN;
+    // simulator v2: the live books are shown to the strategy every step and after its own orders
+    private int simPublishedStep = -1;
+    private boolean simBookDirty;
+    private boolean strategyStarted;
+    private long liveBookSeq = 1;
+    private final BookUpdateEncoder liveBookEncoder = new BookUpdateEncoder();
+    private final BookUpdateDecoder liveBookDecoder = new BookUpdateDecoder();
+    private final UnsafeBuffer liveBook = new UnsafeBuffer(ByteBuffer.allocateDirect(256));
 
     private final MessageHeaderDecoder headerDecoder = new MessageHeaderDecoder();
     private final QuoteRequestDecoder rfqDecoder = new QuoteRequestDecoder();
@@ -289,6 +298,11 @@ public final class BacktestRunner {
           mids.computeIfAbsent(i.id(), k -> new MidSeries()).add(now, mid);
         }
       }
+      if (strategyStarted && (step != simPublishedStep || simBookDirty)) {
+        simPublishedStep = step;
+        simBookDirty = false;
+        publishLiveBooks(now);
+      }
       if (!resting.isEmpty()) {
         final List<Order> touched = new ArrayList<>();
         for (final Order o : resting.values()) {
@@ -298,6 +312,45 @@ public final class BacktestRunner {
         }
         for (final Order o : touched) {
           bookRestingFills(o);
+        }
+      }
+    }
+
+    /**
+     * Simulator v2: shows the strategy the top of every order book as the live model has it, with
+     * the strategy's own impact and the depth it took, once per grid step and again after each of
+     * its own orders. The journal's book was written with no desk in the market, so in simulator
+     * v2 it is not passed on: a desk that saw it would keep hitting prices its own orders had
+     * already moved.
+     */
+    private void publishLiveBooks(final long now) {
+      final io.ratesalgo.sim.MarketSpec spec = simDay.model().spec();
+      for (int b = 0; b < spec.bookCount(); b++) {
+        final int id = spec.instrument(spec.bookInstrument(b)).id();
+        if (!config.instruments().contains(id)) {
+          continue;
+        }
+        final double[] t = simDay.top(id, now);
+        final Top top = tops.computeIfAbsent(id, k -> new Top());
+        top.bid = Prices.toMantissa(t[0]);
+        top.bidQty = (long) t[1];
+        top.ask = Prices.toMantissa(t[2]);
+        top.askQty = (long) t[3];
+        for (int side = 0; side < 2; side++) {
+          liveBookEncoder
+              .wrapAndApplyHeader(liveBook, 0, headerEncoder)
+              .venueId(io.ratesalgo.backtest.synth.SyntheticDay.CLOB_VENUE)
+              .instrumentId(id)
+              .venueSeqNo(liveBookSeq++)
+              .side(side == 0 ? Side.Buy : Side.Sell)
+              .action(BookAction.Change)
+              .level((short) 0)
+              .quantity((long) t[2 * side + 1])
+              .orderCount(1)
+              .timestampNanos(now);
+          liveBookEncoder.price().mantissa(side == 0 ? top.bid : top.ask);
+          liveBookDecoder.wrapAndApplyHeader(liveBook, 0, headerDecoder);
+          strategy.onBookUpdate(liveBookDecoder, this);
         }
       }
     }
@@ -335,6 +388,8 @@ public final class BacktestRunner {
       calendar =
           EventCalendar.forDay(date, spec.utcOffsetHours(), spec.minutesEt(), spec.halfWidthMinutes());
       strategy.onStart(this);
+      strategyStarted = true;
+      simTick();
     }
 
     private void onFrame(final long ts, final int templateId, final DirectBuffer buffer, final int offset) {
@@ -427,6 +482,10 @@ public final class BacktestRunner {
     }
 
     private void onBookUpdate() {
+      if (simDay != null) {
+        // simulator v2: the strategy sees the live books instead (publishLiveBooks)
+        return;
+      }
       final int id = bookDecoder.instrumentId();
       if (!config.instruments().contains(id) || bookDecoder.level() != 0) {
         strategy.onBookUpdate(bookDecoder, this);
@@ -737,6 +796,7 @@ public final class BacktestRunner {
         } else if (order.type == OrdType.Market) {
           final HedgeCostModel.Fill fill = hedgeCost.fillSimV2(instrument, order.buy, order.quantity, clock.epochNanos());
           fillOrder(order, fill.priceMantissa(), fill.fee());
+          simBookDirty = true;
           simTick();
         } else {
           order.resting =
@@ -744,6 +804,7 @@ public final class BacktestRunner {
           report(order, OrdStatus.New, 0, 0);
           resting.put(order.clOrdId, order);
           // the order may have moved the level factor, and may already have traded
+          simBookDirty = true;
           simTick();
           if (order.timeInForce != TimeInForce.Day && resting.remove(order.clOrdId) != null) {
             // immediate-or-cancel (fill-or-kill alike: a match on the shared book cannot be undone)
