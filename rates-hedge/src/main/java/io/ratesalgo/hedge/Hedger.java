@@ -12,6 +12,7 @@ import io.ratesalgo.messages.sbe.KillReason;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.risk.KillSwitchListener;
 import io.ratesalgo.risk.RiskEngine;
+import java.util.Arrays;
 
 /**
  * Staged, cost-aware hedging of one currency's residual key-rate risk (API_SPEC.md Section 14).
@@ -28,6 +29,14 @@ import io.ratesalgo.risk.RiskEngine;
  * <p>A kill cancels every parent, except a kill from the risk engine's daily-loss limit ({@link
  * RiskEngine#flattenOnly}): then the parents keep working and timers keep sending risk-reducing
  * tranches, so the book is flattened rather than frozen with a loss on it.
+ *
+ * <p>Protection (review 2026-11-23, Q10). A parent is never priced off a mid older than {@code
+ * maxMidAgeNanos} on the injected clock, and none is sent while the {@link HedgeInputGate} says the
+ * inputs are unhealthy. A parent still working {@code parentTimeoutNanos} after it was sent is
+ * cancelled and stops counting toward the residual, so a venue that has stopped answering cannot
+ * make open risk look hedged; its reservation is kept until the router reports it done, and a fill
+ * that still arrives is booked as usual. Each of the three is counted, and a stalled parent is
+ * reported to the {@link StallListener}.
  *
  * <p>Also an {@link AxeSource}: while an episode is active, a client trade that moves the book
  * toward the hedge earns a price improvement proportional to its correlation with the needed
@@ -46,6 +55,9 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     double limitBp = 2.0;
     int maxParents = 256;
     long parentIdBase = 1L << 40;
+    long maxMidAgeNanos = 5_000_000_000L;
+    long parentTimeoutNanos = 60_000_000_000L;
+    boolean carryFractionalLots;
 
     /** Fraction of the plan sent at the start of an episode. */
     public Config firstTranche(final double f) {
@@ -92,6 +104,41 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       return this;
     }
 
+    /**
+     * Oldest mid a parent may be priced from, measured from the fair value's reference stamp to
+     * the hedger's clock. The default equals the desk's quoting input age.
+     */
+    public Config maxMidAgeNanos(final long nanos) {
+      if (nanos <= 0) {
+        throw new IllegalArgumentException("mid age " + nanos);
+      }
+      maxMidAgeNanos = nanos;
+      return this;
+    }
+
+    /**
+     * Time after which a parent still working is cancelled and no longer counted as a hedge. It
+     * should be several half-lives, so a parent on schedule never reaches it.
+     */
+    public Config parentTimeoutNanos(final long nanos) {
+      if (nanos <= 0) {
+        throw new IllegalArgumentException("parent timeout " + nanos);
+      }
+      parentTimeoutNanos = nanos;
+      return this;
+    }
+
+    /**
+     * Honour the half-life for small plans (review Q13). Off, a tranche that rounds to zero lots is
+     * sent as one lot, so a small plan trades a lot per timer and finishes far ahead of its
+     * half-life. On, the fraction is carried per instrument until it adds up to a whole lot. Off by
+     * default: it changes when the back-tested desk hedges.
+     */
+    public Config carryFractionalLots(final boolean on) {
+      carryFractionalLots = on;
+      return this;
+    }
+
     /** Parent order ids start above this value. */
     public Config parentIdBase(final long base) {
       parentIdBase = base;
@@ -113,6 +160,8 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private final int[] parentInstrument;
   private final long[] parentRemaining;
   private final long[] parentArrival;
+  private final long[] parentSent;
+  private final boolean[] parentStalled;
   private int parentCount;
   private long nextParentId;
   // parents dropped by the last kill: a fill that raced the cancel-all is still booked (DR-R2R-13)
@@ -132,6 +181,22 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private long lastHedgeNanos;
   private long parentsSent;
   private long parentsRefused;
+  private final double[] carry;
+  private HedgeInputGate gate = HedgeInputGate.ALWAYS;
+  private StallListener stallListener = StallListener.NONE;
+  private long staleMidRefusals;
+  private long unhealthyTimers;
+  private long stalledParents;
+
+  /** Told when a working parent times out; called on the hedger's thread, must not allocate. */
+  @FunctionalInterface
+  public interface StallListener {
+    /** No listener. */
+    StallListener NONE = (parentId, instrumentId, remainingMinor, ageNanos) -> {};
+
+    /** {@code remainingMinor} is signed from our side: positive is an unfilled buy. */
+    void onParentStalled(long parentId, int instrumentId, long remainingMinor, long ageNanos);
+  }
 
   /** A hedger for {@code currency}. */
   public Hedger(
@@ -156,6 +221,9 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentInstrument = new int[config.maxParents];
     parentRemaining = new long[config.maxParents];
     parentArrival = new long[config.maxParents];
+    parentSent = new long[config.maxParents];
+    parentStalled = new boolean[config.maxParents];
+    carry = new double[universe.size()];
     killedId = new long[config.maxParents];
     killedInstrument = new int[config.maxParents];
     killedRemaining = new long[config.maxParents];
@@ -168,13 +236,31 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     return new Config();
   }
 
+  /** Sets the input-health gate; {@code null} removes it. */
+  public void inputGate(final HedgeInputGate inputGate) {
+    gate = inputGate == null ? HedgeInputGate.ALWAYS : inputGate;
+  }
+
+  /** Sets the listener told of stalled parents; {@code null} removes it. */
+  public void stallListener(final StallListener listener) {
+    stallListener = listener == null ? StallListener.NONE : listener;
+  }
+
   /** Measures the residual and sends the next tranche if one is due. Returns parents sent. */
   public int onTimer(final long epochNanos) {
+    final long now = clock.epochNanos();
+    expireStalled(now);
     measure();
     analytics.recordResidual(epochNanos, residualVariance, residual.parallel());
     final boolean allowed = risk.killSwitch().isActive() || risk.flattenOnly();
     if (!allowed || Math.sqrt(residualVariance) < config.triggerStdDev) {
-      episode = false;
+      endEpisode();
+      return 0;
+    }
+    if (!gate.healthy(now)) {
+      // prices cannot be trusted: nothing new is sent, and the episode is left open so the
+      // schedule resumes where it was when the inputs recover
+      unhealthyTimers++;
       return 0;
     }
     planner.plan(residual);
@@ -195,9 +281,20 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       if (whole == 0) {
         continue;
       }
-      long lots = Math.round(planned * fraction);
-      if (lots == 0) {
-        lots = whole > 0 ? 1 : -1;
+      long lots;
+      if (config.carryFractionalLots && !first) {
+        // the part of a lot the schedule owes is carried until it adds up to a whole one
+        final double due = planned * fraction + (carry[j] * planned > 0.0 ? carry[j] : 0.0);
+        lots = (long) due;
+        carry[j] = due - lots;
+        if (lots == 0) {
+          continue;
+        }
+      } else {
+        lots = Math.round(planned * fraction);
+        if (lots == 0) {
+          lots = whole > 0 ? 1 : -1;
+        }
       }
       if (Math.abs(lots) > Math.abs(whole)) {
         lots = whole;
@@ -297,7 +394,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       releaseRemaining(p);
     }
     parentCount = 0;
-    episode = false;
+    endEpisode();
   }
 
   @Override
@@ -361,9 +458,35 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     return parentsSent;
   }
 
-  /** Parents refused by the risk engine or the router. */
+  /** Parents refused by the risk engine or the router, or for want of a fresh mid. */
   public long parentsRefused() {
     return parentsRefused;
+  }
+
+  /** Parents not sent because the mid had no stamp or was older than the maximum age. */
+  public long staleMidRefusals() {
+    return staleMidRefusals;
+  }
+
+  /** Timers on which a tranche was due but the input gate was unhealthy. */
+  public long unhealthyTimers() {
+    return unhealthyTimers;
+  }
+
+  /** Parents that timed out while working, in total. */
+  public long stalledParents() {
+    return stalledParents;
+  }
+
+  /** Parents timed out and not yet reported done: risk reserved but not counted as hedged. */
+  public int stalledWorking() {
+    int n = 0;
+    for (int p = 0; p < parentCount; p++) {
+      if (parentStalled[p]) {
+        n++;
+      }
+    }
+    return n;
   }
 
   public HedgeAnalytics analytics() {
@@ -377,6 +500,9 @@ public final class Hedger implements AxeSource, KillSwitchListener {
   private void measure() {
     risk.ladder(currency, residual);
     for (int p = 0; p < parentCount; p++) {
+      if (parentStalled[p]) {
+        continue; // timed out: its remainder is open risk until a fill says otherwise
+      }
       final int id = parentInstrument[p];
       final double qty = risk.directory().byId(id).major(parentRemaining[p]);
       for (int k = 0; k < K; k++) {
@@ -409,6 +535,14 @@ public final class Hedger implements AxeSource, KillSwitchListener {
       parentsRefused++;
       return false;
     }
+    final long now = clock.epochNanos();
+    final long reference = fair.referenceNanos(instrumentId);
+    if (reference == FairValueSource.NO_VALUE || now - reference > config.maxMidAgeNanos) {
+      // a limit set off a stale mid can sit a long way through the market
+      staleMidRefusals++;
+      parentsRefused++;
+      return false;
+    }
     final Side side = lots > 0 ? Side.Buy : Side.Sell;
     final long qty = Math.abs(lots) * universe.lotMinor(j);
     final double offset = config.limitBp * risk.quotePerBp(instrumentId);
@@ -422,7 +556,7 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     final long sell = side == Side.Buy ? 0L : qty;
     risk.reserve(instrumentId, buy, sell);
     final long id = ++nextParentId;
-    if (!sink.submit(id, instrumentId, side, qty, limit, urgency, clock.epochNanos())) {
+    if (!sink.submit(id, instrumentId, side, qty, limit, urgency, now)) {
       risk.release(instrumentId, buy, sell);
       parentsRefused++;
       return false;
@@ -431,9 +565,33 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentInstrument[parentCount] = instrumentId;
     parentRemaining[parentCount] = side == Side.Buy ? qty : -qty;
     parentArrival[parentCount] = arrival;
+    parentSent[parentCount] = now;
+    parentStalled[parentCount] = false;
     parentCount++;
     parentsSent++;
     return true;
+  }
+
+  /**
+   * Cancels parents that have worked past the timeout and stops counting them as hedges. Backward,
+   * because a router may report the parent done from inside the cancel, which removes it.
+   */
+  private void expireStalled(final long now) {
+    for (int p = parentCount - 1; p >= 0; p--) {
+      if (p >= parentCount || parentStalled[p] || now - parentSent[p] <= config.parentTimeoutNanos) {
+        continue;
+      }
+      final long id = parentId[p];
+      parentStalled[p] = true;
+      stalledParents++;
+      stallListener.onParentStalled(id, parentInstrument[p], parentRemaining[p], now - parentSent[p]);
+      sink.cancel(id);
+    }
+  }
+
+  private void endEpisode() {
+    episode = false;
+    Arrays.fill(carry, 0.0);
   }
 
   private void releaseRemaining(final int p) {
@@ -457,6 +615,8 @@ public final class Hedger implements AxeSource, KillSwitchListener {
     parentInstrument[p] = parentInstrument[last];
     parentRemaining[p] = parentRemaining[last];
     parentArrival[p] = parentArrival[last];
+    parentSent[p] = parentSent[last];
+    parentStalled[p] = parentStalled[last];
     parentCount = last;
   }
 }

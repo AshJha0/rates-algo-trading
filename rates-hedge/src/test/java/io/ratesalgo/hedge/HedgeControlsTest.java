@@ -44,6 +44,7 @@ class HedgeControlsTest {
     final double atKill = Math.abs(f.risk.netPv01(CurrencyCode.USD));
     fillAll(f, h);
     f.clock.advance(30_000_000_000L);
+    f.restamp();
     final int before = f.sink.parents().size();
     assertTrue(h.onTimer(f.clock.epochNanos()) > 0, "still hedging while killed");
     for (int i = before; i < f.sink.parents().size(); i++) {

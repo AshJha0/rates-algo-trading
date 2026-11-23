@@ -93,6 +93,10 @@ public final class Desk {
         };
     fairValue = new FairValueEngine(in.fairValues(), in.book(), risk);
     health = new InputHealth(in.quotingConfig().heartbeatTimeoutNanos);
+    // a hedge is priced from the same inputs as a quote, so the hedgers stop on the same signal
+    for (final Hedger h : hedgers) {
+      h.inputGate(health::healthy);
+    }
     tiers = new TierTableControl(in.tierTable());
     final HitRateModel hitRate = new HitRateModel(in.preset(), in.quotingConfig().learningRate);
     quoting =

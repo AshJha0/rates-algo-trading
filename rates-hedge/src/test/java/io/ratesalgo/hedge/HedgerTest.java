@@ -37,6 +37,7 @@ class HedgerTest {
     fillAll(f, h);
     assertEquals(0, h.workingParents());
     f.clock.advance(HALF_LIFE);
+    f.restamp();
     final int before = f.sink.parents().size();
     h.onTimer(f.clock.epochNanos());
     final RecordingHedgeOrderSink.Parent later = f.sink.parents().get(before);
@@ -111,6 +112,7 @@ class HedgerTest {
       fillAll(f, h);
       f.sink.clear();
       f.clock.advance(HALF_LIFE / 4);
+      f.restamp();
     }
     final Dv01Vector r = new Dv01Vector(CurrencyCode.USD);
     f.risk.ladder(CurrencyCode.USD, r);
@@ -185,6 +187,7 @@ class HedgerTest {
     assertEquals(0L, g.risk.pendingSell(HedgeFixture.TY), "refused by the router: reservation released");
     g.sink.accepting(true);
     g.clock.advance(1_000_000_000L);
+    g.restamp();
     h2.onTimer(g.clock.epochNanos());
     final RecordingHedgeOrderSink.Parent p = g.sink.parents().get(0);
     h2.onHedgeFill(p.parentId(), p.limitPrice(), p.quantityMinor() / 2);
