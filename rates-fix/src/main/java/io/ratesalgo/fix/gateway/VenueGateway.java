@@ -18,6 +18,7 @@ import io.ratesalgo.messages.sbe.NewOrderDecoder;
 import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.OrdType;
 import io.ratesalgo.messages.sbe.OrderCancelDecoder;
+import io.ratesalgo.messages.sbe.OrderCancelRejectEncoder;
 import io.ratesalgo.messages.sbe.OrderReplaceDecoder;
 import io.ratesalgo.messages.sbe.OrderWithdrawDecoder;
 import io.ratesalgo.messages.sbe.QuoteCancelDecoder;
@@ -31,6 +32,7 @@ import io.ratesalgo.messages.sbe.TimeInForce;
 import io.ratesalgo.messages.sbe.TradeBustEncoder;
 import java.nio.ByteBuffer;
 import org.agrona.DirectBuffer;
+import org.agrona.collections.Long2LongHashMap;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
@@ -38,8 +40,9 @@ import org.agrona.concurrent.UnsafeBuffer;
  *
  * <p>Inbound (FIX to SBE, delivered to the engine sink): QuoteRequest R to QuoteRequest;
  * QuoteResponse AJ and rejecting QuoteStatusReport AI to QuoteResponse; ExecutionReport 8 to
- * ExecutionReport or TradeBust after {@link OrderStateTracker}; MarketDataSnapshotFullRefresh W
- * and MarketDataIncrementalRefresh X to BookUpdate. Outbound (SBE offered by the engine to FIX):
+ * ExecutionReport or TradeBust after {@link OrderStateTracker}; OrderCancelReject 9 to
+ * OrderCancelReject; MarketDataSnapshotFullRefresh W and MarketDataIncrementalRefresh X to
+ * BookUpdate. Outbound (SBE offered by the engine to FIX):
  * Quote to S, QuoteCancel to Z, NewOrder to D, OrderCancel to F, OrderReplace to G. The quoting
  * engine's QuoteWithdraw (60) and OrderWithdraw (61) are sent as Z and F too (DR-R2W-04); an
  * OrderWithdraw carries no quantity, so F takes the order quantity the tracker recorded.
@@ -48,11 +51,17 @@ import org.agrona.concurrent.UnsafeBuffer;
  * mantissas with exponent -9; FIX quantities are face or notional in currency units, converted
  * exactly to minor units (scale 2). Ids (QuoteReqID, QuoteID, ClOrdID, OrderID, ExecID) are
  * numeric text. No step uses floating point and nothing is allocated per message.
+ *
+ * <p>FIX 35=9 names no instrument, and the engine routes inbound messages by instrument. The
+ * gateway therefore remembers the instrument of each cancel and replace request it sends, by the
+ * request's ClOrdID, until the venue answers it (an ExecutionReport or an OrderCancelReject
+ * carrying that ClOrdID), and stamps it on the OrderCancelReject it delivers.
  */
 public final class VenueGateway implements FixSessionHandler, MessageSink {
 
   private static final int PRICE_SCALE = 9;
   private static final int QTY_SCALE = 2;
+  private static final int MAX_PENDING_REQUESTS = 65_536;
 
   private final int venueId;
   private final InstrumentMap instruments;
@@ -67,6 +76,9 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
   private final QuoteResponseEncoder quoteResponse = new QuoteResponseEncoder();
   private final ExecutionReportEncoder executionReport = new ExecutionReportEncoder();
   private final TradeBustEncoder tradeBust = new TradeBustEncoder();
+  private final OrderCancelRejectEncoder cancelReject = new OrderCancelRejectEncoder();
+  /** Instrument of each cancel or replace request awaiting the venue's answer, by its ClOrdID. */
+  private final Long2LongHashMap pendingRequests = new Long2LongHashMap(4_096, 0.6f, 0L);
   private final BookUpdateEncoder bookUpdate = new BookUpdateEncoder();
   private final QuoteDecoder quote = new QuoteDecoder();
   private final QuoteCancelDecoder quoteCancel = new QuoteCancelDecoder();
@@ -131,7 +143,7 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
       case MsgType.EXECUTION_REPORT -> onExecutionReport(message);
       case MsgType.MARKET_DATA_SNAPSHOT -> onMarketData(message, true);
       case MsgType.MARKET_DATA_INCREMENTAL -> onMarketData(message, false);
-      case MsgType.ORDER_CANCEL_REJECT -> stats.cancelRejects++;
+      case MsgType.ORDER_CANCEL_REJECT -> onCancelReject(message);
       case MsgType.BUSINESS_MESSAGE_REJECT -> stats.businessRejects++;
       case MsgType.MARKET_DATA_REQUEST_REJECT -> stats.marketDataRejects++;
       default -> stats.unsupportedInbound++;
@@ -232,6 +244,34 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
     }
   }
 
+  /**
+   * The venue refused a cancel or replace. The engine must hear of it: the order is still what it
+   * was before the request, and a router waiting for a cancel confirmation would wait for ever.
+   */
+  private void onCancelReject(final FixParser p) {
+    stats.cancelRejects++;
+    final long clOrdId = p.getLong(FixTags.CL_ORD_ID, 0);
+    cancelReject
+        .wrapAndApplyHeader(sbe, 0, headerEncoder)
+        .venueId(venueId)
+        .clOrdId(clOrdId)
+        .origClOrdId(p.getLong(FixTags.ORIG_CL_ORD_ID, 0))
+        .instrumentId((int) pendingRequests.remove(clOrdId))
+        .ordStatus(ordStatus(p.getChar(FixTags.ORD_STATUS, (byte) '8')))
+        .responseTo((short) p.getLong(FixTags.CXL_REJ_RESPONSE_TO, 1))
+        .timestampNanos(p.getTimestamp(FixTags.TRANSACT_TIME, clock.epochNanos()));
+    deliver(MessageHeaderEncoder.ENCODED_LENGTH + cancelReject.encodedLength());
+  }
+
+  private void remember(final long requestClOrdId, final int instrumentId) {
+    if (pendingRequests.size() >= MAX_PENDING_REQUESTS) {
+      // a venue that never answers must not grow this without bound; a reject for a forgotten
+      // request is delivered with instrument 0, which the engine sends to every group
+      pendingRequests.clear();
+    }
+    pendingRequests.put(requestClOrdId, instrumentId);
+  }
+
   private static OrdStatus ordStatus(final byte fix) {
     return switch (fix) {
       case '1' -> OrdStatus.PartiallyFilled;
@@ -255,6 +295,10 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
     final byte execType = p.getChar(FixTags.EXEC_TYPE);
     final boolean rfqTrade = !p.has(FixTags.CL_ORD_ID);
     final long clOrdId = rfqTrade ? p.getLong(FixTags.QUOTE_ID) : p.getLong(FixTags.CL_ORD_ID);
+    if (!rfqTrade && p.has(FixTags.ORIG_CL_ORD_ID)) {
+      // the answer to a cancel or replace request
+      pendingRequests.remove(clOrdId);
+    }
     final long execId =
         execType == 'H' ? p.getLong(FixTags.EXEC_REF_ID) : p.getLong(FixTags.EXEC_ID, 0);
     final long lastQty = p.getDecimal(FixTags.LAST_QTY, QTY_SCALE, 0);
@@ -540,6 +584,7 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
     if (instruments.securityId(orderWithdraw.instrumentId()) == null) {
       return false;
     }
+    remember(orderWithdraw.clOrdId(), orderWithdraw.instrumentId());
     final FixWriter w = session.begin(MsgType.ORDER_CANCEL_REQUEST);
     w.put(FixTags.ORIG_CL_ORD_ID, orderWithdraw.origClOrdId()).put(FixTags.CL_ORD_ID, orderWithdraw.clOrdId());
     putInstrument(w, orderWithdraw.instrumentId());
@@ -580,6 +625,7 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
     if (instruments.securityId(orderCancel.instrumentId()) == null) {
       return false;
     }
+    remember(orderCancel.clOrdId(), orderCancel.instrumentId());
     final FixWriter w = session.begin(MsgType.ORDER_CANCEL_REQUEST);
     w.put(FixTags.ORIG_CL_ORD_ID, orderCancel.origClOrdId()).put(FixTags.CL_ORD_ID, orderCancel.clOrdId());
     putInstrument(w, orderCancel.instrumentId());
@@ -595,6 +641,7 @@ public final class VenueGateway implements FixSessionHandler, MessageSink {
     if (instruments.securityId(orderReplace.instrumentId()) == null) {
       return false;
     }
+    remember(orderReplace.clOrdId(), orderReplace.instrumentId());
     final FixWriter w = session.begin(MsgType.ORDER_CANCEL_REPLACE_REQUEST);
     w.put(FixTags.ORIG_CL_ORD_ID, orderReplace.origClOrdId()).put(FixTags.CL_ORD_ID, orderReplace.clOrdId());
     putInstrument(w, orderReplace.instrumentId());
