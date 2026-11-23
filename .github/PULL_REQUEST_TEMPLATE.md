@@ -8,7 +8,7 @@
 - [ ] Docs updated (LEARN, COOKBOOK, API_SPEC, docs/ARCHITECTURE as affected) and CHANGELOG under Unreleased
 - [ ] Decision record added to DECISIONS.md if this makes a design choice
 - [ ] STATUS.md entry if this moves a phase or gate
-- [ ] `ai-assisted` label applied and docs/ai_change_log.md entry added, if any content was assistant-drafted
+- [ ] Every assistant-written commit ends with a `Co-Authored-By:` trailer naming the model (CONTRIBUTING.md); no label is used
 - [ ] `git grep -i` for the word that names a hiring conversation returns nothing (DR-007)
 - [ ] No golden files regenerated on Windows
 - [ ] Every number in changed docs names its source file, job and date

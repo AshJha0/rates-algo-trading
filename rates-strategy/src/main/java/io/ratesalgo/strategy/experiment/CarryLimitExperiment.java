@@ -6,6 +6,7 @@ import io.ratesalgo.backtest.BacktestRunner;
 import io.ratesalgo.backtest.RiskCarry;
 import io.ratesalgo.backtest.model.BandPoint;
 import io.ratesalgo.backtest.model.Presets;
+import io.ratesalgo.backtest.prereg.DataSets;
 import io.ratesalgo.backtest.prereg.Ledger;
 import io.ratesalgo.backtest.prereg.PreRegistration;
 import io.ratesalgo.backtest.prereg.PreRegistrationException;
@@ -299,6 +300,10 @@ public final class CarryLimitExperiment {
       return 0;
     }
     final List<LocalDate> days = "holdout".equals(scope) ? prereg.holdout() : prereg.period().businessDays();
+    final List<Map<String, Object>> before = ledger.entries();
+    if (DeskExperimentCli.refusedForUndeclaredLooks(before, DataSets.key(days, exp.desk::daySeed), List.of(prereg), out)) {
+      return 2;
+    }
     final Params p = exp.configured();
     final Map<String, Object> results = exp.evaluate(exp.run(days, List.of(p), work, journals), days, p);
     final StringBuilder concat = new StringBuilder();
@@ -318,6 +323,7 @@ public final class CarryLimitExperiment {
     record.put("recorded_utc", Instant.ofEpochSecond(SystemClock.INSTANCE.epochNanos() / 1_000_000_000L).toString());
     record.put("results", results);
     record.put("verdict", results.get("verdict"));
+    DataSets.stamp(record, before, prereg);
     ledger.append(record);
     out.println(Json.write(results));
     out.println(prereg.id() + " " + TREATMENT + " " + scope + ": " + results.get("verdict")

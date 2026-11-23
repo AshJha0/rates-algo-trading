@@ -10,7 +10,12 @@ import org.agrona.concurrent.IdleStrategy;
  * <p>If a duty cycle or a hook throws, the runner journals a LoopError through {@link
  * EventLoop#recordError(Throwable)} on the loop thread, skips the end-of-day hook and stops. The
  * failure is kept for {@link #failure()}; nothing is retried, because a loop that has thrown may
- * hold half-applied state (API_SPEC.md Section 4).
+ * hold half-applied state (API_SPEC.md Section 4). The owner is expected to watch {@link
+ * #failure()} and {@link #isRunning()}: a stopped loop no longer pulls its own quotes.
+ *
+ * <p>{@link #close()} waits for the thread for a bounded time. A loop stuck inside a duty cycle
+ * cannot be stopped from outside; after the timeout the thread is interrupted and left behind so
+ * that shutdown, which also logs the venue sessions out, is not held up by it.
  */
 public final class LoopRunner implements AutoCloseable {
 
@@ -20,6 +25,7 @@ public final class LoopRunner implements AutoCloseable {
   private final LoopHook startOfDay;
   private final LoopHook endOfDay;
   private final Thread thread;
+  private final long closeTimeoutMillis;
 
   private volatile boolean running = true;
   private volatile boolean pinned;
@@ -31,6 +37,7 @@ public final class LoopRunner implements AutoCloseable {
     this.cpu = b.cpu;
     this.startOfDay = b.startOfDay;
     this.endOfDay = b.endOfDay;
+    this.closeTimeoutMillis = b.closeTimeoutMillis;
     this.thread = new Thread(this::run, b.name);
     this.thread.setDaemon(b.daemon);
   }
@@ -101,15 +108,27 @@ public final class LoopRunner implements AutoCloseable {
     return !thread.isAlive();
   }
 
-  /** Asks the loop to finish its cycle, run the end-of-day hook and stop; waits for it. */
+  /**
+   * Asks the loop to finish its cycle, run the end-of-day hook and stop, and waits for it up to the
+   * close timeout. If the thread has not ended by then it is interrupted and abandoned; {@link
+   * #isRunning()} stays true while it lives.
+   */
   @Override
   public void close() {
     running = false;
     try {
-      thread.join();
+      thread.join(closeTimeoutMillis);
+      if (thread.isAlive()) {
+        thread.interrupt();
+      }
     } catch (final InterruptedException e) {
       Thread.currentThread().interrupt();
     }
+  }
+
+  /** True while the loop thread exists, whether or not it is still cycling. */
+  public boolean isAlive() {
+    return thread.isAlive();
   }
 
   /** Runner settings. */
@@ -120,6 +139,7 @@ public final class LoopRunner implements AutoCloseable {
     private IdleStrategy idle = IdleStrategies.of("backoff");
     private int cpu = -1;
     private boolean daemon;
+    private long closeTimeoutMillis = 10_000L;
     private LoopHook startOfDay = LoopHook.NONE;
     private LoopHook endOfDay = LoopHook.NONE;
 
@@ -147,6 +167,15 @@ public final class LoopRunner implements AutoCloseable {
     /** Whether the thread is a daemon; tests and benchmarks set this so a failure cannot hang the JVM. */
     public Builder daemon(final boolean isDaemon) {
       this.daemon = isDaemon;
+      return this;
+    }
+
+    /** How long {@link LoopRunner#close()} waits for the thread; ten seconds by default. */
+    public Builder closeTimeoutMillis(final long millis) {
+      if (millis < 1) {
+        throw new IllegalArgumentException("close timeout must be positive: " + millis);
+      }
+      this.closeTimeoutMillis = millis;
       return this;
     }
 

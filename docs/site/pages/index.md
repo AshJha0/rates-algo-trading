@@ -5,15 +5,15 @@ An open Java 25 principal e-trading platform for USD interest rate swaps and Tre
 It is a simulator. Every venue runs in the same process, and every P&L figure comes from simulated clients under declared assumptions (DECISIONS.md DR-008). It was built by parallel AI coding sessions directed by one engineer. Verification is CI plus external goldens: QuantLib, published Treasury auctions and published overnight indices. There has been no independent human review of the code.
 
 !!! warning "Read the review first"
-    An in-depth review on 2026-11-23 found that the published P&L figures are fixed by declared simulator constants, that the wired process uses little of the pricing library, and that the safety path can fail open. [Reviewer summary](reviewer-summary.md) is one page; the [full review](review-2026-11-23.md) has the findings with file and line references. A fix round is in progress ([Status](status.md)).
+    An in-depth review on 2026-11-23 found that the published P&L figures are fixed by declared simulator constants, that the wired process uses little of the pricing library, and that the safety path can fail open. [Reviewer summary](reviewer-summary.md) is one page; the [full review](review-2026-11-23.md) has the findings with file and line references. The fix round of 2026-11-23 changes the kill path, routing, reference data, limits and the research ledger; the review's follow-up section gives each finding's status, and [Status](status.md) lists what stays open for later rounds.
 
 ## What is built
 
 - A single-writer event loop with hash-chained journals and replay to an equal hash ([Architecture](architecture.md)).
-- Rates analytics: curves, OIS swaps, bonds, futures, DV01 ladders, checked against QuantLib 1.44 on 224 instruments ([API contract](api-spec.md) Section 7.2).
+- Rates analytics: curves, OIS swaps, bonds, futures, DV01 ladders, checked against QuantLib 1.44 on 225 instruments ([API contract](api-spec.md) Section 7.2).
 - In-process venue simulators (D2C RFQ, D2D CLOB with workup, SEF) behind FIX 4.4 gateways and an SBE book feed.
 - A quoting engine, a risk engine with a kill switch, a hedger and a smart order router, wired into one process, `rates-app`.
-- A back-tester that runs only pre-registered experiments and appends every run to a hash-chained ledger (32 rows on 2026-11-23).
+- A back-tester that runs only pre-registered experiments and appends every run to a hash-chained ledger (32 rows over 13 data sets on 2026-11-23; looks are counted per data set).
 - Post-trade position keeping and reconciliation, read from the journals after the run.
 - A daily forward log on real end-of-day rates with synthetic clients, on the `forward-log` branch. It is not a track record ([Paper trading plan](https://github.com/AshJha0/rates-algo-trading/blob/main/docs/research/PAPER_TRADING_PLAN.md)).
 
@@ -36,7 +36,7 @@ What is not built or not real is listed under "Limits" in the [README](https://g
 
 ```bash
 mvn -B -ntp verify                               # JDK 25, Maven 3.9+
-python -m pip install -e "research[dev]"         # Python 3.12
+python -m pip install -c research/requirements-lock.txt -e "research[dev]"   # Python 3.12
 pytest -q research
 python -m pip install -r docs/site/requirements.txt
 mkdocs build --strict

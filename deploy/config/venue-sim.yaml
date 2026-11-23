@@ -5,7 +5,9 @@ process:
   role: venue-sim
   colour: blue
 http:
-  bindAddress: 0.0.0.0
+  # Loopback by default. A container sets RATES_HTTP_BIND=0.0.0.0 (deploy/compose.yaml); the
+  # process then refuses to start unless the control token is set.
+  bindAddress: 127.0.0.1
   port: 8090
   controlTokenEnv: RATES_CONTROL_TOKEN
 journal:

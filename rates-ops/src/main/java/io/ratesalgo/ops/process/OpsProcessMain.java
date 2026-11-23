@@ -87,6 +87,13 @@ public final class OpsProcessMain {
       e.errors().forEach(x -> err.println("  " + x));
       return null;
     }
+    final String bindProblem = cfg.controlBindProblem(env);
+    if (bindProblem != null) {
+      err.println("configuration refused, process not started:");
+      err.println("  " + bindProblem);
+      return null;
+    }
+    final String token = cfg.controlToken(env);
 
     final MetricsRegistry metrics = new MetricsRegistry();
     metrics.gauge(MetricNames.PROCESS_INFO, "Process identity", "name", cfg.name(), "role", cfg.role(),
@@ -108,15 +115,16 @@ public final class OpsProcessMain {
       final OpsHttpServer server = new OpsHttpServer(cfg.bindAddress(), cfg.port(), metrics, () -> null,
           new OpsHttpServer.Control() {
             @Override
-            public void kill(final int requestedBy) {
+            public String kill(final int requestedBy) {
               // a venue simulator has nothing to kill
+              return null;
             }
 
             @Override
             public String statusJson() {
               return "{\"role\":\"" + cfg.role() + "\"}";
             }
-          }, null);
+          }, token);
       out.println(cfg.name() + " (" + cfg.role() + ") listening on " + cfg.bindAddress() + ":" + server.port());
       return new Started(server, null, null, metrics);
     }
@@ -132,14 +140,14 @@ public final class OpsProcessMain {
     metrics.gauge(MetricNames.QUOTING_ENABLED, "1 when quoting is enabled").bind(() -> quoter.quoting() ? 1 : 0);
     metrics.gauge(MetricNames.LIMIT_UTILISATION, "Observed over limit", "limit", "max_messages_per_second").set(0);
     final MetricsRegistry.Counter frames = metrics.counter(MetricNames.JOURNAL_FRAMES, "Journal frames appended");
-    final String token = cfg.controlTokenEnv() == null ? null : env.get(cfg.controlTokenEnv());
     final OpsHttpServer server = new OpsHttpServer(cfg.bindAddress(), cfg.port(), metrics,
         () -> journal.remaining() > 0 ? null : "journal full", new OpsHttpServer.Control() {
           @Override
-          public void kill(final int requestedBy) {
+          public String kill(final int requestedBy) {
             final long before = quoter.frames();
-            quoter.kill(requestedBy);
+            final String unconfirmed = quoter.kill(requestedBy);
             frames.add(quoter.frames() - before);
+            return unconfirmed;
           }
 
           @Override

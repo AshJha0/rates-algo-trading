@@ -13,6 +13,12 @@ Images, configuration, monitoring and the rehearsal for the simulated environmen
 | `bluegreen.sh` | Switches the active colour: target ready, kill on the old colour, quotes confirmed gone, switch recorded |
 | `OWNER_CHECKLIST.md` | Repository settings only the owner can change |
 
+Control endpoint. The configuration files bind `127.0.0.1`. Every `/control/*` request needs the `X-Control-Token` header; with no token set the control endpoints answer 403 and the process refuses to start on any address that is not loopback. The compose file sets `RATES_HTTP_BIND=0.0.0.0` inside each container, because a published port does not reach a container's loopback, and publishes the ports on the host's loopback only. `/health/*` and `/metrics` need no token. The transport is plain HTTP: beyond one host it belongs behind a management network or a TLS proxy.
+
+Kill and blue/green. `POST /control/kill` answers 200 only when the withdrawal was confirmed at both venues, and 503 with the reason otherwise. `bluegreen.sh` records the switch only on that 200 with zero live quotes. If the old colour is down and cannot answer, confirm at the venues that nothing of ours is working, then re-run with `RATES_OLD_COLOUR_CONFIRMED_DOWN=1`; the override is written into the record.
+
+Loop threads. The optional `runtime` section of a configuration file sets `loopIdleStrategy` (`busy-spin`, `yield` or `backoff`) and `loopCpu` (Linux only; -1 for no pinning). Without it the process runs as before: backoff, not pinned.
+
 Run the rehearsal locally without Docker:
 
 ```bash

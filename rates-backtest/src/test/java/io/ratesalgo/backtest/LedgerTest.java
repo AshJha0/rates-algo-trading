@@ -6,7 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.backtest.prereg.ExperimentCli;
+import io.ratesalgo.backtest.prereg.DataSets;
 import io.ratesalgo.backtest.prereg.Ledger;
+import io.ratesalgo.backtest.prereg.LedgerCli;
 import io.ratesalgo.backtest.prereg.PreRegistration;
 import io.ratesalgo.backtest.prereg.PreRegistrationException;
 import io.ratesalgo.backtest.util.Hashing;
@@ -152,6 +154,95 @@ class LedgerTest {
     Files.writeString(file, text.replaceFirst("\"verdict\":\"", "\"verdict\":\"edited "));
     assertThrows(IllegalStateException.class, ledger::entries);
     assertThrows(IllegalStateException.class, () -> ledger.append(Map.of("x", 1L)));
+  }
+
+  private static int ledgerCli(final Path file, final ByteArrayOutputStream bytes) {
+    try (PrintStream out = new PrintStream(bytes, true, StandardCharsets.UTF_8)) {
+      return LedgerCli.run(new String[] {"--ledger", file.toString()}, out);
+    }
+  }
+
+  /** Runs on every build, so an edited or reordered row of the repository's ledger fails CI. */
+  @Test
+  void theRepositoryLedgerChainHoldsAndItsLooksAreCountedPerDataSet() throws IOException {
+    final Path real = TestSupport.repoRoot().resolve("data/ledger/ledger.jsonl");
+    final List<Map<String, Object>> entries = new Ledger(real).entries();
+    assertTrue(entries.size() >= 32, "rows are never removed");
+    final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    assertEquals(0, ledgerCli(real, bytes));
+    final String report = bytes.toString(StandardCharsets.UTF_8);
+    assertTrue(report.contains("ledger chain verified: " + entries.size() + " lines"), report);
+    // AUDIT-11..14 and AUDIT-21..25 read the same 20 sessions; each row says look 1
+    final DataSets.Looks audit = DataSets.looks(entries).stream()
+        .filter(l -> l.key().equals("sessions:77dc9cc8bfe3fced")).findFirst().orElseThrow();
+    assertEquals(
+        List.of("AUDIT-11", "AUDIT-12", "AUDIT-13", "AUDIT-14", "AUDIT-21", "AUDIT-22", "AUDIT-23", "AUDIT-24", "AUDIT-25"),
+        audit.rows().stream().map(r -> r.get("prereg_id")).limit(9).toList());
+    assertTrue(audit.rows().stream().limit(9).allMatch(r -> ((Number) r.get("look")).longValue() == 1));
+    assertTrue(report.contains("sessions:77dc9cc8bfe3fced  20 sessions 2026-03-02..2026-03-27, seeds 8020514..8020539: "),
+        report);
+    assertTrue(report.contains("  look 9  seq 29  AUDIT-25  evaluation  not supported  (recorded as look 1)"), report);
+    assertTrue(report.contains("warning: 11 looks at the same data by AUDIT-01, AUDIT-02, AUDIT-03, AUDIT-04, R2B-001"),
+        report);
+
+    // a copy with one character changed fails, and so does a missing file
+    final Path copy = repo.resolve("copy.jsonl");
+    Files.writeString(copy, Files.readString(real).replaceFirst("\"verdict\":\"not supported\"", "\"verdict\":\"supported\""));
+    final ByteArrayOutputStream broken = new ByteArrayOutputStream();
+    assertEquals(1, ledgerCli(copy, broken));
+    assertTrue(broken.toString(StandardCharsets.UTF_8).contains("hash chain broken at line 2"), "the broken line is named");
+    assertEquals(1, ledgerCli(repo.resolve("none.jsonl"), new ByteArrayOutputStream()));
+  }
+
+  @Test
+  void aSecondPreRegistrationOnTheSameSessionsIsRefusedUntilItDeclaresTheFirst() throws IOException {
+    setUp();
+    final String first = Files.readString(prereg("2026-02-19, 2026-02-20", sha()));
+    assertEquals(ExperimentCli.OK, cli("--prereg", "data/preregs/t.yaml", "--commit", "abc"));
+    final Path second = repo.resolve("data/preregs/t2.yaml");
+    Files.writeString(second, first.replace("id: T-001", "id: T-002"), StandardCharsets.UTF_8);
+    final Ledger ledger = new Ledger(repo.resolve("data/ledger/ledger.jsonl"));
+
+    assertEquals(ExperimentCli.REFUSED, cli("--prereg", "data/preregs/t2.yaml", "--commit", "abc"));
+    assertEquals(1, ledger.entries().size(), "a refused run reads no data and records nothing");
+
+    Files.writeString(second, first.replace("id: T-001", "id: T-002") + "prior_looks: T-001\n", StandardCharsets.UTF_8);
+    assertEquals(ExperimentCli.REFUSED, cli("--prereg", "data/preregs/t2.yaml"), "prior_looks must be a list");
+    Files.writeString(second, first.replace("id: T-001", "id: T-002") + "prior_looks: [T-001]\n", StandardCharsets.UTF_8);
+    assertEquals(ExperimentCli.OK, cli("--prereg", "data/preregs/t2.yaml", "--commit", "abc"));
+
+    // a pre-registration's own earlier run needs no declaration (it is its look 2); the first
+    // one, though, would now have to declare the second
+    assertEquals(ExperimentCli.OK, cli("--prereg", "data/preregs/t2.yaml", "--commit", "abc"));
+    assertEquals(ExperimentCli.REFUSED, cli("--prereg", "data/preregs/t.yaml", "--commit", "abc"));
+    final List<Map<String, Object>> e = ledger.entries();
+    assertEquals(3, e.size());
+    assertEquals(e.get(0).get("data_set"), e.get(1).get("data_set"));
+    assertEquals(DataSets.key(e.get(0)), e.get(1).get("data_set"));
+    assertEquals(List.of(1L, 2L, 3L), e.stream().map(r -> ((Number) r.get("data_set_look")).longValue()).toList());
+    assertEquals(List.of(1L, 1L, 2L), e.stream().map(r -> ((Number) r.get("look")).longValue()).toList());
+    assertEquals(List.of("T-001", "T-002", "T-002"), e.stream().map(r -> r.get("prereg_id")).toList());
+    assertEquals(List.of("T-001"), e.get(1).get("prior_looks"));
+    assertEquals(List.of(), e.get(0).get("prior_looks"));
+    final String report = DataSets.report(e);
+    assertTrue(report.contains("warning: 3 looks at the same data by T-001, T-002, T-002"), report);
+    assertTrue(report.endsWith("3 ledger rows, 1 data sets, 1 read more than once\n"), report);
+  }
+
+  @Test
+  void rowsWithoutJournalsAreKeyedByTheirDataHashOrNotAtAll() {
+    final String sha = "ab".repeat(32);
+    assertEquals("data:" + sha.substring(0, 16), DataSets.key(Map.of("data_sha256", sha)));
+    assertEquals(null, DataSets.key(Map.of("kind", "decision")));
+    final List<Map<String, Object>> rows = List.of(
+        Map.of("prereg_id", "E1", "data_sha256", sha, "data", "x.csv", "seq", 1L, "scope", "evaluation", "verdict",
+            "supported", "look", 1L),
+        Map.of("kind", "decision", "seq", 2L));
+    assertEquals(List.of("E1"), DataSets.undeclared(rows, "data:" + sha.substring(0, 16), "E2", List.of()));
+    assertEquals(List.of(), DataSets.undeclared(rows, "data:" + sha.substring(0, 16), "E2", List.of("E1")));
+    final String report = DataSets.report(rows);
+    assertTrue(report.contains("files x.csv: 1 look\n"), report);
+    assertTrue(report.endsWith("2 ledger rows, 1 data sets, 0 read more than once, 1 rows name no data\n"), report);
   }
 
   @Test

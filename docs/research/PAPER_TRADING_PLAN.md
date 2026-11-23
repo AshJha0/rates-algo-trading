@@ -69,7 +69,7 @@ A SOFR revision would show in the next input file; old lines are not touched.
 
 **Job.** `.github/workflows/forward.yml`, cron at 01:30 UTC Tuesday to Saturday, after both the Treasury curve (late afternoon New York time) and the DTCC end-of-day file (about 00:15 UTC) for the day before. It runs on the free GitHub-hosted runner for a public repository. It fetches, builds with Maven, runs `ForwardCli`, re-checks the ledger in Python and commits to `forward-log` with the default `GITHUB_TOKEN`. On a Treasury holiday the fetch exits with status 3 and the job stops cleanly; a failed download fails the job so it shows in Actions, and the open decision is marked by the next successful run.
 
-**Report.** `forward/reports/<session>.md` per marked session and a rolling `SUMMARY.md`, both rebuilt from ledger lines only: P&L lines, close mark per instrument, end DV01, cumulative P&L, drawdown, mean and standard error. `ratesresearch.forward.check` recomputes the close marks and totals from the ledger and fails on a difference of more than a cent.
+**Report.** `forward/reports/<session>.md` per marked session and a rolling `SUMMARY.md`, both rebuilt from ledger lines only: P&L lines, close mark per instrument, end DV01 and cumulative P&L. Since 1.1.0 (DECISIONS.md DR-RV-C01) `SUMMARY.md` reports the real close mark on its own, cumulative with its mean and standard error per session, and reports the session P&L separately, labelled synthetic. No ratio of mean to standard deviation is printed, for the close mark, the synthetic income or any total that contains it, at any sample size. `ForwardCli --summary` rebuilds the summary; `ratesresearch.forward.health` checks that every business day has a decision and fails the scheduled job otherwise, and the workflow opens an issue when a run fails or a day is missing. `ratesresearch.forward.check` recomputes the close marks and totals from the ledger and fails on a difference of more than a cent.
 
 **Tests.** `ForwardCycleTest` covers the decision-then-outcome order, the close-mark arithmetic, the look-ahead rule (the decision line is byte-identical when later input files exist), reproducibility from the seed, idempotence, a holiday, a long gap and a tampered line. `research/tests/test_forward.py` covers the parsers, the fallbacks and the Python check. The dry run on ten past days is in Section 9.
 
@@ -84,7 +84,7 @@ Cannot claim:
 - Any real hit rate, real client behaviour, real fill or real spread capture. Those come from fitted models and are synthetic.
 - Any intraday effect. The desk quotes all day on yesterday's close; real intraday moves are missing.
 - Profitability of a real desk. A forward P&L with synthetic flow is a test of the risk and hedging logic under real rate moves, not of a business.
-- Statistical significance for some time. With daily marks, a Sharpe-type figure needs on the order of a year of business days before its standard error is small; the summary will show the standard error next to every ratio and will not print a ratio before 60 logged days.
+- A Sharpe-type figure. The synthetic income is close to deterministic, so its mean over its standard deviation would be large by construction; the close mark has an expected value of zero and measures exposure, not skill. The summary prints no ratio at any sample size (DR-RV-C01). The earlier plan to print one after 60 logged days is withdrawn (review Section 2.5).
 
 ## 7. Work plan
 

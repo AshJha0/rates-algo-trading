@@ -16,7 +16,13 @@ import java.util.Arrays;
  *       which Python reproduces exactly.
  *   <li>{@link #welch}: Welch's unequal-variance t-test, two-sided, with the Welch-Satterthwaite
  *       degrees of freedom and the exact Student-t tail through the regularised incomplete beta.
+ *   <li>{@link #pairedT} and {@link #pairedBlockBootstrapCi}: the test and interval for a
+ *       common-random-number design, where treatment and baseline replay the same sessions with
+ *       the same seeds. The per-session difference is the unit; Welch's test treats the two arms
+ *       as independent, keeps the between-session variance that pairing removes, and so has
+ *       almost no power on such a design.
  *   <li>{@link #holm}: Holm's step-down adjustment of a family of p-values.
+ *   <li>{@link #benjaminiHochberg}: false-discovery-rate adjustment across experiments.
  *   <li>{@link #pnlRisk}: volatility, Sharpe ratio and maximum drawdown of a daily P&amp;L series.
  * </ul>
  */
@@ -39,6 +45,12 @@ public final class Stats {
 
   /** Trading days per year used to annualise a daily Sharpe ratio. */
   public static final int TRADING_DAYS_PER_YEAR = 252;
+
+  /**
+   * Result of a paired t-test: the mean of the per-session differences {@code a[i] - b[i]}, its
+   * standard error, {@code t = mean / se} on {@code n - 1} degrees of freedom and the two-sided p.
+   */
+  public record Paired(int n, double meanDifference, double standardError, double t, double df, double p) {}
 
   /** Result of a Welch test. */
   public record Welch(double meanA, double meanB, double difference, double t, double df, double p) {}
@@ -147,6 +159,42 @@ public final class Stats {
     return new Welch(ma, mb, ma - mb, t, df, studentTwoSidedP(t, df));
   }
 
+  /** The per-session differences {@code a[i] - b[i]} of two arms run on the same sessions. */
+  public static double[] pairedDifferences(final double[] a, final double[] b) {
+    if (a.length != b.length) {
+      throw new IllegalArgumentException("paired samples differ in length: " + a.length + " and " + b.length);
+    }
+    final double[] d = new double[a.length];
+    for (int i = 0; i < d.length; i++) {
+      d[i] = a[i] - b[i];
+    }
+    return d;
+  }
+
+  /**
+   * Paired two-sided t-test of mean(a - b) against zero. {@code a[i]} and {@code b[i]} must come
+   * from the same session. Assumes the differences are independent across sessions; use {@link
+   * #pairedBlockBootstrapCi} when they may not be.
+   */
+  public static Paired pairedT(final double[] a, final double[] b) {
+    final double[] d = pairedDifferences(a, b);
+    final double m = mean(d);
+    final double se2 = variance(d) / d.length;
+    if (!(se2 > 0)) {
+      throw new IllegalArgumentException("the differences have zero variance; the test is undefined");
+    }
+    final double t = m / Math.sqrt(se2);
+    final double df = d.length - 1.0;
+    return new Paired(d.length, m, Math.sqrt(se2), t, df, studentTwoSidedP(t, df));
+  }
+
+  /** Moving-block bootstrap interval of the mean per-session difference {@code a[i] - b[i]}. */
+  public static Interval pairedBlockBootstrapCi(
+      final double[] a, final double[] b, final int blockLength, final int resamples, final double level,
+      final long seed) {
+    return blockBootstrapMeanCi(pairedDifferences(a, b), blockLength, resamples, level, seed);
+  }
+
   /** Two-sided p-value of Student's t with {@code df} degrees of freedom: I_{df/(df+t^2)}(df/2, 1/2). */
   public static double studentTwoSidedP(final double t, final double df) {
     if (!(df > 0)) {
@@ -178,6 +226,36 @@ public final class Stats {
     for (int k = 0; k < m; k++) {
       final int i = order[k];
       running = Math.max(running, Math.min(1.0, (m - k) * p[i]));
+      adjusted[i] = running;
+    }
+    return adjusted;
+  }
+
+  /**
+   * Benjamini-Hochberg adjusted p-values, returned in the input order: sort ascending, multiply
+   * the i-th smallest (1-based) by m / i, take the running minimum from the largest down, cap at
+   * 1. Rejecting where the adjusted value is at most q keeps the expected share of false
+   * discoveries at or below q for independent or positively dependent tests. Use it across the
+   * experiments of a ledger; {@link #holm} stays the rule within one pre-registered family.
+   */
+  public static double[] benjaminiHochberg(final double[] p) {
+    final int m = p.length;
+    final Integer[] order = new Integer[m];
+    for (int i = 0; i < m; i++) {
+      if (!(p[i] >= 0 && p[i] <= 1)) {
+        throw new IllegalArgumentException("p-value outside [0, 1]: " + p[i]);
+      }
+      order[i] = i;
+    }
+    Arrays.sort(order, (i, j) -> {
+      final int c = Double.compare(p[i], p[j]);
+      return c != 0 ? c : Integer.compare(i, j);
+    });
+    final double[] adjusted = new double[m];
+    double running = 1.0;
+    for (int k = m - 1; k >= 0; k--) {
+      final int i = order[k];
+      running = Math.min(running, p[i] * m / (k + 1));
       adjusted[i] = running;
     }
     return adjusted;

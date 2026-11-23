@@ -1,5 +1,6 @@
 package io.ratesalgo.strategy.experiment;
 
+import io.ratesalgo.backtest.prereg.DataSets;
 import io.ratesalgo.backtest.prereg.Ledger;
 import io.ratesalgo.backtest.prereg.PreRegistration;
 import io.ratesalgo.backtest.prereg.PreRegistrationException;
@@ -87,6 +88,10 @@ public final class DeskExperimentCli {
     final PreRegistration first = preregs.get(0);
     final List<LocalDate> days = "holdout".equals(scope) ? first.holdout() : first.period().businessDays();
     final DeskExperiment experiment = new DeskExperiment(repo, repo.resolve(first.config()));
+    final List<Map<String, Object>> before = ledger.entries();
+    if (refusedForUndeclaredLooks(before, DataSets.key(days, experiment::daySeed), preregs, out)) {
+      return REFUSED;
+    }
     final DeskExperiment.Outcome outcome = experiment.run(days, work);
 
     final StringBuilder concat = new StringBuilder();
@@ -112,6 +117,7 @@ public final class DeskExperimentCli {
       record.put("recorded_utc", recorded);
       record.put("results", outcome.resultsByTreatment().get(treatment));
       record.put("verdict", outcome.verdictByTreatment().get(treatment));
+      DataSets.stamp(record, ledger.entries(), p);
       ledger.append(record);
       out.println(
           p.id() + " " + treatment + " " + scope + ": " + outcome.verdictByTreatment().get(treatment)
@@ -119,6 +125,28 @@ public final class DeskExperimentCli {
     }
     out.println("recorded in " + repo.relativize(ledgerFile).toString().replace('\\', '/'));
     return OK;
+  }
+
+  /**
+   * Prints a refusal and returns true when the ledger shows a look at {@code key} that one of
+   * {@code preregs} does not declare. Pre-registrations run together need not name each other.
+   */
+  static boolean refusedForUndeclaredLooks(
+      final List<Map<String, Object>> entries, final String key, final List<PreRegistration> preregs,
+      final PrintStream out) {
+    final List<String> together = new ArrayList<>();
+    for (final PreRegistration p : preregs) {
+      together.add(p.id());
+    }
+    boolean refused = false;
+    for (final PreRegistration p : preregs) {
+      final String problem = DataSets.refusal(entries, key, p, together);
+      if (problem != null) {
+        out.println((refused ? "  " : "refused:\n  ") + problem);
+        refused = true;
+      }
+    }
+    return refused;
   }
 
   /** The pre-registrations must share a config, period and holdout, and name one known treatment each. */

@@ -1,5 +1,6 @@
 package io.ratesalgo.ops.config;
 
+import io.ratesalgo.ops.http.OpsHttpServer;
 import java.io.IOException;
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
@@ -17,9 +18,11 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * deploy/config/schema/process-config.schema.json at start (API_SPEC.md Section 17.11). A process
  * whose configuration does not validate does not start.
  *
- * <p>Two values may be overridden from the environment so that one file serves Docker and
- * process-mode runs: {@code RATES_HTTP_PORT} and {@code RATES_JOURNAL_DIR}. Overrides are applied
- * before validation.
+ * <p>Three values may be overridden from the environment so that one file serves Docker and
+ * process-mode runs: {@code RATES_HTTP_PORT}, {@code RATES_HTTP_BIND} and {@code
+ * RATES_JOURNAL_DIR}. Overrides are applied before validation. The files bind loopback; a
+ * container, whose published port reaches only a non-loopback address, sets {@code
+ * RATES_HTTP_BIND=0.0.0.0}, and the server then insists on a control token.
  *
  * @param name process name
  * @param role {@code trading} or {@code venue-sim}
@@ -33,6 +36,9 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * @param instruments instruments quoted, each an instrument id and a venue id
  * @param maxMessagesPerSecond message-rate limit
  * @param retentionYears record retention
+ * @param loopIdleStrategy idle strategy of the loop threads: {@code busy-spin}, {@code yield} or
+ *     {@code backoff} (the default when the {@code runtime} section is absent)
+ * @param loopCpu CPU the loop thread is pinned to on Linux, or -1 for none (the default)
  */
 public record ProcessConfig(
     String name,
@@ -46,7 +52,12 @@ public record ProcessConfig(
     boolean quotingEnabledAtStart,
     List<int[]> instruments,
     int maxMessagesPerSecond,
-    int retentionYears) {
+    int retentionYears,
+    String loopIdleStrategy,
+    int loopCpu) {
+
+  /** Idle strategy when the configuration names none: what the process always used. */
+  public static final String DEFAULT_LOOP_IDLE_STRATEGY = "backoff";
 
   public ProcessConfig {
     final List<int[]> copy = new ArrayList<>();
@@ -64,6 +75,25 @@ public record ProcessConfig(
       copy.add(i.clone());
     }
     return copy;
+  }
+
+  /** The control token named by {@code controlTokenEnv}, or null when the variable is unset or empty. */
+  public String controlToken(final Map<String, String> env) {
+    final String token = controlTokenEnv == null ? null : env.get(controlTokenEnv);
+    return token == null || token.isEmpty() ? null : token;
+  }
+
+  /**
+   * Why this process may not serve its control endpoints, or null if it may: a bind address that is
+   * not loopback needs a control token. Checked before anything is started, so the refusal reads
+   * like any other configuration error.
+   */
+  public String controlBindProblem(final Map<String, String> env) {
+    if (controlToken(env) != null || OpsHttpServer.isLoopback(bindAddress)) {
+      return null;
+    }
+    return "http.bindAddress " + bindAddress + " is not loopback and " + controlTokenEnv
+        + " is not set: the control endpoints would be open to the network";
   }
 
   /** Raised when a configuration does not validate; carries every violation. */
@@ -111,6 +141,7 @@ public record ProcessConfig(
     }
     if (doc instanceof Map<?, ?> m) {
       override(m, "http", "port", env.get("RATES_HTTP_PORT"), true);
+      override(m, "http", "bindAddress", env.get("RATES_HTTP_BIND"), false);
       override(m, "journal", "directory", env.get("RATES_JOURNAL_DIR"), false);
     }
     final List<String> errors = schema.validate(doc);
@@ -124,6 +155,7 @@ public record ProcessConfig(
     final Map<?, ?> quoting = (Map<?, ?>) root.get("quoting");
     final Map<?, ?> limits = (Map<?, ?>) root.get("limits");
     final Map<?, ?> retention = (Map<?, ?>) root.get("retention");
+    final Map<?, ?> runtime = root.get("runtime") instanceof Map<?, ?> r ? r : Map.of();
     final List<int[]> instruments = new ArrayList<>();
     for (final Object o : (List<?>) quoting.get("instruments")) {
       final Map<?, ?> i = (Map<?, ?>) o;
@@ -141,7 +173,9 @@ public record ProcessConfig(
         (Boolean) quoting.get("enabledAtStart"),
         instruments,
         ((Number) limits.get("maxMessagesPerSecond")).intValue(),
-        ((Number) retention.get("years")).intValue());
+        ((Number) retention.get("years")).intValue(),
+        runtime.get("loopIdleStrategy") instanceof String s ? s : DEFAULT_LOOP_IDLE_STRATEGY,
+        runtime.get("loopCpu") instanceof Number n ? n.intValue() : -1);
   }
 
   @SuppressWarnings("unchecked")

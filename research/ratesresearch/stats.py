@@ -4,6 +4,11 @@
 the same indices on both sides and the intervals agree exactly on the shared fixture
 ``data/fixtures/backtest/stats_crosscheck.json``. Welch's test uses the same Lanczos
 log-gamma and continued fraction as Java; the two agree to about 1e-12.
+
+For a common-random-number design (treatment and baseline replay the same sessions with the same
+seeds) use ``paired_t`` and ``paired_block_bootstrap_ci``: the per-session difference is the
+unit. Welch's test treats the arms as independent and keeps the between-session variance that
+pairing removes. ``benjamini_hochberg`` adjusts across experiments; ``holm`` within one family.
 """
 
 from __future__ import annotations
@@ -56,6 +61,18 @@ class WelchResult:
     mean_a: float
     mean_b: float
     difference: float
+    t: float
+    df: float
+    p: float
+
+
+@dataclass(frozen=True)
+class PairedResult:
+    """Paired t-test of the per-session differences ``a[i] - b[i]``, as ``Stats.Paired`` in Java."""
+
+    n: int
+    mean_difference: float
+    standard_error: float
     t: float
     df: float
     p: float
@@ -233,6 +250,53 @@ def welch(a: Sequence[float], b: Sequence[float]) -> WelchResult:
     t = (ma - mb) / math.sqrt(se2)
     df = se2 * se2 / (va * va / (len(a) - 1) + vb * vb / (len(b) - 1))
     return WelchResult(ma, mb, ma - mb, t, df, student_two_sided_p(t, df))
+
+
+def paired_differences(a: Sequence[float], b: Sequence[float]) -> list[float]:
+    """Per-session differences ``a[i] - b[i]`` of two arms run on the same sessions."""
+    if len(a) != len(b):
+        raise ValueError(f"paired samples differ in length: {len(a)} and {len(b)}")
+    return [x - y for x, y in zip(a, b, strict=True)]
+
+
+def paired_t(a: Sequence[float], b: Sequence[float]) -> PairedResult:
+    """Paired two-sided t-test of mean(a - b) against zero; ``a[i]``, ``b[i]`` share a session."""
+    d = paired_differences(a, b)
+    m = mean(d)
+    se2 = variance(d) / len(d)
+    if se2 <= 0:
+        raise ValueError("the differences have zero variance")
+    t = m / math.sqrt(se2)
+    df = len(d) - 1.0
+    return PairedResult(len(d), m, math.sqrt(se2), t, df, student_two_sided_p(t, df))
+
+
+def paired_block_bootstrap_ci(
+    a: Sequence[float],
+    b: Sequence[float],
+    block_length: int,
+    resamples: int,
+    level: float,
+    seed: int,
+) -> Interval:
+    """Moving-block bootstrap interval of the mean per-session difference ``a[i] - b[i]``."""
+    return block_bootstrap_mean_ci(paired_differences(a, b), block_length, resamples, level, seed)
+
+
+def benjamini_hochberg(p: Sequence[float]) -> list[float]:
+    """Benjamini-Hochberg adjusted p-values in input order (false discovery rate)."""
+    m = len(p)
+    for v in p:
+        if not 0 <= v <= 1:
+            raise ValueError(f"p-value outside [0, 1]: {v}")
+    order = sorted(range(m), key=lambda i: (p[i], i))
+    out = [0.0] * m
+    running = 1.0
+    for k in range(m - 1, -1, -1):
+        i = order[k]
+        running = min(running, p[i] * m / (k + 1))
+        out[i] = running
+    return out
 
 
 def holm(p: Sequence[float]) -> list[float]:

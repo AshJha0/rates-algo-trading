@@ -6,12 +6,17 @@
   <parent>
     <groupId>io.ratesalgo</groupId>
     <artifactId>rates-algo-trading</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
   </parent>
 
   <artifactId>rates-journal</artifactId>
   <name>rates-journal</name>
   <description>Append-only memory-mapped journal with a chained hash and deterministic replay.</description>
+
+  <properties>
+    <!-- mutated by the opt-in pit profile (root pom) -->
+    <pit.skip>false</pit.skip>
+  </properties>
 
   <dependencies>
     <dependency>
