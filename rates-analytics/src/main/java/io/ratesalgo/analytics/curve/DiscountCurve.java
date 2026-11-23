@@ -25,6 +25,7 @@ public final class DiscountCurve {
   private final double[] logDf;
   private final Interpolation interpolation;
   private final double tension;
+  private final int stepPillars;
   private final Interpolator interpolator;
   private final double[] gradientWork;
   private int activeCount;
@@ -45,6 +46,29 @@ public final class DiscountCurve {
       final int[] pillarDates,
       final Interpolation interpolation,
       final double tension) {
+    this(valuationDate, pillarDates, interpolation, tension, 0);
+  }
+
+  /**
+   * Builds a curve whose first {@code stepPillars} pillars are joined by linear log discount
+   * factors when the interpolation is {@link Interpolation#STEP_THEN_MONOTONE_CONVEX} or {@link
+   * Interpolation#STEP_THEN_TENSION_SPLINE}; the count is ignored by the other schemes.
+   *
+   * @param valuationDate curve reference date
+   * @param pillarDates strictly increasing pillar dates after the valuation date
+   * @param interpolation scheme between pillars
+   * @param tension tension per year for the tension spline schemes; ignored otherwise
+   * @param stepPillars leading pillars of the step section, 0 to the pillar count
+   */
+  public DiscountCurve(
+      final int valuationDate,
+      final int[] pillarDates,
+      final Interpolation interpolation,
+      final double tension,
+      final int stepPillars) {
+    if (stepPillars < 0 || stepPillars > pillarDates.length) {
+      throw new IllegalArgumentException("step pillars out of range: " + stepPillars);
+    }
     if (pillarDates.length == 0) {
       throw new IllegalArgumentException("a curve needs at least one pillar");
     }
@@ -66,11 +90,17 @@ public final class DiscountCurve {
     }
     this.interpolation = interpolation;
     this.tension = tension;
+    this.stepPillars = stepPillars;
     this.interpolator =
         switch (interpolation) {
           case LINEAR_LOG_DF -> new LinearInterpolator(n);
           case MONOTONE_CONVEX -> new MonotoneConvexInterpolator(n);
           case TENSION_SPLINE -> new TensionSplineInterpolator(n, tension);
+          case STEP_THEN_MONOTONE_CONVEX ->
+              new StepThenSmoothInterpolator(n, stepPillars, new MonotoneConvexInterpolator(n));
+          case STEP_THEN_TENSION_SPLINE ->
+              new StepThenSmoothInterpolator(
+                  n, stepPillars, new TensionSplineInterpolator(n, tension));
         };
     this.gradientWork = new double[n];
     this.activeCount = n;
@@ -99,7 +129,8 @@ public final class DiscountCurve {
 
   /** A copy with the same pillars, node values, turns and interpolation. */
   public DiscountCurve copy() {
-    final DiscountCurve c = new DiscountCurve(valuationDate, pillarDates, interpolation, tension);
+    final DiscountCurve c =
+        new DiscountCurve(valuationDate, pillarDates, interpolation, tension, stepPillars);
     System.arraycopy(logDf, 0, c.logDf, 0, logDf.length);
     c.turnStart = Arrays.copyOf(turnStart, turnStart.length);
     c.turnEnd = Arrays.copyOf(turnEnd, turnEnd.length);
@@ -173,6 +204,11 @@ public final class DiscountCurve {
   /** The valuation (reference) date. */
   public int valuationDate() {
     return valuationDate;
+  }
+
+  /** Leading pillars joined by linear log discount factors under the step-then-convex scheme. */
+  public int stepPillars() {
+    return stepPillars;
   }
 
   /** The interpolation scheme. */

@@ -58,6 +58,7 @@ public final class CurveBuilder {
   private final LevenbergMarquardt lm;
   private final double[] lmX;
   private final double[] saved;
+  private final double[] savedQuotes;
   private final PillarFunction pillarFunction = new PillarFunction();
   private Method lastMethod = Method.AUTO;
   private boolean jacobianValid;
@@ -79,6 +80,21 @@ public final class CurveBuilder {
       final double tension,
       final DiscountCurve discount,
       final FixingHistory fixings) {
+    this(valuationDate, instruments, interpolation, tension, discount, fixings, 0);
+  }
+
+  /**
+   * As the six-argument constructor, with the number of leading pillars joined by linear log
+   * discount factors under the step-then-smooth interpolations.
+   */
+  public CurveBuilder(
+      final int valuationDate,
+      final List<? extends CurveInstrument> instruments,
+      final Interpolation interpolation,
+      final double tension,
+      final DiscountCurve discount,
+      final FixingHistory fixings,
+      final int stepPillars) {
     final List<CurveInstrument> sorted = new ArrayList<>(instruments);
     sorted.sort(Comparator.comparingInt(CurveInstrument::pillarDate));
     this.instruments = List.copyOf(sorted);
@@ -92,7 +108,7 @@ public final class CurveBuilder {
                 + sorted.get(i - 1).label() + " and " + sorted.get(i).label());
       }
     }
-    this.curve = new DiscountCurve(valuationDate, pillars, interpolation, tension);
+    this.curve = new DiscountCurve(valuationDate, pillars, interpolation, tension, stepPillars);
     this.context =
         new CurveContext(curve, discount == null ? curve : discount, fixings, valuationDate);
     this.jacobian = new double[n * n];
@@ -101,6 +117,7 @@ public final class CurveBuilder {
     this.lm = new LevenbergMarquardt(n, n);
     this.lmX = new double[n];
     this.saved = new double[n];
+    this.savedQuotes = new double[n];
   }
 
   /** The curve being built. */
@@ -195,6 +212,54 @@ public final class CurveBuilder {
         inst.setQuote(oldQuote);
         curve.setActivePillars(n);
         for (int i = 0; i < n; i++) {
+          curve.setPillarLogDf(i, saved[i]);
+        }
+        curve.update();
+        jacobianValid = false;
+      }
+    }
+  }
+
+  /**
+   * Incremental rebuild after any number of quotes change at once: {@code newQuotes[i]} is the
+   * quote of instrument i in pillar order. One solve for the whole set, started from the current
+   * pillars, so a round of market data costs one bootstrap rather than one per quote. All or
+   * nothing, as {@link #rebuild}: on failure every quote and pillar is put back and the exception
+   * rethrown.
+   *
+   * @throws IllegalStateException if the curve cannot be solved to the new quotes
+   */
+  public void rebuildAll(final double[] newQuotes) {
+    int first = n;
+    for (int i = 0; i < n; i++) {
+      saved[i] = curve.pillarLogDf(i);
+      savedQuotes[i] = instruments.get(i).quote();
+      if (first == n && Double.compare(savedQuotes[i], newQuotes[i]) != 0) {
+        first = i;
+      }
+    }
+    if (first == n) {
+      return;
+    }
+    boolean solved = false;
+    try {
+      for (int i = first; i < n; i++) {
+        instruments.get(i).setQuote(newQuotes[i]);
+      }
+      if (lastMethod == Method.SEQUENTIAL) {
+        sequentialFrom(first);
+      } else {
+        curve.setActivePillars(n);
+        global();
+      }
+      jacobianValid = false;
+      checkResiduals();
+      solved = true;
+    } finally {
+      if (!solved) {
+        curve.setActivePillars(n);
+        for (int i = 0; i < n; i++) {
+          instruments.get(i).setQuote(savedQuotes[i]);
           curve.setPillarLogDf(i, saved[i]);
         }
         curve.update();
