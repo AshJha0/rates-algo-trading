@@ -145,9 +145,8 @@ class RouterAllocationTest {
       if (++windows > 150) {
         fail("the ladder model did not reach an allocation-free steady state in 3000 parents");
       }
-      // each window is a day: the benchmark market fills lot by lot, so a day of 3000 parents
-      // would outgrow the execution-id set that the child book clears between days
-      router.children().resetDay();
+      // the benchmark market fills lot by lot; the child book holds execution ids only while
+      // their child is in the book, so 3000 parents in one day need no reset between windows
       final long start = allocatedBytes();
       runParents(router, market, clock, cfg.stepNanos(), id, 20);
       id += 20;

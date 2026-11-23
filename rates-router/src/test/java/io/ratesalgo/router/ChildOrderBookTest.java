@@ -229,7 +229,6 @@ class ChildOrderBookTest {
     assertEquals(ChildState.Rejected, book.state(book.slotOf(11)));
     assertThrows(
         IllegalArgumentException.class, () -> new ChildOrderBook(0, 1, clock, FrameSink.NONE));
-    book.resetDay();
     assertEquals(4, book.highWater());
     assertTrue(book.inUse(0));
     assertEquals(9, book.parentId(0));
