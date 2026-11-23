@@ -75,6 +75,9 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
   private long logonsRefused;
   private Secret requiredUsername;
   private Secret requiredPassword;
+  /** Set once before start; read by QuickFIX/J's threads. */
+  private volatile SimSequencer sequencer;
+  private int sequencerSlot;
 
   /** Text of the Logout that answers a Logon with wrong or missing credentials. */
   public static final String LOGON_REFUSED_TEXT = "logon refused: invalid credentials";
@@ -116,6 +119,20 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
     this.counterparties = List.copyOf(counterparties);
     this.clock = clock;
     this.rng = new SimRng(seed);
+  }
+
+  /**
+   * Hands this venue's work to a sequencer: logons, logouts and application messages are then
+   * queued by the FIX threads and run by whichever thread calls {@link SimSequencer#drain}, in the
+   * order the sequencer fixes. Venues that share a market model must share one, because the model
+   * has one owner. Call before {@link #start}.
+   */
+  public final synchronized void sequenceWith(final SimSequencer shared) {
+    if (acceptor != null) {
+      throw new IllegalStateException(compId + " is already listening");
+    }
+    sequencerSlot = shared.register(this);
+    sequencer = shared;
   }
 
   /** The venue's CompID. */
@@ -375,22 +392,36 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
 
   @Override
   public final void onLogon(final SessionID sessionId) {
-    synchronized (this) {
-      final String cp = sessionId.getTargetCompID();
-      loggedOn.add(cp);
-      log("logon " + cp);
-      onCounterpartyLogon(cp);
+    final String cp = sessionId.getTargetCompID();
+    final SimSequencer shared = sequencer;
+    if (shared != null) {
+      shared.offer(sequencerSlot, () -> logon(cp));
+    } else {
+      logon(cp);
     }
+  }
+
+  private synchronized void logon(final String cp) {
+    loggedOn.add(cp);
+    log("logon " + cp);
+    onCounterpartyLogon(cp);
   }
 
   @Override
   public final void onLogout(final SessionID sessionId) {
-    synchronized (this) {
-      final String cp = sessionId.getTargetCompID();
-      if (loggedOn.remove(cp)) {
-        log("logout " + cp);
-        onCounterpartyLogout(cp);
-      }
+    final String cp = sessionId.getTargetCompID();
+    final SimSequencer shared = sequencer;
+    if (shared != null) {
+      shared.offer(sequencerSlot, () -> logout(cp));
+    } else {
+      logout(cp);
+    }
+  }
+
+  private synchronized void logout(final String cp) {
+    if (loggedOn.remove(cp)) {
+      log("logout " + cp);
+      onCounterpartyLogout(cp);
     }
   }
 
@@ -442,9 +473,18 @@ public abstract class VenueSimulator implements Application, AutoCloseable {
 
   @Override
   public final void fromApp(final Message message, final SessionID sessionId) {
-    synchronized (this) {
-      onMessage(sessionId.getTargetCompID(), message);
+    final String cp = sessionId.getTargetCompID();
+    final SimSequencer shared = sequencer;
+    if (shared != null) {
+      // the FIX thread only queues: the message is handled by the sequencer's owner
+      shared.offer(sequencerSlot, () -> message(cp, message));
+    } else {
+      message(cp, message);
     }
+  }
+
+  private synchronized void message(final String cp, final Message message) {
+    onMessage(cp, message);
   }
 
   /** A counterparty logged on. */

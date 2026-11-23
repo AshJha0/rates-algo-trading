@@ -1,0 +1,70 @@
+# Trading process with the v2 desk profile (docs/research/DESK_V2_WIRING.md). No recorded figure
+# was made with it; trading-blue.yaml is the recorded desk. Schema: schema/process-config.schema.json (API_SPEC.md Section 17.11).
+# A change to this file is a change to a production control: it goes through a pull request
+# with an approving review (docs/AI_USE_POLICY.md, RTS 6 Article 11).
+schemaVersion: 1
+process:
+  name: trading-v2
+  role: trading
+  colour: blue
+http:
+  # Loopback by default. A container sets RATES_HTTP_BIND=0.0.0.0 (deploy/compose.yaml); the
+  # process then refuses to start unless the control token is set and http.tls is configured.
+  bindAddress: 127.0.0.1
+  port: 8084
+  controlTokenEnv: RATES_CONTROL_TOKEN
+  # HTTPS for health, metrics and control. The key store is provided at deploy time (a mounted
+  # directory or a secret mount) and is never committed; its password is named, not written.
+  tls:
+    keyStorePath: /run/rates/certs/server-keystore.p12
+    keyStorePasswordEnv: RATES_HTTP_KEYSTORE_PASSWORD
+journal:
+  directory: /var/lib/rates/journal
+  capacityBytes: 67108864
+quoting:
+  enabledAtStart: true
+  instruments:
+    - instrumentId: 2001
+      venueId: 2
+      maxQuoteSizeMinor: 10000000000
+    - instrumentId: 1001
+      venueId: 1
+      maxQuoteSizeMinor: 5000000000
+limits:
+  maxOrderNotionalMinor: 25000000000
+  maxNetDv01Minor: 5000000
+  maxMessagesPerSecond: 200
+recon:
+  cutTimeUtc: "17:00"
+  timingToleranceMillis: 1000
+retention:
+  years: 5
+# FIX sessions to the venue simulators, which run inside this process. Sequence numbers resume
+# after a restart. Every store below is provided at deploy time and never committed; every
+# password is named by an environment variable (or a ...File path), never written here.
+fix:
+  resetOnLogon: false
+  transport: tls
+  tls:
+    trustStorePath: /run/rates/certs/truststore.p12
+    trustStorePasswordEnv: RATES_FIX_TRUSTSTORE_PASSWORD
+    verifyHostname: true
+    handshakeTimeoutMillis: 5000
+  acceptor:
+    keyStorePath: /run/rates/certs/server-keystore.p12
+    keyStorePasswordEnv: RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD
+    requireClientCertificate: false
+  credentials:
+    username: RATESMM
+    passwordEnv: RATES_FIX_PASSWORD
+  reconnect:
+    maxAttempts: 5
+    initialBackoffMillis: 100
+    maxBackoffMillis: 2000
+# Which version of each component the desks run. "profile: v2" is simulator v2's market (a D2C
+# venue, two Treasury CLOBs and a futures book), pricing v2, strategy v2 and the ladder router.
+# Each can be switched alone on top of the profile: market (standard|simV2), pricing (v1|v2),
+# strategy (v1|v2), router (touch|ladder). The process records the selection beside its journals
+# and refuses to restart on journals another selection wrote.
+desk:
+  profile: v2

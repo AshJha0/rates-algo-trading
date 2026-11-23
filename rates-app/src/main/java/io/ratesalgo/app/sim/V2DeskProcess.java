@@ -320,12 +320,20 @@ public final class V2DeskProcess implements AutoCloseable {
     curve.doWork();
   }
 
-  /** Pumps gateways, feeds, the control ring and the loop until nothing moves and the sessions agree. */
+  /**
+   * Pumps sessions, feeds, the control ring, the loop and the venues until nothing moves. The
+   * venues handle what they received only when everything else is still, and each session is
+   * settled before the next ({@link SteppedDelivery}), so the order of the loop's inputs does not
+   * depend on socket timing: a stepped day is the same day every run.
+   */
   public void pump() {
-    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     int quiet = 0;
-    while (quiet < 3 && System.nanoTime() < deadline) {
-      final int work = gatewayWork() + loop.doWork();
+    while (quiet < 2 && System.nanoTime() < deadline) {
+      int work = gatewayWork() + loop.doWork();
+      if (work == 0) {
+        work = venues.drain();
+      }
       if (work == 0 && inSync()) {
         quiet++;
       } else {
@@ -337,11 +345,15 @@ public final class V2DeskProcess implements AutoCloseable {
     }
   }
 
-  /** One duty cycle of every session, every feed and the control ring: the gateway thread's work. */
+  /**
+   * One round of every session, every feed and the control ring. Each session is run until it
+   * and its venue agree before the next is touched.
+   */
   public int gatewayWork() {
     int work = 0;
-    for (final VenueSession s : sessions) {
-      work += s.doWork();
+    for (int i = 0; i < sessions.size(); i++) {
+      final int venue = i;
+      work += SteppedDelivery.settle(sessions.get(i), () -> venueEnd(venue));
     }
     for (int v = 0; v < feeds.size(); v++) {
       if (!feedPaused[v]) {
@@ -351,19 +363,18 @@ public final class V2DeskProcess implements AutoCloseable {
     return work + controlRing.read(controlHandler, 64);
   }
 
-  /** True when each venue has processed what we sent and we have read what it sent. */
+  private quickfix.Session venueEnd(final int i) {
+    return i == 0 ? venues.d2c().session(AppIds.COMP_ID) : sessionBooks.get(i).session(AppIds.COMP_ID);
+  }
+
+  /** True when each venue has received what we sent and we have read what it sent. */
   public boolean inSync() {
     for (int i = 0; i < sessions.size(); i++) {
-      final VenueSession ours = sessions.get(i);
-      final quickfix.Session theirs =
-          i == 0 ? venues.d2c().session(AppIds.COMP_ID) : sessionBooks.get(i).session(AppIds.COMP_ID);
-      if (ours.isActive() && theirs != null
-          && (theirs.getExpectedSenderNum() != ours.session().expectedInSeq()
-              || theirs.getExpectedTargetNum() != ours.session().nextOutSeq())) {
+      if (!SteppedDelivery.inSync(sessions.get(i), venueEnd(i))) {
         return false;
       }
     }
-    return true;
+    return venues.pending() == 0;
   }
 
   private void onControl(final int msgTypeId, final org.agrona.MutableDirectBuffer buffer, final int index, final int length) {

@@ -27,4 +27,21 @@ public interface PricingBinding extends FairValueSource, SensitivityProvider {
    * quotes for, whether or not this quote was accepted.
    */
   boolean onCurveInput(int instrumentId, long valueMantissa, long timestampNanos);
+
+  /**
+   * Records one curve input without repricing, for a loop that conflates its inputs and reprices
+   * once per burst with {@link #repriceIfDirty}. Version 1 holds nothing: each input is applied as
+   * it comes, as {@link #onCurveInput} does, and that is the default.
+   */
+  default boolean setInput(final int instrumentId, final long valueMantissa, final long timestampNanos) {
+    return onCurveInput(instrumentId, valueMantissa, timestampNanos);
+  }
+
+  /**
+   * Applies every input recorded by {@link #setInput} since the last reprice, with one solve.
+   * Returns true if it repriced. Version 1 holds nothing, so the default does nothing.
+   */
+  default boolean repriceIfDirty() {
+    return false;
+  }
 }

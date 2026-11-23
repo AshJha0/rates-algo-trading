@@ -51,6 +51,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * @param fix the {@code fix} section; {@link FixSettings#SIMULATOR} when it is absent
  * @param runtime the whole {@code runtime} section with its profile applied; {@link
  *     RuntimeSettings#DEFAULT} when it is absent
+ * @param desk the {@code desk} section with its profile applied; {@link DeskSelection#DEFAULT},
+ *     the recorded desk, when it is absent
  */
 public record ProcessConfig(
     String name,
@@ -69,10 +71,87 @@ public record ProcessConfig(
     int loopCpu,
     StoreRef httpKeyStore,
     FixSettings fix,
-    RuntimeSettings runtime) {
+    RuntimeSettings runtime,
+    DeskSelection desk) {
 
   /** Idle strategy when the configuration names none: what the process always used. */
   public static final String DEFAULT_LOOP_IDLE_STRATEGY = "backoff";
+
+  /** A configuration without the {@code desk} section: the recorded desk. */
+  public ProcessConfig(
+      final String name, final String role, final String colour, final String bindAddress, final int port,
+      final String controlTokenEnv, final String journalDirectory, final int journalCapacityBytes,
+      final boolean quotingEnabledAtStart, final List<int[]> instruments, final int maxMessagesPerSecond,
+      final int retentionYears, final String loopIdleStrategy, final int loopCpu, final StoreRef httpKeyStore,
+      final FixSettings fix, final RuntimeSettings runtime) {
+    this(name, role, colour, bindAddress, port, controlTokenEnv, journalDirectory, journalCapacityBytes,
+        quotingEnabledAtStart, instruments, maxMessagesPerSecond, retentionYears, loopIdleStrategy, loopCpu,
+        httpKeyStore, fix, runtime, DeskSelection.DEFAULT);
+  }
+
+  /**
+   * The {@code desk} section: which version of each component the desks run. {@code profile}
+   * names all four at once, {@code default} (the recorded desk, on which every recorded figure
+   * was made) or {@code v2}; each other key switches one component on top of it. A journal
+   * directory can only be restarted on, or replayed, with the selection that wrote it.
+   *
+   * @param profile {@code default} or {@code v2}
+   * @param market {@code standard} (one D2C venue, one Treasury CLOB) or {@code simV2} (D2C, two
+   *     Treasury CLOBs and a futures book on one market model)
+   * @param pricing {@code v1} or {@code v2}
+   * @param strategy {@code v1} or {@code v2}
+   * @param router {@code touch} or {@code ladder}
+   */
+  public record DeskSelection(String profile, String market, String pricing, String strategy, String router) {
+
+    /** The recorded desk. */
+    public static final DeskSelection DEFAULT = new DeskSelection("default", "standard", "v1", "v1", "touch");
+
+    /** The second version of every component. */
+    public static final DeskSelection V2 = new DeskSelection("v2", "simV2", "v2", "v2", "ladder");
+
+    /** The components a profile name stands for. */
+    public static DeskSelection profile(final String name) {
+      return switch (name) {
+        case "default" -> DEFAULT;
+        case "v2" -> V2;
+        default -> throw new IllegalArgumentException("unknown desk profile '" + name + "'; use default or v2");
+      };
+    }
+
+    /** The section as written: the profile's components, each replaced by its own key if present. */
+    static DeskSelection of(final Map<?, ?> section) {
+      final DeskSelection p = profile(section.get("profile") instanceof String s ? s : "default");
+      return new DeskSelection(
+          p.profile(),
+          section.get("market") instanceof String s ? s : p.market(),
+          section.get("pricing") instanceof String s ? s : p.pricing(),
+          section.get("strategy") instanceof String s ? s : p.strategy(),
+          section.get("router") instanceof String s ? s : p.router());
+    }
+
+    /** True when every component is the recorded one, whatever the profile key says. */
+    public boolean isRecorded() {
+      return "standard".equals(market) && "v1".equals(pricing) && "v1".equals(strategy) && "touch".equals(router);
+    }
+
+    /** The four components on one line, as the process records them beside its journals. */
+    public String components() {
+      return "market=" + market + " pricing=" + pricing + " strategy=" + strategy + " router=" + router;
+    }
+
+    /** The selection a {@link #components} line stands for; refuses anything else. */
+    public static DeskSelection parse(final String line) {
+      final java.util.regex.Matcher m = COMPONENTS.matcher(line.strip());
+      if (!m.matches()) {
+        throw new IllegalArgumentException("not a desk selection: " + line);
+      }
+      return new DeskSelection("recorded", m.group(1), m.group(2), m.group(3), m.group(4));
+    }
+
+    private static final java.util.regex.Pattern COMPONENTS =
+        java.util.regex.Pattern.compile("market=(standard|simV2) pricing=(v1|v2) strategy=(v1|v2) router=(touch|ladder)");
+  }
 
   /** A configuration without the {@code runtime} section's later keys: their defaults. */
   public ProcessConfig(
@@ -614,7 +693,8 @@ public record ProcessConfig(
         runtime.loopCpu(),
         store(section(http, "tls"), "keyStore"),
         fixSettings(section(root, "fix")),
-        runtime);
+        runtime,
+        DeskSelection.of(root.get("desk") instanceof Map<?, ?> d ? d : Map.of()));
   }
 
   @SuppressWarnings("unchecked")

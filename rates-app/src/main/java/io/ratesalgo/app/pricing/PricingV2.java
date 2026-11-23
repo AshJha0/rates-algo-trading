@@ -55,21 +55,34 @@ import java.util.List;
  *       market z-spread; and a second ladder, the spread factor, for bonds ({@link
  *       SpreadSensitivityProvider}).
  *   <li>Carry and roll-down per instrument ({@link CarrySource}).
- *   <li>The business date comes from the clock and the input timestamps with a New York cut
- *       ({@link BusinessDate}); at a date change every schedule, settlement date and accrued
- *       amount is rebuilt.
+ *   <li>The business date comes from the input timestamps and the {@link #advanceTo} calls,
+ *       with a New York cut ({@link BusinessDate}); at a date change every schedule, settlement
+ *       date and accrued amount is rebuilt.
  * </ul>
  *
- * <p>Conflation and determinism. Inputs are held until a round is complete (every input that has
- * ever been fed has a new value) or until the oldest held input is {@link
- * Options#conflationNanos()} older than the newest; then the curve is solved once and everything
- * repriced. The trigger depends only on the inputs' own timestamps and order, so the state after
- * any input is a pure function of the journaled inputs and the book, and a replay reproduces it.
- * Pricing runs on the loop thread; {@code PricingV2RepriceBenchmark} and {@code
- * PricingV2Test.repriceDoesNotAllocate} give its cost.
+ * <p>Time. The binding reads no clock for its state. Time enters only as the timestamps of the
+ * inputs it is given and the instants of {@link #advanceTo}, both journaled, so a binding built
+ * at any instant and given the same timed calls holds the same state to the bit (a live loop
+ * builds its binding before its first input and a replay on its first journaled frame). Until the
+ * first timed call the binding stands on a provisional date with the universe's starting quotes
+ * as marks and no reference time. The first timed call fixes the date; if that is not the
+ * provisional date, the start is built again on it, as if the binding had been built there. The
+ * first quote of each instrument is then taken whole: its residual is marked to the full gap.
  *
- * <p>After construction and between date changes nothing allocates. A date change allocates (new
- * schedules); it happens once a day at the cut. Single-threaded: the loop thread owns it.
+ * <p>Set input, then reprice. {@link #setInput} only records a value; {@link #repriceIfDirty}
+ * applies everything recorded with one solve. A loop that conflates its curve inputs (newest per
+ * instrument) calls {@code setInput} for each and {@code repriceIfDirty} once at the end of the
+ * burst. {@link #onCurveInput}, the entry point of {@link PricingBinding}, holds inputs and
+ * reprices by itself when a round is complete (every input that has ever been fed has a new
+ * value) or when an input arrives {@link Options#conflationNanos()} after the round's first;
+ * {@link #advanceTo} applies a held round, once and whole, when its conflation time has passed on
+ * the instant it is given. Every trigger compares journaled times only, so when a reprice happens
+ * is the same on replay. Pricing runs on the loop thread; {@code PricingV2RepriceBenchmark} and
+ * {@code PricingV2Test.repriceDoesNotAllocate} give its cost.
+ *
+ * <p>After the first timed call and between date changes nothing allocates. A date change
+ * allocates (new schedules); it happens once a day at the cut. Single-threaded: the loop thread
+ * owns it.
  */
 public final class PricingV2 implements PricingBinding, SpreadSensitivityProvider, CarrySource {
 
@@ -179,6 +192,12 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   /** Floor on the spread half-width used to weight a bond in the fit: a quarter of a basis point. */
   private static final double SPREAD_NOISE_FLOOR = 0.25e-4;
 
+  /** What became of an input: not one of the binding's, dropped, or held for the next reprice. */
+  private static final int NOT_TAKEN = 0;
+
+  private static final int REJECTED = 1;
+  private static final int RECORDED = 2;
+
   private static final double[] RISK_YEARS = new double[KeyRateTenors.COUNT];
 
   static {
@@ -233,6 +252,10 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   private final double[][] spreadLadder;
   private final double[] carryBp;
   private final double[] rollBp;
+  /** The next observation of the instrument is taken whole: set at the start of the day. */
+  private final boolean[] takeWhole;
+  /** The universe's starting swap rates, decimal. */
+  private final double[] startRates;
 
   private int[] fixingDates;
   private double[] fixingRates;
@@ -240,8 +263,15 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
 
   private BookSource book;
   private Day day;
-  private long nextCut;
-  private long newestInput;
+  /** False until the first timed call has fixed the business date. */
+  private boolean started;
+  /** True while the start-of-day marks are computed: no book, no reference time. */
+  private boolean startMarks;
+  private long nextCut = Long.MIN_VALUE;
+  /** Newest input timestamp; the stamp of a reprice. */
+  private long newestInput = Long.MIN_VALUE;
+  /** Latest instant the binding has been given, by an input or by {@link #advanceTo}. */
+  private long latestNanos = Long.MIN_VALUE;
   private long firstPendingStamp;
   private int pendingCount;
   private int fedCount;
@@ -256,26 +286,46 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   private long referenceFailures;
 
   /**
-   * Builds the binding on the business date of the clock.
+   * Builds the binding. It reads no clock: until its first timed call it stands on the universe's
+   * trade date, and the first input or {@link #advanceTo} fixes the date from then on. This is
+   * the constructor of a desk.
    *
    * @param universe the instruments
-   * @param clock the loop's clock, read once for the starting instant
+   * @param options settings
+   */
+  public PricingV2(final UsdUniverse universe, final Options options) {
+    this(universe, options, Integer.MIN_VALUE);
+  }
+
+  /**
+   * Builds the binding and shows the inputs of the clock's business date until its first timed
+   * call, for a caller that needs to list a date's inputs before it has any (a feed's probe). The
+   * clock is read once, for that date alone; nothing read from it survives the first timed call,
+   * which builds the start again on its own date if that is another one. A desk uses {@link
+   * #PricingV2(UsdUniverse, Options)}.
+   *
+   * @param universe the instruments
+   * @param clock read once, for the date shown before the first timed call
    * @param options settings
    */
   public PricingV2(final UsdUniverse universe, final Clock clock, final Options options) {
+    this(universe, options,
+        BusinessDate.tradeDate(clock.epochNanos(), options.cutHour(), Calendars.US_SOFR));
+  }
+
+  private PricingV2(final UsdUniverse universe, final Options options, final int shownDate) {
     this.universe = universe;
     this.options = options;
-    final long start = clock.epochNanos();
-    final int today = BusinessDate.tradeDate(start, options.cutHour(), Calendars.US_SOFR);
-    nextCut = BusinessDate.nextCut(start, options.cutHour());
-    newestInput = start;
+    // the universe's own date, not an instant: the directory is built on it and does not move
+    final int today =
+        Calendars.US_SOFR.adjust(universe.valuationDate(), BusinessDayConvention.FOLLOWING);
 
     final List<UsdUniverse.SwapSpec> swaps = universe.swaps();
     final List<UsdUniverse.BondSpec> bondSpecs = universe.bonds();
     swapIds = new int[swaps.size()];
     swapMonths = new int[swaps.size()];
     swapIndex = new int[swaps.size()];
-    final double[] startRates = new double[swaps.size()];
+    startRates = new double[swaps.size()];
     for (int j = 0; j < swapIds.length; j++) {
       swapIds[j] = swaps.get(j).instrumentId();
       swapMonths[j] = swaps.get(j).tenorMonths();
@@ -322,18 +372,9 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
         new TreasurySpreadCurve(
             Math.max(1, bondIds.length), 5.0, 1.5e-4, Double.POSITIVE_INFINITY);
 
-    // fixings: the simulated market has no history, so the overnight rate of the start is
-    // assumed for the days a started futures contract looks back over
-    final double overnight = startOvernight(startRates);
     fixingDates = new int[256];
     fixingRates = new double[256];
-    for (int d = today - 120; d < today; d++) {
-      if (Calendars.US_SOFR.isBusinessDay(d)) {
-        appendFixing(d, overnight);
-      }
-    }
-
-    day = new Day(today, null, startRates, overnight);
+    day = freshDay(today);
     for (int j = 0; j < swapIds.length; j++) {
       final double annuity = swapPricer.annuity(day.unit[j], day.curve.curve(), today);
       swapIndex[j] =
@@ -365,20 +406,88 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
     for (int j = 0; j < bondIds.length; j++) {
       kindIndex[bondIndex[j]] = j;
     }
+    takeWhole = new boolean[n];
     smoother = new FairValueSmoother(n, options.halfLifeSeconds());
-    // the starting quotes are the start-of-day marks: every fed slot is pending once
-    for (int s = 0; s < day.slots; s++) {
-      if (day.fed[s]) {
-        day.pendingSet[s] = true;
-        day.pendingValue[s] = day.value[s];
+    markStart();
+    if (shownDate != Integer.MIN_VALUE && shownDate != today) {
+      startDay(shownDate);
+    }
+  }
+
+  /**
+   * The fixings and the curve of a start on a date from the universe's starting quotes. The
+   * simulated market has no history, so the overnight rate of the start is assumed for the days a
+   * started futures contract looks back over.
+   */
+  private Day freshDay(final int date) {
+    final double overnight = startOvernight();
+    fixingCount = 0;
+    for (int d = date - 120; d < date; d++) {
+      if (Calendars.US_SOFR.isBusinessDay(d)) {
+        appendFixing(d, overnight);
+      }
+    }
+    return new Day(date, null, startRates, overnight);
+  }
+
+  /**
+   * Starts again on a date, as a binding built there: everything before is forgotten, counters
+   * included, so the state does not depend on which date the binding was built on.
+   */
+  private void startDay(final int date) {
+    reprices = 0;
+    rebuilds = 0;
+    rejectedInputs = 0;
+    rejectedBondBooks = 0;
+    dateChanges = 0;
+    referenceFailures = 0;
+    day = freshDay(date);
+    markStart();
+  }
+
+  /**
+   * The start-of-day marks: the starting quotes are applied as one round, with no book and no
+   * time. Residuals are set to the whole gap and the first real observation of each instrument
+   * marks it again at its own timestamp, so no stamp is made here.
+   */
+  private void markStart() {
+    Arrays.fill(bondSpread, 0.0);
+    Arrays.fill(bondHasSpread, false);
+    Arrays.fill(bondHeldOut, 0);
+    Arrays.fill(bondWeight, 0.0);
+    Arrays.fill(takeWhole, true);
+    remark = false;
+    carryForced = true;
+    newestInput = Long.MIN_VALUE;
+    pendingCount = 0;
+    final Day d = day;
+    for (int s = 0; s < d.slots; s++) {
+      if (d.fed[s]) {
+        d.pendingSet[s] = true;
+        d.pendingValue[s] = d.value[s];
         pendingCount++;
       }
     }
-    firstPendingStamp = start;
-    reprice(start);
+    startMarks = true;
+    applyHeld(0L);
+    startMarks = false;
   }
 
-  private double startOvernight(final double[] startRates) {
+  /**
+   * The first timed call: fixes the business date, builds the start again if the date shown so
+   * far is another one, and dates the start-of-day marks at the start of the business day.
+   */
+  private void start(final long epochNanos) {
+    started = true;
+    final int date = BusinessDate.tradeDate(epochNanos, options.cutHour(), Calendars.US_SOFR);
+    if (date != day.date) {
+      startDay(date);
+    }
+    nextCut = BusinessDate.nextCut(epochNanos, options.cutHour());
+    Arrays.fill(referenceNanos, BusinessDate.lastCut(epochNanos, options.cutHour()));
+  }
+
+  private double startOvernight() {
     if (!Double.isNaN(options.overnightRate())) {
       return options.overnightRate();
     }
@@ -628,15 +737,32 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   }
 
   /**
-   * Moves the business date forward if the instant is at or past the next New York cut. Called
-   * with every input's timestamp; the loop may also call it from a timer so that the date changes
-   * on a day without market data. A date change allocates.
+   * Time from the loop, journaled: moves the business date forward if the instant is at or past
+   * the next New York cut, and applies a held round, once and whole, if its conflation time has
+   * passed on this instant. The first call before any input fixes the business date. The loop
+   * calls it from its timer, so that a round the feed left incomplete is applied and the date
+   * changes on a day without market data. A date change allocates.
    */
   public void advanceTo(final long epochNanos) {
+    advanceDate(epochNanos);
+    if (pendingCount > 0 && epochNanos - firstPendingStamp >= options.conflationNanos()) {
+      applyHeld(newestInput);
+    }
+  }
+
+  /** Fixes the date at the first timed call and moves it at a cut; nothing else. */
+  private void advanceDate(final long epochNanos) {
+    if (!started) {
+      start(epochNanos);
+    }
+    latestNanos = Math.max(latestNanos, epochNanos);
     if (epochNanos < nextCut) {
       return;
     }
-    flush();
+    // what is held belongs to the date that is ending
+    if (pendingCount > 0) {
+      applyHeld(newestInput);
+    }
     final int date = BusinessDate.tradeDate(epochNanos, options.cutHour(), Calendars.US_SOFR);
     nextCut = BusinessDate.nextCut(epochNanos, options.cutHour());
     if (date == day.date) {
@@ -659,20 +785,76 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   }
 
   /**
-   * One curve input from the loop: a par swap rate or the overnight estimate in percent, or a
-   * futures price, as a Decimal9 mantissa, for a universe swap or an id of {@link V2InputIds}.
-   * A value further than {@link Options#maxQuoteMove()} from the input's previous value is
-   * counted in {@link #rejectedInputs()} and dropped. Returns true if the instrument is one the
-   * binding takes quotes for.
+   * One curve input from the loop, the entry point of {@link PricingBinding}: records it as
+   * {@link #setInput} does and reprices when the round is complete (every input that has ever been
+   * fed has a new value) or when this input is {@link Options#conflationNanos()} newer than the
+   * first one held, which then joins the round. A loop that conflates its inputs itself calls
+   * {@link #setInput} and {@link #repriceIfDirty} instead.
    */
   @Override
   public boolean onCurveInput(
       final int instrumentId, final long valueMantissa, final long timestampNanos) {
-    advanceTo(timestampNanos);
+    final int taken = record(instrumentId, valueMantissa, timestampNanos);
+    if (taken == RECORDED
+        && (pendingCount >= fedCount
+            || timestampNanos - firstPendingStamp >= options.conflationNanos())) {
+      applyHeld(newestInput);
+    }
+    return taken != NOT_TAKEN;
+  }
+
+  /**
+   * Records one curve input and does not reprice: a par swap rate or the overnight estimate in
+   * percent, or a futures price, as a Decimal9 mantissa, for a universe swap or an id of {@link
+   * V2InputIds}. A second value for the same input before the next reprice replaces the first,
+   * so a burst collapses to its newest values. A value further than {@link
+   * Options#maxQuoteMove()} from the input's previous value is counted in {@link
+   * #rejectedInputs()} and dropped. Returns true if the instrument is one the binding takes quotes
+   * for.
+   *
+   * <p>Fair values, ladders and carry do not change until {@link #repriceIfDirty}, {@link
+   * #advanceTo} or a complete round through {@link #onCurveInput} applies what is held. The one
+   * exception is time: an input stamped at or after the next New York cut moves the business date
+   * first, which applies what was held and reprices on the new date. No allocation.
+   */
+  @Override
+  public boolean setInput(
+      final int instrumentId, final long valueMantissa, final long timestampNanos) {
+    return record(instrumentId, valueMantissa, timestampNanos) != NOT_TAKEN;
+  }
+
+  /**
+   * Applies every input recorded since the last reprice with one solve and one reprice, and
+   * returns true; returns false and does nothing if nothing is held.
+   */
+  @Override
+  public boolean repriceIfDirty() {
+    if (pendingCount == 0) {
+      return false;
+    }
+    applyHeld(newestInput);
+    return true;
+  }
+
+  /**
+   * Kept for loops written before {@link #advanceTo} applied held rounds by itself. Applies a held
+   * round only if its conflation time has passed on the latest instant the binding has been given
+   * (an input's timestamp or an {@code advanceTo}); otherwise it does nothing. So it never splits
+   * a round, and after {@code advanceTo} has run for the same instant it never reprices a second
+   * time. To apply what is held now, call {@link #repriceIfDirty}.
+   */
+  public void flush() {
+    if (pendingCount > 0 && latestNanos - firstPendingStamp >= options.conflationNanos()) {
+      applyHeld(newestInput);
+    }
+  }
+
+  private int record(final int instrumentId, final long valueMantissa, final long timestampNanos) {
+    advanceDate(timestampNanos);
     final Day d = day;
     final int slot = d.slotOf(instrumentId);
     if (slot < 0) {
-      return false;
+      return NOT_TAKEN;
     }
     final double v =
         valueMantissa * (d.isPrice(slot) ? MANTISSA_TO_PRICE : MANTISSA_PERCENT_TO_DECIMAL);
@@ -685,7 +867,7 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
             : rate >= MIN_RATE && rate <= MAX_RATE;
     if (!ok) {
       rejectedInputs++;
-      return true;
+      return REJECTED;
     }
     if (!d.fed[slot]) {
       // a first quote changes what the curve is built from: the residuals, which were marked
@@ -702,21 +884,11 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       }
     }
     newestInput = Math.max(newestInput, timestampNanos);
-    if (pendingCount >= fedCount
-        || timestampNanos - firstPendingStamp >= options.conflationNanos()) {
-      reprice(newestInput);
-    }
-    return true;
+    return RECORDED;
   }
 
-  /** Applies any held inputs now. The loop may call this at the end of a market data batch. */
-  public void flush() {
-    if (pendingCount > 0) {
-      reprice(newestInput);
-    }
-  }
-
-  private void reprice(final long stamp) {
+  /** Applies what is held: one solve if a quote moved, then one reprice of everything. */
+  private void applyHeld(final long stamp) {
     final Day d = day;
     for (int s = 0; s < d.slots; s++) {
       if (d.pendingSet[s]) {
@@ -766,18 +938,24 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       final int slot = d.swapSlot[j];
       final int k = slot < d.inputs ? d.loo.swapOfInput(slot) : -1;
       final double model = k >= 0 ? d.loo.value(k) : d.curve.parRate(d.quoted[j]);
-      if (remark && d.fed[slot]) {
-        smoother.reset(i, d.value[slot], model, stamp);
-      }
       // the residual takes an observation only when the swap has a new quote in this round
-      final double fair =
-          d.pendingSet[slot]
-              ? smoother.update(i, d.value[slot], model, stamp)
-              : smoother.fair(i, model);
+      final boolean observed = d.pendingSet[slot];
+      final double fair;
+      if (startMarks) {
+        // a start-of-day mark is the whole gap, with no time: the first real quote marks it again
+        smoother.reset(i, observed ? d.value[slot] : model, model, 0L);
+        fair = observed ? d.value[slot] : smoother.fair(i, model);
+      } else {
+        if (d.fed[slot] && (remark || (takeWhole[i] && observed))) {
+          smoother.reset(i, d.value[slot], model, stamp);
+          takeWhole[i] = false;
+        }
+        fair = observed ? smoother.update(i, d.value[slot], model, stamp) : smoother.fair(i, model);
+      }
       modelValue[i] = model;
       fairValue[i] = fair;
       fairMid[i] = Decimal9.round(fair * 100.0);
-      referenceNanos[i] = stamp;
+      referenceNanos[i] = startMarks ? NO_VALUE : stamp;
       Arrays.fill(d.gradient, 0.0);
       swapPricer.pvGradient(d.unit[j], d.curve.curve(), d.curve.curve(), fixings, d.date,
           d.gradient, d.gradient);
@@ -867,14 +1045,21 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       final FixedRateBond b = bonds[j];
       final double model = fit.leaveOneOut(j);
       // the residual takes an observation when the book has moved on, not when time has
-      final long bookStamp = book == null ? stamp : book.updateNanos(bondIds[j]);
-      if (remark && bondUsable[j]) {
-        smoother.reset(i, bondSpread[j], model, bookStamp);
+      final double fairSpread;
+      if (startMarks) {
+        smoother.reset(i, bondUsable[j] ? bondSpread[j] : model, model, 0L);
+        fairSpread = bondUsable[j] ? bondSpread[j] : smoother.fair(i, model);
+      } else {
+        final long bookStamp = book == null ? stamp : book.updateNanos(bondIds[j]);
+        if (bondUsable[j] && (remark || takeWhole[i])) {
+          smoother.reset(i, bondSpread[j], model, bookStamp);
+          takeWhole[i] = false;
+        }
+        fairSpread =
+            bondUsable[j]
+                ? smoother.update(i, bondSpread[j], model, bookStamp)
+                : smoother.fair(i, model);
       }
-      final double fairSpread =
-          bondUsable[j]
-              ? smoother.update(i, bondSpread[j], model, bookStamp)
-              : smoother.fair(i, model);
       bondModelSpread[j] = model;
       bondFairSpread[j] = fairSpread;
       final double fairClean =
@@ -883,7 +1068,7 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
           bondPricer.dirtyFromCurve(b, d.curve.curve(), d.settlement[j], model) - d.accrued[j];
       fairValue[i] = fairClean;
       fairMid[i] = Decimal9.round(fairClean);
-      referenceNanos[i] = stamp;
+      referenceNanos[i] = startMarks ? NO_VALUE : stamp;
       Arrays.fill(d.gradient, 0.0);
       bondPricer.dirtyFromCurveGradient(b, d.curve.curve(), d.settlement[j], bondSpread[j], 0.01,
           d.gradient);
@@ -941,9 +1126,12 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
     }
   }
 
-  /** Market clean price per 100 of bond j: the composite mid, or the starting price without one. */
+  /**
+   * Market clean price per 100 of bond j: the composite mid, or the starting price without one or
+   * for the start-of-day marks.
+   */
   private double marketClean(final int j) {
-    if (book != null) {
+    if (book != null && !startMarks) {
       final long bid = book.bestBid(bondIds[j]);
       final long ask = book.bestAsk(bondIds[j]);
       if (bid != NO_VALUE && ask != NO_VALUE && ask >= bid) {
@@ -955,7 +1143,7 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
 
   /** Half the bid-ask of bond j's book in price per 100, zero without a two-sided book. */
   private double bookHalfWidth(final int j) {
-    if (book != null) {
+    if (book != null && !startMarks) {
       final long bid = book.bestBid(bondIds[j]);
       final long ask = book.bestAsk(bondIds[j]);
       if (bid != NO_VALUE && ask != NO_VALUE && ask >= bid) {
@@ -1105,12 +1293,15 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
     return n;
   }
 
-  /** Inputs held for the rest of their round. */
+  /** Inputs recorded and not yet applied; a reprice is due on {@link #repriceIfDirty} when above zero. */
   public int pendingInputs() {
     return pendingCount;
   }
 
-  /** Reprices done: one per completed round, flush or date change. */
+  /**
+   * Reprices done: the start-of-day marks, then one per applied round and one per date change.
+   * Building the start again on another date at the first timed call starts the count again.
+   */
   public long reprices() {
     return reprices;
   }
@@ -1140,7 +1331,7 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
     return referenceFailures;
   }
 
-  /** Business-date changes since construction. */
+  /** Business-date changes since the first timed call. */
   public long dateChanges() {
     return dateChanges;
   }

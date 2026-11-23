@@ -1,8 +1,14 @@
 package io.ratesalgo.app.pricing;
 
 import io.ratesalgo.analytics.curve.SofrCurve;
+import io.ratesalgo.api.CarryRoll;
+import io.ratesalgo.api.CurrencyCode;
+import io.ratesalgo.api.Dv01Vector;
 import io.ratesalgo.api.InMemoryBookSource;
+import io.ratesalgo.api.KeyRateTenors;
 import io.ratesalgo.venues.Venues;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A declared market for the pricing v2 tests and the feed that sends it: every curve input of the
@@ -103,5 +109,54 @@ final class V2Feed {
   void book(final int instrumentId, final long mid) {
     final long tick = pricing.universe().bondTick();
     book.set(instrumentId, mid - tick, 1_000_000_00L, mid + tick, 1_000_000_00L, now);
+  }
+
+  /**
+   * Everything the binding prices with, as raw bits: per instrument the fair and model values,
+   * the residual (fair minus model for a swap; the bond's own spread, its fair spread and its
+   * spread against the fit), the reference time, both ladders and carry; then the curve's quotes.
+   */
+  static long[] prices(final PricingV2 p) {
+    final List<Long> bits = new ArrayList<>();
+    final Dv01Vector v = new Dv01Vector(CurrencyCode.USD);
+    final CarryRoll c = new CarryRoll();
+    for (final int id : p.universe().instrumentIds()) {
+      bits.add(p.fairMid(id));
+      bits.add(p.referenceNanos(id));
+      bits.add(Double.doubleToRawLongBits(p.fairValue(id)));
+      bits.add(Double.doubleToRawLongBits(p.modelValue(id)));
+      bits.add(Double.doubleToRawLongBits(p.fairValue(id) - p.modelValue(id)));
+      bits.add(Double.doubleToRawLongBits(p.bondSpread(id)));
+      bits.add(Double.doubleToRawLongBits(p.fairSpread(id)));
+      bits.add(Double.doubleToRawLongBits(p.richCheapBp(id)));
+      p.pv01(id, 100_000_000L, v);
+      for (int k = 0; k < KeyRateTenors.COUNT; k++) {
+        bits.add(Double.doubleToRawLongBits(v.get(k)));
+      }
+      p.spreadPv01(id, 100_000_000L, v);
+      for (int k = 0; k < KeyRateTenors.COUNT; k++) {
+        bits.add(Double.doubleToRawLongBits(v.get(k)));
+      }
+      p.carry(id, c);
+      bits.add(Double.doubleToRawLongBits(c.carryBp()));
+      bits.add(Double.doubleToRawLongBits(c.rollDownBp()));
+    }
+    for (int i = 0; i < p.inputCount(); i++) {
+      bits.add(Double.doubleToRawLongBits(p.curve().quote(i)));
+    }
+    bits.add(Double.doubleToRawLongBits(p.onTheRunPremiumBp()));
+    return bits.stream().mapToLong(Long::longValue).toArray();
+  }
+
+  /** {@link #prices} and the binding's date, counters and what it holds. */
+  static long[] bits(final PricingV2 p) {
+    final long[] prices = prices(p);
+    final long[] counters = {
+      p.businessDate(), p.reprices(), p.rebuilds(), p.pendingInputs(), p.unfedInputs(), p.rejectedInputs(),
+      p.rejectedBondBooks(), p.dateChanges(), p.leaveOneOutReferences(), p.referenceFailures()
+    };
+    final long[] all = java.util.Arrays.copyOf(prices, prices.length + counters.length);
+    System.arraycopy(counters, 0, all, prices.length, counters.length);
+    return all;
   }
 }

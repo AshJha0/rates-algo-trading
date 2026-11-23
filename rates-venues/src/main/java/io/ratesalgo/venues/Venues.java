@@ -102,6 +102,20 @@ public final class Venues {
    */
   public static SimV2 simV2(
       final io.ratesalgo.sim.MarketModel model, final Clock clock, final List<FeedChannel> feeds) {
+    return simV2(model, clock, feeds, null);
+  }
+
+  /**
+   * The same venues with their work handed to {@code sequencer}, in the order D2C, Treasury books,
+   * futures book. The venues share the model and each has FIX threads of its own; with a sequencer
+   * only the thread that drains it touches the model, in an order that does not depend on which
+   * FIX thread ran first. A driver that reaches the venues over FIX from more than one session
+   * needs it; null leaves each venue handling messages on its FIX thread, which is right only for
+   * a driver that never has two messages in flight to different venues.
+   */
+  public static SimV2 simV2(
+      final io.ratesalgo.sim.MarketModel model, final Clock clock, final List<FeedChannel> feeds,
+      final io.ratesalgo.venues.sim.SimSequencer sequencer) {
     final io.ratesalgo.sim.SimParams p = model.spec().params();
     final io.ratesalgo.venues.sim.SimV2Session session =
         new io.ratesalgo.venues.sim.SimV2Session(
@@ -121,7 +135,15 @@ public final class Venues {
         new ClobSimulator(
             simV2FuturesVenueId(p.treasuryVenues()), "FUT", config, session, session.instruments(io.ratesalgo.sim.SimInstrument.Kind.FUTURE), 1.0, ENGINES,
             feeds.get(p.treasuryVenues()), clock);
-    return new SimV2(session, new D2cRfqSimulator(session, ENGINES, clock), treasuryBooks, futures);
+    final D2cRfqSimulator d2c = new D2cRfqSimulator(session, ENGINES, clock);
+    if (sequencer != null) {
+      d2c.sequenceWith(sequencer);
+      for (final ClobSimulator c : treasuryBooks) {
+        c.sequenceWith(sequencer);
+      }
+      futures.sequenceWith(sequencer);
+    }
+    return new SimV2(session, d2c, treasuryBooks, futures);
   }
 
   /** Feed venue id of simulator v2 Treasury order book {@code v}: 102, 103, ... */

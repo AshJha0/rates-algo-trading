@@ -29,41 +29,21 @@ public final class PricingBindings {
   /**
    * Creates a binding.
    *
-   * <p>Version 2 is built as of the start of the clock's business day, the last New York cut,
-   * and not as of the instant of the call. The binding stamps its start-of-day marks with the
-   * time it is built at, and the residuals it carries afterwards depend on that stamp. A live
-   * loop is built before its first input and its replay on the first journaled frame, so the
-   * instant differs between the two; the start of the business day does not, and two desks built
-   * at any two instants of one business day hold the same pricing state after the same inputs.
+   * <p>The clock is not read for state. Version 2 is a function of the timed calls it is given
+   * (the inputs' timestamps and {@link PricingV2#advanceTo}), so a live loop and the replay of its
+   * journals, built at different instants, hold the same pricing state after the same calls; it
+   * takes its business date from the first of them. Version 1 ignores the clock as it always has.
+   * The parameter stays so that the loop's construction is the same for both versions.
    *
    * @param version which binding
    * @param universe the instruments
-   * @param clock the loop's clock; version 2 takes its business date from it, version 1 ignores it
+   * @param clock the loop's clock, not read
    */
   public static PricingBinding create(
       final Version version, final UsdUniverse universe, final Clock clock) {
     return switch (version) {
       case V1 -> new AnalyticsPricing(universe, FairValueSource.NO_VALUE);
-      case V2 -> {
-        final PricingV2.Options options = PricingV2.Options.defaults();
-        yield new PricingV2(universe, businessDayStart(clock, options.cutHour()), options);
-      }
-    };
-  }
-
-  /** A clock standing at the last cut at or before {@code clock}'s time. */
-  public static Clock businessDayStart(final Clock clock, final int cutHour) {
-    final long start = BusinessDate.lastCut(clock.epochNanos(), cutHour);
-    return new Clock() {
-      @Override
-      public long nanoTime() {
-        return start;
-      }
-
-      @Override
-      public long epochNanos() {
-        return start;
-      }
+      case V2 -> new PricingV2(universe, PricingV2.Options.defaults());
     };
   }
 }

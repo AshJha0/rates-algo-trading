@@ -26,7 +26,15 @@ time, so RFQs arrive within seconds of readiness.
 Inside the trading image (ops.yml "images" job) the jars are already in /opt/rates/lib, so pass
 --classpath "/opt/rates/lib/*" instead of packaging them again.
 
-Usage: python deploy/rehearsal.py --mode process [--java PATH] [--classpath CP] [--timeout SECONDS]
+With --profile v2 (process mode) the trading process is started from deploy/config/trading-v2.yaml:
+the v2 desk profile on simulator v2's four venues, from 09:00 New York. The same checks run, kill,
+hard stop and restart on the same journals included, plus: the status names the profile and shows
+every order-book venue usable, the restarted process is no longer reconciling its orders with any
+venue, and after the processes have stopped the journals are replayed with the desk selection
+recorded beside them and must reproduce the recorded outbound stream.
+
+Usage: python deploy/rehearsal.py --mode process [--profile default|v2] [--java PATH] [--classpath CP]
+       [--timeout SECONDS]
 Exit status 0 when every check passes.
 """
 
@@ -50,6 +58,7 @@ import urllib.request
 from collections.abc import Callable
 from http.client import HTTPException
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 ADD_OPENS = [
@@ -313,7 +322,40 @@ def restart_check(r: Rehearsal, restart: Callable[[], None], trading: str, token
     print(f"INFO  after the restart: readiness {code} ({text.strip()}), status {json.dumps(seen)}", flush=True)
 
 
-def run_process_mode(java: str, timeout: float, cp: str | None = None) -> int:
+def v2_checks(r: Rehearsal, trading: str, token: str) -> None:
+    """Before the kill: the process runs the v2 profile and sees every order-book venue."""
+    seen: dict[str, Any] = {}
+
+    def venues_usable() -> bool:
+        status, body = http("GET", f"{trading}/control/status", {"X-Control-Token": token})
+        seen.update(json.loads(body) if status == 200 else {})
+        venues = seen.get("venues", [])
+        return len(venues) == 3 and all(v.get("usable") is True for v in venues)
+
+    r.check("v2: three order-book venues usable", wait_until(venues_usable, 60.0), json.dumps(seen))
+    profile = seen.get("profile", {})
+    r.check("v2: status names the v2 profile",
+            profile == {"market": "SIM_V2", "pricing": "V2", "router": "LADDER"}, json.dumps(profile))
+    r.check("v2: every curve input fed", seen.get("unfedCurveInputs") == 0, str(seen.get("unfedCurveInputs")))
+
+
+def v2_after_restart(r: Rehearsal, trading: str, token: str, timeout: float) -> None:
+    """After the restart: every order-book session has reconciled, and the profile is still v2."""
+    seen: dict[str, Any] = {}
+
+    def reconciled() -> bool:
+        status, body = http("GET", f"{trading}/control/status", {"X-Control-Token": token})
+        seen.update(json.loads(body) if status == 200 else {})
+        return status == 200 and seen.get("reconciling") is False
+
+    r.check("v2: order reconciliation with every venue finished after the restart",
+            wait_until(reconciled, timeout), json.dumps(seen))
+    r.check("v2: restarted process still runs the v2 profile",
+            seen.get("profile", {}).get("market") == "SIM_V2", json.dumps(seen.get("profile")))
+
+
+def run_process_mode(java: str, timeout: float, cp: str | None = None, profile: str = "default") -> int:
+    trading_config = "trading-v2" if profile == "v2" else "trading-blue"
     r = Rehearsal()
     work = Path(tempfile.mkdtemp(prefix="rates-rehearsal-"))
     token = secrets.token_hex(16)
@@ -322,10 +364,10 @@ def run_process_mode(java: str, timeout: float, cp: str | None = None) -> int:
         cp = cp or classpath("rates-app")
         main = "io.ratesalgo.app.TradingProcessMain"
         material = generate_material(java, work / "certs")
-        configs = {name: rehearsal_config(name, material, work) for name in ("trading-blue", "venue-sim")}
+        configs = {name: rehearsal_config(name, material, work) for name in (trading_config, "venue-sim")}
 
         bad = work / "bad.yaml"
-        bad.write_text(configs["trading-blue"].read_text(encoding="utf-8").replace("years: 5", "years: 1"),
+        bad.write_text(configs[trading_config].read_text(encoding="utf-8").replace("years: 5", "years: 1"),
                        encoding="utf-8")
         refused = subprocess.run([java, *ADD_OPENS, "-cp", cp, main, "--config", str(bad), "--schema", str(SCHEMA)],
                                  capture_output=True, timeout=timeout, check=False)
@@ -342,7 +384,7 @@ def run_process_mode(java: str, timeout: float, cp: str | None = None) -> int:
                 env=dict(env, RATES_HTTP_PORT=str(port), RATES_JOURNAL_DIR=str(journal)),
                 stdout=log, stderr=subprocess.STDOUT)
 
-        procs.append(launch("trading-blue", trading_port, work / "journal", "trading-blue.log"))
+        procs.append(launch(trading_config, trading_port, work / "journal", "trading-blue.log"))
         procs.append(launch("venue-sim", venue_port, work / "venue-journal", "venue-sim.log"))
         trading = f"https://127.0.0.1:{trading_port}"
         venue = f"https://127.0.0.1:{venue_port}"
@@ -350,15 +392,28 @@ def run_process_mode(java: str, timeout: float, cp: str | None = None) -> int:
                            and http("GET", f"{venue}/health/ready")[0] == 200, timeout)
         r.check("processes ready", ready)
         if ready:
+            if profile == "v2":
+                v2_checks(r, trading, token)
             checks(r, trading, venue, token, work / "journal")
 
             def restart() -> None:
                 # no shutdown hook runs: this is the crash the journals are there for
                 procs[0].kill()
                 procs[0].wait(timeout=30)
-                procs[0] = launch("trading-blue", trading_port, work / "journal", "trading-blue-restart.log")
+                procs[0] = launch(trading_config, trading_port, work / "journal", "trading-blue-restart.log")
 
             restart_check(r, restart, trading, token, timeout)
+            if profile == "v2":
+                v2_after_restart(r, trading, token, timeout)
+                # stop the trading process, then replay what both of its lives journaled
+                procs[0].terminate()
+                procs[0].wait(timeout=30)
+                replayed = subprocess.run([java, *ADD_OPENS, "-cp", cp, main, "--replay", str(work / "journal")],
+                                          env=env, capture_output=True, timeout=max(timeout, 120.0), check=False)
+                text = replayed.stdout.decode("utf-8", errors="replace")
+                r.check("v2: journals replay to the recorded outbound stream under the recorded selection",
+                        replayed.returncode == 0 and "desk selection: market=simV2" in text and "match" in text,
+                        f"exit {replayed.returncode}: {text.strip()}")
     finally:
         for p in procs:
             p.terminate()
@@ -372,7 +427,8 @@ def run_process_mode(java: str, timeout: float, cp: str | None = None) -> int:
                 print(f"--- {log.name}")
                 print(log.read_text(encoding="utf-8", errors="replace"))
         shutil.rmtree(work, ignore_errors=True)
-    print(f"rehearsal (process mode): {'passed' if r.failures == 0 else str(r.failures) + ' check(s) failed'}")
+    print(f"rehearsal (process mode, {profile} profile): "
+          f"{'passed' if r.failures == 0 else str(r.failures) + ' check(s) failed'}")
     return 1 if r.failures else 0
 
 
@@ -414,10 +470,12 @@ def main() -> int:
     parser.add_argument("--java", default=shutil.which("java") or "java")
     parser.add_argument("--classpath", help="use this class path instead of rates-app/target")
     parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument("--profile", choices=["default", "v2"], default="default",
+                        help="desk profile of the trading process (process mode)")
     args = parser.parse_args()
     if args.mode == "docker":
         return run_docker_mode(args.java, args.timeout)
-    return run_process_mode(args.java, args.timeout, args.classpath)
+    return run_process_mode(args.java, args.timeout, args.classpath, args.profile)
 
 
 if __name__ == "__main__":

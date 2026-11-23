@@ -197,3 +197,73 @@ Section 18.2, add the ids of Section 2 above. Section 18.4, add: `DeskProfile`; 
 ### LEARN
 
 A short section, "One market, three books": why two CLOBs showing shares of one book and a futures book need a state each, with the gapped-venue example of `DeskGroupV2Test`. One, "Why the desk did not hedge in futures", from Section 5: the planner's objective, the two half-tick costs, and the outage in which TY is the only hedge left. A note in the replay section on the two markout files.
+
+## 12. Process integration (v12/process, 2026-11-23)
+
+This section is appended by the process lane. It supersedes Section 7 ("What TradingProcess has to change": done), the "Not built" paragraph under it, four rows of Section 8 and the first bullet of Section 9. Every count below was printed by the test named beside it on 2026-11-23 on the same shared machine; none is a result.
+
+### 12.1 What the process does now
+
+`TradingProcess.Options` carries a `DeskProfile` (`withProfile`). The recorded profile is the default and is built exactly as before: `SmokeTest` prints 36 / 27 / 16 / 210 / 213 and replay hash -4423185950475908182. On `Market.SIM_V2` the process:
+
+| Item of Section 7 | Where |
+|---|---|
+| 1, 2 Options and venues | `SimulatedVenuesV2(clock, seed, acceptors)` on a clock at `V2DeskProcess.SESSION_OPEN_EPOCH_NANOS`, `startFlow`, `runAlone` to the start time, or on a restart to where the journals ended |
+| 3 Loop | `V2DeskProcess.loopBuilder` with six rings; `DeskLoopFactory(profile, universe, routeSink)` |
+| 4 Sessions | four `VenueSession`s (`d2c`, `clob`, `clob2`, `fut`), the three order books with `withReconcileOrders(true)`, each with its own `InboundRouter`, sequence file and, once threaded, its own thread: `rates-d2c`, `rates-clob`, `rates-clob2`, `rates-fut` (DR-R6-L02) |
+| 5 Feeds | three `FeedBinding`s (status ids 3, 6, 7) on `rates-feed`, `rates-feed2`, `rates-feed-fut`; `requireRebuild` on each after a restart |
+| 6 Curve | `CurveFeedV2` on the venues' thread |
+| 7 Restart | journaled DISCONNECTED for gateways 0, 1, 4, 5; `recovered()` on every session |
+| 8 End of session | `TradingProcess.endSession()`, called by `close()` when the loops have stopped; `markouts.end` is promoted to `markouts.start` on a fresh start only, never on a restart, because the desk a restart rebuilds must read the store the stopped process read |
+| 9 Replay | `TradingProcessMain.replayGroup(dir, TradingProcess.journalProfile(journalDir, profile))`; `--replay DIR` reads the selection recorded beside the journals |
+| 10 Status | the recorded JSON plus `profile`, `unfedCurveInputs`, `venues` (usable, book age) and `spreadPv01`, copied to other threads by the loop's status agent on change |
+| 11 Post-trade | `V2Reconciliation.keeper` and `run` against `TradingProcess.venuesV2()` |
+
+Halt, out-of-band kill, the supervisor, the undelivered-message halt and the socket of last resort go over every session: a kill is confirmed only when all four report nothing working. `SimulatedVenuesV2` takes `AcceptorOptions` per venue, so with `fix.resetOnLogon: false` each venue keeps its FIX store and id generation under `journal/venues/{d2c,clob,clob2,fut}` and a restarted process resumes four sessions.
+
+**Configuration.** A `desk` section: `profile: default|v2` and, on top of it, `market: standard|simV2`, `pricing: v1|v2`, `strategy: v1|v2`, `router: touch|ladder` (`ProcessConfig.DeskSelection`, schema, `tools/validate_config.py`, example `deploy/config/trading-v2.yaml`). A selection other than the recorded desk is written to `desk.selection` in the journal directory before anything is journaled. A start on journals another selection wrote is refused; replay follows the file. A process on the simulator v2 market starts at 09:00 New York (`TradingProcessMain.V2_START`) for the reason of Section 5.
+
+**A restarted simulator v2 market.** The venues are in the process, so they restart with it. The market after a restart is the seed's market taken alone to the restart time: the same exogenous path and client flow, without the impact of what the desk traded before it stopped. Nothing of ours rests there (cancel on disconnect). The venues' trade registers start empty, so the end-of-day reconciliation of a restarted day covers the trades since the restart at the venues; `TradingProcessV2Test` checks that the whole journal holds the stopped process's trades plus exactly those.
+
+### 12.2 Determinism: the shared market model
+
+**Plain idea.** The four simulator v2 venues share one `MarketModel` and the two Treasury venues share each `BookModel`. Each venue handled the desk's messages on its own FIX thread under its own lock, so two threads could be inside one `BookModel` at once. That is the defect of Section 8, row 7.
+
+**Decision: one owner, deterministic hand-over.** The venues of a session share a `SimSequencer`. A FIX thread does one thing with a logon, a logout or an application message: it puts it in its venue's inbox. One thread, the one that already moves the venues' clock and runs their timed events, drains the inboxes: venue by venue in the order D2C, CLOB 1, CLOB 2, futures, and each inbox first in, first out. A second thread that tries to drain is refused with an exception. The other two options were considered and not taken: partitioning the model is not possible without changing the market (one book shown on two venues, one level factor moved by every book, is the design of SIM_V2_DESIGN.md Section 8), and one lock across the venues removes the race but leaves the order to whichever FIX thread wins it.
+
+The stepped process also fixes the order in which a loop receives what the venues send (`SteppedDelivery`): a session is polled until it has written what it has to send, the venue has received it and it has read everything the venue sent, before the next session is looked at; the venues are drained only when nothing else moves.
+
+**What is promised.**
+
+| Path | Promise | Evidence |
+|---|---|---|
+| Replay of any journal, stepped or threaded | Exact: the desk rebuilt from the inbound journal sends the recorded outbound bytes | every v2 test replays; `SupervisorV2Test` replays two threaded days |
+| A stepped day (`V2DeskProcess`, `TradingProcess.step`) | Exact: the same seed gives the same journals, frame for frame, timestamps included, from logon to kill | `V2SteppedDeterminismTest` (three runs), `TradingProcessV2Test` (two runs through a kill) |
+| A threaded day (`startThreads`) | Not bit-identical, and not claimed: simulated time is paced by the wall clock and eight gateway threads publish into one inbound ring, so the order and stamps of a loop's inputs differ between runs. Two runs of one seed in `SupervisorV2Test`: 43,462 and 43,104 inbound frames. What holds on every run: one thread owns the model; what a venue does is a function of the sequence of (time, venue, message) its owner handed it; nothing is lost or booked twice (the journals reconcile with every venue's register, 0 breaks); the journals replay | `SupervisorV2Test.aThreadedDayReconcilesAndReplaysRunAfterRunAndIsNotClaimedToRepeat` |
+
+The brief for this lane asked for a test in which a threaded day run several times gives identical journals. That is not delivered, because it is not true of a process whose threads are scheduled by the operating system, and no test should say it is. A threaded run that repeats would need simulated time to advance only when every thread is idle and each venue's output released one thread at a time, which is the stepped process with more moving parts.
+
+**What the tests do and do not show.** The race itself cannot be made to fail on demand. With the sequencer switched off and the ordered pump kept, `V2SteppedDeterminismTest` passed on the one run tried, because settling one session before the next already keeps two FIX threads out of the model in a stepped run; the sequencer is what protects the threaded process. `SimV2SequencedVenuesTest` delivers one sweep to each Treasury venue in both orders: with a sequencer nothing is handled before the drain and the market afterwards is the same. The same two orders handled one after the other without a sequencer also leave the same market in either order, so that test asserts the structure, not a failure of the old code. `SimSequencerTest` asserts the hand-over rule and the refusal of a second draining thread.
+
+`SmokeV2Test` now prints book frames 10,667 / 10,033 / 7,324 on its day; its counts are still recorded and not asserted, and its file is not this lane's.
+
+### 12.3 The other defects of Section 8
+
+| Row | State now |
+|---|---|
+| `PricingV2` constructor | Fixed in pricing (commit 8c471ec): no clock is read for state; the first timed call fixes the date and dates the start-of-day marks at the last cut. `PricingBindings.businessDayStart` is gone. DR-V12-P05 supersedes DR-V12-D12 |
+| PRICING_V2.md Section 12 item 4 (timer flush) | Fixed in pricing: `setInput` records, `repriceIfDirty` applies once, `advanceTo` applies a held round whole when its conflation time has passed, and `flush` never splits a round. The workaround in `DeskGroup` (the `pendingSinceNanos` field and the timed `flush`) is now unnecessary and harmless; removing it is wiring for the owner of that file. DR-V12-P06 supersedes DR-V12-D08 |
+| `BookModel` shared across venue threads | Fixed: Section 12.2 |
+| `ChildOrderBook.execSeen` | Fixed in rates-router (commit 39381d4): execution ids are held per child while it is in the book, in a preallocated pool (`ChildExecIds`); a fill beyond the pool is refused, counted and left outstanding. 50,127 fills allocate 0 bytes (`ChildOrderBookAllocationTest`). DR-V12-P04 |
+
+### 12.4 Where it is tested
+
+`TradingProcessV2Test` (4: a stepped day killed on every venue, reconciled, replayed and repeated; restart on a crash image with sequence numbers resumed on four sessions; the undelivered-message halt; options), `SupervisorV2Test` (6: thread layout, dead loop, stuck futures session, dead feed thread, venues that stop answering, the threaded day), `TradingProcessMainV2Test` (3), `V2SteppedDeterminismTest`, `SimSequencerTest` (6), `SimV2SequencedVenuesTest`, `DeskSelectionTest` (4, rates-ops), `python deploy/rehearsal.py --mode process --profile v2`.
+
+### 12.5 Known limits of the process on the v2 profile
+
+- A threaded day does not repeat (Section 12.2).
+- A restarted market forgets the desk's earlier impact, and the venues' registers start again (Section 12.1).
+- If the venues' thread stops, no venue answers a cancel or a Logout, so a halt ends with the sockets closed, as for a venue that has stopped answering (`SupervisorV2Test.whenTheVenuesStopAnsweringTheSocketsAreClosed`).
+- The wired-desk benchmark's outside D2C endpoint is for the recorded market only; `Options` refuses it on simulator v2.
+- A per-component selection is built and started (`market: standard` with `pricing: v2`, for example) but only the two whole profiles are run by tests at process level.

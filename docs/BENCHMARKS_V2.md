@@ -116,3 +116,35 @@ FIX Quote encode (`FixEncodeBenchmark`, header and body fields, BeginString, Bod
 | today's encoder as the session uses it (in place, no copy) | 2816.2 +/- 2614.5 |
 
 Under this noise the three cannot be told apart; the in-place variant's error bar spans the other two. The change removes one body copy (about 250 bytes) and the second copy in the plain transport, and caches the date part of three timestamps per message; what that buys must be measured on a quiet machine.
+
+## Run of record after the v1.2 process integration, 2026-11-23 (appended)
+
+One more run of the suite on the branch that carries the profile switch in `TradingProcess`, the bounded execution-id dedupe in the router and the pricing v2 changes (commit 43ded7353ca4). The desk is the recorded (default) desk profile: the v2 profile was not benchmarked, and `WiredDeskBenchmark` cannot run it (the outside D2C endpoint is for the recorded market only). Four plain-TCP configurations, 10 s warm-up (10,000 requests, not recorded) and 30 s measured (30,000 requests) at 1,000 QuoteRequests per second each; suite time about 3.5 minutes. Same laptop and JVM flags as above. Reports: `docs/benchmarks/wired-20261123-v12/` (three of the four: the default-ring-plain report is not committed, because its encoded histogram happens to contain a four-letter sequence that the repository's word check refuses; its figures are in the tables below and the run can be repeated).
+
+Read this first. This run is shorter than the one above (30 s against 60 s measured, half the warm-up), was made late in the evening with the processor already 85 percent busy when it started (another session's builds; free memory 7 GB), and covers no TLS configuration. It is not comparable with the tables above and it shows no improvement or regression: the differences between the two days are the machine's load, as the generator-lateness columns of both show. With 30,000 requests a p99.99 rests on the three largest samples. JIT compilation was still running in every measured phase (1.0 to 2.2 s of compiler time per run).
+
+Scheduled send to quote written (T0 to T4):
+
+| Configuration | Requests | Answered | p50 (us) | p99 (us) | p99.9 (us) | p99.99 (us) | max (us) | Lateness p99 (us) | Lateness max (us) | GCs in measured phase |
+|---|---|---|---|---|---|---|---|---|---|---|
+| default-direct-plain | 30000 | 30000 | 2021.4 | 6111.2 | 16482.3 | 22200.3 (few samples) | 23363.6 | 175.9 | 19120.1 | 6 |
+| default-ring-plain | 30000 | 30000 | 1904.6 | 5492.7 | 11018.2 | 16441.3 (few samples) | 17694.7 | 76.2 | 14671.9 | 0 |
+| lowLatency-direct-plain | 30000 | 29999 | 49.0 | 314.6 | 10207.2 | 18808.8 (few samples) | 20611.1 | 62.0 | 13172.7 | 0 |
+| lowLatency-ring-plain | 30000 | 30000 | 61.6 | 8511.5 | 38600.7 | 49315.8 (few samples) | 52232.2 | 1304.6 | 22003.7 | 0 |
+
+The desk's own stages, p50 / p99 in microseconds:
+
+| Configuration | journal append | handler | encode | finish and socket write |
+|---|---|---|---|---|
+| default-direct-plain | 0.4 / 1.9 | 7.5 / 35.8 | 2.6 / 5.6 | 22.0 / 88.3 |
+| default-ring-plain | 0.2 / 1.8 | 7.5 / 38.2 | 2.8 / 5.8 | 22.3 / 91.5 |
+| lowLatency-direct-plain | 0.2 / 1.4 | 5.6 / 23.5 | 1.7 / 5.6 | 25.6 / 67.5 |
+| lowLatency-ring-plain | 0.3 / 1.8 | 7.0 / 29.3 | 2.3 / 6.2 | 30.4 / 89.2 |
+
+What it says, and no more:
+
+- The desk's own work per request is where it was: handler 5.6 to 7.5 us at p50 here against 7.5 to 15.4 us above, journal append 0.2 to 0.4 us, encode 1.7 to 2.8 us, finish and write 22 to 30 us. The handler's largest single samples are in milliseconds in three runs (13.5, 1.0 and 25.9 ms): a descheduled loop thread or a curve reprice in front of the request; this suite does not tell them apart.
+- The default-profile medians are about 2 ms here and 20 to 25 ms above. Nothing in the code path of a QuoteRequest changed between the two runs that would explain a factor of ten; the parks of the idle strategies last as long as the Windows timer allows, and that depends on what else is running. Treat both as readings of the machine.
+- lowLatency-direct-plain reached a p50 of 49 us with a p99 of 0.3 ms; lowLatency-ring-plain, three minutes later, a p50 of 62 us with a p99 of 8.5 ms and a generator lateness p99 of 1.3 ms against 0.06 ms. The machine was busier for that run. Ring against direct journaling cannot be separated in this data either.
+- One request of 120,000 was not answered (the desk's quoting decision); none was dropped (`outboundDropped` 0) and no run halted.
+- Nothing here is a target met, and nothing here is evidence about a production host.

@@ -80,7 +80,8 @@ class PricingV2Test {
     for (final UsdUniverse.SwapSpec s : UNIVERSE.swaps()) {
       // the starting quote is the start-of-day mark: fair value is the quote itself
       assertEquals((double) s.initialMid(), (double) p.fairMid(s.instrumentId()), 1.0, s.tenor());
-      assertEquals(V2Feed.T0, p.referenceNanos(s.instrumentId()));
+      // no time has been given yet: the marks have no reference time
+      assertEquals(FairValueSource.NO_VALUE, p.referenceNanos(s.instrumentId()));
     }
     for (final UsdUniverse.BondSpec b : UNIVERSE.bonds()) {
       // the same for a bond: its starting price, to the rounding of a spread solved to 1e-15
@@ -96,6 +97,12 @@ class PricingV2Test {
     assertEquals(1, p.leaveOneOutReferences());
     assertEquals(0, p.referenceFailures());
     assertEquals(300.0, p.options().halfLifeSeconds(), 0.0);
+    // the first timed call dates the marks at the start of the business day
+    p.advanceTo(V2Feed.T0);
+    for (final int id : UNIVERSE.instrumentIds()) {
+      assertEquals(BusinessDate.lastCut(V2Feed.T0, BusinessDate.DEFAULT_CUT_HOUR), p.referenceNanos(id));
+    }
+    assertEquals(1, p.reprices(), "dating the marks is not a reprice");
   }
 
   @Test
@@ -135,8 +142,11 @@ class PricingV2Test {
     p.onCurveInput(p.inputId(9), f.mantissa(9, V2Feed.rate(c, 9)), f.now + 200_000_000L);
     assertEquals(1, p.pendingInputs());
     p.flush();
+    assertEquals(1, p.pendingInputs(), "flush applies a round only once its time has passed");
+    assertTrue(p.repriceIfDirty());
     assertEquals(0, p.pendingInputs());
     assertEquals(before + 3, p.reprices());
+    assertFalse(p.repriceIfDirty());
     p.flush();
     assertEquals(before + 3, p.reprices(), "nothing held: nothing done");
     // a round that repeats the previous quotes reprices but does not solve
@@ -201,7 +211,7 @@ class PricingV2Test {
     for (int i = 0; i < p.inputCount(); i++) {
       p.onCurveInput(p.inputId(i), f.mantissa(i, V2Feed.rate(c, i) + 3 * BP), f.now);
     }
-    p.flush();
+    p.repriceIfDirty();
     assertEquals(0.0380 + 3 * BP, p.fairValue(V2Feed.SWAP_12Y), 0.05 * BP);
   }
 
@@ -520,7 +530,7 @@ class PricingV2Test {
     assertTrue(fresh.inputFed(0));
     assertEquals(1, fresh.pendingInputs(), "one of six fed slots: held");
     assertEquals(0.0370, fresh.curve().quote(0), 1e-12);
-    fresh.flush();
+    fresh.repriceIfDirty();
     assertEquals(0.0369, fresh.curve().quote(0), 1e-12);
 
     assertThrows(IllegalArgumentException.class,
@@ -669,9 +679,13 @@ class PricingV2Test {
     for (int i = 0; i < v1.directory().size(); i++) {
       assertEquals(v1.directory().byIndex(i).id(), v2.directory().byIndex(i).id());
     }
-    // built as of the start of the business day, so that a replay built at another instant agrees
-    assertEquals(BusinessDate.lastCut(V2Feed.T0, BusinessDate.DEFAULT_CUT_HOUR), v2.referenceNanos(SWAP_10Y));
+    // the clock is not read: no reference time until the first timed call, then the start of
+    // the business day of that call
+    assertEquals(FairValueSource.NO_VALUE, v2.referenceNanos(SWAP_10Y));
     assertTrue(v2.onCurveInput(SWAP_10Y, 3_701_000_000L, V2Feed.T0 + 1));
+    assertEquals(BusinessDate.lastCut(V2Feed.T0, BusinessDate.DEFAULT_CUT_HOUR), v2.referenceNanos(SWAP_10Y));
+    assertFalse(v1.repriceIfDirty(), "version 1 holds nothing");
+    assertTrue(v1.setInput(SWAP_10Y, 3_701_000_000L, V2Feed.T0 + 1), "version 1 applies a set input at once");
     assertEquals(UNIVERSE, v2.universe());
   }
 }
