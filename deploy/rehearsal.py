@@ -148,8 +148,7 @@ def generate_material(java: str, directory: Path) -> Material:
         if done.returncode != 0:
             raise SystemExit(f"keytool {args[0]} failed (exit {done.returncode}): "
                              f"{done.stdout.decode(errors='replace').strip()}")
-    TLS_CONTEXT = ssl.create_default_context(cafile=str(material.ca_pem))
-    TLS_CONTEXT.minimum_version = ssl.TLSVersion.TLSv1_3
+    TLS_CONTEXT = tls13_context(str(material.ca_pem))
     return material
 
 
@@ -175,15 +174,18 @@ def http(method: str, url: str, headers: dict[str, str] | None = None) -> tuple[
         return e.code, e.read().decode("utf-8")
 
 
+def tls13_context(cafile: str | None = None) -> ssl.SSLContext:
+    """A verifying client context that refuses anything older than TLS 1.3."""
+    context = ssl.create_default_context(cafile=cafile)
+    context.minimum_version = ssl.TLSVersion.TLSv1_3
+    return context
+
+
 def tls_version(url: str) -> str:
     """The protocol a verified handshake with the endpoint settles on, or the reason it failed."""
     host, port = url.split("://", 1)[1].split(":")
     try:
-        context = TLS_CONTEXT
-        if context is None:
-            # no test material loaded: still refuse anything older than TLS 1.3
-            context = ssl.create_default_context()
-            context.minimum_version = ssl.TLSVersion.TLSv1_3
+        context = TLS_CONTEXT if TLS_CONTEXT is not None else tls13_context()
         with (socket.create_connection((host, int(port)), timeout=10) as raw,
               context.wrap_socket(raw, server_hostname=host) as tls):
             return str(tls.version())
