@@ -148,7 +148,7 @@ class JournalWaitPathsTest {
   }
 
   /** Appends until the journal is on {@code segment}; returns the frames appended. */
-  private static int appendUntilSegment(final SegmentedJournal j, final int segment) {
+  private static int appendToSegment(final SegmentedJournal j, final int segment) {
     final UnsafeBuffer p = payload();
     int n = 0;
     while (j.segmentIndex() < segment) {
@@ -168,7 +168,7 @@ class JournalWaitPathsTest {
         await("the roll waits", () -> j.rollWaits() == 1);
         clock.release();
       });
-      appended = appendUntilSegment(j, 2);
+      appended = appendToSegment(j, 2);
       join(releaser);
       assertEquals(1, j.rollWaits(), "the one roll found no segment ready and waited");
       await("the segment after is prepared", j::nextSegmentReady);
@@ -183,7 +183,7 @@ class JournalWaitPathsTest {
   void aRollFailsWhenThePreparingThreadFailed() {
     final IllegalStateException cause = new IllegalStateException("disk gone");
     final SegmentedJournal j = SegmentedJournal.create(dir, "failed", SEGMENT, GateClock.failing(cause), true);
-    final IllegalStateException e = assertThrows(IllegalStateException.class, () -> appendUntilSegment(j, 2));
+    final IllegalStateException e = assertThrows(IllegalStateException.class, () -> appendToSegment(j, 2));
     assertTrue(e.getMessage().contains("could not prepare the next segment"), e.getMessage());
     assertSame(cause, e.getCause());
     assertEquals(1, j.segmentIndex(), "the full segment stays current");
@@ -198,11 +198,11 @@ class JournalWaitPathsTest {
     final GateClock clock = GateClock.holding();
     final SegmentedJournal j =
         SegmentedJournal.create(dir, "stalled", SEGMENT, clock, true, TimeUnit.MILLISECONDS.toNanos(200));
-    final IllegalStateException e = assertThrows(IllegalStateException.class, () -> appendUntilSegment(j, 2));
+    final IllegalStateException e = assertThrows(IllegalStateException.class, () -> appendToSegment(j, 2));
     assertTrue(e.getMessage().contains("made no progress for 200 ms"), e.getMessage());
     clock.release();
     await("the held segment is prepared after the release", j::nextSegmentReady);
-    final int more = appendUntilSegment(j, 2);
+    final int more = appendToSegment(j, 2);
     j.close();
     assertTrue(more > 0 && frames("stalled") > more, "the journal is usable once the preparer recovers");
   }
@@ -215,7 +215,7 @@ class JournalWaitPathsTest {
     final AtomicReference<Throwable> thrown = new AtomicReference<>();
     final Thread appender = start("appender", () -> {
       try {
-        appendUntilSegment(j, 2);
+        appendToSegment(j, 2);
       } catch (final Throwable t) {
         thrown.set(t);
       }
