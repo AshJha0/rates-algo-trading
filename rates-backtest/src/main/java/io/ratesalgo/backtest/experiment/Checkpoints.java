@@ -176,7 +176,9 @@ public final class Checkpoints {
     }
     try (DirectoryStream<Path> s = Files.newDirectoryStream(d, "*__*.json")) {
       long n = 0;
-      for (final Path ignored : s) {
+      final java.util.Iterator<Path> it = s.iterator();
+      while (it.hasNext()) {
+        it.next();
         n++;
       }
       return n;
