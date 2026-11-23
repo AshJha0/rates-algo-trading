@@ -90,6 +90,32 @@ public final class FixedRateBond {
     }
   }
 
+  /**
+   * Creates the bond and checks its first coupon date against the one the issuer published, which
+   * catches a dated date or maturity that puts the schedule on other dates. It cannot catch a
+   * dated date that is a few days late (the issue date of a note the Treasury dated on the nominal
+   * date before a weekend): the coupon dates are the same and only the first coupon is short. The
+   * reference data must carry the dated date itself.
+   *
+   * @param firstCouponDate the published first coupon date (unadjusted)
+   * @throws IllegalArgumentException if the schedule's first coupon is on another date
+   */
+  public FixedRateBond(
+      final String name,
+      final BondConvention convention,
+      final double coupon,
+      final int datedDate,
+      final int firstCouponDate,
+      final int maturity) {
+    this(name, convention, coupon, datedDate, maturity);
+    if (payNominal[0] != firstCouponDate) {
+      throw new IllegalArgumentException(
+          name + ": dated " + Dates.format(datedDate) + " and maturing " + Dates.format(maturity)
+              + " the first coupon falls on " + Dates.format(payNominal[0]) + ", not the published "
+              + Dates.format(firstCouponDate));
+    }
+  }
+
   public String name() {
     return name;
   }

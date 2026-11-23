@@ -57,6 +57,7 @@ public final class CurveBuilder {
   private final LuSolver lu;
   private final LevenbergMarquardt lm;
   private final double[] lmX;
+  private final double[] saved;
   private final PillarFunction pillarFunction = new PillarFunction();
   private Method lastMethod = Method.AUTO;
   private boolean jacobianValid;
@@ -99,6 +100,7 @@ public final class CurveBuilder {
     this.lu = new LuSolver(n);
     this.lm = new LevenbergMarquardt(n, n);
     this.lmX = new double[n];
+    this.saved = new double[n];
   }
 
   /** The curve being built. */
@@ -161,17 +163,40 @@ public final class CurveBuilder {
    * Incremental rebuild after instrument {@code index} (in pillar order) changes its quote:
    * sequential re-solves only that pillar and those after it, from the current values; global
    * restarts Levenberg-Marquardt from the current solution.
+   *
+   * <p>All or nothing: if the solve fails (no root in the bracket, or the residual check), the
+   * quote and every pillar are put back as they were before the call and the exception is
+   * rethrown, so the caller still holds the last good curve. Without this a failed solve left the
+   * bad quote in place and the pillars half-solved, and every later rebuild started from there.
+   *
+   * @throws IllegalStateException if the curve cannot be solved to the new quote
    */
   public void rebuild(final int index, final double newQuote) {
-    instruments.get(index).setQuote(newQuote);
-    if (lastMethod == Method.SEQUENTIAL) {
-      sequentialFrom(index);
-    } else {
-      curve.setActivePillars(n);
-      global();
+    final CurveInstrument inst = instruments.get(index);
+    final double oldQuote = inst.quote();
+    for (int i = 0; i < n; i++) {
+      saved[i] = curve.pillarLogDf(i);
     }
-    jacobianValid = false;
-    checkResiduals();
+    try {
+      inst.setQuote(newQuote);
+      if (lastMethod == Method.SEQUENTIAL) {
+        sequentialFrom(index);
+      } else {
+        curve.setActivePillars(n);
+        global();
+      }
+      jacobianValid = false;
+      checkResiduals();
+    } catch (final IllegalStateException | ArithmeticException e) {
+      inst.setQuote(oldQuote);
+      curve.setActivePillars(n);
+      for (int i = 0; i < n; i++) {
+        curve.setPillarLogDf(i, saved[i]);
+      }
+      curve.update();
+      jacobianValid = false;
+      throw e;
+    }
   }
 
   /** Largest |implied - quote| over the instruments. */

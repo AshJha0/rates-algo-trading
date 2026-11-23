@@ -4,6 +4,11 @@ package io.ratesalgo.analytics.futures;
  * CBOT Treasury futures and their deliverable baskets (CME Group contract specifications, CBOT
  * Rulebook Chapters 18 to 22 and 40 to 42). Remaining terms are whole months from the first day of
  * the delivery month; {@code maxRemainingMonths} of -1 means unbounded.
+ *
+ * <p>Checked against the exchange's rule text on 2026-11-23: TY and TN against CBOT Submission
+ * 25-099 (Rules 19101.A and 26101.A, contract months from March 2026), Z3N against CBOT Submission
+ * 20-119 (Rule 39101.A). The windows of TU, FV, TWE, US and UB are as recalled from the CME
+ * contract specifications and were not re-read (the pages refused an automated fetch).
  */
 public enum TreasuryFutureContract {
   /** 2-Year T-Note: original term at most 5y3m, remaining 1y9m to 2y; face 200,000. */
@@ -12,8 +17,12 @@ public enum TreasuryFutureContract {
   Z3N("3-Year T-Note", 33, 36, 84, 1, 200_000),
   /** 5-Year T-Note: original term at most 5y3m, remaining at least 4y2m; face 100,000. */
   FV("5-Year T-Note", 50, -1, 63, 1, 100_000),
-  /** 10-Year T-Note: original at most 10y, remaining 6y6m to 8y; face 100,000. */
-  TY("10-Year T-Note", 78, 96, 120, 3, 100_000),
+  /**
+   * 10-Year T-Note: original at most 10y, remaining at least 6y6m and less than 8y (Rule 19101.A:
+   * "not less than 6 years 6 months and less than 8 years"), so 95 whole months at most; face
+   * 100,000.
+   */
+  TY("10-Year T-Note", 78, 95, 120, 3, 100_000),
   /** Ultra 10-Year T-Note: original 10y, remaining 9y5m to 10y; face 100,000. */
   TN("Ultra 10-Year T-Note", 113, 120, 120, 3, 100_000),
   /** 20-Year T-Bond: original 20y, remaining 19y2m to 19y11m; face 100,000. */
