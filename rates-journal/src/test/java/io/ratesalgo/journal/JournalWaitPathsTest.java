@@ -297,6 +297,37 @@ class JournalWaitPathsTest {
     assertEquals(appended, frames("full"));
   }
 
+  /**
+   * The back-pressure bound (DR-R6-L04): a producer on a full ring whose journal thread makes no
+   * progress at all (stopped at a roll whose segment is held) fails after the stall limit instead
+   * of spinning for ever; once the journal thread moves again everything queued reaches the file.
+   */
+  @Test
+  void aProducerOnAFullRingGivesUpWhenTheJournalThreadMakesNoProgress() {
+    final GateClock clock = GateClock.holding();
+    final RingJournal ring =
+        RingJournal.start("stall", SegmentedJournal.create(dir, "stall", SEGMENT, clock, true), clock, 64 << 10,
+            RingJournal.defaultDrainIdle(), TimeUnit.MILLISECONDS.toNanos(200));
+    assertEquals(TimeUnit.MILLISECONDS.toNanos(200), ring.stallNanos());
+    clock.awaitHeld(1);
+    final UnsafeBuffer p = payload();
+    final IllegalStateException e =
+        assertThrows(IllegalStateException.class, () -> {
+          while (true) {
+            ring.append(1, 0, p, 0, PAYLOAD);
+          }
+        });
+    assertTrue(e.getMessage().contains("made no progress for 200 ms with the ring full"), e.getMessage());
+    assertEquals(1, ring.producerWaits());
+    assertTrue(ring.backlogHighWater() > 0, "the journal thread saw the backlog it was asked to drain");
+    final long queued = ring.nextSequence() - 1;
+    clock.release();
+    ring.close();
+    assertEquals(queued, frames("stall"), "every frame accepted before the failure is in the file");
+    assertThrows(IllegalArgumentException.class,
+        () -> RingJournal.start("bad", null, clock, 64 << 10, RingJournal.defaultDrainIdle(), 0L));
+  }
+
   /** Before the retry, a close that gave up left the files mapped with no way to close them. */
   @Test
   void aCloseThatGaveUpCanBeRetriedOnceTheJournalThreadMoves() {

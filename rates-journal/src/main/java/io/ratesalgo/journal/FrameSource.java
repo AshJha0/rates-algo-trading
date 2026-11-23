@@ -20,6 +20,14 @@ public interface FrameSource extends AutoCloseable {
   /** The chain hash after the last frame delivered; the genesis hash before the first. */
   long chainHash();
 
+  /**
+   * The {@link ChainHash} algorithm of the journal, so a replay can chain what it produces the
+   * same way. Known before the first frame is read.
+   */
+  default int hashAlgorithm() {
+    return ChainHash.FNV1A;
+  }
+
   @Override
   void close();
 }
