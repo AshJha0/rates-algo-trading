@@ -390,6 +390,12 @@ public final class PackageQuoter implements KillSwitchListener {
     final double spreadCharge = hbar * netRisk + standaloneHedge;
     final double charge = Math.max(cfg.minHalfSpreadBp * maxPv01, spreadCharge - saving + inventory);
     final double distance = totalPv01 > 0.0 ? charge / totalPv01 : 0.0;
+    if (totalPv01 > risk.clientRoomDv01(clientId)) {
+      // each leg may fit the client's DV01 limit while the package as a whole does not
+      risk.countClientDv01Reject();
+      out.rejection = RiskEngine.REJECT_CLIENT_DV01;
+      return pass(out, PassReason.RISK_REJECT);
+    }
     for (int i = 0; i < pkg.legs(); i++) {
       final int id = pkg.instrumentId(i);
       final double qpb = risk.quotePerBp(id);

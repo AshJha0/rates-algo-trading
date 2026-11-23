@@ -360,6 +360,31 @@ class ReviewFixesTest {
   }
 
   @Test
+  void aPackageCountsAllItsLegsAgainstTheClientsDv01Limit() {
+    // each 19k leg is inside the 30k limit; the package is 38k
+    final TestMarket m =
+        new TestMarket(TestMarket.standardLimits().clientDv01(30_000.0), new QuotingConfig(), Hedger.config());
+    final PackageQuoter pq = m.desk.packages();
+    final PackageQuoter.Result r = new PackageQuoter.Result();
+    final PackageQuoter.PackageRequest curve = pq.neutralPair(PackageQuoter.Type.CURVE, TestMarket.SW2, 100 * FACE_1M, TestMarket.SW10);
+    assertFalse(pq.quote(curve, 1, 3, r).quoted());
+    assertEquals(PassReason.RISK_REJECT, r.reason());
+    assertEquals(RiskEngine.REJECT_CLIENT_DV01, r.rejection());
+    assertEquals(1L, m.desk.risk().dv01Rejects());
+    assertEquals(0L, m.desk.risk().pendingSell(TestMarket.SW2), "nothing reserved");
+    // half the size fits, is live against the limit, and counts as dealt once it trades
+    final PackageQuoter.PackageRequest half = pq.neutralPair(PackageQuoter.Type.CURVE, TestMarket.SW2, 50 * FACE_1M, TestMarket.SW10);
+    assertTrue(pq.quote(half, 1, 3, r).quoted());
+    final double live = m.desk.risk().clientOpenDv01(1);
+    assertEquals(19_000.0, live, 500.0);
+    assertEquals(30_000.0 - live, m.desk.risk().clientRoomDv01(1), 1e-6);
+    assertTrue(pq.onResponse(r.packageId(), true));
+    assertEquals(live, m.desk.risk().clientDealtDv01(1), 1e-6);
+    assertEquals(0.0, m.desk.risk().clientOpenDv01(1), 1e-6);
+    assertEquals(Double.MAX_VALUE, new TestMarket().desk.risk().clientRoomDv01(1), 0.0);
+  }
+
+  @Test
   void theInventoryTermIsBoundedEitherWay() {
     for (final double sign : new double[] {1.0, -1.0}) {
       final TestMarket m = market(new QuotingConfig().kappa(2e-4).maxSkewBp(0.5));

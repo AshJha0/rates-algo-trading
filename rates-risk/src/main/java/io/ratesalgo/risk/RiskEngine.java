@@ -305,6 +305,28 @@ public final class RiskEngine {
     return s < 0 ? 0.0 : clientOpen[s];
   }
 
+  /**
+   * DV01 a client may still be quoted today: the per-client limit less what it has dealt and what
+   * is live to it; {@code Double.MAX_VALUE} when no limit is set. For a quoter that prices several
+   * legs as one request and must test their sum.
+   */
+  public double clientRoomDv01(final int clientId) {
+    if (limits.clientDv01() == Double.MAX_VALUE) {
+      return Double.MAX_VALUE;
+    }
+    final int s = clientSlot(clientId, false);
+    if (s < 0) {
+      return clientCount == MAX_CLIENTS ? 0.0 : limits.clientDv01();
+    }
+    return Math.max(0.0, limits.clientDv01() - clientDealt[s] - clientOpen[s]);
+  }
+
+  /** Counts a refusal a quoter made on the client DV01 limit before any leg reached a check. */
+  public void countClientDv01Reject() {
+    dv01Rejects++;
+    preTradeRejects++;
+  }
+
   /** Pre-trade refusals by the per-RFQ and per-client DV01 limits. */
   public long dv01Rejects() {
     return dv01Rejects;
