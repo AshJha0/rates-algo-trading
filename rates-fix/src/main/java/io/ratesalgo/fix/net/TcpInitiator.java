@@ -37,8 +37,9 @@ public final class TcpInitiator implements FixTransport, AutoCloseable {
   private final int maxWriteSpins;
   private final int maxBodyLength;
   private FixSession session;
-  // volatile for abort(), which another thread may call
-  private volatile SocketChannel channel;
+  /** The owner's channel; the same channel is published to {@link #shared} for {@link #abort()}. */
+  private SocketChannel channel;
+  private final SharedChannel shared = new SharedChannel();
   private InboundFilter filter = InboundFilter.PASS;
   private long bytesRead;
   private long writeTimeouts;
@@ -145,6 +146,7 @@ public final class TcpInitiator implements FixTransport, AutoCloseable {
       throw new UncheckedIOException("cannot connect to " + host + ":" + port, e);
     }
     channel = c;
+    shared.set(c);
     inBytes.clear();
     session.onConnected();
   }
@@ -271,14 +273,7 @@ public final class TcpInitiator implements FixTransport, AutoCloseable {
    * working there. The owner finds the closed channel on its next poll and tells the session.
    */
   public void abort() {
-    final SocketChannel c = channel;
-    if (c != null && c.isOpen()) {
-      try {
-        c.close();
-      } catch (IOException e) {
-        throw new UncheckedIOException(e);
-      }
-    }
+    shared.close();
   }
 
   @Override

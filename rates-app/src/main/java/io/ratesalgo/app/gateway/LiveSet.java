@@ -61,7 +61,7 @@ final class LiveSet {
   private final OrderReplaceDecoder orderReplace = new OrderReplaceDecoder();
   private final LongLongConsumer cancelQuote = this::cancelQuote;
   private final LongLongConsumer cancelOrder = this::cancelOrder;
-  private MessageSink sink;
+  private MessageSink sink = (buffer, offset, length) -> false;
   private long sentNanos;
   private long cancelsSent;
   private boolean overflowed;

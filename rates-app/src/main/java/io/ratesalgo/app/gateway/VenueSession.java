@@ -102,9 +102,8 @@ public final class VenueSession implements FixSessionHandler {
   private long blockedOutbound;
   private int publishedState;
   private int publishedUnconfirmed;
-  // written by the owner when the value changes, never per duty cycle
-  private volatile int haltState;
-  private volatile int unconfirmed;
+  /** What other threads read; written by the owner when a value changes, never per duty cycle. */
+  private final HaltSignal signal = new HaltSignal();
 
   /**
    * A session to {@code host:port}.
@@ -356,22 +355,22 @@ public final class VenueSession implements FixSessionHandler {
     final int state = withdrawn ? WITHDRAWN : HALTING;
     if (left != publishedUnconfirmed) {
       publishedUnconfirmed = left;
-      unconfirmed = left;
+      signal.unconfirmed(left);
     }
     if (state != publishedState) {
       publishedState = state;
-      haltState = state;
+      signal.state(state);
     }
   }
 
   /** {@link #RUNNING}, {@link #HALTING} or {@link #WITHDRAWN}; readable from any thread. */
   public int haltState() {
-    return haltState;
+    return signal.state();
   }
 
   /** While halted: quotes plus orders the venue has not yet confirmed gone. Any thread. */
   public int unconfirmed() {
-    return unconfirmed;
+    return signal.unconfirmed();
   }
 
   /**

@@ -206,7 +206,8 @@ public final class TradingProcess implements AutoCloseable {
     private long fillsLast;
     private long hedgesRoutedLast;
     private int liveChildrenLast;
-    private long statusWrites;
+    // a one-element array: the count belongs to the loop thread alone, unlike the fields above
+    private final long[] statusWrites = new long[1];
 
     Group(final String name, final Path dir, final EventLoop loop, final DeskGroup desk,
         final LoopJournals journals, final SegmentedJournal route) {
@@ -228,44 +229,44 @@ public final class TradingProcess implements AutoCloseable {
       if (quotes != liveQuotesLast) {
         liveQuotesLast = quotes;
         liveQuotes = quotes;
-        statusWrites++;
+        statusWrites[0]++;
       }
       final boolean pulled = !desk.desk().killSwitch().isActive();
       if (pulled != killedLast) {
         killedLast = pulled;
         killed = pulled;
-        statusWrites++;
+        statusWrites[0]++;
       }
       final long sent = desk.desk().quoting().quotesSent();
       if (sent != quotesSentLast) {
         quotesSentLast = sent;
         quotesSent = sent;
-        statusWrites++;
+        statusWrites[0]++;
       }
       final long filled = desk.desk().quoting().fills();
       if (filled != fillsLast) {
         fillsLast = filled;
         fills = filled;
-        statusWrites++;
+        statusWrites[0]++;
       }
       final long hedges = desk.hedgesRouted();
       if (hedges != hedgesRoutedLast) {
         hedgesRoutedLast = hedges;
         hedgesRouted = hedges;
-        statusWrites++;
+        statusWrites[0]++;
       }
       final int children = desk.liveChildren();
       if (children != liveChildrenLast) {
         liveChildrenLast = children;
         liveChildren = children;
-        statusWrites++;
+        statusWrites[0]++;
       }
       return 0;
     }
 
     /** Volatile status writes made so far. Loop thread, or after it stopped. */
     public long statusWrites() {
-      return statusWrites;
+      return statusWrites[0];
     }
 
     public String name() {
