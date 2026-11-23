@@ -1,0 +1,78 @@
+# Pre-registration R5-005 (DRAFT, Round 5): Client markouts per side and tier, persisted, inside the Round 5 desk.
+# Design: docs/research/STRATEGY_V2.md Section 6; ablation table in Section 8.
+# DRAFT: not signed and not to be run. It follows the Round 3 protocol (SIM_V2_DESIGN.md
+# Section 12): seeded full-day sessions, a paired primary test and looks counted per data
+# set. The date keys of prereg_version 1 (period, fitting_period, holdout) do not describe
+# seeded sessions and are left out until the Round 3 harness extends the schema with the
+# data_set block below, so this file does not validate as prereg_version 1 yet. Written
+# from theory and the calibration; no desk P&L under any simulator was looked at.
+prereg_version: 1
+status: draft
+id: R5-005
+title: "Client markouts per side and tier, persisted, inside the Round 5 desk"
+hypothesis: >
+  Inside the Round 5 desk, charging each client its own multi-horizon markout shrunk to its tier's
+  prior (markoutStore, three tiers) raises P&L per session against the same desk charging the
+  toxicity table's single estimate. Mechanism (Section 6): tier C clients (adverse 0.115 bp) are
+  priced above the winning level and tier A (0.030 bp) inside it. The store is carried through the
+  sessions in seed order and starts empty at the first session of the set. Predicted sign:
+  positive.
+metric: >
+  Primary: total P&L per session in USD (cash plus the final position at the final latent mid),
+  paired difference treatment minus baseline; the same difference in bp of the baseline arm's
+  client DV01 traded in that session. Guard metrics below. Secondary, reported only: spread
+  capture, inventory marking and hedge cost lines of the attribution, in bp of client DV01.
+baseline: v2_without_markouts
+treatments: [v2]
+data_set:
+  seed_base: 36000000
+  sessions: >
+    N = max(2000, ceil(16.7 x sigma_d^2 / delta^2)) with delta = 12,000 USD per session fixed
+    here, before the pilot (the smallest effect in bp of client DV01 times an estimated 1.2mm USD
+    of client DV01 a session: 233 RFQs x about 20k USD of DV01 x a traded share of about a
+    quarter, an assumption), and sigma_d the sd of the paired difference measured on the pilot
+    (200 sessions, seed base 29,000,000, default desk against this treatment), which is then
+    discarded for inference (SIM_V2_DESIGN.md Section 12)
+  simulator_params: data/calibration/sim_v2_params.json
+  simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+prior_looks: []
+test: >
+  Paired, common random numbers: both arms run the same seeds, so the exogenous path, RFQs,
+  competitor quotes and client reserves are identical and only the desk differs. Unit: one full
+  session, 07:00 to 17:00 New York, 36,000 steps of 1 s, day type by session index modulo 21
+  (SIM_V2_DESIGN.md Section 12). Per session d_n = P&L(treatment, n) - P&L(baseline, n), P&L
+  marked at the latent mid. Primary test: two-sided paired t on d_n (Stats.pairedT); 95 percent
+  interval of the mean of d_n from a moving-block bootstrap with blocks of 21 sessions, 2,000
+  resamples, bootstrap seed 5 (Stats.pairedBlockBootstrapCi). The p value enters the
+  Benjamini-Hochberg family of every primary test read on this confirmation set (q = 0.05). The
+  unpaired Welch test is not used.
+success_threshold: >
+  Supported only if all hold: (1) Benjamini-Hochberg adjusted paired-t p below 0.05 at the central
+  parameters; (2) the bootstrap interval of the mean paired difference entirely above zero at the
+  central parameters; (3) the mean paired difference above zero at every band point listed under
+  assumption_band (informed_fraction, drift_tau, winner_half_spread), same seeds, same look; (4)
+  every guard metric holds. Reversed: adjusted p below 0.05 and the central interval entirely
+  below zero. A sign change inside the band makes the result 'not robust', reported as such and
+  not supported. Otherwise inconclusive. Size reported whatever the verdict: mean paired
+  difference with its interval, in USD per session and in bp of the baseline arm's client DV01
+  traded; the smallest effect of interest is 0.01 bp of client DV01.
+guard_metrics: >
+  Guard metrics, each treatment over baseline on the same sessions, summed over the set: quoted
+  share (quotes / RFQs) at least 0.8; hit rate (fills / quotes) at least 0.5; client DV01 traded
+  at least 0.6. If any guard fails the verdict is 'trading less' and the hypothesis is not
+  supported whatever the P&L. All three are reported whatever happens.
+assumption_band:
+  preset: sim_v2_params
+  parameters: [informed_fraction, drift_tau, winner_half_spread]
+  points: [low, central, high]
+author: Ashish Jha (owner); drafted with Claude (ai-assisted, docs/AI_USE_POLICY.md)
+date: 2026-11-23
+config: research/prereg/R5-005.config.yaml
+config_sha256: 70d50d5c683d3e62baa3ee3d4bf58eff964954b752c0e46a10690fbba2347ebb
+limitations: >
+  Simulated sessions only: every number is a statement about the Round 3 simulator under the
+  calibration, which ties competitor dispersion, the product of informed fraction and move,
+  intraday volatility and the curve factors to public data and assumes the rest (bands above). It
+  is not an estimate of desk P&L. Spent data (the 20 AUDIT sessions, the five April sessions, seed
+  bases 5,000,000 and 8,000,000) is not used. One look per data set; the seed base is new and used
+  by no other pre-registration.
