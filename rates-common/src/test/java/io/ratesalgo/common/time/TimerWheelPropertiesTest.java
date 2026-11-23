@@ -4,15 +4,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import net.jqwik.api.Arbitraries;
 import net.jqwik.api.Arbitrary;
 import net.jqwik.api.ForAll;
 import net.jqwik.api.Property;
 import net.jqwik.api.Provide;
 
-/** Properties the wheel must hold for every schedule and every polling pattern. */
-class TimerWheelProperties {
+/**
+ * Properties the wheel must hold for every schedule and every polling pattern: each timer fires
+ * exactly once, at the first poll at or after its deadline whatever the phase of the ticks, in
+ * deadline then id order.
+ */
+class TimerWheelPropertiesTest {
 
   private static final long START = 1_000_000L;
 
@@ -46,15 +52,28 @@ class TimerWheelProperties {
     }
     final long horizon = START + 600_000L;
     int total = 0;
-    for (long now = START; now <= horizon; now += pollStep) {
+    // poll on the grid START + k * step until one poll is at or past the horizon
+    for (long now = START; ; now += pollStep) {
       total += wheel.poll(now);
+      if (now >= horizon) {
+        break;
+      }
     }
     assertEquals(deadlines.size(), total);
     assertEquals(deadlines.size(), firedAt.size());
     assertEquals(0, wheel.liveCount());
+    for (final long id : ids) {
+      assertTrue(id > 0);
+      assertTrue(!wheel.cancel(id), "a fired timer cannot be cancelled");
+    }
+    final Set<Long> fired = new HashSet<>();
     for (int i = 0; i < firedAt.size(); i++) {
       final long[] f = firedAt.get(i);
       assertTrue(f[1] >= f[2], "fired early: now=" + f[1] + " deadline=" + f[2]);
+      // the first poll of the grid START, START + step, ... at or after the deadline
+      final long due = f[2] <= START ? START : START + Math.ceilDiv(f[2] - START, pollStep) * pollStep;
+      assertEquals(due, f[1], "fired late or early: deadline=" + f[2] + " step=" + pollStep);
+      assertTrue(fired.add(f[0]), "fired twice: " + f[0]);
       if (i > 0) {
         final long[] p = firedAt.get(i - 1);
         final boolean ordered = p[2] < f[2] || (p[2] == f[2] && p[0] < f[0]);
