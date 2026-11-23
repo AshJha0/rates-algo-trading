@@ -154,11 +154,13 @@ public final class AggressiveBaseline implements ExecutionStrategy {
       return;
     }
     filled += lastQuantity;
-    if (ordStatus == OrdStatus.Cancelled) {
+    // a rejected order never traded: its quantity is resent like an IOC remainder
+    final boolean unfilled = ordStatus == OrdStatus.Cancelled || ordStatus == OrdStatus.Rejected;
+    if (unfilled) {
       pending[(int) i] += orderedOf.get(clOrdId) - cumQuantity;
       nextRetry = clock.nanoTime() + retryNanos;
     }
-    if (ordStatus == OrdStatus.Cancelled || ordStatus == OrdStatus.Filled) {
+    if (unfilled || ordStatus == OrdStatus.Filled) {
       venueOf.remove(clOrdId);
       orderedOf.remove(clOrdId);
     }
