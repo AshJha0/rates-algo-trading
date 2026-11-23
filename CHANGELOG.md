@@ -4,6 +4,12 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
+Nothing yet beyond the 1.1.0 draft below.
+
+## [1.1.0] - 2026-11-23
+
+Draft. Pull requests #7, #8 and #9 (merged 2026-11-07 and 2026-11-08) and the fix round after the review of 2026-11-23. The tag is cut when the fix round merges. Every P&L figure here comes from the simulators under declared assumptions; the review shows that their sign follows from those assumptions (docs/reviews/REVIEW_2026-11-23.md Section 2.1).
+
 ### Added
 
 - Risk carry time (`RiskCarry`): time from each client fill to the next hedge fill. An exploratory hedge latency sweep (`LatencySweep`, 0 to 5,000 ms): latency up to 1 s barely matters, and median carry is 20 minutes to over an hour. A carry-time limit (`CarryLimitHedgeBudget`, V1C-001, ledger seq 31): improved risk-adjusted hedge cost at central and high, inconclusive at low, so not supported and not adopted. A flow-aware version with a quiet gap (V1C-002, ledger seq 32) improved at high only, also not supported. docs/research/DESK_FEATURES.md, DR-V1C-01 to DR-V1C-03.
@@ -15,14 +21,32 @@ All notable changes to this project are recorded here. The format follows [Keep 
 ### Changed
 
 - `BandScenario.presets` has an overload that takes an already parsed presets map, used by the forward session to pin the synthetic market to the real close.
+- The prepared-roll allocation test in `rates-journal` is paced, warmed up, parks right before each roll and waits until the next segment is ready instead of sleeping (commits 3820801, 4a2f17a, fde7b88, 3b44709 in PR #8).
 
 ### Fixed
 
-- README: the documentation site note, and the desk P&L figures and limit, now from AUDIT-21 and AUDIT-26.
+- README: the documentation site note, and the desk P&L figures and limit, now from AUDIT-21 and AUDIT-26 (PR #7).
+- `rates-strategy` prints output paths safely when they are outside the repository (f4bab10, PR #8).
+- README ledger row count is 32 after V1C-001 and V1C-002 (PR #9).
+<!-- FIX-ROUND: code items filled at integration -->
 
-## [1.0.0] - 2026-10-31
+### Review 2026-11-23
 
-The first release. It includes every phase module (P0 to P6, round 1, pull requests 1 and 2) and round 2 (pull request 3, merge ecfc591): the modules are wired into one trading process (`rates-app`), the journal write path is off the loop's latency path, LEARN is finished, recipes 23 to 34 and the diagrams are added, the desk features are in `rates-strategy`, and the edge research, the P&L audit, the review fixes and audit fix packages A1, A2, B, C and D are merged. From this version on, a change to a pinned contract (API_SPEC.md) needs a major version.
+Documentation changes from the review (findings E1, E2, E3, E9, E11 and the documentation part of E7).
+
+- docs/reviews/REVIEW_2026-11-23.md added to the repository and the site; docs/REVIEWER_SUMMARY.md, a one-page summary, linked from the top of README and the site.
+- The site home page described "Phase 0: foundations only"; it now describes the project as it is (E1). `tools/check_site_current.py` fails the docs workflow if the site home page, STATUS.md or README names a version or date older than the latest release here, or a phrase from an earlier state.
+- README: a first-screen statement of how the project was built and checked (parallel AI sessions directed by one engineer; CI and external goldens; no independent human review). "Measured results" keeps only external checks and findings; plumbing self-checks move to a second table. The router row is relabelled as a regression check against the router's own simulator; the latency row leads with scheduled-to-encode and names the bench quoter, the laptop and the 100 ns clock tick. The daily Sharpe table moves to docs/research/BAND_RISK.md, with AUDIT-21 in place of the superseded AUDIT-11. "Limits" adds what the review found undisclosed: the P&L sign set by the spread clamp and the informed-flow constants, independent instrument walks, the little-used pricing library, one venue, one client tier, limits sized for the smoke day, and the forward log's synthetic income. The ledger-flag note now counts nine `code_dirty` rows, not four.
+- STATUS.md brought up to date (E3): V1 integration closed, rows for pull requests #5 to #9, the repository public with a ruleset, CI statements that were pending now marked historical, and a row for this fix round.
+- Governance documents state actual practice (E2): CONTRIBUTING.md, docs/AI_USE_POLICY.md and docs/ai_change_log.md say this is a solo project with no independent reviewer, that the nine required CI checks are the only merge gate, and that assisted commits are identified by their `Co-Authored-By` trailer, not by a label.
+- docs/compliance/RTS6_INVENTORY.md uses the scale "illustrated in simulation", "document only", "absent" and "out of scope" (E9); rows that relied on review or change-management controls are downgraded. Nothing in the repository claims compliance.
+- SECURITY.md describes dependency pinning as it is (E7, documentation part).
+- The diagrams page and four diagrams no longer call built components "planned" or the review rule "one approving review".
+- The 1.0.0 heading below is dated 2026-11-01, the day the v1.0.0 tag and release were made.
+
+## [1.0.0] - 2026-11-01
+
+The first release. The tag v1.0.0 is on 8e6ae10, the merge of pull request #6, and the GitHub release was published on 2026-11-01; this heading said 2026-10-31 until 2026-11-23. It includes every phase module (P0 to P6, round 1, pull requests 1 and 2), round 2 (pull request 3, merge ecfc591), the release pass (pull request 4), version 1 integration (pull request 5) and the journal shutdown fix (pull request 6): the modules are wired into one trading process (`rates-app`), the journal write path is off the loop's latency path, LEARN is finished, recipes 23 to 34 and the diagrams are added, the desk features are in `rates-strategy`, and the edge research, the P&L audit, the review fixes and audit fix packages A1, A2, B, C and D are merged. From this version on, a change to a pinned contract (API_SPEC.md) needs a major version.
 
 Every P&L, Sharpe ratio or drawdown in this release comes from the simulators under declared assumptions. Each one is a consistency check, not evidence of edge (DECISIONS.md DR-008).
 

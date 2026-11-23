@@ -248,7 +248,7 @@ Added 2026-10-31 on branch `claude/fix-d-backtest-cdd6aa`. The DR-008 caveat app
 - **Attribution.** The residual was below 1e-5 USD on every run.
 - **Code commit.** Every run used commit 04edc03, which comes before b4658da (DR-INT-05, `winnersCurseBp` 0.02 in `DeskSettings`). The production engine has changed since these runs. AUDIT-21 to AUDIT-24 re-ran them at v1.0.0; see the last section.
 - **Ledger rows.** Seq 19 (AUDIT-11), 20 (AUDIT-12), 21 (AUDIT-13) and 22 (AUDIT-14). They were seq 12 to 15 when recorded and were re-chained after R2B-001 to R2B-007 when round2-integration was merged, with only `seq` and `prev_sha256` changed, as in DR-INT-04. The copies in `research/audit/results/AUDIT-1n.json` are the rows as recorded.
-- **The `code_dirty` flag.** The AUDIT-12 to AUDIT-14 rows record `code_dirty: true` only because the ledger file itself had been appended to by the previous row. AUDIT-02 to AUDIT-04 carry the same flag for the same reason.
+- **The `code_dirty` flag.** The AUDIT-12 to AUDIT-14 rows record `code_dirty: true` only because the ledger file itself had been appended to by the previous row. AUDIT-02 to AUDIT-04 carry the same flag for the same reason. So do AUDIT-22 to AUDIT-24 (seq 26 to 28), each recorded at AUDIT-21's commit c843fdd after the row before it had appended to the ledger (note added 2026-11-23).
 
 ### The production engine against model_spread
 
