@@ -292,6 +292,36 @@ class PositionKeeperTest {
     assertEquals("CAME", k.recordsByVenueOrderId(508).get(0).eventType());
   }
 
+  /**
+   * 40 of a 100 buy fill, then the venue cancels the other 60 (FIX: OrderQty = CumQty + LeavesQty
+   * while working; a cancel leaves CumQty and sets LeavesQty to 0). The fill stays booked and the
+   * order stops working. An order first seen through its reports, with no NewOrder in the
+   * journal, gives the same open-order figures.
+   */
+  @Test
+  void aPartiallyFilledThenCancelledOrderKeepsItsFillAndStopsWorking() {
+    for (final boolean withNewOrder : new boolean[] {true, false}) {
+      final Consumer<JournalScript> partial = s -> {
+        if (withNewOrder) {
+          s.newOrder(NINE, 1, 9, 1001, Side.Buy, px("100"), 100);
+        }
+        s.executionReport(NINE + 1, 1, 9, 509, 90, 1001, Side.Buy, OrdStatus.PartiallyFilled, px("100"), 40,
+            60, 40, NINE + 1);
+      };
+      final PositionKeeper working = replay(partial);
+      assertEquals(List.of(new OpenOrder(1, 9, 509, 1001, 60, 40)), working.openOrders(), "after the fill");
+      assertEquals(40, working.position(BOND).netQuantity());
+
+      final PositionKeeper cancelled = replay(partial.andThen(s ->
+          s.executionReport(NINE + 2, 1, 9, 509, 91, 1001, Side.Buy, OrdStatus.Cancelled, 0, 0, 0, 40, NINE + 2)));
+      assertTrue(cancelled.openOrders().isEmpty(), "a cancelled order is not working");
+      assertEquals(40, cancelled.position(BOND).netQuantity(), "the 40 filled stay");
+      assertEquals(1, cancelled.trades().size(), "the cancel books nothing");
+      assertEquals(List.of("PARF", "CAME"),
+          cancelled.recordsByVenueOrderId(509).stream().map(OrderRecord::eventType).toList());
+    }
+  }
+
   @Test
   void otherTemplatesAreIgnoredAndForeignSchemasRejected() {
     final byte[] heartbeat = new byte[20];

@@ -245,10 +245,12 @@ public final class PositionKeeper implements FrameHandler {
       return;
     }
 
+    // an order first seen through its reports (no NewOrder journaled) starts here; the state keeps
+    // only leaves and cum, both set from this report below, so the order quantity (cum + leaves in
+    // FIX) is not needed
     final OrderState order =
         orders.computeIfAbsent(
-            clOrdId, id -> new OrderState(venueId, id, instrumentId, side, executionReport.cumQuantity()
-                + executionReport.leavesQuantity()));
+            clOrdId, id -> new OrderState(venueId, id, instrumentId, side, executionReport.leavesQuantity()));
     order.venueOrderId = venueOrderId;
     order.leaves = executionReport.leavesQuantity();
     order.cum = executionReport.cumQuantity();
@@ -666,11 +668,11 @@ public final class PositionKeeper implements FrameHandler {
     private OrdStatus status = OrdStatus.New;
 
     OrderState(final int venueId, final long clOrdId, final int instrumentId, final Side side,
-        final long quantity) {
+        final long leaves) {
       this.venueId = venueId;
       this.clOrdId = clOrdId;
       this.instrumentId = instrumentId;
-      this.leaves = quantity;
+      this.leaves = leaves;
       if (side == null) {
         throw new IllegalArgumentException("order " + clOrdId + " without a side");
       }
