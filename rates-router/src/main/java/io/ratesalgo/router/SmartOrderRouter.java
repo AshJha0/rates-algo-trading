@@ -697,8 +697,9 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
       cAcked[cs] = true;
       scorecard.onAck(r, now, now - cSent[cs]);
       if (cEmulatedIoc[cs] && ChildOrderBook.isLive(st)) {
-        // a day order standing in for an IOC: what did not trade on arrival is cancelled now
-        cancelChild(cs, true, false);
+        // a day order standing in for an IOC: what did not trade on arrival is cancelled now,
+        // and its remainder waits for a retry as an IOC remainder does
+        cancelChild(cs, false, false);
       }
     }
     final long fill = children.lastFill();
@@ -719,7 +720,10 @@ public final class SmartOrderRouter implements ParentOrderSink, ExecutionListene
     final int r = cRow[cs];
     final long ordered = children.ordered(cs);
     if (!children.passive(cs)) {
-      scorecard.onIocDone(r, clock.nanoTime(), ordered, children.cum(cs));
+      // a rejected order never reached the book: its reject rate counts it, not the fill ratio
+      if (children.state(cs) != ChildState.Rejected) {
+        scorecard.onIocDone(r, clock.nanoTime(), ordered, children.cum(cs));
+      }
     } else if (children.state(cs) == ChildState.Filled || cHorizonCancel[cs]) {
       // cancelled at its time limit or filled: an outcome; any other cancel censors it
       calibration.record(r, cBucket[cs], cModelP[cs], children.cum(cs) / (double) ordered);

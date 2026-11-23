@@ -6,7 +6,10 @@ import io.ratesalgo.messages.sbe.TimeInForce;
 import java.util.ArrayList;
 import java.util.List;
 
-/** A hand-driven book and a recording gateway for deterministic router tests. */
+/**
+ * A hand-driven book and a recording gateway for deterministic router tests. Level 0 is the
+ * touch arrays; deeper levels, for the ladder model, are set with {@link #level}.
+ */
 final class StubVenues implements BookView, OrderGateway {
 
   /** A child order the router sent. */
@@ -22,6 +25,9 @@ final class StubVenues implements BookView, OrderGateway {
   final long[] updated;
   final List<Order> orders = new ArrayList<>();
   final List<long[]> cancels = new ArrayList<>();
+  // deeper levels: [venue][side 0 bid, 1 ask][level - 1]
+  final long[][][] deepPrice;
+  final long[][][] deepQty;
 
   StubVenues(final int... venueIds) {
     ids = venueIds.clone();
@@ -33,6 +39,15 @@ final class StubVenues implements BookView, OrderGateway {
     rate = new double[n];
     updated = new long[n];
     java.util.Arrays.fill(updated, BookView.AGE_UNKNOWN);
+    deepPrice = new long[n][2][CostTable.MAX_LEVELS];
+    deepQty = new long[n][2][CostTable.MAX_LEVELS];
+  }
+
+  /** Sets level {@code k >= 1} of a side. */
+  void level(final int venue, final Side side, final int k, final long price, final long qty) {
+    final int i = index(venue);
+    deepPrice[i][side == Side.Buy ? 0 : 1][k - 1] = price;
+    deepQty[i][side == Side.Buy ? 0 : 1][k - 1] = qty;
   }
 
   int index(final int venue) {
@@ -56,11 +71,20 @@ final class StubVenues implements BookView, OrderGateway {
 
   @Override
   public long depth(final int venueId, final Side side, final int level) {
-    if (level != 0) {
-      return 0;
-    }
     final int i = index(venueId);
+    if (level != 0) {
+      return level < 0 || level > CostTable.MAX_LEVELS ? 0 : deepQty[i][side == Side.Buy ? 0 : 1][level - 1];
+    }
     return side == Side.Buy ? bidDepth[i] : askDepth[i];
+  }
+
+  @Override
+  public long levelPrice(final int venueId, final Side side, final int level) {
+    final int i = index(venueId);
+    if (level == 0) {
+      return side == Side.Buy ? bid[i] : ask[i];
+    }
+    return level < 0 || level > CostTable.MAX_LEVELS ? 0 : deepPrice[i][side == Side.Buy ? 0 : 1][level - 1];
   }
 
   @Override
