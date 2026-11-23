@@ -94,10 +94,13 @@ class TimerWheelEdgesTest {
   void theSystemClockReadsTheWallClockAndAMovingMonotonicTime() {
     final SystemClock clock = SystemClock.INSTANCE;
     final long a = clock.nanoTime();
+    final Instant before = Instant.now();
     final long wall = clock.epochNanos();
+    final Instant after = Instant.now();
     final long b = clock.nanoTime();
     assertTrue(b >= a && a != 0, "monotonic");
-    final long expected = Instant.now().toEpochMilli() * 1_000_000L;
-    assertTrue(Math.abs(wall - expected) < 60_000_000_000L, "within a minute of the wall clock: " + wall);
+    final long lo = before.getEpochSecond() * 1_000_000_000L + before.getNano();
+    final long hi = after.getEpochSecond() * 1_000_000_000L + after.getNano();
+    assertTrue(lo <= wall && wall <= hi, lo + " <= " + wall + " <= " + hi);
   }
 }
