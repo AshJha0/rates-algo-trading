@@ -1,0 +1,21 @@
+{
+  "fixture": "sim_v2_params.json",
+  "created_utc": "2026-11-23T14:52:56+00:00",
+  "sha256": "3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4",
+  "size": 24122,
+  "read_start": "2024-11-25",
+  "read_end": "2025-12-31",
+  "curve_read_start": "2015-01-02",
+  "manifests": [
+    "data/manifests/sim_v2_dtcc.json",
+    "data/manifests/edge_par_curve.json",
+    "data/manifests/edge_alfred.json",
+    "data/manifests/edge_fomc.json",
+    "data/manifests/edge_auctions.json"
+  ],
+  "raw_file_count": 419,
+  "raw_files": "listed in the manifests; DTCC file days 2024-11-25 to 2025-12-31 are read (288 files), the 2026 files only by the validation command",
+  "transformation": "Calibration-period estimates of pre-analysis note SIM3-CAL-001 (research/prereg/SIM3-CAL-001.yaml): curve PCA on daily par-yield changes, median-based print dispersion and intraday volatility, event-window variance, arrivals, sizes, signed markouts, and the zero-profit competitor spread; assumptions carry status 'assumption' and a band. Evidence: docs/research/SIM_V2_CALIBRATION.md.",
+  "produced_by": "python -m ratesresearch.simcal calibrate --raw RAW --cache CACHE --out cal.json; python -m ratesresearch.simcal params --cal cal.json",
+  "validation": "docs/research/SIM_V2_CALIBRATION.md section 10 (one read of 2026-01-02 to 2026-06-30 after the estimators were frozen at commit e09e3b8)"
+}

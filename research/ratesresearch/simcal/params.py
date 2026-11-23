@@ -28,7 +28,10 @@ COMPETITOR_LOG_SD = (0.5, 0.35, 0.7)
 DEALERS = (3, 5)
 RESPONSE_PROBABILITY = 0.9
 ALL_IN_COST_BP = (0.08, 0.05, 0.15)
-INFORMED_FRACTION = (0.2, 0.1, 0.4)
+INFORMED_FRACTION = (0.5, 0.2, 1.0)
+TREASURY_SPREAD_MULTIPLE = (0.5, 0.3, 1.0)
+TAKER_SIGN_SKILL = (0.1, 0.0, 0.2)
+TOUCH_DEPTH_USD_MM = (30.0, 10.0, 100.0)
 DRIFT_TIME_CONSTANT_S = (10.0, 2.0, 60.0)
 DESK_INQUIRY_SHARE = (0.5, 0.2, 1.0)
 SPREAD_FACTOR_SD = (0.7, 0.3, 1.3)
@@ -317,6 +320,11 @@ def build(cal: dict[str, Any]) -> dict[str, Any]:
                 "bp of client DV01: hedge spread, fees and capital of a competitor; equals its realised half-spread at zero profit",
                 "lower figure 0.05 is the measured raw 5-minute realised half-spread, which misclassified sides pull towards zero",
             ),
+            "treasury_half_spread_multiple": _assume(
+                TREASURY_SPREAD_MULTIPLE,
+                "Treasury competitor median half-spread in bp of yield, as a multiple of the swap median",
+                "no Treasury RFQ data; 0.5 is the ratio in the present back-test competitor model",
+            ),
             "size_and_tenor_scaling": _p(
                 0.0,
                 "exponent of size and of tenor in the median half-spread",
@@ -339,8 +347,13 @@ def build(cal: dict[str, Any]) -> dict[str, Any]:
             ),
             "informed_fraction": _assume(
                 INFORMED_FRACTION,
-                "probability that an RFQ is informed",
-                "only the product fraction x move is constrained",
+                "probability that an RFQ is informed, averaged over client tiers",
+                "only the product fraction x move is constrained by the data; 0.5 rather than the old 0.2 because a smaller fraction with a larger move makes the desk's own RFQs explain an implausible share of the level factor's variance (design document, section 6)",
+            ),
+            "tier_weights_and_informed_probability": _assume(
+                (0.5, 0.3, 0.2),
+                "weights of client tiers A, B, C; informed probabilities 0.25, 0.60, 0.975 (weighted mean = informed_fraction)",
+                "tier structure kept from the back-test synthetic day, rescaled; no client data",
             ),
             "move_per_informed_trade": _p(
                 _r(adverse / INFORMED_FRACTION[0]),
@@ -390,6 +403,16 @@ def build(cal: dict[str, Any]) -> dict[str, Any]:
             "futures_daily_volume_contracts": _assume(
                 (1_500_000.0, 750_000.0, 3_000_000.0),
                 "contracts per day, 10-year note future",
+                "assumption",
+            ),
+            "taker_sign_skill": _assume(
+                TAKER_SIGN_SKILL,
+                "probability above one half that another taker's trade is in the direction of the latent mid's move over the next 5 s",
+                "assumption; makes resting orders adversely selected",
+            ),
+            "touch_depth_usd_mm": _assume(
+                TOUCH_DEPTH_USD_MM,
+                "USD millions resting at the best level of the 10-year note (other instruments in proportion to daily volume); levels 2 to 5 hold 1.5, 2, 2, 2 times this",
                 "assumption",
             ),
             "taker_trade_size_usd_mm": _assume(

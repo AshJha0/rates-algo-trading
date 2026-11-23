@@ -62,3 +62,12 @@ Downloaded unattended on 2026-10-31 with `python -m ratesresearch.edge.sources`,
 
 Each day's input file, `forward/inputs/<day>.json` on the `forward-log` branch, records every download's URL, size, SHA-256 and time, and plays the part of a manifest. FRED's copy of SOFR timed out on 2026-11-07 and is not used.
 
+## Simulator calibration (SIM3-CAL-001, 2026-11-23)
+
+The DTCC zips of the edge-study download were no longer on disk (`data/raw/` absent; no `CFTC_CUMULATIVE_RATES_*.zip` under `C:\Work\Claude` or the user profile). They were downloaded again on 2026-11-23 from the same endpoint (`https://kgc0418-tdw-data-0.s3.amazonaws.com/cftc/eod/`, no account or key), into a directory outside the repository, for `python -m ratesresearch.simcal`. Terms as before: DTCC terms of use, CFTC Part 43 public data, raw files not redistributed.
+
+| Source | Files | Status |
+|---|---|---|
+| DTCC SDR public dissemination, rates | 419 of the 436 files of `data/manifests/edge_dtcc.json`, 526 MB | downloaded; every file's SHA-256 equals the one recorded in the first manifest. The 17 files of 2024-10-29 to 2024-11-20 answered HTTP 403 (moved to archive storage, as the older files had been). Manifest `data/manifests/sim_v2_dtcc.json` |
+
+Committed result: `data/calibration/sim_v2_params.json` with `data/calibration/sim_v2_params.provenance.json`; every fitted entry names its manifest in `fitted_from`. No other source was downloaded: the par curve, release, FOMC and auction inputs are the committed edge fixtures.

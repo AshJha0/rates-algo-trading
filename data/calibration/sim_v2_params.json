@@ -617,6 +617,18 @@
       "status": "assumption",
       "note": "lower figure 0.05 is the measured raw 5-minute realised half-spread, which misclassified sides pull towards zero"
     },
+    "treasury_half_spread_multiple": {
+      "value": 0.5,
+      "unit": "Treasury competitor median half-spread in bp of yield, as a multiple of the swap median",
+      "interval": [
+        0.3,
+        1.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "no Treasury RFQ data; 0.5 is the ratio in the present back-test competitor model"
+    },
     "size_and_tenor_scaling": {
       "value": 0.0,
       "unit": "exponent of size and of tenor in the median half-spread",
@@ -641,19 +653,31 @@
       "note": "zero-profit value: expected winning half-spread minus all_in_cost. Upper end: largest winning half-spread the dispersion supports minus the smallest realised half-spread the markouts support"
     },
     "informed_fraction": {
-      "value": 0.2,
-      "unit": "probability that an RFQ is informed",
+      "value": 0.5,
+      "unit": "probability that an RFQ is informed, averaged over client tiers",
       "interval": [
-        0.1,
-        0.4
+        0.2,
+        1.0
       ],
       "window": "none",
       "fitted_from": "assumption",
       "status": "assumption",
-      "note": "only the product fraction x move is constrained"
+      "note": "only the product fraction x move is constrained by the data; 0.5 rather than the old 0.2 because a smaller fraction with a larger move makes the desk's own RFQs explain an implausible share of the level factor's variance (design document, section 6)"
+    },
+    "tier_weights_and_informed_probability": {
+      "value": 0.5,
+      "unit": "weights of client tiers A, B, C; informed probabilities 0.25, 0.60, 0.975 (weighted mean = informed_fraction)",
+      "interval": [
+        0.3,
+        0.2
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "tier structure kept from the back-test synthetic day, rescaled; no client data"
     },
     "move_per_informed_trade": {
-      "value": 0.295,
+      "value": 0.118,
       "unit": "bp of yield at the traded tenor, expected, delivered through the level factor",
       "interval": null,
       "window": "2024-11-25 to 2025-12-31",
@@ -741,6 +765,30 @@
       "interval": [
         750000.0,
         3000000.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption"
+    },
+    "taker_sign_skill": {
+      "value": 0.1,
+      "unit": "probability above one half that another taker's trade is in the direction of the latent mid's move over the next 5 s",
+      "interval": [
+        0.0,
+        0.2
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption; makes resting orders adversely selected"
+    },
+    "touch_depth_usd_mm": {
+      "value": 30.0,
+      "unit": "USD millions resting at the best level of the 10-year note (other instruments in proportion to daily volume); levels 2 to 5 hold 1.5, 2, 2, 2 times this",
+      "interval": [
+        10.0,
+        100.0
       ],
       "window": "none",
       "fitted_from": "assumption",
