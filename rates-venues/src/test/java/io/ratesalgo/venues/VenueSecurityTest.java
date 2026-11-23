@@ -159,7 +159,23 @@ class VenueSecurityTest {
     }
   }
 
+  /**
+   * Waits until the venue has let go of the engine's previous connection. QuickFIX/J tears a
+   * refused connection down on its own thread, and a connection arriving before that is closed
+   * as a second logon for the same session with no Logout at all, which is not what these tests
+   * are about (seen on the Linux runner on the third refusal in a row).
+   */
+  private static void awaitVenueFree(final VenueSimulator sim) {
+    final quickfix.Session venueSide = sim.session("RALGO");
+    final long deadline = System.nanoTime() + 10_000_000_000L;
+    while (venueSide != null && venueSide.hasResponder() && System.nanoTime() < deadline) {
+      Thread.onSpinWait();
+    }
+    assertTrue(venueSide == null || !venueSide.hasResponder(), "the venue still holds the last connection");
+  }
+
   private static void expectRefusal(final VenueSimulator sim, final EngineSession e, final Refusal seen) {
+    awaitVenueFree(sim);
     e.transport().filter((b, o, l) -> {
       final FixParser p = new FixParser();
       p.wrap(b, o, l);
@@ -288,6 +304,7 @@ class VenueSecurityTest {
       assertEquals(3, clob.eventLog().stream().filter(l -> l.contains("logon refused RALGO")).count());
 
       // the right credentials are accepted, on the same acceptor, after the refusals
+      awaitVenueFree(clob);
       try (EngineSession e = h.connect("RALGO", (s, m, d) -> { }, null, "desk-1", Secret.of(LOGON_PASSWORD), true)) {
         assertEquals(SessionState.ACTIVE, e.session().state());
         assertEquals(0, e.session().stats().logonsRefused());
