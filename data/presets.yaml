@@ -18,9 +18,21 @@
 #     assumptions:  optional (added in P5, DR-P5-01); mapping of parameter name to
 #                   { band: { low: number, central: number, high: number }, rationale: text }
 #                   for declared assumptions reported across a band (DR-008)
-#     superseded:   optional (added with the simulator v2 harness); says that a version 1 market
-#                   preset is kept only so recorded ledger rows reproduce, and what replaces it
-#                   for new experiments (docs/research/SIM_V2_DESIGN.md section 9)
+#
+# SUPERSEDED FOR NEW EXPERIMENTS (simulator v2 harness, 2026-11-23). These version 1 market
+# presets are kept only so that recorded ledger rows reproduce; a new experiment runs on the
+# shared market model (docs/research/SIM_V2_DESIGN.md sections 2 to 9, parameters
+# data/calibration/sim_v2_params.json) and must not read them as market parameters:
+#   usd_synthetic_market        replaced by the market model; its latencies, clients_per_tier and
+#                               sofr_fixing_pct are still read as desk-side and transport settings
+#   usd_rfq_flow                replaced by rfq.*; its event calendar is still the fixing calendar
+#                               strategies see
+#   usd_rfq_competition         replaced by competitors.* (section 7)
+#   usd_sofr_ois_size_by_tenor  replaced by rfq.size_lognormal_by_tenor
+#   usd_time_of_day_spread      replaced by the flat multiplier and event windows of P
+#   usd_hedge_cost              replaced by the order-book model (section 8); fee_per_lot and
+#                               order_latency_ms are still read as desk-side settings
+# usd_rfq_hit_rate stays, for the sensitivity rule only. sim_v2_publication is the v2 transport.
 #
 # Dates are written as quoted strings so YAML readers do not turn them into timestamps.
 #
@@ -59,7 +71,6 @@ presets:
     read by a strategy. Version 1 keeps
     usd_synthetic_market.curve_input_interval_s (5 s) so that its recorded runs reproduce.
 - name: usd_hedge_cost
-  superseded: 'version 1 only, kept so recorded ledger rows reproduce; superseded for new experiments by the order-book model of docs/research/SIM_V2_DESIGN.md section 8; fee_per_lot and order_latency_ms are still read by simulator v2 as desk-side settings'
   fitted_from: assumption
   data_range:
     start: '2026-10-31'
@@ -86,7 +97,6 @@ presets:
     and pay 1.50 USD per contract in fees. In the queue model 60 percent of displayed size decreases are
     trades.
 - name: usd_rfq_competition
-  superseded: 'version 1 only, kept so recorded ledger rows reproduce; superseded for new experiments by competitors.* of data/calibration/sim_v2_params.json (SIM_V2_DESIGN.md section 7)'
   fitted_from: assumption
   data_range:
     start: '2026-10-31'
@@ -138,7 +148,6 @@ presets:
         0.5 of its log-odds), low -1.25 (clients loyal, price matters less), high -5.0 (clients pick the
         best price almost always). Results are reported at all three points.'
 - name: usd_rfq_flow
-  superseded: 'version 1 only, kept so recorded ledger rows reproduce; superseded for new experiments by rfq.* of data/calibration/sim_v2_params.json; the event calendar fields are still read as the fixing calendar strategies see'
   fitted_from: data/manifests/dtcc_rates_2025-10.json
   data_range:
     start: '2025-10-01'
@@ -260,7 +269,6 @@ presets:
     it is not a market hit rate (DR-008). The back-tester replaces spread_to_cover_bp by the band value
     of each run. Out-of-sample log-loss on the last 12000 labels: model 0.6146, constant 0.6900.'
 - name: usd_sofr_ois_size_by_tenor
-  superseded: 'version 1 only, kept so recorded ledger rows reproduce; superseded for new experiments by rfq.size_lognormal_by_tenor of data/calibration/sim_v2_params.json'
   fitted_from: data/manifests/edge_dtcc.json
   data_range:
     start: '2025-07-01'
@@ -359,7 +367,6 @@ presets:
     ledger seq 5, holdout verdict supported: E4a passed (Holm p 0.005497), E4b passed (Holm p 0.005497).
     Values are holdout means with bootstrap standard errors; docs/research/EDGE_STUDIES.md.'
 - name: usd_synthetic_market
-  superseded: 'version 1 only, kept so recorded ledger rows reproduce; superseded for new experiments by the shared market model (SIM_V2_DESIGN.md sections 2 to 8); latencies, clients_per_tier and sofr_fixing_pct are still read as desk-side and transport settings'
   fitted_from: assumption
   data_range:
     start: '2026-10-31'
@@ -513,7 +520,6 @@ presets:
     fast money (45 percent informed over 60 s). Informed share and horizon are what ratesresearch.markouts
     tries to recover.
 - name: usd_time_of_day_spread
-  superseded: 'version 1 only, kept so recorded ledger rows reproduce; superseded for new experiments by the flat time-of-day multiplier and event windows of data/calibration/sim_v2_params.json'
   fitted_from: data/manifests/edge_dtcc.json, data/manifests/edge_alfred.json, data/manifests/edge_fomc.json
   data_range:
     start: '2025-07-01'
