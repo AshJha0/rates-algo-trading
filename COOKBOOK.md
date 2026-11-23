@@ -4,7 +4,7 @@
 
 Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/cookbook/`. `RecipesTest` runs it in CI and compares its output with the block under "Expected output"; `tools/check_cookbook.py` checks that this page quotes both verbatim. The outputs were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11 and reproduced on JDK 27; they do not depend on the machine. Recipes 4 to 8 (P1) print values rounded well above double-precision noise so that they are the same on every platform. Recipes 14 to 16 (P3) were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11. Recipes 23 to 34 (round 2) were recorded on 2026-10-31 with JDK 25.0.5 and Python 3.12 on Windows 11; the analytics recipes among them (23 to 26) round their output in the same way as recipes 4 to 8.
 
-## The planned recipes
+## The recipes
 
 1. How do I use the ManualClock and TimerWheel in a test? (P0, written below)
 2. How do I write frames to a journal and replay them? (P0, written below)
