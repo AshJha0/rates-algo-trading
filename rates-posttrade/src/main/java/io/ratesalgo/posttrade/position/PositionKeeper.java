@@ -48,7 +48,11 @@ import org.agrona.DirectBuffer;
  * NewOrder and Quote for the order records, and the post-trade messages PostTradeBust (100) and
  * TradeAmend (101). A venue's TradeBust (44, FIX ExecType H through the gateway) is applied as a
  * PostTradeBust of the Execution trade {@code (venueId, execId)} with reason VenueError
- * (DECISIONS.md DR-P6-01, API_SPEC.md Section 17.14).
+ * (DECISIONS.md DR-P6-01, API_SPEC.md Section 17.14). An RFQ trade has no execution id of ours:
+ * it is keyed by our quote id, which the venue's bust carries as {@code clOrdId}. So when no
+ * execution matches, the bust is applied to the Rfq trade {@code (venueId, clOrdId)} on the same
+ * instrument, and a bust that arrives before either is held for whichever is booked first
+ * (review 2026-11-23, Q14).
  *
  * <ul>
  *   <li>Duplicates: a second fill with a booked trade key is ignored; if its economics differ it is
@@ -86,6 +90,8 @@ public final class PositionKeeper implements FrameHandler {
   private final Map<TradeKey, Trade> trades = new HashMap<>();
   private final Map<TradeKey, List<Trade>> versions = new HashMap<>();
   private final Map<TradeKey, Long> pendingBusts = new HashMap<>();
+  // a pending venue bust may be for an RFQ trade: Rfq key -> the Execution key it is held under
+  private final Map<TradeKey, PendingVenueBust> pendingRfqBusts = new HashMap<>();
   private final Set<TradeKey> seenReports = new HashSet<>();
   private final Set<TradeKey> seenQuoteOutcomes = new HashSet<>();
   private final Map<PositionKey, OpeningPosition> openings = new TreeMap<>();
@@ -352,8 +358,20 @@ public final class PositionKeeper implements FrameHandler {
   }
 
   private void onVenueBust(final long sequence) {
-    bust(new TradeKey(venueBust.venueId(), TradeSource.Execution, venueBust.execId()),
-        BustReason.VenueError.name(), sequence);
+    final TradeKey execution = new TradeKey(venueBust.venueId(), TradeSource.Execution, venueBust.execId());
+    final long quoteId = venueBust.clOrdId();
+    if (!trades.containsKey(execution) && quoteId != 0) {
+      final TradeKey rfq = new TradeKey(venueBust.venueId(), TradeSource.Rfq, quoteId);
+      final Trade t = trades.get(rfq);
+      if (t != null && t.instrumentId() == venueBust.instrumentId()) {
+        applyBust(t, sequence, BustReason.VenueError.name());
+        return;
+      }
+      if (t == null && !pendingBusts.containsKey(execution)) {
+        pendingRfqBusts.put(rfq, new PendingVenueBust(execution, venueBust.instrumentId()));
+      }
+    }
+    bust(execution, BustReason.VenueError.name(), sequence);
   }
 
   private void bust(final TradeKey key, final String reason, final long sequence) {
@@ -443,11 +461,24 @@ public final class PositionKeeper implements FrameHandler {
       audit.add(new AuditEntry(t.journalSequence(), lastTimestamp, AuditKind.LATE_FILL, t.key(), 0,
           "transact " + t.transactNanos() + " before latest " + latest));
     }
-    final Long bustSequence = pendingBusts.remove(t.key());
+    Long bustSequence = pendingBusts.remove(t.key());
+    if (bustSequence != null) {
+      // the bust was for this execution after all, not for an RFQ trade with the same number
+      pendingRfqBusts.values().removeIf(b -> b.execution().equals(t.key()));
+    } else if (t.key().source() == TradeSource.Rfq) {
+      final PendingVenueBust held = pendingRfqBusts.get(t.key());
+      if (held != null && held.instrumentId() == t.instrumentId()) {
+        pendingRfqBusts.remove(t.key());
+        bustSequence = pendingBusts.remove(held.execution());
+      }
+    }
     if (bustSequence != null) {
       applyBust(t, bustSequence, "pending");
     }
   }
+
+  /** A venue bust held under its execution key that may name an RFQ trade on this instrument. */
+  private record PendingVenueBust(TradeKey execution, int instrumentId) {}
 
   private void replace(final Trade t) {
     trades.put(t.key(), t);

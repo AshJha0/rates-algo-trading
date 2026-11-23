@@ -126,6 +126,75 @@ class PositionKeeperTest {
     assertEquals(1, k.pendingBusts().size(), "a bust of an unknown execution waits for its fill");
   }
 
+  private static final TradeKey R1 = new TradeKey(2, TradeSource.Rfq, 9001);
+
+  /** An RFQ on venue 2: the client sells 100, we quote, the venue reports Done at 100. */
+  private static void rfqTrade(final JournalScript s, final long at) {
+    s.quoteRequest(at, 2, 77, 5, 1001, Side.Sell, 100, "USD");
+    s.quote(at + 1, 2, 77, 9001, 1001, px("100"), px("100.1"), 100, at + 1_000);
+    s.quoteResponse(at + 2, 2, 77, 9001, QuoteStatus.Done, px("100"), 100, at + 2);
+  }
+
+  /** Review 2026-11-23, Q14: the venue names an RFQ trade by our quote id, not by an execution. */
+  @Test
+  void venueBustOfAnRfqTradeIsApplied() {
+    final PositionKeeper k = replay(s -> {
+      rfqTrade(s, NINE);
+      s.venueBust(NINE + 5, 2, 9001, 4242, 1001, Side.Buy, px("100"), 100);
+      s.venueBust(NINE + 6, 2, 9001, 4242, 1001, Side.Buy, px("100"), 100);
+    });
+    assertEquals(TradeStatus.BUSTED, k.trade(R1).status());
+    assertEquals(0, k.position(new PositionKey(1, 10, 1001)).netQuantity());
+    assertTrue(k.pendingBusts().isEmpty(), "nothing left waiting for an execution that will never come");
+    assertEquals(1, k.audit(AuditKind.BUSTED).size());
+    assertEquals("reason=VenueError", k.audit(AuditKind.BUSTED).get(0).detail());
+    assertEquals(1, k.audit(AuditKind.DUPLICATE_BUST).size(), "the repeat is a duplicate, not a second bust");
+  }
+
+  @Test
+  void venueBustBeforeItsRfqTradeIsHeldAndApplied() {
+    final PositionKeeper held = replay(s -> s.venueBust(NINE, 2, 9001, 4242, 1001, Side.Buy, px("100"), 100));
+    assertEquals(1, held.pendingBusts().size());
+    final PositionKeeper k = replay(s -> {
+      s.venueBust(NINE, 2, 9001, 4242, 1001, Side.Buy, px("100"), 100);
+      rfqTrade(s, NINE + 10);
+    });
+    assertTrue(k.pendingBusts().isEmpty());
+    assertEquals(TradeStatus.BUSTED, k.trade(R1).status());
+    assertEquals(1, k.audit(AuditKind.BUST_PENDING).size());
+    assertEquals(0, k.position(new PositionKey(1, 10, 1001)).netQuantity());
+  }
+
+  @Test
+  void venueBustIsNotAppliedToAnRfqTradeOnAnotherInstrument() {
+    final PositionKeeper k = replay(s -> {
+      rfqTrade(s, NINE);
+      s.venueBust(NINE + 5, 2, 9001, 4242, 1002, Side.Buy, px("100"), 100);
+    });
+    assertEquals(TradeStatus.LIVE, k.trade(R1).status());
+    assertEquals(1, k.pendingBusts().size(), "held, and reported by the reconciliation");
+    // and held before the trade, it does not bust a trade on another instrument either
+    final PositionKeeper before = replay(s -> {
+      s.venueBust(NINE, 2, 9001, 4242, 1002, Side.Buy, px("100"), 100);
+      rfqTrade(s, NINE + 10);
+    });
+    assertEquals(TradeStatus.LIVE, before.trade(R1).status());
+    assertEquals(1, before.pendingBusts().size());
+  }
+
+  /** A held bust goes to the execution it names when that arrives, not to a later RFQ trade. */
+  @Test
+  void aHeldVenueBustIsUsedOnce() {
+    final PositionKeeper k = replay(s -> {
+      s.venueBust(NINE, 2, 9001, 4242, 1001, Side.Buy, px("100"), 100);
+      s.executionReport(NINE + 1, 2, 9001, 600, 4242, 1001, Side.Buy, OrdStatus.Filled, px("100"), 100, 0, 100, NINE + 1);
+      rfqTrade(s, NINE + 10);
+    });
+    assertEquals(TradeStatus.BUSTED, k.trade(new TradeKey(2, TradeSource.Execution, 4242)).status());
+    assertEquals(TradeStatus.LIVE, k.trade(R1).status());
+    assertTrue(k.pendingBusts().isEmpty());
+  }
+
   @Test
   void bustBeforeFillIsHeldAndApplied() {
     final PositionKeeper k = replay(s -> {
