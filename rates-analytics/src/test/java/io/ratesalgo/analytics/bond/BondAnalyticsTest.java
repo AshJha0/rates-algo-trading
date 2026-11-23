@@ -121,6 +121,82 @@ class BondAnalyticsTest {
     }
   }
 
+  /**
+   * The gradient at a fixed z-spread against bumping each pillar and repricing at that spread
+   * (review 2026-11-23, A3). Central difference with h = 1e-7 in ln P: truncation is O(h^2) and
+   * rounding about 1e-14 / h = 1e-7 times the price, so 1e-5 on a gradient of order 100 is the
+   * same bound as the zero-spread test above.
+   */
+  @Test
+  void curveGradientAtAZSpreadMatchesBumpedPillars() {
+    final FixedRateBond b = ust10();
+    final DiscountCurve c = Golden.quantLibCurve("USD-OIS").copy();
+    final int settle = b.settlementDate(Golden.today());
+    final double h = 1e-7;
+    for (final double spread : new double[] {-0.004, 0.0, 0.0035, 0.012}) {
+      final double[] g = new double[c.pillarCount()];
+      P.dirtyFromCurveGradient(b, c, settle, spread, 1.0, g);
+      for (int i = 0; i < c.pillarCount(); i++) {
+        final double y = c.pillarLogDf(i);
+        c.setPillarLogDf(i, y + h);
+        c.update();
+        final double up = P.dirtyFromCurve(b, c, settle, spread);
+        c.setPillarLogDf(i, y - h);
+        c.update();
+        final double dn = P.dirtyFromCurve(b, c, settle, spread);
+        c.setPillarLogDf(i, y);
+        c.update();
+        assertEquals((up - dn) / (2 * h), g[i], 1e-5, "spread " + spread + " pillar " + i);
+      }
+    }
+    // zero spread is the existing gradient, to the bit
+    final double[] zero = new double[c.pillarCount()];
+    final double[] plain = new double[c.pillarCount()];
+    P.dirtyFromCurveGradient(b, c, settle, 0.0, 1.0, zero);
+    P.dirtyFromCurveGradient(b, c, settle, 1.0, plain);
+    for (int i = 0; i < zero.length; i++) {
+      assertEquals(plain[i], zero[i], 0.0);
+    }
+  }
+
+  @Test
+  void marketGradientSolvesTheSpreadAndCutsTheRiskOfABondBelowItsCurveValue() {
+    final FixedRateBond b = ust10();
+    final DiscountCurve c = Golden.quantLibCurve("USD-OIS").copy();
+    final int settle = b.settlementDate(Golden.today());
+    final double onCurve = P.dirtyFromCurve(b, c, settle);
+    final double market = onCurve - 3.0;
+    final double[] g = new double[c.pillarCount()];
+    final double spread = P.marketGradient(b, c, market, settle, 1.0, g);
+    assertTrue(spread > 0, "cheaper than the curve: positive spread " + spread);
+    // Brent to 1e-15 in the spread; the price has a slope of about 800 per unit spread
+    assertEquals(market, P.dirtyFromCurve(b, c, settle, spread), 1e-10);
+    final double[] atSpread = new double[c.pillarCount()];
+    P.dirtyFromCurveGradient(b, c, settle, spread, 1.0, atSpread);
+    final double[] zero = new double[c.pillarCount()];
+    P.dirtyFromCurveGradient(b, c, settle, 0.0, 1.0, zero);
+    double sumMarket = 0.0;
+    double sumZero = 0.0;
+    for (int i = 0; i < g.length; i++) {
+      assertEquals(atSpread[i], g[i], 0.0);
+      // a parallel rise dz of the zero rates moves ln P(t) by -t dz, so the sum of gradient
+      // times pillar time is minus the price change per unit of parallel shift
+      final double t = c.time(c.pillarDate(i));
+      sumMarket += g[i] * t;
+      sumZero += zero[i] * t;
+    }
+    // positive, and smaller at the lower price. The cut is a little more than the 3 percent price
+    // cut because the spread discounts the long flows most.
+    assertTrue(sumMarket > 0 && sumMarket < sumZero, sumMarket + " vs " + sumZero);
+    assertTrue(sumMarket / sumZero < market / onCurve, "ratio " + sumMarket / sumZero);
+    // at the curve's own value the spread is zero and nothing changes
+    final double[] same = new double[c.pillarCount()];
+    assertEquals(0.0, P.marketGradient(b, c, onCurve, settle, 1.0, same), 1e-13);
+    for (int i = 0; i < same.length; i++) {
+      assertEquals(zero[i], same[i], 1e-9);
+    }
+  }
+
   @Test
   void repoForwardCarryAndRollDown() {
     final FixedRateBond b = ust10();

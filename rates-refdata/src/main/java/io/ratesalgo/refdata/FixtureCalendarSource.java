@@ -51,7 +51,10 @@ public final class FixtureCalendarSource implements CalendarSource {
     }
     if (date.getYear() < firstYear || date.getYear() > lastYear) {
       throw new RefDataException(
-          "calendar '" + calendar + "' covers " + firstYear + " to " + lastYear + ", not " + date);
+          "calendar '" + calendar + "' covers " + firstYear + " to " + lastYear + ", not " + date
+              + ": holidays.csv has no rows for " + date.getYear()
+              + ", so the date cannot be classified; add the year in tools/gen_refdata_fixtures.py"
+              + " and regenerate the fixtures");
     }
     return set.contains(date);
   }

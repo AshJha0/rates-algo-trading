@@ -316,6 +316,57 @@ public final class BondPricer {
     curve.accumulateLogDfGradient(settlement, -weight * pv, out);
   }
 
+  /**
+   * Adds {@code weight * d dirtyFromCurve(spread) / d ln P(pillar)} into {@code out}, the z-spread
+   * held fixed: the gradient of {@link #dirtyFromCurve(FixedRateBond, DiscountCurve, int, double)}.
+   * The spread scales each flow by exp(-s (t_pay - t_settle)), which does not depend on the
+   * pillars, so the flows are simply reweighted. A bond trading below its curve value (positive
+   * spread) has less risk than the zero-spread gradient says, the more so the longer it is.
+   */
+  public void dirtyFromCurveGradient(
+      final FixedRateBond b,
+      final DiscountCurve curve,
+      final int settlement,
+      final double spread,
+      final double weight,
+      final double[] out) {
+    final double dfs = curve.df(settlement);
+    final double ts = curve.time(settlement);
+    double pv = 0.0;
+    final int n = b.couponCount();
+    for (int i = 0; i < n; i++) {
+      final int pay = b.payAdjusted[i];
+      if (pay <= settlement) {
+        continue;
+      }
+      double a = settlement >= b.exDate[i] ? 0.0 : b.amount[i];
+      if (i == n - 1) {
+        a += 100.0;
+      }
+      final double v = a * curve.df(pay) / dfs * Math.exp(-spread * (curve.time(pay) - ts));
+      pv += v;
+      curve.accumulateLogDfGradient(pay, weight * v, out);
+    }
+    curve.accumulateLogDfGradient(settlement, -weight * pv, out);
+  }
+
+  /**
+   * The curve gradient at the market price: solves the z-spread that reprices {@code marketDirty}
+   * and adds {@code weight * d dirty / d ln P(pillar)} at that spread into {@code out}. This is the
+   * bond's rate risk as it trades, not as the OIS curve alone would value it. Returns the spread.
+   */
+  public double marketGradient(
+      final FixedRateBond b,
+      final DiscountCurve curve,
+      final double marketDirty,
+      final int settlement,
+      final double weight,
+      final double[] out) {
+    final double spread = zSpread(b, curve, marketDirty, settlement);
+    dirtyFromCurveGradient(b, curve, settlement, spread, weight, out);
+    return spread;
+  }
+
   /** Z-spread (continuous, decimal) that reprices the dirty price on the curve; to 1e-15. */
   public double zSpread(
       final FixedRateBond b, final DiscountCurve curve, final double dirty, final int settlement) {

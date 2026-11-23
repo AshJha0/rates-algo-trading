@@ -42,6 +42,7 @@ def us(base8: str) -> tuple[str, str]:
 
 
 import calendar as _cal
+from datetime import date as _date
 
 
 def first_coupon(mat: str, iss: str, freq: int) -> str:
@@ -60,6 +61,29 @@ def first_coupon(mat: str, iss: str, freq: int) -> str:
         if cand <= iss:
             return best
         best = cand
+
+def dated_date(first_cpn: str, iss: str, freq: int) -> str:
+    """Date interest accrues from.
+
+    The Treasury dates a note on its nominal date (the 15th or the last day of the month) and, when
+    that is not a business day, issues it on the next one: the note that matures 2028-10-31 is dated
+    Saturday 2026-10-31 and issued Monday 2026-11-02, the first coupon is a full one and the buyer
+    pays two days of accrued at issue (31 CFR 356.2 "dated date" and Appendix B on accrued interest; the offering
+    announcement lists "Dated Date" and "Issue Date" separately). So: one coupon period before the
+    first coupon when the issue date is within a few days after it, otherwise the issue date itself
+    (a genuinely short or long first coupon).
+    """
+    y, m, d = (int(x) for x in first_cpn.split("-"))
+    eom = d == _cal.monthrange(y, m)[1]
+    m -= 12 // freq
+    while m < 1:
+        m += 12
+        y -= 1
+    dd = _cal.monthrange(y, m)[1] if eom else min(d, _cal.monthrange(y, m)[1])
+    quasi = _date(y, m, dd)
+    gap = (_date.fromisoformat(iss) - quasi).days
+    return quasi.isoformat() if 0 <= gap <= 4 else iss
+
 
 bonds = []
 auctions = []
@@ -81,7 +105,7 @@ for tenor, letters, cpn, mat, ann, auc, iss in ust:
     isin, cusip = us("91282C" + letters[:2])
     first_cpn = first_coupon(mat, iss, 2)
     bonds.append(
-        [bond_id, isin, cusip, "UST", "USD", tenor, cpn, "2", mat, first_cpn, iss, iss, "US-GS", ann, auc, iss]
+        [bond_id, isin, cusip, "UST", "USD", tenor, cpn, "2", mat, first_cpn, dated_date(first_cpn, iss, 2), iss, iss, "US-GS", ann, auc, iss]
     )
     auctions.append(["UST", tenor, isin, ann, auc, iss])
     bond_id += 1
@@ -103,7 +127,7 @@ gilts = [
 ]
 for tenor, base, cpn, mat, ann, auc, iss in gilts:
     isin, _ = gb(base)
-    bonds.append([bond_id, isin, "", "GILT", "GBP", tenor, cpn, "2", mat, first_coupon(mat, iss, 2), iss, iss, "UK", ann, auc, iss])
+    bonds.append([bond_id, isin, "", "GILT", "GBP", tenor, cpn, "2", mat, first_coupon(mat, iss, 2), iss, iss, iss, "UK", ann, auc, iss])
     auctions.append(["GILT", tenor, isin, ann, auc, iss])
     bond_id += 1
 bunds = [
@@ -113,7 +137,7 @@ bunds = [
 for tenor, base, cpn, mat, ann, auc, iss in bunds:
     isin, _ = de(base)
     first = first_coupon(mat, iss, 1)
-    bonds.append([bond_id, isin, "", "BUND", "EUR", tenor, cpn, "1", mat, first, iss, iss, "TARGET", ann, auc, iss])
+    bonds.append([bond_id, isin, "", "BUND", "EUR", tenor, cpn, "1", mat, first, iss, iss, iss, "TARGET", ann, auc, iss])
     auctions.append(["BUND", tenor, isin, ann, auc, iss])
     bond_id += 1
 
@@ -121,7 +145,8 @@ files = {}
 files["bonds.csv"] = (
     "# Securities master: government bonds. Identifiers are synthetic (valid check digits), not real issues.\n"
     "# coupon in percent; frequency = coupons per year; dates ISO; calendar names a CalendarSource calendar.\n"
-    "id,isin,cusip,market,currency,tenor,coupon,frequency,maturity,firstCouponDate,issueDate,firstSettlementDate,calendar,announcementDate,auctionDate,onTheRunFromDate\n"
+    "# datedDate is the date interest accrues from: the nominal date when the issue date moved off a weekend.\n"
+    "id,isin,cusip,market,currency,tenor,coupon,frequency,maturity,firstCouponDate,datedDate,issueDate,firstSettlementDate,calendar,announcementDate,auctionDate,onTheRunFromDate\n"
     + "".join(",".join(str(x) for x in b) + "\n" for b in bonds)
 )
 files["auctions.csv"] = (
@@ -143,7 +168,8 @@ files["swap_templates.csv"] = (
 files["futures.csv"] = (
     "# Futures contract specifications (CBOT Treasury futures and Eurex Bund), from the exchanges' published specifications.\n"
     "id,symbol,exchange,underlying,currency,contractSize,tickSize,notionalCoupon,deliveryMonth,firstDeliveryDate,lastTradingDate\n"
-    "3001,TUZ6,CBOT,UST-2Y,USD,200000,0.0078125,6,2026-12,2026-12-01,2026-12-31\n"
+    # TU: one-eighth of 1/32 since 2019-01-13 (CME SER-8171; CME 2-Year T-Note contract specifications)
+    "3001,TUZ6,CBOT,UST-2Y,USD,200000,0.00390625,6,2026-12,2026-12-01,2026-12-31\n"
     "3002,FVZ6,CBOT,UST-5Y,USD,100000,0.0078125,6,2026-12,2026-12-01,2026-12-31\n"
     "3003,TYZ6,CBOT,UST-10Y,USD,100000,0.015625,6,2026-12,2026-12-01,2026-12-21\n"
     "3004,USZ6,CBOT,UST-BOND,USD,100000,0.03125,6,2026-12,2026-12-01,2026-12-21\n"
@@ -172,7 +198,9 @@ files["parties.csv"] = (
 hol = {
     "US-GS": [
         ("2026-01-01", "New Year"), ("2026-01-19", "Martin Luther King Jr Day"), ("2026-02-16", "Presidents Day"),
-        ("2026-04-03", "Good Friday"), ("2026-05-25", "Memorial Day"), ("2026-06-19", "Juneteenth"),
+        # no Good Friday 2026-04-03: SIFMA recommends an early close (12:00 ET), not a full close, because
+        # the employment report is released that day (sifma.org holiday schedule, read 2026-11-23)
+        ("2026-05-25", "Memorial Day"), ("2026-06-19", "Juneteenth"),
         ("2026-07-03", "Independence Day observed"), ("2026-09-07", "Labor Day"), ("2026-10-12", "Columbus Day"),
         ("2026-11-11", "Veterans Day"), ("2026-11-26", "Thanksgiving"), ("2026-12-25", "Christmas"),
         ("2027-01-01", "New Year"), ("2027-01-18", "Martin Luther King Jr Day"), ("2027-02-15", "Presidents Day"),
@@ -197,7 +225,7 @@ hol = {
     ],
 }
 files["holidays.csv"] = (
-    "# Holiday fixture for 2026 and 2027 for the calendars the venues use; a date outside the years listed is refused. Replaced by rates-analytics calendars once merged.\n"
+    "# Holiday fixture for 2026 and 2027 for the calendars the venues use; a date outside the years listed is refused. Full closes only: an early close (US Good Friday 2026-04-03) is a business day. Kept equal to the rates-analytics calendars by CalendarConsistencyTest.\n"
     "calendar,date,name\n"
     + "".join(f"{c},{d},{n}\n" for c, rows in hol.items() for d, n in rows)
 )

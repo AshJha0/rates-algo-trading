@@ -119,6 +119,7 @@ public final class RefData {
               Fields.integer(csv, r, "frequency"),
               Fields.date(csv, r, "maturity"),
               Fields.date(csv, r, "firstCouponDate"),
+              Fields.date(csv, r, "datedDate"),
               Fields.date(csv, r, "issueDate"),
               Fields.date(csv, r, "firstSettlementDate"),
               calendar,
@@ -131,6 +132,11 @@ public final class RefData {
           || !b.maturity().isAfter(b.firstCouponDate())) {
         throw new RefDataException(
             csv.where(r) + ": dates out of order (announce <= auction <= issue < first coupon < maturity)");
+      }
+      // interest cannot start after the issue settles, nor before the auction is announced
+      if (b.datedDate().isAfter(b.issueDate()) || b.datedDate().isBefore(b.announcementDate())) {
+        throw new RefDataException(
+            csv.where(r) + ": dated date " + b.datedDate() + " must lie between announcement and issue");
       }
       if (b.frequency() != 1 && b.frequency() != 2) {
         throw new RefDataException(csv.where(r) + ": frequency must be 1 or 2");
