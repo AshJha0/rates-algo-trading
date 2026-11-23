@@ -17,6 +17,7 @@ import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.RiskLimitBreachEncoder;
 import io.ratesalgo.messages.sbe.Side;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
@@ -42,6 +43,12 @@ import org.agrona.concurrent.UnsafeBuffer;
  * refusal returns {@link #REJECT_BASIS} or {@link #REJECT_SWAP_SPREAD} without a breach message,
  * and post-trade breaches are counted by {@link #basisBreaches}.
  *
+ * <p>Per-RFQ and per-client DV01 limits (review 2026-11-23, Q9) work the same way: the schema has
+ * no kind for them, so a refusal returns {@link #REJECT_RFQ_DV01} or {@link #REJECT_CLIENT_DV01}
+ * and is counted by {@link #dv01Rejects}. The client figure is the DV01 dealt with the client
+ * since the start of day plus the DV01 of the quotes live to it; the quoting engine reports both
+ * through {@link #reserveClient}, {@link #releaseClient} and {@link #onClientFill}.
+ *
  * <p>Single-writer. No allocation after construction.
  */
 public final class RiskEngine {
@@ -60,6 +67,18 @@ public final class RiskEngine {
 
   /** Refused because swap-spread exposure would grow past its limit. */
   public static final int REJECT_SWAP_SPREAD = -4;
+
+  /** Refused because one quote's parallel DV01 is above the per-RFQ limit. */
+  public static final int REJECT_RFQ_DV01 = -5;
+
+  /** Refused because the client's dealt plus quoted DV01 would pass the per-client limit. */
+  public static final int REJECT_CLIENT_DV01 = -6;
+
+  /** Client id for a quote that belongs to no client; the per-client limit is not applied. */
+  public static final int NO_CLIENT = Integer.MIN_VALUE;
+
+  /** Clients the per-client DV01 table holds (a power of two); more are refused, not untracked. */
+  public static final int MAX_CLIENTS = 4096;
 
   private static final int K = KeyRateTenors.COUNT;
   private static final int C = CurrencyCode.COUNT;
@@ -119,6 +138,14 @@ public final class RiskEngine {
   private final boolean[] basisAlerted = new boolean[C];
   private final boolean[] spreadAlerted = new boolean[C];
   private long basisBreaches;
+
+  // per-client DV01: open addressing on the client id, never removed during a day
+  private final int[] clientKey = new int[MAX_CLIENTS];
+  private final boolean[] clientUsed = new boolean[MAX_CLIENTS];
+  private final double[] clientDealt = new double[MAX_CLIENTS];
+  private final double[] clientOpen = new double[MAX_CLIENTS];
+  private int clientCount;
+  private long dv01Rejects;
 
   /** An engine over every instrument in {@code directory}, with no positions. */
   public RiskEngine(
@@ -224,12 +251,63 @@ public final class RiskEngine {
     postTrade(currency.index(), -1);
   }
 
-  /** Starts a new day: P&amp;L is measured from the current value. */
+  /**
+   * Starts a new day: P&amp;L is measured from the current value and every client's dealt DV01
+   * starts again from zero (quotes still live keep counting).
+   */
   public void startOfDay() {
     for (int c = 0; c < C; c++) {
       startOfDay[c] = cash[c] + markValue[c];
       postAlerted[c][LimitKind.DailyLoss.value()] = false;
     }
+    Arrays.fill(clientDealt, 0.0);
+  }
+
+  /** Parallel DV01 of {@code quantityMinor} of an instrument, unsigned, currency per bp. */
+  public double dv01(final int instrumentId, final long quantityMinor) {
+    final int i = index(instrumentId);
+    return Math.abs(unitParallel[i] * directory.byIndex(i).major(quantityMinor));
+  }
+
+  /** A quote of {@code dv01} went live to {@code clientId}. */
+  public void reserveClient(final int clientId, final double dv01) {
+    final int s = clientSlot(clientId, true);
+    if (s >= 0) {
+      clientOpen[s] += dv01;
+    }
+  }
+
+  /** A quote to {@code clientId} ended; {@code dv01} is the figure given to {@link #reserveClient}. */
+  public void releaseClient(final int clientId, final double dv01) {
+    final int s = clientSlot(clientId, false);
+    if (s >= 0) {
+      clientOpen[s] = Math.max(0.0, clientOpen[s] - dv01);
+    }
+  }
+
+  /** {@code clientId} dealt {@code dv01}; the caller releases the quote's reservation as well. */
+  public void onClientFill(final int clientId, final double dv01) {
+    final int s = clientSlot(clientId, true);
+    if (s >= 0) {
+      clientDealt[s] += dv01;
+    }
+  }
+
+  /** DV01 dealt with a client since the start of day. */
+  public double clientDealtDv01(final int clientId) {
+    final int s = clientSlot(clientId, false);
+    return s < 0 ? 0.0 : clientDealt[s];
+  }
+
+  /** DV01 of the quotes live to a client. */
+  public double clientOpenDv01(final int clientId) {
+    final int s = clientSlot(clientId, false);
+    return s < 0 ? 0.0 : clientOpen[s];
+  }
+
+  /** Pre-trade refusals by the per-RFQ and per-client DV01 limits. */
+  public long dv01Rejects() {
+    return dv01Rejects;
   }
 
   /** Adds a reservation for a live quote, resting order or hedge parent. */
@@ -275,6 +353,22 @@ public final class RiskEngine {
       final long askPrice,
       final long askQuantity,
       final long journalSeqNo) {
+    return checkQuote(NO_CLIENT, instrumentId, bidPrice, bidQuantity, askPrice, askQuantity, journalSeqNo);
+  }
+
+  /**
+   * {@link #checkQuote(int, long, long, long, long, long)} for a quote to {@code clientId}: after
+   * the price checks, the quote's DV01 is tested against the per-RFQ limit and, with the client's
+   * dealt and live DV01, against the per-client limit.
+   */
+  public int checkQuote(
+      final int clientId,
+      final int instrumentId,
+      final long bidPrice,
+      final long bidQuantity,
+      final long askPrice,
+      final long askQuantity,
+      final long journalSeqNo) {
     if (!killSwitch.isActive()) {
       preTradeRejects++;
       return REJECT_KILLED;
@@ -291,6 +385,9 @@ public final class RiskEngine {
     int r = sizeAndPrice(i, bidPrice, bidQuantity);
     if (r == OK) {
       r = sizeAndPrice(i, askPrice, askQuantity);
+    }
+    if (r == OK) {
+      r = dv01Limits(i, clientId, Math.max(bidQuantity, askQuantity));
     }
     if (r == OK) {
       r = envelope(i, bidQuantity, askQuantity);
@@ -314,11 +411,14 @@ public final class RiskEngine {
 
   /**
    * Checks an order before it is sent. {@code side} is ours. A risk-reducing order (one whose
-   * parallel PV01 offsets the currency's net PV01 without overshooting it) skips the PV01 and
-   * daily-loss checks so that a breached book can always be hedged; size, fat-finger, collar,
-   * position and rate checks still apply. While the kill switch is KILLED by this engine's own
-   * daily-loss breach ({@link #flattenOnly}), risk-reducing orders still pass, so the hedgers can
-   * keep flattening; every other order is refused with {@link #REJECT_KILLED}.
+   * parallel PV01 offsets the currency's net PV01 without overshooting it) skips the daily-loss
+   * check, so a book in loss can still be hedged; every other check applies, the pillar, net and
+   * gross PV01 envelope included. The envelope lets a figure already past its limit stay or
+   * shrink, so a hedge at the tenor of the risk always passes; what it refuses is a hedge that
+   * lowers parallel PV01 by pushing another pillar, or gross PV01, further past its limit (a
+   * 30-year order against 2-year risk; review 2026-11-23, Q12). While the kill switch is KILLED by
+   * this engine's own daily-loss breach ({@link #flattenOnly}), risk-reducing orders still pass, so
+   * the hedgers can keep flattening; every other order is refused with {@link #REJECT_KILLED}.
    */
   public int checkOrder(
       final int instrumentId,
@@ -338,16 +438,15 @@ public final class RiskEngine {
       preTradeRejects++;
       return REJECT_UNKNOWN;
     }
+    final boolean reducing = riskReducing(i, buy - sell);
     int r = sizeAndPrice(i, price, quantity);
     if (r == OK) {
-      // a risk-reducing order skips the PV01 envelope but not the basis and swap-spread limits,
-      // so a futures hedge of swap risk cannot open unlimited spread risk (PNL_AUDIT item 16)
-      r = riskReducing(i, buy - sell) ? positionOnly(i, buy, sell) : envelope(i, buy, sell);
-      if (r == OK && riskReducing(i, buy - sell)) {
-        r = basisCheck(i, buy, sell);
-      }
+      // a risk-reducing order passes the same envelope as any other, with the basis and
+      // swap-spread limits inside it (PNL_AUDIT item 16): lower parallel PV01 is no licence to
+      // open risk at another pillar
+      r = envelope(i, buy, sell);
     }
-    if (r == OK && !riskReducing(i, buy - sell)) {
+    if (r == OK && !reducing) {
       r = dailyLoss(directory.byIndex(i).currency().index());
     }
     if (r == OK) {
@@ -414,6 +513,29 @@ public final class RiskEngine {
       }
     }
     return lo;
+  }
+
+  /**
+   * {@link #headroom} for a quote to {@code clientId}: also inside the per-RFQ DV01 limit and what
+   * is left of the client's DV01 limit, so the quoting engine sizes down instead of being refused.
+   */
+  public long quoteHeadroom(final int clientId, final int instrumentId, final Side ourSide) {
+    final long room = headroom(instrumentId, ourSide);
+    if (room <= 0L) {
+      return 0L;
+    }
+    double dv01Room = limits.rfqDv01();
+    if (clientId != NO_CLIENT && limits.clientDv01() != Double.MAX_VALUE) {
+      final int s = clientSlot(clientId, false);
+      final double used = s < 0 ? 0.0 : clientDealt[s] + clientOpen[s];
+      dv01Room = Math.min(dv01Room, Math.max(0.0, limits.clientDv01() - used));
+    }
+    if (dv01Room == Double.MAX_VALUE) {
+      return room;
+    }
+    final int i = directory.indexOf(instrumentId);
+    final double minor = dv01Room / Math.abs(unitParallel[i]) * directory.byIndex(i).minorPerMajor();
+    return minor >= (double) room ? room : (long) minor;
   }
 
   // ---------------------------------------------------------------- reads
@@ -673,6 +795,50 @@ public final class RiskEngine {
       return record(LimitKind.PriceCollar, inst.id(), limits.priceCollarBp(), bp);
     }
     return OK;
+  }
+
+  /** The per-RFQ and per-client DV01 limits on a quote of {@code quantity}. */
+  private int dv01Limits(final int i, final int clientId, final long quantity) {
+    if (limits.rfqDv01() == Double.MAX_VALUE && limits.clientDv01() == Double.MAX_VALUE) {
+      return OK;
+    }
+    final double dv01 = Math.abs(unitParallel[i] * directory.byIndex(i).major(quantity));
+    if (dv01 > limits.rfqDv01()) {
+      dv01Rejects++;
+      return REJECT_RFQ_DV01;
+    }
+    if (clientId != NO_CLIENT && limits.clientDv01() != Double.MAX_VALUE) {
+      final int s = clientSlot(clientId, false);
+      // a client the full table could not take has no record to test against: refused
+      final boolean untracked = s < 0 && clientCount == MAX_CLIENTS;
+      final double used = s < 0 ? 0.0 : clientDealt[s] + clientOpen[s];
+      if (untracked || used + dv01 > limits.clientDv01()) {
+        dv01Rejects++;
+        return REJECT_CLIENT_DV01;
+      }
+    }
+    return OK;
+  }
+
+  /** Slot of a client in the DV01 table, adding it when {@code add}; -1 if absent or full. */
+  private int clientSlot(final int clientId, final boolean add) {
+    int s = (clientId * 0x9E3779B1) >>> (32 - 12);
+    for (int probe = 0; probe < MAX_CLIENTS; probe++) {
+      if (!clientUsed[s]) {
+        if (!add) {
+          return -1;
+        }
+        clientUsed[s] = true;
+        clientKey[s] = clientId;
+        clientCount++;
+        return s;
+      }
+      if (clientKey[s] == clientId) {
+        return s;
+      }
+      s = (s + 1) & (MAX_CLIENTS - 1);
+    }
+    return -1;
   }
 
   private int positionOnly(final int i, final long buy, final long sell) {

@@ -207,7 +207,10 @@ class RiskEngineTest {
     // for more adds to it and is refused
     assertEquals(RiskEngine.OK, f.risk.checkQuote(BOND10, 0L, 0L, f.fairMid(BOND10), M, 1));
     expect(f, LimitKind.BucketDv01, f.risk.checkQuote(BOND10, f.fairMid(BOND10), M, 0L, 0L, 1));
-    assertEquals(RiskEngine.OK, f.risk.checkOrder(FUT10, Side.Sell, 100 * M, f.fairMid(FUT10), 2));
+    // review 2026-11-23 Q12: the 7Y future hedges the 10Y bond only up to the 7Y pillar's own limit;
+    // 70mm is +45.5k there and passes, 100mm is +65k and is refused (it used to pass as exempt)
+    assertEquals(RiskEngine.OK, f.risk.checkOrder(FUT10, Side.Sell, 70 * M, f.fairMid(FUT10), 2));
+    expect(f, LimitKind.BucketDv01, f.risk.checkOrder(FUT10, Side.Sell, 100 * M, f.fairMid(FUT10), 2));
     assertEquals(RiskEngine.OK, f.risk.checkOrder(BOND10, Side.Sell, 50 * M, f.fairMid(BOND10), 3));
     expect(f, LimitKind.BucketDv01, f.risk.checkOrder(FUT10, Side.Sell, 200 * M, f.fairMid(FUT10), 4));
   }
