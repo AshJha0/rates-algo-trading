@@ -1670,3 +1670,13 @@ Context. The back-tester runs one session from a flat book, and the synthetic ge
 Decision. Every curve input of a forward session carries the committed mid of the previous close (no level, idiosyncratic, event or basis moves). The session's end-of-day book is marked once at the real close and then counts as closed; there is no multi-day inventory. Carry and funding accrue inside the session: declared bond coupons, swap carry at the committed SOFR and bond funding at the committed SOFR. Weekend and overnight carry are not booked.
 
 Consequences. The only real outcome is the close mark. Informed clients carry no information on a flat market, so spread capture is an upper bound with no adverse selection, and it is much larger than the simulator audits found; README "Limits" says so. The flat market is a setting (`flat_intraday`), recorded by hash, if a later round wants to change it.
+
+## DR-REV-01: Governance documents describe solo practice; the repository is public
+
+Date: 2026-11-23
+
+Context. The review of 2026-11-23 (docs/reviews/REVIEW_2026-11-23.md, findings E2, E3 and E9) found that CONTRIBUTING.md, docs/AI_USE_POLICY.md and the RTS 6 inventory described one approving review per pull request, an `ai-assisted` label and an extended AI change log, none of which was in use, and that STATUS.md still called the repository private under the DR-001 amendment. Checked with `gh api` on 2026-11-23: the repository is public; the `main` ruleset requires nine status checks and 0 approving reviews; pull requests #1 to #9 have no reviews.
+
+Decision. The documents describe what happens: one engineer directs AI coding sessions and merges; the nine required checks are the only merge gate; assisted commits are identified by their `Co-Authored-By` trailer. The RTS 6 inventory uses the scale illustrated in simulation, document only, absent and out of scope, and claims no compliance. The DR-001 amendment that kept the repository private is superseded; the repository is public.
+
+Consequences. Rows of the RTS 6 inventory that rested on review or approval are rated absent or document only. `tools/check_inventory.py` must accept the new status words. Adding an independent reviewer later would be a new decision record and would change these documents back with evidence.

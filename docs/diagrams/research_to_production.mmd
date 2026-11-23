@@ -4,14 +4,14 @@ flowchart TD
   fit["ratesresearch.hitrate.fit<br/>logistic MLE, out-of-sample log-loss"]
   write["ratesresearch.presets.write_preset<br/>validate_preset checks the schema"]
   yaml["data/presets.yaml<br/>value and standard_error per parameter,<br/>assumption band low, central, high"]
-  pr["Pull request<br/>CI and one approving review (CONTRIBUTING.md)"]
+  pr["Pull request<br/>required CI checks, no independent review (CONTRIBUTING.md)"]
   bt["Back-tester<br/>Presets reader, usd_rfq_hit_rate,<br/>run at every band point"]
   exp["ExperimentCli<br/>pre-registration and ledger"]
   hrp["HitRatePreset.load<br/>preset quoting_hit_rate_default"]
   shipped["Shipped default<br/>rates-quoting quoting-hit-rate-default.yaml<br/>declared assumption, DR-P3-02"]
   desk["Desk Inputs<br/>HitRateModel, feedback clamped to the band"]
   qe["QuotingEngine<br/>spread from P of win, Section 12.2"]
-  proc["OpsProcessMain<br/>deploy/config validated by ProcessConfig at start"]
+  proc["TradingProcessMain (rates-app)<br/>DeskSettings.hitRate() loads the shipped default"]
 
   nb -->|calls| fit
   fit -->|coefficients and standard errors| write
@@ -23,4 +23,4 @@ flowchart TD
   shipped -->|"used when the file has no such preset"| hrp
   hrp -->|coefficients and band| desk
   desk -->|win probability| qe
-  qe -.->|bound at integration| proc
+  qe -->|runs inside| proc

@@ -35,6 +35,9 @@ PAGES: dict[str, str] = {
     "edge-studies.md": "docs/research/EDGE_STUDIES.md",
     "desk-features.md": "docs/research/DESK_FEATURES.md",
     "pnl-audit.md": "docs/research/PNL_AUDIT.md",
+    "band-risk.md": "docs/research/BAND_RISK.md",
+    "reviewer-summary.md": "docs/REVIEWER_SUMMARY.md",
+    "review-2026-11-23.md": "docs/reviews/REVIEW_2026-11-23.md",
 }
 
 # research notebooks (P5): page notebooks/<name>.md from research/notebooks/<name>.ipynb

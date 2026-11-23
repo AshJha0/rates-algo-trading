@@ -16,7 +16,7 @@ flowchart LR
     cfg["config-and-dashboards: validate_config.py,<br/>lint_dashboards.py, bash -n bluegreen.sh"]
     reh["rehearsal: ConfigValidatorMain,<br/>deploy/rehearsal.py with the kill switch,<br/>images when Docker is available"]
   end
-  gate{"Gating jobs pass<br/>and one approving review"}
+  gate{"Required checks pass<br/>main ruleset, no approval required"}
   merge["Merge to main"]
   report["latency-report artifact<br/>compared by hand"]
   release["Release v1.0.0"]
@@ -31,7 +31,4 @@ flowchart LR
   gate -->|required| merge
   merge -->|push to main| build
   build -->|main only| deploy
-  merge -.->|planned| release
-
-  classDef planned stroke-dasharray: 5 5
-  class release planned
+  merge -->|tag by hand| release

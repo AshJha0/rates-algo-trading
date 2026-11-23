@@ -3,7 +3,9 @@
 [![CI](https://github.com/AshJha0/rates-algo-trading/actions/workflows/ci.yml/badge.svg)](https://github.com/AshJha0/rates-algo-trading/actions/workflows/ci.yml)
 [![Licence: Apache 2.0](https://img.shields.io/badge/licence-Apache%202.0-blue.svg)](LICENSE)
 
-An open Java 25 principal e-trading platform for interest rate swaps and government bonds, with a Python research package, built from public data only. Version 1.0.0 (2026-10-31).
+An open Java 25 principal e-trading platform for USD interest rate swaps and Treasuries, with a Python research package, built from public data only. Version 1.1.0 (CHANGELOG section dated 2026-11-23).
+
+**How it was built and checked.** It was built by parallel AI coding sessions directed by one engineer. Verification is CI (nine required checks on Linux and Windows) plus external goldens: QuantLib, published Treasury auctions and published overnight indices. There has been no independent human review. An in-depth review on 2026-11-23 ([docs/reviews/REVIEW_2026-11-23.md](docs/reviews/REVIEW_2026-11-23.md)) found that the P&L figures are fixed by declared simulator constants and that parts of the safety path fail open; a fix round is in progress (STATUS.md). Start with the one-page [reviewer summary](docs/REVIEWER_SUMMARY.md).
 
 It is a dealer desk's stack in miniature, and it is a simulator: every venue is a simulator in the same process, and every P&L figure below comes from simulated client behaviour under declared assumptions. Those figures check that the parts agree with each other; they are not evidence that the strategy would make money in a real market (DECISIONS.md DR-008).
 
@@ -31,53 +33,45 @@ Next to the process:
 
 ## Measured results
 
-Each figure names its source and the date it was measured. Java figures come from `mvn -B -ntp verify` on JDK 25.0.5 and Windows 11. CI repeats them on Linux and Windows.
+Rows here are either checks against something outside the project or research findings. Each names its source and date. Plumbing self-checks are in the next table.
+
+| What | Result | Kind | Source, date |
+|---|---|---|---|
+| Analytics against QuantLib 1.44, 224 instruments | swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16 | external golden | `AnalyticsGoldenTest`, API_SPEC.md 7.2, 2026-10-31 |
+| Published Treasury auctions of 2024 | all 84 notes and bonds and 332 bills reproduced to the published digits | external golden | `PublishedExamplesTest`, 2026-10-31 |
+| Published overnight indices of 2024 | compounded legs reproduce the published SOFR, EUR STR and SONIA indices to the last digit | external golden | `CompoundedIndexHoldoutTest`, STATUS.md P1 gate, 2026-10-31 |
+| Edge studies on public data, E1 to E6 | two supported after their holdouts (E3 release volatility and intensity, E4 trade size and clustering); three not supported; one inconclusive because its data could not be downloaded | finding, public data | ledger seq 2 to 7, docs/research/EDGE_STUDIES.md, 2026-10-31 |
+| Production desk at default settings, 20 fifteen-minute sessions (simulated) | loses -114k, -109k and -125k USD per session at low, central and high (central 95% interval -168k to -41k). The sign follows from declared constants (see Limits); it is not a market finding. Supersedes AUDIT-11 | simulator property | AUDIT-21, ledger seq 25, docs/research/PNL_AUDIT.md, 2026-11-07 |
+| Half-spread cap 0.50 bp with 4x skew, chosen on those 20 sessions (simulated) | failed its one look on 5 unopened sessions: difference +96k, +36k (-30k to +101k) and -10k USD per session, central wins down from 15 to 6 a session. Defaults unchanged | finding, simulator | AUDIT-25, AUDIT-26, ledger seq 29 and 30, 2026-11-07 |
+
+### Self-checks of the plumbing
+
+These show that the parts agree with each other and with the project's own models. They are not evidence about markets.
 
 | What | Result | Source, date |
 |---|---|---|
-| Test suite | 639 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 114 Python tests, 11 executed notebooks, 36 of the 37 cookbook recipes checked against their recorded output | local run on paper-trading, 2026-11-07 |
-| Analytics against QuantLib 1.44, 224 instruments | swap PV within 1.6e-15 of notional, par rates within 3.5e-16, bond yields within 7.3e-16 | `AnalyticsGoldenTest`, API_SPEC.md 7.2, 2026-10-31 |
-| Published Treasury auctions of 2024 reproduced | all 84 notes and bonds and 332 bills, to the published digits | `PublishedExamplesTest`, 2026-10-31 |
-| Event loop latency, core decode to encode, journaling on, 50,000 msg/s | p50 0.1 to 0.2 us, p99.9 1.6 us, 0 bytes allocated on the loop thread (target: p50 under 20 us, p99.9 under 100 us); laptop, unpinned threads | docs/BENCHMARKS.md, runs at 04d12a503a6b, 2026-10-31 |
+| Test suite | 639 Java tests across 20 modules (`mvn -B -ntp verify`, coverage floor and SpotBugs green), 114 Python tests, 11 executed notebooks, 36 of the 37 cookbook recipes checked against their recorded output | local run on the PR #8 branch `hedge-carry-limit` (README commit 7320610), 2026-11-07; not re-run for this page |
 | Wired process, ten simulated minutes, seed 7 | 36 RFQs, 27 quoted, 16 filled, 210 hedge parents, 213 hedge fills, 229 trades reconciled with 0 breaks, nothing working after the kill switch, replay hash equal | `SmokeTest`, DR-INT-07, 2026-10-31 |
 | Risk limits under load | 1,000,000 simulated RFQs with 0 limit violations at the sink; 10,000 chaos scenarios with 0 invariant failures | `MillionRfqTest`, `ChaosTest`, STATUS.md P3, 2026-10-31 |
-| Router against single-venue aggressive hedging (simulated) | 2.9388 bp better (95% interval 2.7792 to 3.0631) in scenario `ust10y_three_venue_v1` | `BacktestTest`, API_SPEC.md 15.6, 2026-10-31 |
+| Router regression check | about 2.9 bp better than single-venue aggressive hedging (95% interval 2.8 to 3.1) in scenario `ust10y_three_venue_v1`. A regression check against the router's own simulator and cost model; the baselines are single-shot orders; not a market finding. The wired process gives the router one venue | `BacktestTest`, API_SPEC.md 15.6, 2026-10-31 |
+| Event loop latency, laptop | scheduled-to-encode, journaling on (direct): p50 0.5 us, p99 26 us, p99.9 184 us, max 9.3 ms at 50,000 msg/s; 0 bytes allocated on the loop thread. The handler is `BenchQuoter`, a constant-arithmetic bench quoter, not the wired desk. Windows 11 laptop, unpinned threads; every recorded value is a multiple of 0.1 us, the Windows 100 ns clock tick, so core decode-to-encode (p50 0.2 us) is two ticks. Four of the six journaling-on runs at that commit were discarded by the generator-lateness rule | docs/BENCHMARKS.md, run `latency-20261031-115541.json` at 04d12a503a6b, 2026-10-31 |
+| Event loop latency, GitHub-hosted runner (shared 2 vCPU VM, informational) | scheduled-to-encode p50 766 us (mostly generator and scheduling delay); core decode-to-encode p50 0.160 us, p99.9 9.511 us; same bench quoter | docs/BENCHMARKS.md, CI run 41290006100 at 8bfe1b8af42f, 2026-11-01 |
 | First pre-registered experiment, P5-001 | not supported; recorded as such | ledger seq 1, 2026-10-31 |
-| Desk features, R2B-001 to R2B-007 | internalisation supported at every band point and adopted as the desk default; the other six not supported | ledger seq 12 to 18, docs/research/DESK_FEATURES.md, 2026-10-31 |
-| Edge studies on public data, E1 to E6 | two supported after their holdouts (E3 release volatility and intensity, E4 trade size and clustering); three not supported; one inconclusive because its data could not be downloaded | ledger seq 2 to 7, docs/research/EDGE_STUDIES.md, 2026-10-31 |
-| Hedge slicing against one market order, V1H-001 (simulated, depth-walk fills) | supported at every band point: implementation shortfall better by +446k, +300k and +71k USD per session at low, central and high (Holm p at most 0.0022); adopted as the back-tested desk default. The cost-aware trigger, V1H-002, was not supported and stays opt-in | ledger seq 23 and 24, DR-V1H-01 to 03, docs/research/DESK_FEATURES.md, 2026-11-01 |
-| Hedge latency sweep and carry-time limit, V1C-001 and V1C-002 (simulated) | hedge order latency up to 1 s barely moves P&L; median time from client fill to hedge is 20 minutes to over an hour. The carry limit always shortened carry and cut the risk charge, and improved risk-adjusted hedge cost where client flow is sparse (high: +130k and +64k) but not where it is heavy (low); neither version supported, desk default unchanged | ledger seq 31 and 32, docs/research/DESK_FEATURES.md, 2026-11-07 |
-| Event loop latency on a GitHub-hosted ubuntu-latest runner (shared 2 vCPU VM, informational) | core decode to encode, journaling on, 50,000 msg/s: p50 0.160 us, p99 5.939 us, p99.9 9.511 us | docs/BENCHMARKS.md, CI run 41290006100 at 8bfe1b8af42f, 2026-11-01 |
-| Production desk at default settings, 20 fifteen-minute sessions (simulated) | loses money on these sessions at every band point: -114k, -109k and -125k USD per session at low, central and high (central 95% interval -168k to -41k). Supersedes AUDIT-11 (-82k, -72k, -105k), which predates DR-INT-05 | AUDIT-21, ledger seq 25, docs/research/PNL_AUDIT.md, 2026-11-07 |
-| Same desk, 5 unopened sessions (simulated) | +92k, +72k and +77k USD per session; every interval includes zero, so session noise is large | AUDIT-26, ledger seq 30, 2026-11-07 |
-| Half-spread cap 0.50 bp with 4x skew, chosen on the 20 sessions (simulated) | failed its one look on the 5 unopened sessions: difference +96k, +36k (-30k to +101k) and -10k, with central wins down from 15 to 6 a session. Defaults unchanged | AUDIT-25, AUDIT-26, ledger seq 29 and 30, 2026-11-07 |
+| Desk features, R2B-001 to R2B-007 (simulated) | internalisation supported at every band point and adopted as the desk default; the other six not supported | ledger seq 12 to 18, docs/research/DESK_FEATURES.md, 2026-10-31 |
+| Hedge slicing against one market order, V1H-001 (simulated) | supported at every band point and adopted as the back-tested desk default. In this simulator our orders have no impact and the touch refills at once, so the result follows from the fill model (review Section 2.3). V1H-002 not supported, opt-in | ledger seq 23 and 24, DR-V1H-01 to 03, 2026-11-01 |
+| Hedge latency sweep and carry-time limit, V1C-001 and V1C-002 (simulated) | hedge order latency up to 1 s barely moves P&L; median time from client fill to hedge is 20 minutes to over an hour; neither carry limit supported, desk default unchanged | ledger seq 31 and 32, docs/research/DESK_FEATURES.md, 2026-11-07 |
 
-### Daily-P&L risk across the assumption band
-
-These are simulator consistency checks, not evidence of edge (DR-008). The table recomputes the volatility, Sharpe ratio (zero risk-free rate) and maximum drawdown of the recorded daily P&L. Run `ratesresearch.stats.pnl_risk`, or `BandRisk.fromExperimentResults` in Java, on the ledger rows named. Computed 2026-10-31.
-
-| Run | Band point | Strategy | Mean daily P&L (USD) | P&L volatility (USD) | Daily Sharpe | Max drawdown (USD) |
-|---|---|---|---:|---:|---:|---:|
-| P5-001, 10 synthetic days (seq 1) | low | model_spread | 2,350,531 | 1,272,516 | 1.85 | 0 |
-| | central | model_spread | 1,832,066 | 1,254,129 | 1.46 | 319,515 |
-| | high | model_spread | 617,976 | 847,380 | 0.73 | 311,741 |
-| | central | fixed_spread | 768,724 | 1,336,526 | 0.58 | 2,129,307 |
-| AUDIT-11, 20 sessions of 15 minutes (seq 19) | low | engine | -82,167 | 167,162 | -0.49 | 1,886,022 |
-| | central | engine | -72,476 | 175,064 | -0.41 | 1,692,144 |
-| | high | engine | -105,217 | 177,325 | -0.59 | 2,295,318 |
-
-The P5-001 Sharpe ratios are high because the simulated clients follow the declared hit-rate model that the quoter is optimised against. That is the consistency the check is for, not a forecast. An AUDIT-11 session is 15 minutes, so annualising its ratio would mean nothing. The daily report and every experiment run now write this table themselves:
-
-- `ReportCli` writes `band_risk.json` and `band_risk.md`, plus a section in each `report.md`.
-- `ExperimentCli` writes `<id>-<scope>-band_risk.json` and `.md`.
-
-The figures come from the same `Stats.pnlRisk` (API_SPEC.md 16.9).
+The daily Sharpe ratio and drawdown table that used to sit here is in [docs/research/BAND_RISK.md](docs/research/BAND_RISK.md), with AUDIT-21 in place of the superseded AUDIT-11. Its figures are a property of the declared simulator constants. `ReportCli` and `ExperimentCli` still write that table for every run (`band_risk.json`, `band_risk.md`).
 
 ## Limits
 
 Read these before reading any number above.
 
 - **Simulator only.** Every venue is a simulator in the same process. Client behaviour comes from declared models: a hit-rate slope, competitor counts and the share of informed flow. Each result is reported at three points of that band (DR-008).
+- **The desk's P&L sign is fixed by declared constants.** The half-spread is clamped to 0.02 to 0.08 bp (`rates-app/src/main/java/io/ratesalgo/app/loop/DeskSettings.java:59-60`). In the D2C simulator 20% of RFQs are informed and move the mid by 4 competitor half-spreads of 0.25 bp after 30 s (`rates-venues/src/main/resources/io/ratesalgo/venues/presets.json`), an expected adverse cost of 0.2 x 4 x 0.25 = 0.20 bp per swap trade. A desk that earns at most 0.08 bp loses; AUDIT-21 measures that arithmetic (review Section 2.1).
+- **Hedging cannot reduce risk in the session simulator.** Each instrument's mid in the D2C simulator is an independent random walk, rounded to the tick (`D2cRfqSimulator.java:160-171`), so a Treasury hedge does not offset a swap position there. The back-tester's own synthetic day (`SyntheticDay`) does have a common level factor.
+- **The wired process uses little of `rates-analytics`.** Swap fair value comes from a curve whose pillars are the quoted swaps themselves, bond fair value is the book mid, and bond DV01 is taken on the SOFR OIS curve with no spread (`rates-app/src/main/java/io/ratesalgo/app/pricing/AnalyticsPricing.java:99-108, 234, 278-283`). Turns, convexity, futures, fitted Treasury curves and repo are not used by the process (review A1, A2).
+- **One venue, one client tier, wide limits.** The wired router is given one venue, the CLOB (`DeskGroup.java:95`). There is one client tier with firm quotes to 1bn (`DeskSettings.java:83-85`). Risk limits are sized so that the smoke day never breaches them (`DeskSettings.java:68-79`); no price collar or fat-finger quantity is set there.
 - **The default desk lost money on average in the simulator, with large swings.** It lost at every band point over the 20 sessions of AUDIT-21 and made money on the 5 sessions of AUDIT-26, where every interval includes zero. Inventory marking is the largest loss line. A setting that widened the cap failed its holdout, and those 5 sessions are now spent.
 - **Audit-fix controls ship off by default.** None of these is on in the wired process:
   - package A1: the hit-rate learning and cover averaging change engine output only once the engine is fed outcomes and cover gaps;
@@ -85,12 +79,14 @@ Read these before reading any number above.
   - package B: the CLOB inventory skew is off until called.
 - **One currency, one loop.** The routers and the hedger trade Treasuries on the CLOB only, because there is no futures simulator (DR-R2W-08). The CLOB quoter is built but not enabled in the process. The SEF simulator is not connected.
 - **Post-trade reads the journals after the run** rather than tailing them live. Marks, carry, calendars and the venue status port run on fixtures (API_SPEC.md 17.14).
-- **Latency figures are for the core loop**, on a laptop with unpinned threads and, informationally, on a shared GitHub-hosted Linux runner. They are not for the wired process. Gating numbers belong on a pinned Linux host (DR-005), which has not been run.
+- **Latency figures are for a bench quoter in the core loop**, on a laptop with unpinned threads and, informationally, on a shared GitHub-hosted Linux runner. They are not for the wired process, whose threading differs (review L3, L4). Gating numbers belong on a pinned Linux host (DR-005), which has not been run.
+<!-- FIX-ROUND: code items filled at integration -->
 - **Some data was unavailable or had no example to reproduce.** No UK DMO golden test: the DMO formulae paper gives the conventional gilt formulae without a numerical worked example (DR-V1G-02). No FINRA Treasury data (needs an account). E5's fitting data could not be downloaded.
 - **Not built:** Aeron replication and the quoting lease (DR-P6-06), APA publication, the Part 43 message and the pre-execution credit check (docs/compliance/RTS6_INVENTORY.md).
-- **The forward log is not a track record.** Its client flow and fills are synthetic, and the intraday market is held flat at the previous close, so informed clients carry no information and the session's spread capture has no adverse selection in it. Only the close mark of the session's book is a real outcome. No ratio is printed before 60 marked sessions (docs/research/PAPER_TRADING_PLAN.md Section 6).
+- **The forward log is not a track record.** Its client flow and fills are synthetic, and the intraday market is held flat at the previous close, so informed clients carry no information and the session's spread capture has no adverse selection in it. Its synthetic income is close to deterministic, so a ratio of mean to standard deviation would be large and mean nothing; only the close mark of the session's book is a real outcome, and it measures no skill (docs/research/PAPER_TRADING_PLAN.md Section 6, review Section 2.5).
+- **No independent review.** The code was written by AI sessions and merged by the owner with CI as the only gate (CONTRIBUTING.md). docs/compliance/RTS6_INVENTORY.md describes controls in simulation; it is not a claim of compliance.
 - **Cookbook.** All 37 recipes are written. Recipe 9 is a comparison method checked by the golden tests, so `tools/check_cookbook.py` checks 36 of the 37.
-- **Ledger flags.** Four audit rows (AUDIT-02 to 04 and AUDIT-12 to 14 carry `code_dirty: true`) were recorded while the ledger file itself was uncommitted; docs/research/PNL_AUDIT.md explains.
+- **Ledger flags.** Nine audit rows carry `code_dirty: true`: AUDIT-02 to 04, AUDIT-12 to 14 and AUDIT-22 to 24. Each was recorded at the same commit as the row before it, while the ledger file itself was uncommitted; docs/research/PNL_AUDIT.md explains. The ledger chain has no external anchor (review Section 2.4).
 
 ## Quick start
 
@@ -155,6 +151,8 @@ tools/               Cookbook, notebook, config and inventory checks
 
 ## Documents
 
+For a reviewer with five minutes: [docs/REVIEWER_SUMMARY.md](docs/REVIEWER_SUMMARY.md), then the review it summarises, [docs/reviews/REVIEW_2026-11-23.md](docs/reviews/REVIEW_2026-11-23.md).
+
 For a newcomer, in reading order:
 
 - [LEARN.md](LEARN.md): the subject, from rates products to low-latency Java and regulation. Each section gives the plain idea, the formal statement and a worked example.
@@ -166,6 +164,7 @@ For a desk reviewer:
 - [API_SPEC.md](API_SPEC.md): the pinned contract: units, journal format, SBE schema, clock semantics, every module's interface.
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md): latency method and results.
 - [docs/research/PNL_AUDIT.md](docs/research/PNL_AUDIT.md): where the engine loses money, ranked, and the fix packages.
+- [docs/research/BAND_RISK.md](docs/research/BAND_RISK.md): daily-P&L volatility, Sharpe ratio and drawdown across the band, a property of the simulator constants.
 - [docs/research/DESK_FEATURES.md](docs/research/DESK_FEATURES.md): the desk-feature experiments.
 - [docs/research/EDGE_STUDIES.md](docs/research/EDGE_STUDIES.md): the edge studies on public data.
 - [docs/research/PAPER_TRADING_PLAN.md](docs/research/PAPER_TRADING_PLAN.md): the forward log (paper trading): data, cadence, ledger, what it can and cannot claim. The log itself is on the `forward-log` branch (`forward/reports/SUMMARY.md`).

@@ -1,6 +1,6 @@
 # Diagrams
 
-Mermaid sources live in `docs/diagrams/` and are embedded here unchanged. Dashed nodes and arrows mark components that are planned, not present.
+Mermaid sources live in `docs/diagrams/` and are embedded here unchanged. Dashed nodes and arrows mark components that are not built, or links that are not wired into the trading process.
 
 ## Module dependencies
 
@@ -20,7 +20,7 @@ From a venue through the gateway and ring buffer into the event loop, with every
 
 ## One RFQ
 
-The sequence for a dealer-to-client request for quote: request, pre-trade risk check, quote, client acceptance with cover price, position update, hedge decision and routed hedge order. Every message crossing the gateway is journaled. The gateway, quoting engine, risk engine, hedger and router are planned (P2 to P4); the journal frames exist.
+The sequence for a dealer-to-client request for quote: request, pre-trade risk check, quote, client acceptance with cover price, position update, hedge decision and routed hedge order. Every message crossing the gateway is journaled. All of these components are built and wired in `rates-app` (API_SPEC.md Section 18); in the wired process the router has one venue, the CLOB (`DeskGroup.java`).
 
 ```mermaid
 --8<-- "docs/diagrams/rfq_sequence.mmd"
@@ -116,7 +116,7 @@ The three states of the process-wide kill switch and the four-eyes reset (API_SP
 
 ## System context
 
-Who and what the platform exchanges messages and files with: the desk roles, the simulated clients and venues, the clearing house, the public data sources through the research package, and monitoring; the dashed box is transparency reporting, planned for integration (RTS 6 inventory, US and EU flow rows).
+Who and what the platform exchanges messages and files with: the desk roles, the simulated clients and venues, the clearing house, the public data sources through the research package, and monitoring; the dashed box is transparency reporting, which is not built (RTS 6 inventory, US and EU flow rows).
 
 ```mermaid
 --8<-- "docs/diagrams/system_context.mmd"
@@ -132,7 +132,7 @@ One D2C RFQ from the client through the gateway, the event loop and its journals
 
 ## Hedge and route
 
-How a position change becomes a hedge: the hedger's timer measures the residual, the planner solves for lots, a parent passes `checkOrder`, the router allocates and journals its decision before sending children, and fills flow back into the risk engine and the slippage record ([API contract](api-spec.md) Sections 14 and 15). The links between `HedgeOrderSink` and the router are bound at integration.
+How a position change becomes a hedge: the hedger's timer measures the residual, the planner solves for lots, a parent passes `checkOrder`, the router allocates and journals its decision before sending children, and fills flow back into the risk engine and the slippage record ([API contract](api-spec.md) Sections 14 and 15). `RouterHedgeSink` in `rates-app` binds `HedgeOrderSink` to the routers (DECISIONS.md DR-R2W-07).
 
 ```mermaid
 --8<-- "docs/diagrams/hedge_route_sequence.mmd"
@@ -156,7 +156,7 @@ What is journaled in a live run, how `LoopReplay` rebuilds a loop and feeds it t
 
 ## Research to production parameters
 
-The path of a fitted parameter from a notebook to `data/presets.yaml` (value, standard error and assumption band), through review and the back-tester, to `HitRatePreset` and the quoting engine; the dashed edges are the preset the file does not yet hold and the binding to the running process ([API contract](api-spec.md) Sections 12.3 and 16.2).
+The path of a fitted parameter from a notebook to `data/presets.yaml` (value, standard error and assumption band), through a pull request and the back-tester, to `HitRatePreset` and the quoting engine; the dashed edge is the preset `data/presets.yaml` does not hold, so the quoting engine reads the shipped default ([API contract](api-spec.md) Sections 12.3 and 16.2).
 
 ```mermaid
 --8<-- "docs/diagrams/research_to_production.mmd"
@@ -164,7 +164,7 @@ The path of a fitted parameter from a notebook to `data/presets.yaml` (value, st
 
 ## CI and release pipeline
 
-The three workflows a pull request triggers, which jobs gate the merge and which are informational, the docs deployment from main, and the release that follows integration (dashed). The workflows are `.github/workflows/ci.yml`, `docs.yml` and `ops.yml`; the review rule is in CONTRIBUTING.md.
+The three workflows a pull request triggers, which jobs gate the merge and which are informational, the docs deployment from main, and the release. The workflows are `.github/workflows/ci.yml`, `docs.yml` and `ops.yml`. The merge gate is the nine required checks of the `main` ruleset; it requires no approving review (CONTRIBUTING.md).
 
 ```mermaid
 --8<-- "docs/diagrams/ci_pipeline.mmd"
@@ -172,7 +172,7 @@ The three workflows a pull request triggers, which jobs gate the merge and which
 
 ## RTS 6 control map
 
-The UK RTS 6 controls grouped as pre-trade, real-time monitoring, kill, post-trade, surveillance and stress, and change management, each with the component that implements it and the journal they share; the article-by-article status and evidence are in the [compliance inventory](compliance.md).
+The UK RTS 6 controls grouped as pre-trade, real-time monitoring, kill, post-trade, surveillance and stress, and change management, each with the component that illustrates it in simulation and the journal they share; the article-by-article status, on a scale from "illustrated in simulation" to "absent", is in the [compliance inventory](compliance.md). The change-management controls on the map do not operate as drawn: there is no independent reviewer.
 
 ```mermaid
 --8<-- "docs/diagrams/rts6_control_map.mmd"

@@ -20,7 +20,7 @@ sequenceDiagram
     H->>HP: plan(r)
     HP-->>H: lots per hedge instrument, FISTA to tolerance 1e-9
     H->>R: checkOrder, reserve the parent quantity
-    H->>S: submit parent through HedgeOrderSink, bound at integration
+    H->>S: submit parent through HedgeOrderSink (RouterHedgeSink)
     Note over H,S: first tranche 0.5 immediately, later tranches 1 - 2^(-dt / 30 s)
     S->>A: allocate the next slice across venues
     A-->>S: quantity per venue, aggressive or passive
@@ -29,7 +29,7 @@ sequenceDiagram
     V-->>S: ExecutionReport (21) through ExecutionListener
     S->>B: apply the report, ChildOrderTransition (82) journaled
     Note over S,V: passive child cancelled at its horizon and re-routed aggressively, deadline routes everything
-    S-->>H: parent fill, bound at integration
+    S-->>H: parent fill (RouterHedgeSink)
     H->>R: onHedgeFill: release, onFill
     H->>HA: slippage against the arrival mid
   end

@@ -15,6 +15,7 @@ hooks:
 
 nav:
   - Home: index.md
+  - Reviewer summary: reviewer-summary.md
   - Learn: learn.md
   - Cookbook: cookbook.md
   - API contract: api-spec.md
@@ -39,6 +40,8 @@ nav:
       - E6 carry tilt: notebooks/edge_e6_carry.md
   - Desk features: desk-features.md
   - P&L audit: pnl-audit.md
+  - Band P&L risk: band-risk.md
+  - Review 2026-11-23: review-2026-11-23.md
   - Compliance inventory: compliance.md
   - Runbooks: runbooks.md
   - AI use policy: ai-use-policy.md
