@@ -15,7 +15,7 @@
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
                    package="io.ratesalgo.messages.sbe"
                    id="1"
-                   version="0"
+                   version="1"
                    semanticVersion="1.0.0"
                    description="rates-algo-trading messages v1"
                    byteOrder="littleEndian">
@@ -133,6 +133,7 @@
       <validValue name="BelowMinimum">3</validValue>
       <validValue name="CapReached">4</validValue>
       <validValue name="LimitPrice">5</validValue>
+      <validValue name="Stale" sinceVersion="1" description="The venue's book is gapped, too old, or its session is down">6</validValue>
     </enum>
 
     <enum name="ChildState" encodingType="uint8" description="Router child order state (API_SPEC.md Section 15.4)">
@@ -452,6 +453,17 @@
     <field name="price" id="6" type="Decimal9"/>
     <field name="quantity" id="7" type="Quantity"/>
     <field name="timestampNanos" id="8" type="EpochNanos"/>
+  </sbe:message>
+
+  <!-- Schema version 1 (additive): OrderCancelReject and VenueExclusion.Stale. -->
+  <sbe:message name="OrderCancelReject" id="45" sinceVersion="1" description="Venue refused a cancel or replace request (FIX 35=9)">
+    <field name="venueId" id="1" type="VenueId"/>
+    <field name="clOrdId" id="2" type="int64" description="ClOrdID of the refused request"/>
+    <field name="origClOrdId" id="3" type="int64" description="The order the request named"/>
+    <field name="instrumentId" id="4" type="InstrumentId" description="0 when the gateway could not tell"/>
+    <field name="ordStatus" id="5" type="OrdStatus" description="The venue's status of the order"/>
+    <field name="responseTo" id="6" type="uint8" description="1 cancel request, 2 replace request"/>
+    <field name="timestampNanos" id="7" type="EpochNanos"/>
   </sbe:message>
 
   <!-- P3 quoting engine withdrawals, template ids 60 to 79 (API_SPEC.md Sections 2 and 12). Named

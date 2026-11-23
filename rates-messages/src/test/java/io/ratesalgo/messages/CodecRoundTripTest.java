@@ -26,7 +26,7 @@ class CodecRoundTripTest {
   @Test
   void schemaIdentityIsPinned() {
     assertEquals(1, QuoteRequestEncoder.SCHEMA_ID);
-    assertEquals(0, QuoteRequestEncoder.SCHEMA_VERSION);
+    assertEquals(1, QuoteRequestEncoder.SCHEMA_VERSION);
     assertEquals(10, QuoteRequestEncoder.TEMPLATE_ID);
     assertEquals(11, QuoteEncoder.TEMPLATE_ID);
     assertEquals(31, KillSwitchEncoder.TEMPLATE_ID);
