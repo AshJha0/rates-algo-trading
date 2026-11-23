@@ -8,12 +8,18 @@ package io.ratesalgo.analytics.date;
  * business day, so the overnight rate steps on that day: the effective date. Between two effective
  * dates the curve holds the overnight forward flat.
  *
- * <p>Source and status: the dates below are the Board of Governors' published schedules for 2025
- * and 2026 and its tentative schedule for 2027, typed from memory. UNVERIFIED: they were not
- * re-read from federalreserve.gov when this class was written. A wrong date moves one step of the
- * front end by the error in days; it does not stop the curve from repricing its inputs. Unscheduled
- * meetings are not modelled. After the last date listed the front end has no meeting steps and the
- * futures strip starts at the overnight pillar.
+ * <p>Source: Board of Governors of the Federal Reserve System, "Meeting calendars, statements, and
+ * minutes", federalreserve.gov/monetarypolicy/fomccalendars.htm (page last updated November 18,
+ * 2026; read 2026-11-23). 2025 and 2026 are the held schedules; the 2025 dates and the 2026 dates
+ * to June also match data/fixtures/edge/calendar.csv, built from the same page. 2027 is tentative:
+ * the page says each date is tentative until confirmed at the meeting before it. The August 22,
+ * 2025 notation vote is not a meeting and is left out. The October 26-27, 2027 entry is marked
+ * "Monetary Policy Strategy Meeting", three weeks before the November 16-17 meeting, and is left
+ * out as not a scheduled policy decision; that is a reading of the page, not something it states.
+ * The next listed meeting, January 25-26, 2028, is outside the list. A wrong date moves one step of
+ * the front end by the error in days; it does not stop the curve from repricing its inputs.
+ * Unscheduled meetings are not modelled. After the last date listed the front end has no meeting
+ * steps and the futures strip starts at the overnight pillar.
  */
 public final class FomcCalendar {
 
@@ -24,7 +30,7 @@ public final class FomcCalendar {
     Dates.of(2026, 1, 28), Dates.of(2026, 3, 18), Dates.of(2026, 4, 29), Dates.of(2026, 6, 17),
     Dates.of(2026, 7, 29), Dates.of(2026, 9, 16), Dates.of(2026, 10, 28), Dates.of(2026, 12, 9),
     Dates.of(2027, 1, 27), Dates.of(2027, 3, 17), Dates.of(2027, 4, 28), Dates.of(2027, 6, 9),
-    Dates.of(2027, 7, 28), Dates.of(2027, 9, 15), Dates.of(2027, 10, 27), Dates.of(2027, 12, 8),
+    Dates.of(2027, 7, 28), Dates.of(2027, 9, 15), Dates.of(2027, 11, 17),
   };
 
   private FomcCalendar() {}
