@@ -225,12 +225,12 @@ public final class RiskEngine {
     final Instrument inst = directory.byIndex(i);
     final int c = inst.currency().index();
     final double px = Decimal9.toDouble(fairMid);
+    // an unmarked instrument has no position: onFill, the only writer of position, marks first
+    // and marked is never cleared, so the first mark adds nothing to the mark value
     if (marked[i]) {
       markValue[c] += inst.major(position[i]) * (px - mark[i]) * inst.quoteValue();
-    } else {
-      markValue[c] += inst.major(position[i]) * px * inst.quoteValue();
-      marked[i] = true;
     }
+    marked[i] = true;
     mark[i] = px;
     postTrade(c, -1);
   }
@@ -520,13 +520,17 @@ public final class RiskEngine {
     if (room <= 0) {
       return 0L;
     }
-    // bisection on the envelope, which is monotone in the added quantity
+    // bisection on the envelope, which is monotone in the added quantity. Invariant: lo is zero or
+    // passes, hi fails. Run to hi - lo == 1 so lo is the exact edge: the old 48-step cap left up
+    // to 2^15 units on the table when room was near Long.MAX_VALUE (no position or size limit).
+    // At most 63 halvings, since 0 <= lo < hi <= Long.MAX_VALUE, and lo + (hi - lo) / 2 cannot
+    // overflow.
     if (envelopeQuiet(i, buy ? room : 0L, buy ? 0L : room)) {
       return room;
     }
     long lo = 0L;
     long hi = room;
-    for (int iter = 0; iter < 48 && hi - lo > 1; iter++) {
+    while (hi - lo > 1) {
       final long mid = lo + (hi - lo) / 2;
       if (envelopeQuiet(i, buy ? mid : 0L, buy ? 0L : mid)) {
         lo = mid;

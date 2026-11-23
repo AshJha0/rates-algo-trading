@@ -41,7 +41,10 @@ class RiskControlsTest {
     assertTrue(sellRoom > 0, "selling 10Y reduces the 10Y breach");
     // stops where net PV01 reaches its +20k limit: (20k + 6k) / 820 per million
     assertEquals(26_000.0 / 820.0, (double) sellRoom / M, 0.01);
-    assertEquals(0L, f.risk.headroom(BOND10, Side.Buy), "buying 10Y adds to the breach");
+    // buying 10Y adds to the breach; all that is left is the check's rounding allowance,
+    // 1e-9 x 82k = 8.2e-5 of PV01, or 10 minor units at 8.2e-6 each, far below any quote lot
+    // (exact headroom shows it; the old 48-step bisection stopped at 0)
+    assertTrue(f.risk.headroom(BOND10, Side.Buy) <= 10L, "buying 10Y adds to the breach");
 
     // RFQ: the client buys 10m from us, so we quote an offer and sell
     assertEquals(RiskEngine.OK, f.risk.checkQuote(BOND10, 0L, 0L, px, 10 * M, 1));
