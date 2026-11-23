@@ -95,6 +95,8 @@ class RestartRecoveryTest {
       assertTrue(desk.desk().quoting().quotesSent() > 0, "quotes sent before the stop");
       assertTrue(desk.desk().quoting().fills() > 0, "fills before the stop");
       assertTrue(desk.hedgesRouted() > 0, "hedges routed before the stop");
+      // in ring mode the files trail the loop by the rings' backlog; direct mode returns at once
+      p.group(0).journals().awaitDrained(1, java.util.concurrent.TimeUnit.MINUTES);
       final long[] out = journalEnd(p.group(0).dir(), "out");
       final long[] in = journalEnd(p.group(0).dir(), "in");
       final Stopped stopped =
@@ -271,6 +273,43 @@ class RestartRecoveryTest {
       p.close();
     }
     assertTrue(TradingProcessMain.replayGroup(image.resolve("usd")).matches());
+  }
+
+  /**
+   * Restart recovery in ring mode (DR-R6-L04): a crash image of a process whose journals were
+   * written through rings, with the WORD64 hash, restarts in ring mode and, on a second copy, in
+   * direct mode. The files are the same in both modes, and the outbound journal never runs ahead of
+   * the inbound one, so either restart replays to the recorded hash.
+   */
+  @Test
+  void aRingModeCrashImageRestartsInEitherMode() throws IOException {
+    final TradingProcess.Tuning ring =
+        TradingProcess.Tuning.DEFAULT.withJournals(
+            io.ratesalgo.core.LoopJournals.Settings.DEFAULT
+                .withMode(io.ratesalgo.core.JournalMode.RING)
+                .withHashAlgorithm(io.ratesalgo.journal.ChainHash.WORD64));
+    final Path live = Files.createDirectories(root.resolve("ring-live"));
+    final Path image = root.resolve("ring-image");
+    final Stopped stopped = runAndStop(live, image, options(live).withTuning(ring));
+    final Path second = crashImage(image, root.resolve("ring-image-direct"));
+    for (final Path dir : new Path[] {image, second}) {
+      final TradingProcess.Tuning tuning = dir.equals(image) ? ring : TradingProcess.Tuning.DEFAULT;
+      final TradingProcess p = TradingProcess.start(options(dir).withTuning(tuning));
+      try {
+        assertTrue(p.recovered());
+        assertEquals(stopped.digest(), p.recoveredStateDigest(0), dir + ": state by replay alone");
+        assertEquals(stopped.outHash(), p.recoveredReplayHash(0), dir + ": replay reproduced the recorded outbound");
+        assertEquals(io.ratesalgo.journal.ChainHash.WORD64, p.group(0).journals().hashAlgorithm(),
+            "an existing journal keeps the hash its files name, whatever the tuning says");
+        pumpUntil(p, () -> p.notReadyReason() == null, "readiness after the restart");
+        p.step(MINUTE, STEP);
+        assertNull(p.haltReason());
+      } finally {
+        p.close();
+      }
+      final ReplayResult replay = TradingProcessMain.replayGroup(dir.resolve("usd"));
+      assertTrue(replay.matches(), dir + ": " + replay);
+    }
   }
 
   @Test

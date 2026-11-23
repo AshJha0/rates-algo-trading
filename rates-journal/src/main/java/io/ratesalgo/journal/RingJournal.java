@@ -52,17 +52,31 @@ import org.agrona.concurrent.ringbuffer.RingBufferDescriptor;
  * restart repairs whatever tail is left ({@link JournalRecovery}) and replays it the same way in
  * either mode, because the files are the same. {@link #close()} drains the ring, then closes the
  * segmented journal.
+ *
+ * <p>Order between two journals ({@link #follow}). A loop's outbound frames are consequences of its
+ * inbound frames. In direct mode the inbound frame is in the file before its handler runs, so the
+ * outbound journal can never be ahead of the inbound one, and a restart that replays the inbound
+ * journal produces at least every recorded outbound frame. With two rings and two journal threads
+ * that order would be lost: the outbound thread could write a frame whose cause was still in the
+ * inbound ring when the process died, and the restart would refuse the journals. So an outbound
+ * journal follows its inbound one: each record carries the inbound sequence appended before it,
+ * and the outbound journal thread writes it only once the inbound journal thread has written that
+ * far. A crash then loses a tail of each journal, never the cause of a frame that survived.
  */
 public final class RingJournal implements AutoCloseable {
 
   /** Default ring size: 64 MiB, about 0.5 million QuoteRequest frames. */
   public static final int DEFAULT_RING_CAPACITY = 64 << 20;
 
-  /** Ring record: timestamp (int64), schema version (int32), four zero bytes, then the payload. */
+  /**
+   * Ring record: timestamp (int64), schema version (int32), four zero bytes, the followed
+   * journal's sequence this frame waits for (int64, 0 for none), then the payload.
+   */
   private static final int RECORD_TIMESTAMP_OFFSET = 0;
 
   private static final int RECORD_VERSION_OFFSET = 8;
-  private static final int RECORD_HEADER_LENGTH = 16;
+  private static final int RECORD_AFTER_OFFSET = 16;
+  private static final int RECORD_HEADER_LENGTH = 24;
 
   /** Frames drained per read of the ring. */
   private static final int DRAIN_LIMIT = 1024;
@@ -81,6 +95,12 @@ public final class RingJournal implements AutoCloseable {
 
   /** Read and written on the producing thread only. */
   private long nextSequence;
+
+  /** The journal whose frames this one's must not overtake in the files, or null. */
+  private RingJournal leader;
+
+  /** The last sequence the journal thread has written to the file. Written by it; read by followers. */
+  private final AtomicLong written = new AtomicLong();
 
   /** Written by {@link #close()}, which may run on another thread once the producer has stopped. */
   private volatile boolean closed;
@@ -111,6 +131,7 @@ public final class RingJournal implements AutoCloseable {
     this.maxPayload = ring.maxMsgLength() - RECORD_HEADER_LENGTH;
     this.maxFrame = journal.segmentCapacity() - FILE_HEADER_LENGTH - Integer.BYTES;
     this.nextSequence = journal.nextSequence();
+    this.written.set(journal.nextSequence() - 1);
     final Drain drain = new Drain(journal, drainIdle);
     this.drainer = new Thread(drain, "journal-drain-" + name);
     this.drainer.setDaemon(true);
@@ -196,6 +217,8 @@ public final class RingJournal implements AutoCloseable {
     }
     ringBuffer.putLong(index + RECORD_TIMESTAMP_OFFSET, clock.epochNanos(), JournalFormat.BYTE_ORDER);
     ringBuffer.putLong(index + RECORD_VERSION_OFFSET, schemaVersion & 0xFFFFL, JournalFormat.BYTE_ORDER);
+    // both producers are the same loop thread, so the leader's counter is read where it is written
+    ringBuffer.putLong(index + RECORD_AFTER_OFFSET, leader == null ? 0L : leader.nextSequence - 1, JournalFormat.BYTE_ORDER);
     ringBuffer.putBytes(index + RECORD_HEADER_LENGTH, payload, offset, length);
     ring.commit(index);
     return nextSequence++;
@@ -245,6 +268,24 @@ public final class RingJournal implements AutoCloseable {
   /** The largest backlog the journal thread has found before a read, in bytes. Readable from any thread. */
   public long backlogHighWater() {
     return backlogHighWater.get();
+  }
+
+  /**
+   * Makes this journal follow {@code inbound}: a frame appended here after inbound frame {@code n}
+   * reaches the file only once {@code inbound}'s journal thread has written frame {@code n} (see
+   * the class comment). Both journals must be appended to on the same thread. Call before the
+   * first append.
+   */
+  public void follow(final RingJournal inbound) {
+    if (inbound == this) {
+      throw new IllegalArgumentException("a journal cannot follow itself");
+    }
+    this.leader = inbound;
+  }
+
+  /** The last sequence written to the file by the journal thread. Readable from any thread. */
+  public long writtenSequence() {
+    return written.get();
   }
 
   /** The sequence the next queued frame will get. Call on the appending thread. */
@@ -393,13 +434,37 @@ public final class RingJournal implements AutoCloseable {
     @Override
     public void onMessage(
         final int typeId, final MutableDirectBuffer buffer, final int index, final int length) {
-      target.append(
+      final long after = buffer.getLong(index + RECORD_AFTER_OFFSET, JournalFormat.BYTE_ORDER);
+      if (after > 0) {
+        awaitLeader(after);
+      }
+      final long sequence = target.append(
           typeId - 1,
           (int) buffer.getLong(index + RECORD_VERSION_OFFSET, JournalFormat.BYTE_ORDER),
           buffer.getLong(index + RECORD_TIMESTAMP_OFFSET, JournalFormat.BYTE_ORDER),
           buffer,
           index + RECORD_HEADER_LENGTH,
           length - RECORD_HEADER_LENGTH);
+      written.lazySet(sequence);
+    }
+
+    /**
+     * Waits until the followed journal has written {@code sequence}. The leader's journal thread
+     * never waits on this one, so the wait ends as long as it runs; if it has failed this thread
+     * fails too, and the producer hears of it on its next append.
+     */
+    private void awaitLeader(final long sequence) {
+      final RingJournal l = leader;
+      while (l.written.get() < sequence) {
+        final Throwable t = l.failure;
+        if (t != null) {
+          throw new IllegalStateException("the journal this one follows failed", t);
+        }
+        if (!l.drainer.isAlive() && l.written.get() < sequence) {
+          throw new IllegalStateException("the journal this one follows stopped before frame " + sequence);
+        }
+        Thread.onSpinWait();
+      }
     }
   }
 }

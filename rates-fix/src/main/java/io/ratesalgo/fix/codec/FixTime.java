@@ -27,6 +27,32 @@ public final class FixTime {
     return (long) era * 146_097 + doe - 719_468;
   }
 
+  /**
+   * The {@code YYYYMMDD-} prefix of the last day written, so that stamps on the same day copy nine
+   * bytes instead of redoing the civil-date arithmetic. One per writer: it is not thread-safe.
+   */
+  public static final class DayCache {
+    private long day = Long.MIN_VALUE;
+    private final byte[] prefix = new byte[9];
+  }
+
+  /**
+   * {@link #writeMillis(MutableDirectBuffer, int, long)} with the date part taken from {@code
+   * cache} when the day is the one it holds, and kept there otherwise. The bytes are the same.
+   */
+  public static int writeMillis(
+      final MutableDirectBuffer buffer, final int offset, final long epochNanos, final DayCache cache) {
+    final long days = Math.floorDiv(epochNanos, NANOS_PER_DAY);
+    if (days == cache.day) {
+      buffer.putBytes(offset, cache.prefix);
+      return 9 + writeTime(buffer, offset + 9, Math.floorMod(epochNanos, NANOS_PER_DAY));
+    }
+    final int length = writeMillis(buffer, offset, epochNanos);
+    buffer.getBytes(offset, cache.prefix);
+    cache.day = days;
+    return length;
+  }
+
   /** Writes epoch nanoseconds with millisecond precision; returns {@link #MILLIS_LENGTH}. */
   public static int writeMillis(final MutableDirectBuffer buffer, final int offset, final long epochNanos) {
     final long days = Math.floorDiv(epochNanos, NANOS_PER_DAY);
@@ -40,12 +66,19 @@ public final class FixTime {
     final long day = doy - (153 * mp + 2) / 5 + 1;
     final long month = mp < 10 ? mp + 3 : mp - 9;
     final long year = yoe + era * 400 + (month <= 2 ? 1 : 0);
-    final long millisOfDay = nanosOfDay / 1_000_000L;
     int p = offset;
     p += AsciiNumbers.writePadded(buffer, p, year, 4);
     p += AsciiNumbers.writePadded(buffer, p, month, 2);
     p += AsciiNumbers.writePadded(buffer, p, day, 2);
     buffer.putByte(p++, (byte) '-');
+    p += writeTime(buffer, p, nanosOfDay);
+    return p - offset;
+  }
+
+  /** {@code HH:MM:SS.sss} of a time of day; returns 12. */
+  private static int writeTime(final MutableDirectBuffer buffer, final int offset, final long nanosOfDay) {
+    final long millisOfDay = nanosOfDay / 1_000_000L;
+    int p = offset;
     p += AsciiNumbers.writePadded(buffer, p, millisOfDay / 3_600_000L, 2);
     buffer.putByte(p++, (byte) ':');
     p += AsciiNumbers.writePadded(buffer, p, (millisOfDay / 60_000L) % 60, 2);

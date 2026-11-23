@@ -35,6 +35,17 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  * duty cycles until the gateway has room. The retry touches the ring only, never the journals or a
  * handler, so replay is unaffected.
  *
+ * <p>Conflation ({@link Builder#conflate}, off unless asked for; DECISIONS.md DR-R6-L05). A level
+ * input such as a curve quote, whose next value supersedes the last, can be held back instead of
+ * dispatched where it stands in the ring: the loop keeps only the newest per key, dispatches the
+ * rest of the ring first, and then at most {@link Builder#conflatedPerCycle} held inputs per duty
+ * cycle. A held input is journaled when it is dispatched, not when it is read, and one that a newer
+ * one replaced is never journaled (it is counted in {@link LoopCounters#CONFLATED}); the inbound
+ * journal therefore holds exactly what the handlers saw, in the order they saw it, and replay
+ * reproduces it. The cost of the input's handler (a curve rebuild and reprice) then stands in front
+ * of at most one duty cycle's worth of other inputs: an RFQ or a KillSwitch waits for at most
+ * the number of held inputs dispatched per cycle, not for every curve input queued before it.
+ *
  * <p>In replay ({@link LoopReplay}) the same handlers receive the journaled inbound frames, clock
  * ticks poll the timers, backpressure frames reach the listener, and outbound messages go to a sink
  * that hashes them and compares with the recorded outbound journal.
@@ -81,6 +92,21 @@ public final class EventLoop {
   private final int[] retryTail;
   private int retryGateways;
 
+  /** Per template id: conflated when held back, or null when nothing is. */
+  private final boolean[] conflating;
+  private final int[] conflateKeyOffset;
+  private final int[] conflateKeyLength;
+  private final int conflatedPerCycle;
+  private final int heldSlotBytes;
+  /** Held inputs as [int length][int templateId][int version][int spare][bytes], one slot each. */
+  private final UnsafeBuffer held;
+  private final long[] heldKey;
+  private final int[] heldTemplate;
+  /** Slots in arrival order of their key's first held input; a ring of slot indices. */
+  private final int[] heldOrder;
+  private int heldHead;
+  private int heldCount;
+
   private Agent[] agents = new Agent[0];
   private BackpressureListener backpressureListener = event -> {};
   private int pendingCount;
@@ -109,6 +135,17 @@ public final class EventLoop {
         retryBuffers[g] = new UnsafeBuffer(ByteBuffer.allocateDirect(b.retryCapacityBytes));
       }
     }
+    final boolean conflate = b.conflating != null && !b.replay;
+    this.conflating = conflate ? b.conflating.clone() : null;
+    this.conflateKeyOffset = conflate ? b.conflateKeyOffset.clone() : null;
+    this.conflateKeyLength = conflate ? b.conflateKeyLength.clone() : null;
+    this.conflatedPerCycle = b.conflatedPerCycle;
+    this.heldSlotBytes = HELD_HEADER + b.conflateSlotBytes;
+    final int slots = conflate ? b.conflateSlots : 0;
+    this.held = conflate ? new UnsafeBuffer(ByteBuffer.allocateDirect(slots * heldSlotBytes)) : null;
+    this.heldKey = new long[slots];
+    this.heldTemplate = new int[slots];
+    this.heldOrder = new int[slots];
     // Load and initialise the backpressure path's classes now, on the building thread. The loop
     // reads ControlMessages only through compile-time constants until the first dropped message,
     // so without this the first backpressure event of a run loads the class on the loop thread,
@@ -193,6 +230,9 @@ public final class EventLoop {
     for (final RingBuffer ring : inbound) {
       work += ring.read(ringHandler, readLimit);
     }
+    if (heldCount != 0) {
+      work += dispatchHeld();
+    }
     final int fired = timers.poll(clock.nanoTime());
     if (fired > 0) {
       journalClockTick();
@@ -228,9 +268,111 @@ public final class EventLoop {
     } else {
       throw ContractBreach.schema(schemaId, version, templateId);
     }
+    if (LoopProbe.ENABLED) {
+      LoopProbe.Installed.probe.onStage(LoopProbe.READ, templateId, buffer, index);
+    }
+    if (conflating != null && conflating[templateId] && holdBack(templateId, version, buffer, index, length)) {
+      return;
+    }
     inboundJournal.append(templateId, version, buffer, index, length);
+    if (LoopProbe.ENABLED) {
+      LoopProbe.Installed.probe.onStage(LoopProbe.JOURNALED, templateId, buffer, index);
+    }
     dispatch(templateId, buffer, index, length);
     flushBackpressure();
+    if (LoopProbe.ENABLED) {
+      LoopProbe.Installed.probe.onStage(LoopProbe.HANDLED, templateId, buffer, index);
+    }
+  }
+
+  private static final int HELD_HEADER = 16;
+
+  /**
+   * Holds a conflatable input in its key's slot, replacing a held one with the same key. False if
+   * it cannot be held (no free slot, or too long for one): the caller then dispatches it at once,
+   * which is always correct, only not conflated.
+   */
+  private boolean holdBack(
+      final int templateId, final int version, final DirectBuffer buffer, final int index, final int length) {
+    if (length > heldSlotBytes - HELD_HEADER) {
+      return false;
+    }
+    final long key = conflationKey(templateId, buffer, index);
+    final int slots = heldOrder.length;
+    int slot = -1;
+    for (int i = 0; i < heldCount; i++) {
+      final int s = heldOrder[(heldHead + i) % slots];
+      if (heldTemplate[s] == templateId && heldKey[s] == key) {
+        slot = s;
+        break;
+      }
+    }
+    if (slot >= 0) {
+      counters.increment(LoopCounters.CONFLATED);
+    } else {
+      if (heldCount == slots) {
+        return false;
+      }
+      slot = freeSlot();
+      heldTemplate[slot] = templateId;
+      heldKey[slot] = key;
+      heldOrder[(heldHead + heldCount) % slots] = slot;
+      heldCount++;
+    }
+    final int at = slot * heldSlotBytes;
+    held.putInt(at, length);
+    held.putInt(at + Integer.BYTES, templateId);
+    held.putInt(at + 2 * Integer.BYTES, version);
+    held.putBytes(at + HELD_HEADER, buffer, index, length);
+    return true;
+  }
+
+  /** A slot no held input occupies; called only when one exists. */
+  private int freeSlot() {
+    final int slots = heldOrder.length;
+    for (int s = 0; s < slots; s++) {
+      boolean used = false;
+      for (int i = 0; i < heldCount && !used; i++) {
+        used = heldOrder[(heldHead + i) % slots] == s;
+      }
+      if (!used) {
+        return s;
+      }
+    }
+    throw new IllegalStateException();
+  }
+
+  private long conflationKey(final int templateId, final DirectBuffer buffer, final int index) {
+    final int from = index + conflateKeyOffset[templateId];
+    long key = 0;
+    for (int i = conflateKeyLength[templateId] - 1; i >= 0; i--) {
+      key = (key << 8) | (buffer.getByte(from + i) & 0xFFL);
+    }
+    return key;
+  }
+
+  /** Journals and dispatches the oldest held inputs, at most {@link Builder#conflatedPerCycle}. */
+  private int dispatchHeld() {
+    int done = 0;
+    while (heldCount != 0 && done < conflatedPerCycle) {
+      final int slot = heldOrder[heldHead];
+      heldHead = (heldHead + 1) % heldOrder.length;
+      heldCount--;
+      final int at = slot * heldSlotBytes;
+      final int length = held.getInt(at);
+      final int templateId = held.getInt(at + Integer.BYTES);
+      inboundJournal.append(templateId, held.getInt(at + 2 * Integer.BYTES), held, at + HELD_HEADER, length);
+      dispatch(templateId, held, at + HELD_HEADER, length);
+      flushBackpressure();
+      done++;
+    }
+    // inputs still held are work: the idle strategy must not back off while they wait
+    return done + heldCount;
+  }
+
+  /** Conflatable inputs read and not yet dispatched. Loop thread only. */
+  public int heldInputs() {
+    return heldCount;
   }
 
   private static boolean isClockTick(final int templateId, final DirectBuffer buffer, final int index) {
@@ -468,6 +610,12 @@ public final class EventLoop {
     private int readLimit = DEFAULT_READ_LIMIT;
     private boolean[] retryTemplates;
     private int retryCapacityBytes = 64 * 1024;
+    private boolean[] conflating;
+    private int[] conflateKeyOffset;
+    private int[] conflateKeyLength;
+    private int conflatedPerCycle = 1;
+    private int conflateSlots = 64;
+    private int conflateSlotBytes = 256;
 
     Builder(final EventClock clock, final boolean replay) {
       this.clock = clock;
@@ -561,6 +709,58 @@ public final class EventLoop {
         throw new IllegalArgumentException("retry capacity too small: " + bytes);
       }
       retryCapacityBytes = bytes;
+      return this;
+    }
+
+    /**
+     * Conflates inputs of {@code templateId}: they are held back per key and dispatched after the
+     * rest of the ring, the newest per key only (see the class comment). The key is {@code
+     * keyLength} bytes (1 to 8) at {@code keyOffset} from the start of the message, SBE header
+     * included. Ignored in replay, which dispatches the journal as it stands.
+     *
+     * <p>Only for level inputs whose newest value supersedes the older ones, such as curve quotes.
+     * Never for session messages, book deltas or anything whose loss changes state.
+     */
+    public Builder conflate(final int templateId, final int keyOffset, final int keyLength) {
+      if (templateId < 1 || templateId >= TEMPLATE_IDS) {
+        throw new IllegalArgumentException("template id out of range: " + templateId);
+      }
+      if (keyOffset < HEADER || keyLength < 1 || keyLength > Long.BYTES) {
+        throw new IllegalArgumentException("a conflation key is 1 to 8 bytes after the SBE header");
+      }
+      if (conflating == null) {
+        conflating = new boolean[TEMPLATE_IDS];
+        conflateKeyOffset = new int[TEMPLATE_IDS];
+        conflateKeyLength = new int[TEMPLATE_IDS];
+      }
+      conflating[templateId] = true;
+      conflateKeyOffset[templateId] = keyOffset;
+      conflateKeyLength[templateId] = keyLength;
+      return this;
+    }
+
+    /**
+     * Held inputs dispatched per duty cycle (1 by default): the most expensive handler work that can
+     * stand between two reads of the rings.
+     */
+    public Builder conflatedPerCycle(final int perCycle) {
+      if (perCycle < 1) {
+        throw new IllegalArgumentException("at least one held input per cycle: " + perCycle);
+      }
+      conflatedPerCycle = perCycle;
+      return this;
+    }
+
+    /**
+     * Distinct keys held at once (64 by default) and the largest message a slot holds (256 bytes
+     * by default). An input that finds no slot is dispatched where it stands.
+     */
+    public Builder conflationSlots(final int slots, final int slotBytes) {
+      if (slots < 1 || slotBytes < HEADER) {
+        throw new IllegalArgumentException("conflation slots too small");
+      }
+      conflateSlots = slots;
+      conflateSlotBytes = slotBytes;
       return this;
     }
 

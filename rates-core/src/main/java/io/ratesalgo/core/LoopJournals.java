@@ -1,5 +1,6 @@
 package io.ratesalgo.core;
 
+import io.ratesalgo.journal.ChainHash;
 import io.ratesalgo.journal.RingJournal;
 import io.ratesalgo.journal.SegmentedJournal;
 import java.nio.file.Path;
@@ -29,6 +30,75 @@ public final class LoopJournals implements AutoCloseable {
    */
   public static final JournalMode DEFAULT_MODE = JournalMode.DIRECT;
 
+  /**
+   * How a loop's journals are written (API_SPEC.md Section 9.7).
+   *
+   * @param mode direct or ring
+   * @param ringCapacity bytes of each ring in {@link JournalMode#RING}; ignored in direct mode
+   * @param hashAlgorithm the {@link ChainHash} of new journals; opened journals keep theirs
+   * @param journalIdle the journal threads' idle strategy in ring mode, a name {@link
+   *     IdleStrategies#of} accepts
+   * @param journalStallNanos how long the loop waits on a full ring with no progress before it
+   *     fails (DECISIONS.md DR-R6-L04)
+   * @param segmentOptions page locking and the refault window of every segment
+   */
+  public record Settings(
+      JournalMode mode,
+      int ringCapacity,
+      int hashAlgorithm,
+      String journalIdle,
+      long journalStallNanos,
+      SegmentedJournal.Options segmentOptions) {
+
+    /**
+     * What a loop always had: direct mode, FNV-1a, 64 MiB rings and a backoff journal thread if
+     * ring mode is chosen, a minute's stall limit, the default segment options.
+     */
+    public static final Settings DEFAULT =
+        new Settings(DEFAULT_MODE, RingJournal.DEFAULT_RING_CAPACITY, ChainHash.DEFAULT, "backoff",
+            RingJournal.STALL_NANOS, SegmentedJournal.Options.DEFAULT);
+
+    /** Validates the settings. */
+    public Settings {
+      IdleStrategies.of(journalIdle);
+      if (!ChainHash.isKnown(hashAlgorithm)) {
+        throw new IllegalArgumentException("unknown chain hash algorithm " + hashAlgorithm);
+      }
+      if (journalStallNanos <= 0) {
+        throw new IllegalArgumentException("journal stall limit must be positive");
+      }
+    }
+
+    /** These settings in another mode. */
+    public Settings withMode(final JournalMode other) {
+      return new Settings(other, ringCapacity, hashAlgorithm, journalIdle, journalStallNanos, segmentOptions);
+    }
+
+    /** These settings with another chain hash for new journals. */
+    public Settings withHashAlgorithm(final int algorithm) {
+      return new Settings(mode, ringCapacity, algorithm, journalIdle, journalStallNanos, segmentOptions);
+    }
+
+    /** These settings with another ring size and journal-thread idle strategy. */
+    public Settings withRing(final int capacity, final String idle) {
+      return new Settings(mode, capacity, hashAlgorithm, idle, journalStallNanos, segmentOptions);
+    }
+
+    /** These settings with another stall limit on a full ring. */
+    public Settings withStallNanos(final long nanos) {
+      return new Settings(mode, ringCapacity, hashAlgorithm, journalIdle, nanos, segmentOptions);
+    }
+
+    /** These settings with other segment options. */
+    public Settings withSegmentOptions(final SegmentedJournal.Options options) {
+      return new Settings(mode, ringCapacity, hashAlgorithm, journalIdle, journalStallNanos, options);
+    }
+
+    SegmentedJournal.Options segments() {
+      return segmentOptions.withHashAlgorithm(hashAlgorithm);
+    }
+  }
+
   private final JournalMode mode;
   private final Sink inbound;
   private final Sink outbound;
@@ -37,6 +107,11 @@ public final class LoopJournals implements AutoCloseable {
     this.mode = mode;
     this.inbound = inbound;
     this.outbound = outbound;
+    if (inbound.ring != null && outbound.ring != null) {
+      // an outbound frame never reaches its file before the inbound frame that caused it, so a
+      // crash in ring mode leaves journals a restart can replay (RingJournal, DR-R6-L04)
+      outbound.ring.follow(inbound.ring);
+    }
   }
 
   /**
@@ -54,12 +129,29 @@ public final class LoopJournals implements AutoCloseable {
       final EventClock clock,
       final JournalMode mode,
       final int ringCapacity) {
-    final Sink in = Sink.create(dir, inboundName, segmentBytes, clock, mode, ringCapacity);
+    return create(dir, inboundName, outboundName, segmentBytes, clock,
+        Settings.DEFAULT.withMode(mode).withRing(ringCapacity, Settings.DEFAULT.journalIdle()));
+  }
+
+  /**
+   * Creates journals {@code inboundName} and {@code outboundName} in {@code dir} with {@code
+   * settings}.
+   *
+   * @throws IllegalArgumentException if either journal already exists
+   */
+  public static LoopJournals create(
+      final Path dir,
+      final String inboundName,
+      final String outboundName,
+      final int segmentBytes,
+      final EventClock clock,
+      final Settings settings) {
+    final Sink in = Sink.create(dir, inboundName, segmentBytes, clock, settings);
     boolean opened = false;
     try {
       final LoopJournals journals =
           new LoopJournals(
-              mode, in, Sink.create(dir, outboundName, segmentBytes, clock, mode, ringCapacity));
+              settings.mode(), in, Sink.create(dir, outboundName, segmentBytes, clock, settings));
       opened = true;
       return journals;
     } finally {
@@ -107,11 +199,28 @@ public final class LoopJournals implements AutoCloseable {
       final EventClock clock,
       final JournalMode mode,
       final int ringCapacity) {
-    final Sink in = Sink.open(dir, inboundName, segmentBytes, clock, mode, ringCapacity);
+    return open(dir, inboundName, outboundName, segmentBytes, clock,
+        Settings.DEFAULT.withMode(mode).withRing(ringCapacity, Settings.DEFAULT.journalIdle()));
+  }
+
+  /**
+   * Opens existing journals with {@code settings}; their chain hash is the one their files name.
+   *
+   * @throws IllegalArgumentException if either journal does not exist
+   * @throws io.ratesalgo.journal.JournalCorruptionException if a chain is broken
+   */
+  public static LoopJournals open(
+      final Path dir,
+      final String inboundName,
+      final String outboundName,
+      final int segmentBytes,
+      final EventClock clock,
+      final Settings settings) {
+    final Sink in = Sink.open(dir, inboundName, segmentBytes, clock, settings);
     boolean opened = false;
     try {
       final LoopJournals journals =
-          new LoopJournals(mode, in, Sink.open(dir, outboundName, segmentBytes, clock, mode, ringCapacity));
+          new LoopJournals(settings.mode(), in, Sink.open(dir, outboundName, segmentBytes, clock, settings));
       opened = true;
       return journals;
     } finally {
@@ -157,6 +266,38 @@ public final class LoopJournals implements AutoCloseable {
   }
 
   /**
+   * Waits until both rings are written to their files, for tests and tools that read the files of a
+   * live loop; returns at once in direct mode. Never call on the loop thread.
+   *
+   * @throws IllegalStateException if a journal thread failed or the wait timed out
+   */
+  public void awaitDrained(final long timeout, final java.util.concurrent.TimeUnit unit) {
+    if (inbound.ring != null) {
+      inbound.ring.awaitDrained(timeout, unit);
+    }
+    if (outbound.ring != null) {
+      outbound.ring.awaitDrained(timeout, unit);
+    }
+  }
+
+  /** The larger of the two rings' backlog high-water marks, bytes; 0 in direct mode. */
+  public long backlogHighWater() {
+    return Math.max(inbound.backlogHighWater(), outbound.backlogHighWater());
+  }
+
+  /** The chain hash both journals are written with. */
+  public int hashAlgorithm() {
+    return inbound.segmented.hashAlgorithm();
+  }
+
+  /** Segments locked in memory and segments whose lock was refused, over both journals. */
+  public long[] pageLocks() {
+    final long[] in = inbound.segmented.pageLocks();
+    final long[] out = outbound.segmented.pageLocks();
+    return new long[] {in[0] + out[0], in[1] + out[1]};
+  }
+
+  /**
    * Closes both journals: in ring mode each ring is drained first. Call after the loop thread has
    * stopped.
    */
@@ -181,37 +322,27 @@ public final class LoopJournals implements AutoCloseable {
     }
 
     static Sink create(
-        final Path dir,
-        final String name,
-        final int segmentBytes,
-        final EventClock clock,
-        final JournalMode mode,
-        final int ringCapacity) {
-      return wrap(name, SegmentedJournal.create(dir, name, segmentBytes, clock, true), clock, mode, ringCapacity);
+        final Path dir, final String name, final int segmentBytes, final EventClock clock, final Settings settings) {
+      return wrap(name, SegmentedJournal.create(dir, name, segmentBytes, clock, true, settings.segments()), clock,
+          settings);
     }
 
     static Sink open(
-        final Path dir,
-        final String name,
-        final int segmentBytes,
-        final EventClock clock,
-        final JournalMode mode,
-        final int ringCapacity) {
-      return wrap(name, SegmentedJournal.open(dir, name, segmentBytes, clock, true), clock, mode, ringCapacity);
+        final Path dir, final String name, final int segmentBytes, final EventClock clock, final Settings settings) {
+      return wrap(name, SegmentedJournal.open(dir, name, segmentBytes, clock, true, settings.segments()), clock,
+          settings);
     }
 
     private static Sink wrap(
-        final String name,
-        final SegmentedJournal journal,
-        final EventClock clock,
-        final JournalMode mode,
-        final int ringCapacity) {
-      if (mode == JournalMode.DIRECT) {
+        final String name, final SegmentedJournal journal, final EventClock clock, final Settings settings) {
+      if (settings.mode() == JournalMode.DIRECT) {
         return new Sink(journal, null);
       }
       boolean started = false;
       try {
-        final Sink sink = new Sink(journal, RingJournal.start(name, journal, clock, ringCapacity));
+        final Sink sink =
+            new Sink(journal, RingJournal.start(name, journal, clock, settings.ringCapacity(),
+                IdleStrategies.of(settings.journalIdle()), settings.journalStallNanos()));
         started = true;
         return sink;
       } finally {
@@ -239,6 +370,10 @@ public final class LoopJournals implements AutoCloseable {
 
     long producerWaits() {
       return ring == null ? 0L : ring.producerWaits();
+    }
+
+    long backlogHighWater() {
+      return ring == null ? 0L : ring.backlogHighWater();
     }
 
     @Override

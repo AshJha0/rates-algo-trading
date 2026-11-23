@@ -27,7 +27,7 @@ class ConfigValidationTest {
   @Test
   void committedConfigurationsAreValid() throws Exception {
     final JsonSchema schema = ProcessConfig.schema(SCHEMA);
-    for (final String f : List.of("trading-blue", "trading-green", "venue-sim")) {
+    for (final String f : List.of("trading-blue", "trading-green", "trading-lowlatency", "venue-sim")) {
       assertEquals(List.of(), ProcessConfig.check(Path.of("../deploy/config/" + f + ".yaml"), schema), f);
     }
     final ProcessConfig c = ProcessConfig.load(BLUE, schema, Map.of());

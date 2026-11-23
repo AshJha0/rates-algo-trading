@@ -58,6 +58,37 @@ class TcpInitiatorBoundsTest {
     return session;
   }
 
+  /**
+   * The plain path writes a direct buffer's bytes from a view of it instead of copying them (L11):
+   * what arrives is exactly the window asked for, from a direct buffer at an offset, a buffer that
+   * wraps part of one, and a heap buffer, and the caller's buffer keeps its own position and limit.
+   */
+  @Test
+  void thePlainPathSendsTheWindowAskedForFromAnyBufferAndLeavesTheCallersBufferAlone() throws Exception {
+    try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+      final TcpInitiator tcp = new TcpInitiator("127.0.0.1", server.getLocalPort(), 1 << 16, 2_000_000_000L, 200);
+      attach(tcp);
+      tcp.connect();
+      try (Socket accepted = server.accept()) {
+        final ByteBuffer backing = ByteBuffer.allocateDirect(64);
+        final UnsafeBuffer direct = new UnsafeBuffer(backing);
+        direct.putStringWithoutLengthAscii(0, "....hello-direct....");
+        final UnsafeBuffer inner = new UnsafeBuffer(direct, 4, 16);
+        final UnsafeBuffer heap = new UnsafeBuffer("..heap..".getBytes(StandardCharsets.US_ASCII));
+        tcp.send(direct, 4, 12);
+        tcp.send(inner, 0, 5);
+        tcp.send(heap, 2, 4);
+        tcp.send(direct, 4, 12);
+        assertEquals(0, backing.position());
+        assertEquals(64, backing.limit());
+        final byte[] got = accepted.getInputStream().readNBytes(12 + 5 + 4 + 12);
+        assertEquals("hello-directhelloheaphello-direct", new String(got, StandardCharsets.US_ASCII));
+      } finally {
+        tcp.close();
+      }
+    }
+  }
+
   @Test
   void aVenueThatStopsReadingIsDisconnectedInsteadOfHangingTheSender() throws Exception {
     try (ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {

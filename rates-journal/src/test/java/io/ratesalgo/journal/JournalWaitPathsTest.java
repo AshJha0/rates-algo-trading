@@ -328,6 +328,45 @@ class JournalWaitPathsTest {
         () -> RingJournal.start("bad", null, clock, 64 << 10, RingJournal.defaultDrainIdle(), 0L));
   }
 
+  /**
+   * An outbound journal follows its inbound one (DR-R6-L04): a frame appended after inbound frame
+   * {@code n} is not written while the inbound journal thread is held before {@code n}, and is
+   * written as soon as it gets there. Without the order a crash could keep an outbound frame and
+   * lose its cause, and the restart would refuse the journals.
+   */
+  @Test
+  void anOutboundFrameIsNotWrittenBeforeTheInboundFrameItFollows() {
+    final GateClock held = GateClock.holding();
+    final ManualClock free = new ManualClock(1_000L);
+    final RingJournal in = RingJournal.start("lead", SegmentedJournal.create(dir, "lead", SEGMENT, held, true), held, 64 << 10);
+    final RingJournal out = RingJournal.start("follow", SegmentedJournal.create(dir, "follow", SEGMENT, free, true), free, 64 << 10);
+    assertThrows(IllegalArgumentException.class, () -> in.follow(in));
+    out.follow(in);
+    final UnsafeBuffer p = payload();
+    out.append(1, 0, p, 0, PAYLOAD); // follows nothing yet: written at once
+    await("the unordered first frame is written", () -> out.writtenSequence() == 1);
+    // fill the inbound segment: the inbound journal thread stops at its roll (the next segment is held)
+    final int inbound = 200; // about seven segments' worth
+    for (int i = 0; i < inbound; i++) {
+      in.append(1, 0, p, 0, PAYLOAD);
+    }
+    await("the inbound journal thread waits at its roll", () -> in.rollWaits() == 1);
+    assertTrue(in.writtenSequence() < inbound, "frames of the inbound journal are still in its ring");
+    out.append(1, 0, p, 0, PAYLOAD); // follows inbound frame `inbound`
+    final long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200);
+    while (System.nanoTime() - until < 0) {
+      assertEquals(1, out.writtenSequence(), "the outbound frame waits for its cause");
+      Thread.onSpinWait();
+    }
+    held.release();
+    await("the inbound journal catches up", () -> in.writtenSequence() == inbound);
+    await("then the outbound frame is written", () -> out.writtenSequence() == 2);
+    in.close();
+    out.close();
+    assertEquals(inbound, frames("lead"));
+    assertEquals(2, frames("follow"));
+  }
+
   /** Before the retry, a close that gave up left the files mapped with no way to close them. */
   @Test
   void aCloseThatGaveUpCanBeRetriedOnceTheJournalThreadMoves() {

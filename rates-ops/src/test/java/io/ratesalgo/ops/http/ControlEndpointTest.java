@@ -130,6 +130,32 @@ class ControlEndpointTest {
     final ProcessConfig c = ProcessConfig.load(tuned, schema, Map.of());
     assertEquals("busy-spin", c.loopIdleStrategy());
     assertEquals(3, c.loopCpu());
+    assertEquals(ProcessConfig.RuntimeSettings.DEFAULT.withLoopThread("busy-spin", 3), c.runtime(), "the rest stays default");
+    assertEquals(ProcessConfig.RuntimeSettings.DEFAULT, ProcessConfig.load(Path.of("../deploy/config/trading-blue.yaml"),
+        schema, Map.of()).runtime(), "no runtime section: what the process always ran");
+
+    // the low-latency profile, with the host's CPUs and one key overridden
+    final Path low = dir.resolve("low.yaml");
+    Files.writeString(low, base + "runtime:\n  profile: lowLatency\n  loopCpu: 2\n  gatewayCpu: 3\n  journalHash: fnv1a\n");
+    final ProcessConfig.RuntimeSettings r = ProcessConfig.load(low, schema, Map.of()).runtime();
+    assertEquals("lowLatency", r.profile());
+    assertEquals("busy-spin", r.loopIdleStrategy());
+    assertEquals(2, r.loopCpu());
+    assertEquals("busy-spin", r.gatewayIdleStrategy());
+    assertEquals(3, r.gatewayCpu());
+    assertEquals("ring", r.journalMode());
+    assertEquals("fnv1a", r.journalHash(), "a key beside the profile wins");
+    assertEquals("busy-spin", r.journalIdleStrategy());
+    assertTrue(r.lockJournalPages() && r.conflateCurveInputs());
+    assertThrows(IllegalArgumentException.class, () -> ProcessConfig.RuntimeSettings.profile("fast"));
+    final ProcessConfig shipped =
+        ProcessConfig.load(Path.of("../deploy/config/trading-lowlatency.yaml"), schema, Map.of());
+    assertEquals("lowLatency", shipped.runtime().profile());
+    assertTrue(shipped.loopCpu() >= 0 && shipped.runtime().gatewayCpu() >= 0, "the shipped profile pins");
+    final Path badProfile = dir.resolve("badprofile.yaml");
+    Files.writeString(badProfile, base + "runtime:\n  profile: fast\n  journalMode: mmap\n");
+    assertEquals(2, assertThrows(ProcessConfig.InvalidConfigException.class,
+        () -> ProcessConfig.load(badProfile, schema, Map.of())).errors().size());
     final Path bad = dir.resolve("bad.yaml");
     Files.writeString(bad, base + "runtime:\n  loopIdleStrategy: sleep\n  loopCpu: -2\n");
     final ProcessConfig.InvalidConfigException e =

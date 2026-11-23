@@ -19,19 +19,24 @@ import io.ratesalgo.common.time.Clock;
 import io.ratesalgo.common.time.SystemClock;
 import io.ratesalgo.core.AnchoredClock;
 import io.ratesalgo.core.ControlMessages;
+import io.ratesalgo.core.DutyCycleRunner;
 import io.ratesalgo.core.EventClock;
 import io.ratesalgo.core.EventLoop;
 import io.ratesalgo.core.IdleStrategies;
 import io.ratesalgo.core.InboundPublisher;
+import io.ratesalgo.core.JournalMode;
 import io.ratesalgo.core.LoopCounters;
 import io.ratesalgo.core.LoopJournals;
 import io.ratesalgo.core.LoopRecovery;
 import io.ratesalgo.core.LoopRunner;
 import io.ratesalgo.core.RecoveryClock;
 import io.ratesalgo.core.RingBufferContract;
+import io.ratesalgo.journal.ChainHash;
 import io.ratesalgo.journal.JournalRecovery;
 import io.ratesalgo.journal.JournalWarmUp;
+import io.ratesalgo.journal.RingJournal;
 import io.ratesalgo.journal.SegmentedJournal;
+import io.ratesalgo.messages.sbe.CurveInputDecoder;
 import io.ratesalgo.messages.sbe.KillReason;
 import io.ratesalgo.messages.sbe.KillSwitchEncoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
@@ -54,7 +59,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
 import java.util.stream.Stream;
 import org.agrona.DirectBuffer;
@@ -74,14 +79,19 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  * time, runs the venues' due events and pumps gateways, feed and loops until the FIX sessions are
  * quiet; the smoke test and the recipe use it, so a seeded day runs the same way each time up to
  * the venues' socket timing. {@link #startThreads} runs each loop on its own {@link LoopRunner}
- * thread and the gateways, feed and venues on one driver thread that paces simulated time at a
- * multiple of real time; the process main uses it.
+ * thread, each FIX session and the book feed on a thread of its own ({@code rates-d2c}, {@code
+ * rates-clob}, {@code rates-feed}), and the simulated venues, the curve feed and the CLOB's
+ * liquidity on {@code rates-venues}, which paces simulated time at a multiple of real time; the
+ * process main uses it. Each of those threads has its own idle strategy and, on Linux, its own CPU
+ * ({@link Tuning}; review finding L3, DECISIONS.md DR-R6-L02). The defaults are what the process
+ * always did: the loop backs off, the gateway threads park 200 microseconds when idle, nothing is
+ * pinned.
  *
  * <p>Safety (review findings L1 and L2). The loops pull their own quotes when they are told to, but
  * a loop that has died, hung or fallen behind cannot, so the withdrawal does not depend on them:
  *
  * <ul>
- *   <li>A halt is a volatile flag the gateway thread reads every duty cycle. Once set, each venue
+ *   <li>A halt is a volatile flag each session's thread reads every duty cycle. Once set, each venue
  *       session lets nothing more from the loops out, cancels every quote and order it knows to be
  *       working, repeats the cancels the venue has not answered and, if asked or if they stay
  *       unanswered, logs out so that the venue's cancel-on-disconnect applies ({@link
@@ -90,10 +100,13 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  *       replay still sees the kill as an input (DR-R2W-10) while the withdrawal itself needs
  *       neither a live loop nor room in the inbound ring. It answers whether the withdrawal was
  *       confirmed.
- *   <li>A supervisor thread ({@link #supervise}) watches the loop runners and the gateway thread.
- *       A loop that stopped or stalled halts the process with a logout. A gateway thread that died
- *       withdraws as it goes down; if it cannot, or is stuck, the supervisor closes the sockets
- *       from outside, which is the one thing another thread may safely do to a session.
+ *   <li>A supervisor thread ({@link #supervise}) watches the loop runners and the gateway
+ *       threads. A loop that stopped or stalled halts the process with a logout. A session thread
+ *       that died withdraws its own session as it goes down, and the other session's thread
+ *       withdraws its own on the halt; if a session thread cannot, or is stuck, the supervisor
+ *       closes that session's socket from outside, which is the one thing another thread may
+ *       safely do to a session (DR-RV-S01 to S04). A feed or venue-simulator thread that died or
+ *       stalled halts the process with a logout, which the session threads carry out.
  * </ul>
  *
  * <p>Restart (review finding L6). A journal directory that already holds a group's journals is a
@@ -141,8 +154,20 @@ public final class TradingProcess implements AutoCloseable {
    * @param seed seed of the venues' random streams
    * @param settings the desks' parameters
    * @param startNanos simulated wall time at start, epoch nanoseconds
+   * @param tuning threads, journals and supervision
+   * @param fix how the FIX sessions reach the venues
+   * @param d2cEndpoint where the D2C session connects instead of the in-process D2C simulator, or
+   *     null for the simulator; the wired-desk benchmark puts its load generator here
    */
-  public record Options(Path journalDir, long seed, DeskSettings settings, long startNanos, Tuning tuning, Fix fix) {
+  public record Options(
+      Path journalDir, long seed, DeskSettings settings, long startNanos, Tuning tuning, Fix fix, Endpoint d2cEndpoint) {
+
+    /** Options with the in-process D2C simulator. */
+    public Options(
+        final Path journalDir, final long seed, final DeskSettings settings, final long startNanos, final Tuning tuning,
+        final Fix fix) {
+      this(journalDir, seed, settings, startNanos, tuning, fix, null);
+    }
 
     /** Options with the simulator's FIX preset: plain loopback, no credentials, reset on logon. */
     public Options(
@@ -152,7 +177,12 @@ public final class TradingProcess implements AutoCloseable {
 
     /** These options with other FIX settings. */
     public Options withFix(final Fix other) {
-      return new Options(journalDir, seed, settings, startNanos, tuning, other);
+      return new Options(journalDir, seed, settings, startNanos, tuning, other, d2cEndpoint);
+    }
+
+    /** These options with the D2C session connecting to {@code endpoint} (null: the simulator). */
+    public Options withD2cEndpoint(final Endpoint endpoint) {
+      return new Options(journalDir, seed, settings, startNanos, tuning, fix, endpoint);
     }
 
     /** Options starting at {@link #DEFAULT_START}. */
@@ -167,9 +197,18 @@ public final class TradingProcess implements AutoCloseable {
 
     /** These options with another tuning. */
     public Options withTuning(final Tuning other) {
-      return new Options(journalDir, seed, settings, startNanos, other, fix);
+      return new Options(journalDir, seed, settings, startNanos, other, fix, d2cEndpoint);
     }
   }
+
+  /**
+   * A FIX acceptor outside the process.
+   *
+   * @param host its address; without TLS it must be loopback (the transport refuses anything else)
+   * @param port its port
+   * @param compId its SenderCompID
+   */
+  public record Endpoint(String host, int port, String compId) {}
 
   /**
    * How the FIX sessions reach the venues, and how the in-process simulators accept them.
@@ -210,8 +249,9 @@ public final class TradingProcess implements AutoCloseable {
   }
 
   /**
-   * Threading and supervision settings. The defaults are what the process did before they were
-   * configurable: loops on the backoff idle strategy, not pinned (review finding L3).
+   * Threading, journaling and supervision settings. {@link #DEFAULT} is what the process did before
+   * they were configurable (review finding L3); {@link #LOW_LATENCY} spins every thread on the path
+   * from socket to socket and keeps the loop thread off file-backed pages (DECISIONS.md DR-R6-L02).
    *
    * @param loopIdleStrategy idle strategy of the loop threads, a name {@link IdleStrategies#of}
    *     accepts
@@ -219,32 +259,131 @@ public final class TradingProcess implements AutoCloseable {
    *     loopCpu + g}), or -1 for no pinning
    * @param killDeadlineNanos how long a kill waits for the venues to confirm the withdrawal
    *     before it logs out, and again before it closes the sockets
-   * @param stallNanos how long a loop or the gateway thread may go without a duty cycle before the
+   * @param stallNanos how long a loop or a gateway thread may go without a duty cycle before the
    *     supervisor treats it as stopped
    * @param supervisorPeriodNanos pause between supervisor checks
+   * @param gatewayIdleStrategy idle strategy of the D2C, CLOB and feed threads
+   * @param gatewayCpu CPU of the D2C session's thread on Linux; the CLOB session takes {@code
+   *     gatewayCpu + 1} and the feed {@code gatewayCpu + 2}; -1 for no pinning. The venue
+   *     simulators' thread is never pinned: in production the venues are not in the process
+   * @param journals how the loops' journals are written; the router journal follows their mode
+   * @param conflateCurveInputs hold curve inputs back per instrument and dispatch the newest after
+   *     the rest of the inbound ring, one per loop duty cycle (review finding L10, DR-R6-L05)
    */
   public record Tuning(
-      String loopIdleStrategy, int loopCpu, long killDeadlineNanos, long stallNanos, long supervisorPeriodNanos) {
+      String loopIdleStrategy,
+      int loopCpu,
+      long killDeadlineNanos,
+      long stallNanos,
+      long supervisorPeriodNanos,
+      String gatewayIdleStrategy,
+      int gatewayCpu,
+      LoopJournals.Settings journals,
+      boolean conflateCurveInputs) {
 
-    /** Backoff, unpinned, two-second kill deadline, ten-second stall limit, checks every 5 ms. */
-    public static final Tuning DEFAULT = new Tuning("backoff", -1, 2_000_000_000L, 10_000_000_000L, 5_000_000L);
+    /**
+     * Backoff loop, parking gateway threads, unpinned, direct FNV-1a journals, no conflation,
+     * two-second kill deadline, ten-second stall limit, checks every 5 ms.
+     */
+    public static final Tuning DEFAULT =
+        new Tuning("backoff", -1, 2_000_000_000L, 10_000_000_000L, 5_000_000L, "park", -1,
+            LoopJournals.Settings.DEFAULT, false);
+
+    /**
+     * Busy-spinning loop, gateway and journal threads, ring journals with the WORD64 hash and
+     * locked segments, conflated curve inputs. CPUs are the host's to choose ({@link #withLoopThread},
+     * {@link #withGatewayThreads}); a spinning thread that is not pinned to a reserved core competes
+     * with everything else on the machine.
+     */
+    public static final Tuning LOW_LATENCY =
+        DEFAULT.withLoopThread("busy-spin", -1)
+            .withGatewayThreads("busy-spin", -1)
+            .withJournals(
+                LoopJournals.Settings.DEFAULT
+                    .withMode(JournalMode.RING)
+                    .withHashAlgorithm(ChainHash.WORD64)
+                    .withRing(RingJournal.DEFAULT_RING_CAPACITY, "busy-spin")
+                    .withSegmentOptions(SegmentedJournal.Options.DEFAULT.withLockPages(true)))
+            .withCurveConflation(true);
 
     /** Validates the settings. */
     public Tuning {
       IdleStrategies.of(loopIdleStrategy);
+      IdleStrategies.of(gatewayIdleStrategy);
       if (killDeadlineNanos <= 0 || stallNanos <= 0 || supervisorPeriodNanos <= 0) {
         throw new IllegalArgumentException("deadlines and periods must be positive");
       }
+      if (journals == null) {
+        throw new IllegalArgumentException("journal settings are required");
+      }
     }
 
-    /** This tuning with another idle strategy and CPU. */
+    /** Settings with the default gateway threads, journals and no conflation. */
+    public Tuning(
+        final String loopIdleStrategy, final int loopCpu, final long killDeadlineNanos, final long stallNanos,
+        final long supervisorPeriodNanos) {
+      this(loopIdleStrategy, loopCpu, killDeadlineNanos, stallNanos, supervisorPeriodNanos, "park", -1,
+          LoopJournals.Settings.DEFAULT, false);
+    }
+
+    /** This tuning with another idle strategy and CPU for the loops. */
     public Tuning withLoopThread(final String idleStrategy, final int cpu) {
-      return new Tuning(idleStrategy, cpu, killDeadlineNanos, stallNanos, supervisorPeriodNanos);
+      return new Tuning(idleStrategy, cpu, killDeadlineNanos, stallNanos, supervisorPeriodNanos, gatewayIdleStrategy,
+          gatewayCpu, journals, conflateCurveInputs);
     }
 
     /** This tuning with other supervision times. */
     public Tuning withSupervision(final long killDeadline, final long stall, final long period) {
-      return new Tuning(loopIdleStrategy, loopCpu, killDeadline, stall, period);
+      return new Tuning(loopIdleStrategy, loopCpu, killDeadline, stall, period, gatewayIdleStrategy, gatewayCpu,
+          journals, conflateCurveInputs);
+    }
+
+    /** This tuning with another idle strategy and first CPU for the session and feed threads. */
+    public Tuning withGatewayThreads(final String idleStrategy, final int cpu) {
+      return new Tuning(loopIdleStrategy, loopCpu, killDeadlineNanos, stallNanos, supervisorPeriodNanos, idleStrategy,
+          cpu, journals, conflateCurveInputs);
+    }
+
+    /** This tuning with other journal settings. */
+    public Tuning withJournals(final LoopJournals.Settings settings) {
+      return new Tuning(loopIdleStrategy, loopCpu, killDeadlineNanos, stallNanos, supervisorPeriodNanos,
+          gatewayIdleStrategy, gatewayCpu, settings, conflateCurveInputs);
+    }
+
+    /** This tuning conflating curve inputs, or not. */
+    public Tuning withCurveConflation(final boolean conflate) {
+      return new Tuning(loopIdleStrategy, loopCpu, killDeadlineNanos, stallNanos, supervisorPeriodNanos,
+          gatewayIdleStrategy, gatewayCpu, journals, conflate);
+    }
+  }
+
+  /** The gateway threads of a process running on its own threads, by index. */
+  public enum GatewayThread {
+    /** The D2C session's thread, {@code rates-d2c}. */
+    D2C(0, "rates-d2c"),
+    /** The CLOB session's thread, {@code rates-clob}. */
+    CLOB(1, "rates-clob"),
+    /** The book feed's thread, {@code rates-feed}. */
+    FEED(2, "rates-feed"),
+    /** The simulated venues, curve feed, liquidity and control rings, {@code rates-venues}. */
+    VENUES(3, "rates-venues");
+
+    private final int index;
+    private final String threadName;
+
+    GatewayThread(final int index, final String threadName) {
+      this.index = index;
+      this.threadName = threadName;
+    }
+
+    /** The thread's slot in the process's arrays. */
+    int index() {
+      return index;
+    }
+
+    /** The thread's name. */
+    public String threadName() {
+      return threadName;
     }
   }
 
@@ -277,6 +416,8 @@ public final class TradingProcess implements AutoCloseable {
     private final DeskGroup desk;
     private final LoopJournals journals;
     private final SegmentedJournal route;
+    /** The router journal's ring in ring mode, which owns {@link #route}; null in direct mode. */
+    private final RingJournal routeRing;
     private volatile int liveQuotes;
     private volatile boolean killed;
     private volatile long quotesSent;
@@ -294,13 +435,28 @@ public final class TradingProcess implements AutoCloseable {
     private final long[] statusWrites = new long[1];
 
     Group(final String name, final Path dir, final EventLoop loop, final DeskGroup desk,
-        final LoopJournals journals, final SegmentedJournal route) {
+        final LoopJournals journals, final SegmentedJournal route, final RingJournal routeRing) {
       this.name = name;
       this.dir = dir;
       this.loop = loop;
       this.desk = desk;
       this.journals = journals;
       this.route = route;
+      this.routeRing = routeRing;
+    }
+
+    /** Closes the router journal, through its ring in ring mode. */
+    void closeRoute() {
+      if (routeRing != null) {
+        routeRing.close();
+      } else {
+        route.close();
+      }
+    }
+
+    /** The loop's journals, for their counters. */
+    public LoopJournals journals() {
+      return journals;
     }
 
     /**
@@ -413,9 +569,11 @@ public final class TradingProcess implements AutoCloseable {
   private final Object killLock = new Object();
   private final long[] loopBeat;
   private final long[] loopBeatNanos;
-  private final AtomicLong gatewayBeat = new AtomicLong();
-  private long gatewayBeatSeen;
-  private long gatewayBeatNanos;
+  /** The gateway threads by {@link GatewayThread} ordinal, once running on threads. */
+  private final DutyCycleRunner[] gateways = new DutyCycleRunner[GatewayThread.values().length];
+  private final long[] gatewayBeatSeen = new long[gateways.length];
+  private final long[] gatewayBeatNanos = new long[gateways.length];
+  private final AtomicReferenceArray<Runnable> gatewayFaults = new AtomicReferenceArray<>(gateways.length);
   private boolean supervised;
   private volatile Thread supervisor;
   // the halt: set once by any thread, read by the gateway thread every duty cycle
@@ -424,14 +582,15 @@ public final class TradingProcess implements AutoCloseable {
   private volatile long haltNanos;
   private volatile boolean socketsClosed;
   private volatile boolean killPending;
-  private volatile Runnable gatewayFault;
   private volatile int killRequestedBy;
   private final org.agrona.concurrent.MessageHandler controlHandler = this::onControl;
   private final List<LoopRunner> runners = new ArrayList<>();
   private final AtomicBoolean driving = new AtomicBoolean();
   private final Object lifecycle = new Object();
-  private volatile Thread driver;
-  private volatile Throwable driverFailure;
+  /** True once {@link #startThreads} has run: the gateways belong to their threads. */
+  private volatile boolean threaded;
+  private long simLastNanos;
+  private double timeScale;
   private long killSwitchMessages;
   private long breachMessages;
   private final Restart restart;
@@ -440,9 +599,13 @@ public final class TradingProcess implements AutoCloseable {
   private boolean feedSyncedSeen;
   private volatile boolean feedSynced;
 
-  /** The router journal's sink, silent while a restart replays decisions it already holds. */
+  /**
+   * The router journal's sink, silent while a restart replays decisions it already holds. In ring
+   * mode it appends to the journal's ring, so the loop thread does not touch the mapped file.
+   */
   private static final class RouteSink implements FrameSink {
     private final SegmentedJournal route;
+    private RingJournal ring;
     private boolean muted;
 
     RouteSink(final SegmentedJournal route, final boolean muted) {
@@ -453,7 +616,12 @@ public final class TradingProcess implements AutoCloseable {
     @Override
     public void append(
         final int templateId, final int schemaVersion, final DirectBuffer buffer, final int offset, final int length) {
-      if (!muted) {
+      if (muted) {
+        return;
+      }
+      if (ring != null) {
+        ring.append(templateId, schemaVersion, buffer, offset, length);
+      } else {
         route.append(templateId, schemaVersion, buffer, offset, length);
       }
     }
@@ -549,21 +717,35 @@ public final class TradingProcess implements AutoCloseable {
         d2cRings[g] = outbound[AppIds.D2C_GATEWAY];
         clobRings[g] = outbound[AppIds.CLOB_GATEWAY];
         controlRings[g] = outbound[AppIds.CONTROL_GATEWAY];
-        // DR-INT-03: the loop's journals use the R2 write path (LoopJournals, default mode,
-        // segments prepared and touched off the loop thread), so a roll does no I/O on the loop.
+        // DR-INT-03: the loop's journals use the R2 write path (LoopJournals, segments prepared
+        // and touched off the loop thread), so a roll does no I/O on the loop. The mode, the hash
+        // of new journals and the journal threads come from the tuning (DR-R6-L03, L04); a journal
+        // that exists keeps the hash its files name.
+        final LoopJournals.Settings journalSettings = options.tuning().journals();
         final LoopJournals journals =
             restart.existing[g]
-                ? LoopJournals.open(dir, "in", "out", SEGMENT_BYTES, loopClock)
-                : LoopJournals.create(dir, "in", "out", SEGMENT_BYTES, loopClock);
+                ? LoopJournals.open(dir, "in", "out", SEGMENT_BYTES, loopClock, journalSettings)
+                : LoopJournals.create(dir, "in", "out", SEGMENT_BYTES, loopClock, journalSettings);
+        final SegmentedJournal.Options routeOptions =
+            journalSettings.segmentOptions().withHashAlgorithm(journalSettings.hashAlgorithm());
         SegmentedJournal opened = null;
+        RingJournal routeRing = null;
         try {
           opened =
               JournalRecovery.exists(dir, "route")
-                  ? SegmentedJournal.open(dir, "route", SEGMENT_BYTES, loopClock, true)
-                  : SegmentedJournal.create(dir, "route", SEGMENT_BYTES, loopClock, true);
+                  ? SegmentedJournal.open(dir, "route", SEGMENT_BYTES, loopClock, true, routeOptions)
+                  : SegmentedJournal.create(dir, "route", SEGMENT_BYTES, loopClock, true, routeOptions);
+          if (journalSettings.mode() == JournalMode.RING) {
+            routeRing =
+                RingJournal.start("route-" + names[g], opened, loopClock, journalSettings.ringCapacity(),
+                    IdleStrategies.of(journalSettings.journalIdle()), journalSettings.journalStallNanos());
+          }
         } finally {
           if (opened == null) {
             journals.close();
+          } else if (journalSettings.mode() == JournalMode.RING && routeRing == null) {
+            journals.close();
+            opened.close();
           }
         }
         final SegmentedJournal route = opened;
@@ -571,29 +753,39 @@ public final class TradingProcess implements AutoCloseable {
         // compared with anything, so they are not written twice. A decision the stopped process
         // made and had not written is therefore missing from it, which is the cost.
         routeSinks[g] = new RouteSink(route, recoveryClocks[g] != null);
+        routeSinks[g].ring = routeRing;
         final DeskLoopFactory factory = new DeskLoopFactory(universe, options.settings(), routeSinks[g]);
         Group group = null;
         try {
-          final EventLoop loop =
-              factory.create(
-                  EventLoop.builder(loopClock)
-                      .inbound(inboundRings[g])
-                      .outbound(outbound[AppIds.D2C_GATEWAY])
-                      .outbound(outbound[AppIds.CLOB_GATEWAY])
-                      .outbound(outbound[AppIds.CONTROL_GATEWAY])
-                      // a cancel lost to a full gateway ring leaves a quote or order at the venue:
-                      // hold these and deliver them when the gateway has room
-                      .retryOnDrop(
-                          QuoteCancelEncoder.TEMPLATE_ID,
-                          QuoteWithdrawEncoder.TEMPLATE_ID,
-                          OrderCancelEncoder.TEMPLATE_ID,
-                          OrderWithdrawEncoder.TEMPLATE_ID)
-                      .journals(journals));
-          group = new Group(names[g], dir, loop, factory.last(), journals, route);
+          final EventLoop.Builder builder =
+              EventLoop.builder(loopClock)
+                  .inbound(inboundRings[g])
+                  .outbound(outbound[AppIds.D2C_GATEWAY])
+                  .outbound(outbound[AppIds.CLOB_GATEWAY])
+                  .outbound(outbound[AppIds.CONTROL_GATEWAY])
+                  // a cancel lost to a full gateway ring leaves a quote or order at the venue:
+                  // hold these and deliver them when the gateway has room
+                  .retryOnDrop(
+                      QuoteCancelEncoder.TEMPLATE_ID,
+                      QuoteWithdrawEncoder.TEMPLATE_ID,
+                      OrderCancelEncoder.TEMPLATE_ID,
+                      OrderWithdrawEncoder.TEMPLATE_ID)
+                  .journals(journals);
+          if (options.tuning().conflateCurveInputs()) {
+            // DR-R6-L05: a curve input is a level; the newest per kind and instrument supersedes
+            // the rest, and its rebuild and reprice wait behind the ring's other inputs
+            builder.conflate(CurveInputDecoder.TEMPLATE_ID, CURVE_KEY_OFFSET, CURVE_KEY_LENGTH).conflatedPerCycle(1);
+          }
+          final EventLoop loop = factory.create(builder);
+          group = new Group(names[g], dir, loop, factory.last(), journals, route, routeRing);
         } finally {
           if (group == null) {
             journals.close();
-            route.close();
+            if (routeRing != null) {
+              routeRing.close();
+            } else {
+              route.close();
+            }
           }
         }
         groups[g] = group;
@@ -601,7 +793,12 @@ public final class TradingProcess implements AutoCloseable {
           groupOf.put(id, g);
         }
       }
+      // one router per publishing thread (InboundRouter is single-threaded): the D2C session's
+      // also remembers which group each RFQ went to, which a restart rebuilds from the journal
       final InboundRouter gatewayInbound = new InboundRouter(inboundRings, groupOf);
+      final InboundRouter clobInbound = new InboundRouter(inboundRings, groupOf);
+      final InboundRouter feedInbound = new InboundRouter(inboundRings, groupOf);
+      final InboundRouter curveInbound = new InboundRouter(inboundRings, groupOf);
       for (int g = 0; g < names.length; g++) {
         if (recoveryClocks[g] != null) {
           final int group = g;
@@ -624,23 +821,28 @@ public final class TradingProcess implements AutoCloseable {
         groups[g].loop.addAgent(groups[g]::publishStatus);
       }
       // a fill or reject the loop never received leaves its view of the venue wrong: stop trading
-      gatewayInbound.undeliveredHandler(
-          (templateId, group) -> requestHalt("a session message could not be delivered to the loop", true));
+      for (final InboundRouter router : new InboundRouter[] {gatewayInbound, clobInbound, feedInbound, curveInbound}) {
+        router.undeliveredHandler(
+            (templateId, group) -> requestHalt("a session message could not be delivered to the loop", true));
+      }
       final Clock fixClock = fixClock(clock);
       final Path sequences = options.journalDir().resolve("fix");
       final VenueSession.Link link =
           new VenueSession.Link(
               fix.clientTls(), fix.username(), fix.password(), fix.resetOnLogon(),
               fix.resetOnLogon() ? null : sequences.resolve("d2c.seq"), false);
-      d2c = new VenueSession(AppIds.D2C_VENUE, AppIds.D2C_GATEWAY, new String[] {AppIds.COMP_ID, venues.d2c().compId()},
-          "127.0.0.1", venues.d2c().port(), universe.instrumentMap(), gatewayInbound, fixClock, d2cRings,
+      final Endpoint external = options.d2cEndpoint();
+      d2c = new VenueSession(AppIds.D2C_VENUE, AppIds.D2C_GATEWAY,
+          new String[] {AppIds.COMP_ID, external == null ? venues.d2c().compId() : external.compId()},
+          external == null ? "127.0.0.1" : external.host(), external == null ? venues.d2c().port() : external.port(),
+          universe.instrumentMap(), gatewayInbound, fixClock, d2cRings,
           fix.reconnect(), VenueSession.WithdrawPolicy.DEFAULT, link);
       VenueSession second = null;
       try {
         // the CLOB holds orders for us: a session that comes back reconciles them before use
         second = new VenueSession(AppIds.CLOB_VENUE, AppIds.CLOB_GATEWAY,
             new String[] {AppIds.COMP_ID, venues.clob().compId()}, "127.0.0.1", venues.clob().port(),
-            universe.instrumentMap(), gatewayInbound, fixClock, clobRings, fix.reconnect(),
+            universe.instrumentMap(), clobInbound, fixClock, clobRings, fix.reconnect(),
             VenueSession.WithdrawPolicy.DEFAULT,
             link.withSequenceFile(fix.resetOnLogon() ? null : sequences.resolve("clob.seq")).withReconcileOrders(true));
       } finally {
@@ -651,8 +853,8 @@ public final class TradingProcess implements AutoCloseable {
       clob = second;
       d2c.inboundDrained(this::inboundDrained);
       clob.inboundDrained(this::inboundDrained);
-      feed = new FeedBinding(venues.feed(), venues.clob().feed(), gatewayInbound, AppIds.CLOB_FEED_STATUS, clock);
-      curve = new CurveFeed(universe, venues.d2c(), gatewayInbound, clock, CURVE_INTERVAL_NANOS);
+      feed = new FeedBinding(venues.feed(), venues.clob().feed(), feedInbound, AppIds.CLOB_FEED_STATUS, clock);
+      curve = new CurveFeed(universe, venues.d2c(), curveInbound, clock, CURVE_INTERVAL_NANOS);
       liquidity = new ClobLiquidity(universe, venues.d2c(), venues.clob(), clock, LIQUIDITY_INTERVAL_NANOS);
       if (restart.any) {
         // Journaled inputs, so that replay sees them too: the sessions the stopped process had are
@@ -686,11 +888,17 @@ public final class TradingProcess implements AutoCloseable {
     for (final Group g : groups) {
       if (g != null) {
         g.journals.close();
-        g.route.close();
+        g.closeRoute();
       }
     }
     venues.close();
   }
+
+  /** CurveInput conflation key: kind and instrument id, five bytes from body offset 4 (SBE header included). */
+  static final int CURVE_KEY_OFFSET =
+      io.ratesalgo.messages.sbe.MessageHeaderDecoder.ENCODED_LENGTH + CurveInputDecoder.kindEncodingOffset();
+
+  static final int CURVE_KEY_LENGTH = CurveInputDecoder.kindEncodingLength() + CurveInputDecoder.instrumentIdEncodingLength();
 
   /**
    * The acceptor settings of one in-process simulator. Each keeps its FIX store and its id
@@ -760,7 +968,7 @@ public final class TradingProcess implements AutoCloseable {
       p.clob.connect();
       final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
       while (!(p.d2c.isActive() && p.clob.isActive()
-          && p.venues.d2c().loggedOn().contains(AppIds.COMP_ID)
+          && (p.options.d2cEndpoint() != null || p.venues.d2c().loggedOn().contains(AppIds.COMP_ID))
           && p.venues.clob().loggedOn().contains(AppIds.COMP_ID))) {
         if (System.nanoTime() > deadline) {
           throw new IllegalStateException("venue sessions did not log on within 20 s");
@@ -787,7 +995,7 @@ public final class TradingProcess implements AutoCloseable {
    * gateways, feed and loops are pumped until the sessions are quiet.
    */
   public void step(final long nanos, final long stepNanos) {
-    if (driver != null) {
+    if (threaded) {
       throw new IllegalStateException("the process is running on its own threads");
     }
     for (long done = 0; done < nanos; done += stepNanos) {
@@ -830,31 +1038,75 @@ public final class TradingProcess implements AutoCloseable {
    * sessions keep working; {@link #pump} is this plus the loops.
    */
   public int driveGateways() {
-    if (driver != null) {
+    if (threaded) {
       throw new IllegalStateException("the process is running on its own threads");
     }
     return gatewayWork();
   }
 
+  /** The stepped process's gateway cycle: every gateway thread's work, in one call. */
   private int gatewayWork() {
     if (haltReason != null) {
       applyHalt();
     }
-    final Runnable fault = gatewayFault;
-    if (fault != null) {
-      gatewayFault = null;
-      fault.run();
+    for (final GatewayThread t : GatewayThread.values()) {
+      runFault(t);
     }
-    int work = d2c.doWork() + clob.doWork() + feed.doWork();
+    return d2c.doWork() + clob.doWork() + feedWork() + controlWork();
+  }
+
+  private int feedWork() {
+    final int work = feed.doWork();
     final boolean synced = feed.synced();
     if (synced != feedSyncedSeen) {
       feedSyncedSeen = synced;
       feedSynced = synced;
     }
+    return work;
+  }
+
+  private int controlWork() {
+    int work = 0;
     for (final RingBuffer ring : controlRings) {
       work += ring.read(controlHandler, 64);
     }
     return work;
+  }
+
+  /** Runs a fault injected for thread {@code t}, once; a volatile read when there is none. */
+  private void runFault(final GatewayThread t) {
+    if (gatewayFaults.get(t.index()) != null) {
+      final Runnable fault = gatewayFaults.getAndSet(t.index(), null);
+      if (fault != null) {
+        fault.run();
+      }
+    }
+  }
+
+  /** One duty cycle of a session's own thread: apply the halt, then the session's work. */
+  private int sessionCycle(final GatewayThread t, final VenueSession session) {
+    if (haltReason != null) {
+      session.halt(haltLogout);
+    }
+    runFault(t);
+    return session.doWork();
+  }
+
+  private int feedCycle() {
+    runFault(GatewayThread.FEED);
+    return feedWork();
+  }
+
+  /** The simulator side: moves simulated time, runs the venues, curve feed and liquidity, reads control rings. */
+  private int venuesCycle() {
+    runFault(GatewayThread.VENUES);
+    final long now = System.nanoTime();
+    final long simNanos = (long) ((now - simLastNanos) * timeScale);
+    if (simNanos >= 1_000_000L) {
+      simLastNanos = now;
+      tick(simNanos);
+    }
+    return controlWork();
   }
 
   /** True when each venue has processed what we sent and we have read what it sent. */
@@ -882,8 +1134,9 @@ public final class TradingProcess implements AutoCloseable {
   // ---------------------------------------------------------------- threaded running
 
   /**
-   * Runs each loop on its own thread and the venues, gateways, feed and liquidity on a driver
-   * thread that advances simulated time by {@code timeScale} times real time.
+   * Runs each loop on its own thread, each FIX session and the feed on a thread of its own, and
+   * the venues, curve feed and liquidity on a thread that advances simulated time by {@code
+   * timeScale} times real time (see the class comment).
    */
   public void startThreads(final double timeScale) {
     synchronized (lifecycle) {
@@ -891,47 +1144,42 @@ public final class TradingProcess implements AutoCloseable {
     }
   }
 
-  private void startThreadsLocked(final double timeScale) {
-    if (driver != null) {
+  private void startThreadsLocked(final double scale) {
+    if (threaded) {
       return;
     }
+    final Tuning tuning = options.tuning();
     for (final Group g : groups) {
       runners.add(
           LoopRunner.builder(g.loop)
               .name("rates-loop-" + g.name)
-              .idleStrategy(IdleStrategies.of(options.tuning().loopIdleStrategy()))
-              .cpu(options.tuning().loopCpu() < 0 ? -1 : options.tuning().loopCpu() + runners.size())
+              .idleStrategy(IdleStrategies.of(tuning.loopIdleStrategy()))
+              .cpu(tuning.loopCpu() < 0 ? -1 : tuning.loopCpu() + runners.size())
               .daemon(true)
               .build()
               .start());
     }
     driving.set(true);
-    final Thread thread =
-        new Thread(
-            () -> {
-              try {
-                long last = System.nanoTime();
-                while (driving.get()) {
-                  final long now = System.nanoTime();
-                  final long simNanos = (long) ((now - last) * timeScale);
-                  if (simNanos >= 1_000_000L) {
-                    last = now;
-                    tick(simNanos);
-                  }
-                  gatewayBeat.lazySet(gatewayBeat.get() + 1);
-                  if (gatewayWork() == 0) {
-                    LockSupport.parkNanos(200_000L);
-                  }
-                }
-              } catch (final Throwable t) {
-                driverFailure = t;
-                withdrawOnTheWayDown(t);
-              }
-            },
-            "rates-gateways");
-    thread.setDaemon(true);
-    driver = thread;
-    thread.start();
+    timeScale = scale;
+    simLastNanos = System.nanoTime();
+    final int cpu = tuning.gatewayCpu();
+    gateways[GatewayThread.D2C.index()] =
+        gatewayRunner(GatewayThread.D2C, () -> sessionCycle(GatewayThread.D2C, d2c), cpu < 0 ? -1 : cpu,
+            tuning.gatewayIdleStrategy(), cause -> withdrawOnTheWayDown(GatewayThread.D2C, d2c, cause));
+    gateways[GatewayThread.CLOB.index()] =
+        gatewayRunner(GatewayThread.CLOB, () -> sessionCycle(GatewayThread.CLOB, clob), cpu < 0 ? -1 : cpu + 1,
+            tuning.gatewayIdleStrategy(), cause -> withdrawOnTheWayDown(GatewayThread.CLOB, clob, cause));
+    gateways[GatewayThread.FEED.index()] =
+        gatewayRunner(GatewayThread.FEED, this::feedCycle, cpu < 0 ? -1 : cpu + 2, tuning.gatewayIdleStrategy(),
+            cause -> requestHalt(stopped(GatewayThread.FEED, cause), true));
+    // the simulators stand in for venues outside the process: never pinned, never spinning
+    gateways[GatewayThread.VENUES.index()] =
+        gatewayRunner(GatewayThread.VENUES, this::venuesCycle, -1, "park",
+            cause -> requestHalt(stopped(GatewayThread.VENUES, cause), true));
+    threaded = true;
+    for (final DutyCycleRunner r : gateways) {
+      r.start();
+    }
     final long period = options.tuning().supervisorPeriodNanos();
     final Thread watch =
         new Thread(
@@ -953,26 +1201,42 @@ public final class TradingProcess implements AutoCloseable {
     watch.start();
   }
 
+  private static DutyCycleRunner gatewayRunner(
+      final GatewayThread which, final io.ratesalgo.core.Agent work, final int cpu, final String idle,
+      final java.util.function.Consumer<Throwable> onFailure) {
+    return DutyCycleRunner.builder(which.threadName(), work)
+        .idleStrategy(IdleStrategies.of(idle))
+        .cpu(cpu)
+        .daemon(true)
+        .onFailure(onFailure)
+        .build();
+  }
+
+  private static String stopped(final GatewayThread which, final Throwable cause) {
+    return "gateway thread " + which.threadName() + " stopped: " + cause;
+  }
+
   /**
-   * The gateway thread is ending on a failure. It still owns the sessions, so it withdraws itself:
-   * cancels, Logout, and duty cycles on the two sessions only until both are down or the kill
-   * deadline passes. Whatever is still open then is closed, so the venues cancel on disconnect.
+   * A session's thread is ending on a failure. It still owns its session, so it withdraws it:
+   * cancels, Logout, and duty cycles on that session only until it is down or the kill deadline
+   * passes; then its socket is closed if it is still open, so the venue cancels on disconnect. The
+   * other session's thread sees the halt and withdraws its own.
    */
-  private void withdrawOnTheWayDown(final Throwable cause) {
-    requestHalt("gateway thread stopped: " + cause, true);
+  private void withdrawOnTheWayDown(final GatewayThread which, final VenueSession session, final Throwable cause) {
+    requestHalt(stopped(which, cause), true);
     try {
       final long deadline = System.nanoTime() + options.tuning().killDeadlineNanos();
-      while (!withdrawn() && System.nanoTime() - deadline < 0) {
-        applyHalt();
-        if (d2c.doWork() + clob.doWork() == 0) {
+      while (session.haltState() != VenueSession.WITHDRAWN && System.nanoTime() - deadline < 0) {
+        session.halt(haltLogout);
+        if (session.doWork() == 0) {
           LockSupport.parkNanos(100_000L);
         }
       }
     } catch (final Throwable again) {
       cause.addSuppressed(again);
     } finally {
-      if (!withdrawn()) {
-        closeSockets();
+      if (session.haltState() != VenueSession.WITHDRAWN) {
+        closeSocket(session);
       }
     }
   }
@@ -980,12 +1244,28 @@ public final class TradingProcess implements AutoCloseable {
   // ---------------------------------------------------------------- halt and supervision
 
   /**
-   * Chaos hook: runs {@code fault} once on the thread that drives the gateways, at its next duty
-   * cycle. A fault that throws kills the gateway thread; one that blocks hangs it. Tests of the
-   * supervisor use it; nothing in the process does.
+   * Chaos hook: runs {@code fault} once on the D2C session's thread, at its next duty cycle (on the
+   * caller's thread at the next gateway cycle when the process is stepped). A fault that throws
+   * kills the thread; one that blocks hangs it. Tests of the supervisor use it; nothing in the
+   * process does.
    */
   public void injectGatewayFault(final Runnable fault) {
-    gatewayFault = fault;
+    injectGatewayFault(GatewayThread.D2C, fault);
+  }
+
+  /** {@link #injectGatewayFault(Runnable)} on another gateway thread. */
+  public void injectGatewayFault(final GatewayThread thread, final Runnable fault) {
+    gatewayFaults.set(thread.index(), fault);
+  }
+
+  /** Gateway thread {@code which}, or null before {@link #startThreads}. */
+  public DutyCycleRunner gatewayThread(final GatewayThread which) {
+    return gateways[which.index()];
+  }
+
+  /** The loop runners, one per group, once running on threads. */
+  public List<LoopRunner> loopRunners() {
+    return List.copyOf(runners);
   }
 
   /** Latches the halt. Any thread; the first reason is kept, a logout can be added later. */
@@ -1001,7 +1281,7 @@ public final class TradingProcess implements AutoCloseable {
     }
   }
 
-  /** Gateway thread (or the caller's, when the process is stepped): applies the halt to the sessions. */
+  /** The caller's thread, when the process is stepped: applies the halt to both sessions. */
   private void applyHalt() {
     final boolean logout = haltLogout;
     d2c.halt(logout);
@@ -1010,9 +1290,22 @@ public final class TradingProcess implements AutoCloseable {
 
   /** Last resort, any thread: close both sockets so the venues cancel on disconnect. */
   private void closeSockets() {
+    closeSocket(d2c);
+    closeSocket(clob);
+  }
+
+  /** Last resort, any thread: close one session's socket, the one thing another thread may do to it. */
+  private void closeSocket(final VenueSession session) {
     socketsClosed = true;
-    d2c.abort();
-    clob.abort();
+    session.abort();
+  }
+
+  private VenueSession sessionOf(final GatewayThread which) {
+    return switch (which) {
+      case D2C -> d2c;
+      case CLOB -> clob;
+      default -> null;
+    };
   }
 
   /** True when both sessions report nothing of ours working at their venue. Any thread. */
@@ -1041,9 +1334,11 @@ public final class TradingProcess implements AutoCloseable {
    *   <li>A loop runner that failed or ended, or a loop that made no duty cycle for the stall
    *       limit: halt with logout. If its thread is gone, its inbound ring is emptied so that a
    *       gateway thread waiting for room in it can go on and carry out the halt.
-   *   <li>A gateway thread that ended: halt; it withdraws on its way down, and the sockets are
-   *       closed here if it did not manage. A gateway thread that made no duty cycle for the stall
-   *       limit: halt and close the sockets at once.
+   *   <li>A session thread that ended: halt; it withdrew its session on its way down, and that
+   *       session's socket is closed here if it did not manage. A session thread that made no duty
+   *       cycle for the stall limit: halt and close its socket at once. The other session's thread
+   *       withdraws its own session on the halt.
+   *   <li>The feed or venue-simulator thread ended or stalled: halt with logout.
    *   <li>A halt not confirmed within twice the kill deadline: close the sockets.
    *   <li>A KillSwitch message that found the inbound ring full is offered again.
    * </ul>
@@ -1052,13 +1347,12 @@ public final class TradingProcess implements AutoCloseable {
     if (killPending) {
       offerKillMessage();
     }
-    final Thread gateway = driver;
-    if (gateway == null) {
+    if (!threaded) {
       return;
     }
     if (!supervised) {
       supervised = true;
-      gatewayBeatNanos = nowNanos;
+      java.util.Arrays.fill(gatewayBeatNanos, nowNanos);
       java.util.Arrays.fill(loopBeatNanos, nowNanos);
     }
     final long stall = options.tuning().stallNanos();
@@ -1082,22 +1376,8 @@ public final class TradingProcess implements AutoCloseable {
         requestHalt("loop " + groups[g].name + " made no duty cycle for " + stall / 1_000_000L + " ms", true);
       }
     }
-    if (!gateway.isAlive()) {
-      if (driving.get() || driverFailure != null) {
-        requestHalt("gateway thread stopped: " + driverFailure, true);
-        if (!withdrawn()) {
-          closeSockets();
-        }
-      }
-      return;
-    }
-    final long beat = gatewayBeat.get();
-    if (beat != gatewayBeatSeen) {
-      gatewayBeatSeen = beat;
-      gatewayBeatNanos = nowNanos;
-    } else if (nowNanos - gatewayBeatNanos >= stall) {
-      requestHalt("gateway thread made no duty cycle for " + stall / 1_000_000L + " ms", true);
-      closeSockets();
+    for (final GatewayThread which : GatewayThread.values()) {
+      superviseGateway(which, nowNanos, stall);
     }
     if (haltReason != null && !socketsClosed && !withdrawn()
         && nowNanos - haltNanos >= 2 * options.tuning().killDeadlineNanos()) {
@@ -1105,13 +1385,39 @@ public final class TradingProcess implements AutoCloseable {
     }
   }
 
+  private void superviseGateway(final GatewayThread which, final long nowNanos, final long stall) {
+    final DutyCycleRunner r = gateways[which.index()];
+    final VenueSession session = sessionOf(which);
+    if (!r.isAlive()) {
+      if (driving.get() || r.failure() != null) {
+        requestHalt(stopped(which, r.failure()), true);
+        if (session != null && session.haltState() != VenueSession.WITHDRAWN) {
+          closeSocket(session);
+        }
+      }
+      return;
+    }
+    final int i = which.index();
+    final long beat = r.beats();
+    if (beat != gatewayBeatSeen[i]) {
+      gatewayBeatSeen[i] = beat;
+      gatewayBeatNanos[i] = nowNanos;
+    } else if (nowNanos - gatewayBeatNanos[i] >= stall) {
+      requestHalt("gateway thread " + which.threadName() + " made no duty cycle for " + stall / 1_000_000L + " ms", true);
+      if (session != null) {
+        closeSocket(session);
+      }
+    }
+  }
+
   private static final org.agrona.concurrent.MessageHandler DISCARD = (type, buffer, index, length) -> {};
 
-  /** What stopped the driver thread or a loop thread, or null. */
+  /** What stopped a gateway thread or a loop thread, or null. */
   public Throwable failure() {
-    final Throwable driverThread = driverFailure;
-    if (driverThread != null) {
-      return driverThread;
+    for (final DutyCycleRunner r : gateways) {
+      if (r != null && r.failure() != null) {
+        return r.failure();
+      }
     }
     for (final LoopRunner r : runners) {
       if (r.failure() != null) {
@@ -1150,7 +1456,7 @@ public final class TradingProcess implements AutoCloseable {
     }
     offerKillMessage();
     final long deadlineNanos = options.tuning().killDeadlineNanos();
-    if (driver == null) {
+    if (!threaded) {
       // stepped on the caller's thread, which owns the sessions and the loops
       applyHalt();
       for (final Group g : groups) {
@@ -1204,7 +1510,7 @@ public final class TradingProcess implements AutoCloseable {
    * status that follows shows it. Nothing depends on this: the venues have already confirmed.
    */
   private void awaitLoops(final long nanos) {
-    if (driver == null || failure() != null) {
+    if (!threaded || failure() != null) {
       return;
     }
     final long deadline = System.nanoTime() + nanos;
@@ -1468,33 +1774,39 @@ public final class TradingProcess implements AutoCloseable {
 
   private void closeLocked() {
     driving.set(false);
-    final Thread thread = driver;
     final Thread watch = supervisor;
     try {
       if (watch != null) {
         watch.join(5_000L);
       }
-      if (thread != null) {
-        thread.join(5_000L);
-      }
     } catch (final InterruptedException e) {
       Thread.currentThread().interrupt();
     }
-    if (thread != null && thread.isAlive()) {
-      // the gateway thread is stuck and still owns the sessions: all that is safe is the socket
-      closeSockets();
+    for (final DutyCycleRunner r : gateways) {
+      if (r != null) {
+        r.stop();
+      }
+    }
+    for (final GatewayThread which : new GatewayThread[] {GatewayThread.D2C, GatewayThread.CLOB}) {
+      final DutyCycleRunner r = gateways[which.index()];
+      if (r != null && r.isAlive()) {
+        // the session's thread is stuck and still owns the session: all that is safe is the socket
+        closeSocket(sessionOf(which));
+      }
     }
     for (final LoopRunner r : runners) {
       r.close();
     }
-    if (thread == null || !thread.isAlive()) {
-      d2c.close();
-      clob.close();
+    for (final GatewayThread which : new GatewayThread[] {GatewayThread.D2C, GatewayThread.CLOB}) {
+      final DutyCycleRunner r = gateways[which.index()];
+      if (r == null || !r.isAlive()) {
+        sessionOf(which).close();
+      }
     }
     for (final Group g : groups) {
       if (g != null) {
         g.journals.close();
-        g.route.close();
+        g.closeRoute();
       }
     }
     venues.close();

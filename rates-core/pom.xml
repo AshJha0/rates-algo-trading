@@ -40,14 +40,6 @@
       <artifactId>agrona</artifactId>
     </dependency>
     <dependency>
-      <!-- Core pinning on Linux only (CoreAffinity). Optional: a deployment that does not pin
-           leaves it off the class path and the runner skips pinning. -->
-      <groupId>net.openhft</groupId>
-      <artifactId>affinity</artifactId>
-      <version>${affinity.version}</version>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
       <groupId>com.tngtech.archunit</groupId>
       <artifactId>archunit-junit5</artifactId>
       <version>${archunit.version}</version>
