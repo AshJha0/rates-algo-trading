@@ -170,6 +170,17 @@
         "lockJournalPages": {"type": "boolean"},
         "conflateCurveInputs": {"type": "boolean"}
       }
+    },
+    "desk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {"type": "string", "enum": ["default", "v2"]},
+        "market": {"type": "string", "enum": ["standard", "simV2"]},
+        "pricing": {"type": "string", "enum": ["v1", "v2"]},
+        "strategy": {"type": "string", "enum": ["v1", "v2"]},
+        "router": {"type": "string", "enum": ["touch", "ladder"]}
+      }
     }
   }
 }

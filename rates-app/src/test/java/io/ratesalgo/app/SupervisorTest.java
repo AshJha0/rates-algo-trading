@@ -209,7 +209,12 @@ class SupervisorTest {
       p.step(60 * SECOND, STEP);
       assertNull(p.gatewayThread(TradingProcess.GatewayThread.D2C), "no threads while stepped");
       p.startThreads(1.0);
-      for (final TradingProcess.GatewayThread t : TradingProcess.GatewayThread.values()) {
+      assertEquals(
+          java.util.List.of(TradingProcess.GatewayThread.D2C, TradingProcess.GatewayThread.CLOB,
+              TradingProcess.GatewayThread.FEED, TradingProcess.GatewayThread.VENUES),
+          p.gatewayThreads(), "the recorded market's threads, and no others");
+      assertNull(p.gatewayThread(TradingProcess.GatewayThread.CLOB2), "no thread for a venue this market lacks");
+      for (final TradingProcess.GatewayThread t : p.gatewayThreads()) {
         final io.ratesalgo.core.DutyCycleRunner r = p.gatewayThread(t);
         assertEquals(t.threadName(), r.name());
         await(() -> r.beats() > 10, t + " cycling");
