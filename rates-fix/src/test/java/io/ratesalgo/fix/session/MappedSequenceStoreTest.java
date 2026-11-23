@@ -211,9 +211,24 @@ class MappedSequenceStoreTest {
     for (int round = 0; round < 5; round++) {
       write(store, 1, 50_000);
     }
-    final long before = mx.getThreadAllocatedBytes(thread);
-    write(store, 50_001, 250_000);
-    assertEquals(0, mx.getThreadAllocatedBytes(thread) - before, "bytes allocated over 400,000 writes");
+    // Windows, as in LoopAllocationTest (DR-INT-02): the JIT can recompile the loop once more
+    // after warm-up and that shows as about a kilobyte on this thread in one window (1,072 bytes
+    // on the Linux runner). A write that allocated would cost every window megabytes, so one
+    // window at zero and none above a kilobyte or so proves the write path allocates nothing.
+    final long[] bytes = new long[4];
+    long least = Long.MAX_VALUE;
+    for (int w = 0; w < bytes.length; w++) {
+      final int from = 50_001 + w * 50_000;
+      final long before = mx.getThreadAllocatedBytes(thread);
+      write(store, from, from + 49_999);
+      bytes[w] = mx.getThreadAllocatedBytes(thread) - before;
+      least = Math.min(least, bytes[w]);
+    }
+    final String seen = java.util.Arrays.toString(bytes);
+    assertEquals(0, least, "bytes allocated per window of 50,000 writes: " + seen);
+    for (final long b : bytes) {
+      assertTrue(b <= 2_048, "bytes allocated per window of 50,000 writes: " + seen);
+    }
     assertEquals(250_000, store.nextOutSeq());
     store.close();
   }
