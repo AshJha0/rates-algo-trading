@@ -254,8 +254,9 @@ public final class LadderAllocator {
   }
 
   private boolean before(final int a, final int b) {
-    if (eCost[a] != eCost[b]) {
-      return eCost[a] < eCost[b];
+    final int c = Double.compare(eCost[a], eCost[b]);
+    if (c != 0) {
+      return c < 0;
     }
     if (eRow[a] != eRow[b]) {
       return eRow[a] < eRow[b];

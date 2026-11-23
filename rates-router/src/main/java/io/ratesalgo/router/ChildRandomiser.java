@@ -108,13 +108,16 @@ public final class ChildRandomiser {
   }
 
   private double normal() {
-    double u;
-    double s;
-    do {
-      u = 2.0 * random.nextDouble() - 1.0;
+    // a point in the unit disc is found with probability pi / 4 per try; the bound only makes the
+    // loop visibly finite
+    for (int i = 0; i < 1_000; i++) {
+      final double u = 2.0 * random.nextDouble() - 1.0;
       final double v = 2.0 * random.nextDouble() - 1.0;
-      s = u * u + v * v;
-    } while (s >= 1.0 || s == 0.0);
-    return u * StrictMath.sqrt(-2.0 * StrictMath.log(s) / s);
+      final double s = u * u + v * v;
+      if (s < 1.0 && s > 0.0) {
+        return u * StrictMath.sqrt(-2.0 * StrictMath.log(s) / s);
+      }
+    }
+    return 0.0;
   }
 }

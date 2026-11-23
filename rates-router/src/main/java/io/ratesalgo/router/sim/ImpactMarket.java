@@ -199,14 +199,15 @@ public final class ImpactMarket implements SimulatedMarket {
     processArrivals(clock.nanoTime());
     // the efficient price: one normal per step from its own stream, whatever happens. Polar
     // method: StrictMath.cos allocates on JDK 25 (FdLibm), and Math.cos may differ by platform
-    double u;
-    double w;
-    do {
-      u = 2.0 * pricePath.nextDouble() - 1.0;
-      w = 2.0 * pricePath.nextDouble() - 1.0;
-      w = u * u + w * w;
-    } while (w >= 1.0 || w == 0.0);
-    mid += cfg.sigmaTicksPerSqrtSecond() * sqrtDt * u * StrictMath.sqrt(-2.0 * StrictMath.log(w) / w);
+    for (int i = 0; i < 1_000; i++) {
+      final double u = 2.0 * pricePath.nextDouble() - 1.0;
+      final double v = 2.0 * pricePath.nextDouble() - 1.0;
+      final double s = u * u + v * v;
+      if (s < 1.0 && s > 0.0) {
+        mid += cfg.sigmaTicksPerSqrtSecond() * sqrtDt * u * StrictMath.sqrt(-2.0 * StrictMath.log(s) / s);
+        break;
+      }
+    }
     for (int v = 0; v < n; v++) {
       tradedLots[v] = 0.0;
     }
@@ -335,7 +336,9 @@ public final class ImpactMarket implements SimulatedMarket {
       int front = -1;
       for (int s = 0; s < orderHighWater; s++) {
         if (oPhase[s] == RESTING && oVenue[s] == v && oBuy[s] == restingBuy && oPriceTicks[s] == px
-            && (front < 0 || oAhead[s] < oAhead[front] || (oAhead[s] == oAhead[front] && oSeq[s] < oSeq[front]))) {
+            && (front < 0
+                || Double.compare(oAhead[s], oAhead[front]) < 0
+                || (Double.compare(oAhead[s], oAhead[front]) == 0 && oSeq[s] < oSeq[front]))) {
           front = s;
         }
       }

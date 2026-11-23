@@ -99,6 +99,9 @@ public final class SweepBaseline implements ExecutionStrategy {
 
   @Override
   public void submit(final long id, final Side parentSide, final long qty) {
+    if (clock == null || market == null) {
+      throw new IllegalStateException(name + ": startDay was not called");
+    }
     parentId = id;
     side = parentSide;
     quantity = qty;
@@ -133,7 +136,7 @@ public final class SweepBaseline implements ExecutionStrategy {
   }
 
   private void send(final long size) {
-    if (size <= 0) {
+    if (size <= 0 || clock == null || market == null) {
       return;
     }
     final int k = plan(market, venueIds, takerFees, side, size, lot, maxLevels, planQty, planLimit);
@@ -194,7 +197,10 @@ public final class SweepBaseline implements ExecutionStrategy {
     }
     java.util.Arrays.sort(
         order,
-        (a, b) -> cost[a] != cost[b] ? Double.compare(cost[a], cost[b]) : Integer.compare(venue[a], venue[b]));
+        (a, b) -> {
+          final int c = Double.compare(cost[a], cost[b]);
+          return c != 0 ? c : Integer.compare(venue[a], venue[b]);
+        });
     long remaining = qty;
     int venues = 0;
     for (int x = 0; x < count && remaining > 0; x++) {
