@@ -36,6 +36,19 @@
       <Bug pattern="EI_EXPOSE_REP2" />
     </Or>
   </Match>
+  <!-- rates-analytics pricing v2 (DR-R4-02, DR-R4-03): SofrCurve hands out the one curve its
+       bootstrap writes, as CurveBuilder does, and the leave-one-out rates read the full curve's
+       quotes through the caller's object on purpose. -->
+  <Match>
+    <Or>
+      <Class name="io.ratesalgo.analytics.curve.SofrCurve" />
+      <Class name="io.ratesalgo.analytics.curve.SofrLeaveOneOut" />
+    </Or>
+    <Or>
+      <Bug pattern="EI_EXPOSE_REP" />
+      <Bug pattern="EI_EXPOSE_REP2" />
+    </Or>
+  </Match>
   <!-- rates-router (P4, narrowed to these classes by DR-R2R-14): the router, its child order
        book, the decision codec and the back-test baseline share collaborators
        with their caller by design (the journal sink, the book view, the decoded table handed to a

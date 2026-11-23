@@ -44,10 +44,13 @@ import java.util.List;
  *   <li>Swap fair value: the leave-one-out par rate for a swap that is a curve input, the curve's
  *       par rate for one that is not, plus a residual that follows the swap's own quote with a
  *       half-life ({@link FairValueSmoother}). A quote cannot become its own fair value in one
- *       step; {@code PricingV2Test.aSkewedQuoteBarelyMovesItsOwnFairValue} states the share.
- *   <li>Bond fair value: the SOFR curve plus a z-spread from the fitted Treasury spread curve
- *       ({@link TreasurySpreadCurve}), leave-one-out, plus the same kind of residual in spread.
- *       {@link #richCheapBp} is the bond's own spread against the fit.
+ *       step; {@code PricingV2Test.aSkewedQuoteBarelyMovesItsOwnFairValue} states the share. The
+ *       residuals are marked to the whole gap at the first quote of the day and again whenever
+ *       an input is fed for the first time, since that changes what the model is built from.
+ *   <li>Bond fair value: the SOFR curve plus a z-spread from the Treasury spread curve fitted to
+ *       the other bonds' books ({@link TreasurySpreadCurve}, leave-one-out), plus the same kind of
+ *       residual in spread. It does not follow the bond's own book; it does follow the other
+ *       Treasuries. {@link #richCheapBp} is the bond's own spread against the fit.
  *   <li>Risk: every ladder on the eight risk tenors through the curve's Jacobian; bonds at their
  *       market z-spread; and a second ladder, the spread factor, for bonds ({@link
  *       SpreadSensitivityProvider}).
@@ -166,6 +169,13 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   /** Reprices a bond stays held out before its spread is taken as the new level. */
   private static final int REANCHOR_AFTER = 20;
 
+  /**
+   * Carry and roll-down are recomputed on every sixteenth reprice (and after a date change or a
+   * re-mark): they move with the slope of the curve and the repo rate, not with the level, and
+   * they cost a third of a reprice.
+   */
+  private static final int CARRY_EVERY = 16;
+
   /** Floor on the spread half-width used to weight a bond in the fit: a quarter of a basis point. */
   private static final double SPREAD_NOISE_FLOOR = 0.25e-4;
 
@@ -200,6 +210,10 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   private final double[] bondFairSpread;
   private final double[] bondModelSpread;
   private final double[] bondPricePerBp;
+  private final double[] bondCandidate;
+  private final double[] bondWeight;
+  private final double[] newtonScratch = new double[KeyRateTenors.COUNT];
+  private final double[] bondMoves;
   private final boolean[] bondHasSpread;
   private final boolean[] bondUsable;
   private final int[] bondHeldOut;
@@ -231,6 +245,9 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   private long firstPendingStamp;
   private int pendingCount;
   private int fedCount;
+  private boolean remark;
+  private boolean carryDue;
+  private boolean carryForced = true;
   private long reprices;
   private long rebuilds;
   private long rejectedInputs;
@@ -275,6 +292,9 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
     bondFairSpread = new double[bondIds.length];
     bondModelSpread = new double[bondIds.length];
     bondPricePerBp = new double[bondIds.length];
+    bondCandidate = new double[bondIds.length];
+    bondWeight = new double[bondIds.length];
+    bondMoves = new double[bondIds.length];
     bondHasSpread = new boolean[bondIds.length];
     bondUsable = new boolean[bondIds.length];
     bondHeldOut = new int[bondIds.length];
@@ -295,7 +315,12 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       bondTenor[j] = b.bond().tenor();
       bondStartClean[j] = b.initialMid() * MANTISSA_TO_PRICE;
     }
-    fit = TreasurySpreadCurve.standard(Math.max(1, bondIds.length));
+    // no cross-sectional rejection here: a bond dropping in and out of the fit would move the
+    // model value of the others in steps. A bad book is caught in time instead (its spread
+    // jumps), and its last accepted spread stands in for it
+    fit =
+        new TreasurySpreadCurve(
+            Math.max(1, bondIds.length), 5.0, 1.5e-4, Double.POSITIVE_INFINITY);
 
     // fixings: the simulated market has no history, so the overnight rate of the start is
     // assumed for the days a started futures contract looks back over
@@ -626,6 +651,7 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       }
     }
     day = new Day(date, day, null, overnight);
+    carryForced = true;
     dateChanges++;
     pendingCount = 0;
     newestInput = Math.max(newestInput, epochNanos);
@@ -662,8 +688,11 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       return true;
     }
     if (!d.fed[slot]) {
+      // a first quote changes what the curve is built from: the residuals, which were marked
+      // against a curve that had this input seeded, are marked again at the next reprice
       d.fed[slot] = true;
       fedCount++;
+      remark = true;
     }
     d.pendingValue[slot] = v;
     if (!d.pendingSet[slot]) {
@@ -730,11 +759,16 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
   private void recompute(final long stamp) {
     final Day d = day;
     final FixingHistory fixings = d.curve.fixings();
+    carryDue = remark || carryForced || reprices % CARRY_EVERY == 0;
+    carryForced = false;
     for (int j = 0; j < swapIds.length; j++) {
       final int i = swapIndex[j];
       final int slot = d.swapSlot[j];
       final int k = slot < d.inputs ? d.loo.swapOfInput(slot) : -1;
       final double model = k >= 0 ? d.loo.value(k) : d.curve.parRate(d.quoted[j]);
+      if (remark && d.fed[slot]) {
+        smoother.reset(i, d.value[slot], model, stamp);
+      }
       // the residual takes an observation only when the swap has a new quote in this round
       final double fair =
           d.pendingSet[slot]
@@ -748,11 +782,14 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       swapPricer.pvGradient(d.unit[j], d.curve.curve(), d.curve.curve(), fixings, d.date,
           d.gradient, d.gradient);
       d.curve.riskLadder(d.gradient, unitLadder[i]);
-      d.carry[j].compute(d.curve.curve(), fixings, d.date);
-      carryBp[i] = d.carry[j].carry() / BP;
-      rollBp[i] = d.carry[j].rollDown() / BP;
+      if (carryDue) {
+        d.carry[j].compute(d.curve.curve(), fixings, d.date);
+        carryBp[i] = d.carry[j].carry() / BP;
+        rollBp[i] = d.carry[j].rollDown() / BP;
+      }
     }
     recomputeBonds(stamp);
+    remark = false;
     reprices++;
   }
 
@@ -762,22 +799,37 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
     if (n == 0) {
       return;
     }
-    // 1. each bond's market z-spread, its spread ladder and its weight in the fit
+    // 1. each bond's market z-spread; the move common to the bonds since the last reprice (the
+    // curve and the books are not sampled at the same instant) is taken out before a bond's own
+    // move is judged
+    int moved = 0;
+    for (int j = 0; j < n; j++) {
+      final double z = solveSpread(d, j, marketClean(j) + d.accrued[j]);
+      // NaN fails the comparison
+      bondCandidate[j] = Math.abs(z) <= MAX_BOND_SPREAD ? z : Double.NaN;
+      if (bondHasSpread[j] && !Double.isNaN(bondCandidate[j])) {
+        // insertion into the sorted moves
+        final double move = bondCandidate[j] - bondSpread[j];
+        int k = moved++;
+        while (k > 0 && bondMoves[k - 1] > move) {
+          bondMoves[k] = bondMoves[k - 1];
+          k--;
+        }
+        bondMoves[k] = move;
+      }
+    }
+    final double common =
+        moved == 0 ? 0.0 : 0.5 * (bondMoves[(moved - 1) / 2] + bondMoves[moved / 2]);
+    // 2. its spread ladder and its weight in the fit
     for (int j = 0; j < n; j++) {
       final int i = bondIndex[j];
-      final double clean = marketClean(j);
-      double z = Double.NaN;
-      try {
-        z = bondPricer.zSpread(bonds[j], d.curve.curve(), clean + d.accrued[j], d.settlement[j]);
-      } catch (final IllegalStateException ignored) {
-        // no spread within 500 bp reprices this price
-      }
-      // NaN fails both comparisons
-      boolean usable = Math.abs(z) <= MAX_BOND_SPREAD;
+      final double z = bondCandidate[j];
+      boolean usable = !Double.isNaN(z);
       if (usable && bondHasSpread[j]
-          && !(Math.abs(z - bondSpread[j]) <= options.maxBondSpreadMove())
+          && !(Math.abs(z - bondSpread[j] - common) <= options.maxBondSpreadMove())
           && ++bondHeldOut[j] < REANCHOR_AFTER) {
-        // a jump no market makes between two reprices: a bad book, until it has stood this long
+        // a jump of its own that no market makes between two reprices: a bad book, until it
+        // has stood this long
         usable = false;
       }
       bondUsable[j] = usable;
@@ -802,17 +854,23 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       fitYears[j] = (bonds[j].maturity() - d.settlement[j]) / 365.25;
       fitSpreads[j] = bondSpread[j];
       fitOtr[j] = d.onTheRun[j];
-      fitWeights[j] =
-          usable ? 1.0 / (halfWidth * halfWidth + SPREAD_NOISE_FLOOR * SPREAD_NOISE_FLOOR) : 0.0;
+      // a held-out bond stays in the fit at its last accepted spread and weight
+      if (usable) {
+        bondWeight[j] = 1.0 / (halfWidth * halfWidth + SPREAD_NOISE_FLOOR * SPREAD_NOISE_FLOOR);
+      }
+      fitWeights[j] = bondHasSpread[j] ? bondWeight[j] : 0.0;
     }
     fit.fit(n, fitYears, fitSpreads, fitWeights, fitOtr);
-    // 2. fair value from the fit, ladders at the market spread, carry
+    // 3. fair value from the fit, ladders at the market spread, carry
     for (int j = 0; j < n; j++) {
       final int i = bondIndex[j];
       final FixedRateBond b = bonds[j];
       final double model = fit.leaveOneOut(j);
       // the residual takes an observation when the book has moved on, not when time has
       final long bookStamp = book == null ? stamp : book.updateNanos(bondIds[j]);
+      if (remark && bondUsable[j]) {
+        smoother.reset(i, bondSpread[j], model, bookStamp);
+      }
       final double fairSpread =
           bondUsable[j]
               ? smoother.update(i, bondSpread[j], model, bookStamp)
@@ -830,7 +888,9 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       bondPricer.dirtyFromCurveGradient(b, d.curve.curve(), d.settlement[j], bondSpread[j], 0.01,
           d.gradient);
       d.curve.riskLadder(d.gradient, unitLadder[i]);
-
+      if (!carryDue) {
+        continue;
+      }
       final double pricePerBp = bondPricePerBp[j];
       final double clean = marketClean(j);
       final int term = d.horizon[j] - d.settlement[j];
@@ -847,8 +907,37 @@ public final class PricingV2 implements PricingBinding, SpreadSensitivityProvide
       final double curveAtHorizon =
           TreasurySpreadCurve.parYield(d.curve.curve(), d.settlement[j], shorter,
               fit.spread(shorter) - premium);
-      final double yield = bondPricer.yieldFromClean(b, clean, d.settlement[j], false);
-      rollBp[i] = bondCarry.rollDown(b, yield, d.horizon[j], curveToday, curveAtHorizon) / pricePerBp;
+      // in yield the roll-down is the fall of the curve's yield as the bond shortens; repricing
+      // the bond at the horizon (BondCarry.rollDown) gives the same number to first order and
+      // would cost a yield solve per bond per reprice
+      rollBp[i] = (curveToday - curveAtHorizon) / BP;
+    }
+  }
+
+  /**
+   * The z-spread that reprices a dirty price, or NaN if there is none within 500 bp. Newton on
+   * the price in the spread, started from the bond's last accepted spread: the price is smooth
+   * and convex in the spread and the start is within basis points, so three steps reach 1e-9 of
+   * a price point, where the bracketing search of {@link BondPricer#zSpread} takes some fifty
+   * price evaluations. That search is the fallback when Newton does not settle.
+   */
+  private double solveSpread(final Day d, final int j, final double dirty) {
+    final FixedRateBond b = bonds[j];
+    double s = bondSpread[j];
+    for (int k = 0; k < 6 && Math.abs(s) <= 2.0 * MAX_BOND_SPREAD; k++) {
+      final double error = bondPricer.dirtyFromCurve(b, d.curve.curve(), d.settlement[j], s) - dirty;
+      if (Math.abs(error) <= 1e-9) {
+        return s;
+      }
+      Arrays.fill(newtonScratch, 0.0);
+      s -= error / bondPricer.spreadLadder(b, d.curve.curve(), d.settlement[j], s, 1.0, RISK_YEARS,
+          newtonScratch);
+    }
+    try {
+      return bondPricer.zSpread(b, d.curve.curve(), dirty, d.settlement[j]);
+    } catch (final IllegalStateException ignored) {
+      // no spread within 500 bp reprices this price
+      return Double.NaN;
     }
   }
 

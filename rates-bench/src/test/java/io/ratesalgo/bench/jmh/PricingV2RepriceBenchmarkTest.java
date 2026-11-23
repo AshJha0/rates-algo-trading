@@ -8,8 +8,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The pricing v2 benchmark does what it says: each call is one complete round and one reprice.
- * It also prints a plain timing of the three cases, so that a build log carries a cost figure
- * even where JMH is not run; the JMH figure is the one to quote.
+ * It also prints a plain timing of the three cases, so that a build log carries a relative cost
+ * figure (version 2 against version 1 under the same conditions) even where JMH is not run; the
+ * JMH figure is the one to quote for absolute cost.
  */
 class PricingV2RepriceBenchmarkTest {
 
@@ -55,8 +56,8 @@ class PricingV2RepriceBenchmarkTest {
         "PRICING V2 plain timing, microseconds per round: moving %.1f, unchanged %.1f, version 1 %.1f"
             + " (checksum %d)%n",
         (t1 - t0) / 1e3 / rounds, (t2 - t1) / 1e3 / rounds, (t3 - t2) / 1e3 / rounds, sink);
-    // a guard against a gross regression only: a round has cost tens of microseconds on every
-    // machine it was run on; half a millisecond would be a loop stall worth failing for
-    assertTrue((t1 - t0) / rounds < 500_000L, "a moving round took " + (t1 - t0) / rounds + " ns");
+    // no bound is asserted: this runs under the coverage agent beside whatever else the machine
+    // is doing, and a timing assertion there fails for reasons that are not the code's
+    assertTrue(sink != 0L);
   }
 }

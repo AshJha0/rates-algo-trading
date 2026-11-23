@@ -127,7 +127,8 @@ public final class TreasurySpreadCurve {
 
   /**
    * Fits the curve to the first {@code n} bonds. A bond with a weight that is not positive or a
-   * spread that is not finite takes no part and counts as rejected.
+   * spread that is not finite takes no part and counts as rejected. If no bond is usable the
+   * previous fit is kept and the bonds are given its values.
    *
    * @param n number of bonds, at least one
    * @param years years to maturity
@@ -155,6 +156,18 @@ public final class TreasurySpreadCurve {
       }
     }
     rejected = n - usable;
+    if (usable == 0) {
+      // nothing to fit: the previous curve stands and every bond is valued off it
+      for (int i = 0; i < n; i++) {
+        double f = 0.0;
+        for (int t = 0; t < terms; t++) {
+          f += beta[t] * design[i * MAX_COLUMNS + t];
+        }
+        fitted[i] = f + (premium && otr[i] ? beta[terms] : 0.0);
+        leverage[i] = 0.0;
+      }
+      return;
+    }
     terms = usable >= 8 ? MAX_TERMS : usable >= 4 ? 2 : 1;
     for (int round = 0; ; round++) {
       layout();

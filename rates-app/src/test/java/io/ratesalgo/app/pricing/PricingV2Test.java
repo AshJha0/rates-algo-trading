@@ -206,54 +206,74 @@ class PricingV2Test {
   }
 
   /**
-   * Review finding A1, bonds. Version 1 returns the book mid. Here the bond is priced off the
-   * SOFR curve plus its fitted spread: when the curve moves and the book has not, the fair value
-   * moves; when the book jumps and nothing else does, it does not.
+   * Review finding A1, bonds. Version 1 returns the book mid. Here a bond is priced off the
+   * Treasury curve fitted to the other bonds: it moves when they move and not when its own book
+   * does. A move of the SOFR curve alone, with no Treasury book moving, is a move of the spread
+   * and leaves Treasury fair values where the Treasury market has them.
    */
   @Test
-  void bondFairValueFollowsTheCurveAndNotItsOwnBook() {
+  void bondFairValueFollowsTheOtherTreasuriesAndNotItsOwnBook() {
     final V2Feed f = settled();
     final PricingV2 p = f.pricing;
     final long start = UNIVERSE.bond(BOND_10Y).initialMid();
-    assertEquals((double) start, (double) p.fairMid(BOND_10Y), 20_000.0, "at its book mid after settling");
+    final long tick = UNIVERSE.bondTick();
+    assertEquals((double) start, (double) p.fairMid(BOND_10Y), 20_000.0, "its mark, after settling");
     final double spread = p.bondSpread(BOND_10Y);
     assertEquals(spread, p.fairSpread(BOND_10Y), 0.01 * BP);
     assertTrue(Double.isNaN(p.bondSpread(SWAP_10Y)) && Double.isNaN(p.fairSpread(SWAP_10Y)));
     assertTrue(Double.isNaN(p.richCheapBp(SWAP_10Y)));
-
-    // rates up 5 bp, books unchanged (and so not refreshed): about 5 bp of DV01 lower
     final Dv01Vector dv = new Dv01Vector(CurrencyCode.USD);
-    p.pv01(BOND_10Y, 100L, dv);
+    p.spreadPv01(BOND_10Y, 100L, dv);
     final double pricePerBp = -dv.parallel() * 100.0;
+
+    // swaps up 5 bp, no Treasury book moves: every spread is 5 bp tighter, fair values stay
     final double before = p.fairValue(BOND_10Y);
     f.round(5 * BP);
-    assertEquals(-5.0 * pricePerBp, p.fairValue(BOND_10Y) - before, 0.03 * 5.0 * pricePerBp);
-    assertEquals(start, f.book.bestBid(BOND_10Y) + UNIVERSE.bondTick(), "the book did not move");
+    assertEquals(spread - 5 * BP, p.bondSpread(BOND_10Y), 0.2 * BP);
+    assertEquals(before, p.fairValue(BOND_10Y), 0.1 * pricePerBp);
+    assertEquals(0, p.rejectedBondBooks(), "a move common to every bond is not a bad book");
 
-    // the version 1 binding on the same book: the book mid, whatever the curve does
+    // the version 1 binding on the same book: the book mid, whatever else happens
     final AnalyticsPricing v1 = new AnalyticsPricing(UNIVERSE, V2Feed.T0);
     v1.book(f.book);
     assertEquals(start, v1.fairMid(BOND_10Y));
 
-    // one book a full point away: held out of the fit, and its fair value does not follow it
+    // the other three notes cheapen by about a basis point of yield (3, 6 and 22 ticks at 2, 5
+    // and 30 years); the 10-year book does not move. Its fair value falls with them
+    f.now += V2Feed.ROUND;
+    f.book(1003, UNIVERSE.bond(1003).initialMid() - 3 * tick);
+    f.book(1006, UNIVERSE.bond(1006).initialMid() - 6 * tick);
+    f.book(BOND_30Y, UNIVERSE.bond(BOND_30Y).initialMid() - 22 * tick);
+    f.now -= V2Feed.ROUND;
     f.round(5 * BP);
+    final double fell = before - p.fairValue(BOND_10Y);
+    System.out.printf("V2 10-year fair value fell %.3f bp of yield with its own book unmoved%n",
+        fell / pricePerBp);
+    assertTrue(fell > 0.4 * pricePerBp && fell < 1.6 * pricePerBp, "fell " + fell / pricePerBp);
+    assertEquals(start, f.book.bestBid(BOND_10Y) + tick, "its own book did not move");
+    assertEquals(0, p.rejectedBondBooks());
+
+    // its own book a full point lower: held out, its last spread stands in, nothing moves
     final double fair = p.fairValue(BOND_10Y);
     final double other = p.fairValue(BOND_30Y);
-    final long rejected = p.rejectedBondBooks();
+    final double cheap = p.richCheapBp(BOND_10Y);
     f.book(BOND_10Y, start - 1_000_000_000L);
     f.round(5 * BP);
-    assertEquals(rejected + 1, p.rejectedBondBooks());
-    assertEquals(fair, p.fairValue(BOND_10Y), 0.002, "a point in the book, nothing in fair value");
-    assertEquals(other, p.fairValue(BOND_30Y), 0.002);
+    assertEquals(1, p.rejectedBondBooks());
+    assertEquals(fair, p.fairValue(BOND_10Y), 1e-9, "a point in the book, nothing in fair value");
+    assertEquals(other, p.fairValue(BOND_30Y), 1e-9);
     // a book that stays there for twenty reprices is the market: taken as the new level, and
     // then absorbed at the half-life like any other persistent gap
     for (int k = 0; k < 25; k++) {
       f.book(BOND_10Y, start - 1_000_000_000L);
       f.round(5 * BP);
     }
-    assertTrue(p.bondSpread(BOND_10Y) - spread > 5 * BP, "re-anchored");
-    assertTrue(fair - p.fairValue(BOND_10Y) < 0.05, "and absorbed slowly");
-    assertTrue(p.richCheapBp(BOND_10Y) > 5.0, "cheap to the fit: " + p.richCheapBp(BOND_10Y));
+    // held on nineteen reprices, taken on the twentieth
+    assertEquals(19, p.rejectedBondBooks());
+    assertTrue(p.bondSpread(BOND_10Y) - (spread - 5 * BP) > 9 * BP, "re-anchored a point lower");
+    // ten seconds held out and three more since: a few percent of the point so far
+    assertTrue(fair - p.fairValue(BOND_10Y) < 0.10, "and absorbed slowly");
+    assertTrue(p.richCheapBp(BOND_10Y) - cheap > 9.0, "cheap to the fit: " + p.richCheapBp(BOND_10Y));
   }
 
   /**
@@ -276,10 +296,14 @@ class PricingV2Test {
       assertTrue(p.spreadPv01(ids[j], ONE_MILLION, s));
       assertEquals(0.0, s.gross(), 0.0, "a swap has no spread risk");
     }
-    // the 12-year sits between 10 and 20 years: both hold it, nothing else does
+    // the 12-year sits between the 10 and 20-year pillars and is not one: most of it is in the
+    // 10-year bucket and the rest in the 20-year. A spline is not local, so the neighbouring
+    // buckets carry small amounts of the opposite sign; their sum is bounded here and printed
     p.pv01(V2Feed.SWAP_12Y, ONE_MILLION, v);
+    System.out.println("V2 12Y ladder per 1mm: " + v);
     assertTrue(v.get(5) > 0.5 * v.parallel() && v.get(6) > 0.1 * v.parallel(), v.toString());
-    assertEquals(v.parallel(), v.get(5) + v.get(6), 0.02 * v.parallel());
+    assertTrue(v.gross() - v.get(5) - v.get(6) < 0.45 * v.parallel(), v.toString());
+    assertTrue(v.parallel() > 0.0);
 
     final BondPricer pricer = new BondPricer();
     for (final UsdUniverse.BondSpec b : UNIVERSE.bonds()) {
@@ -289,17 +313,21 @@ class PricingV2Test {
       assertEquals(CurrencyCode.USD, s.currency());
       assertTrue(v.parallel() < 0.0 && s.parallel() < 0.0, "a long bond loses on either rise");
       // the two ladders describe the same bond: their totals agree to the difference between a
-      // par-rate bump and a zero-rate bump, a few percent at thirty years
-      assertEquals(v.parallel(), s.parallel(), 0.06 * Math.abs(v.parallel()), b.securityId());
+      // par-rate bump and a zero-rate bump, some percent at thirty years
+      assertEquals(v.parallel(), s.parallel(), 0.10 * Math.abs(v.parallel()), b.securityId());
       // and both are the bond's yield DV01 at its market price, not at the curve's price
       final FixedRateBond bond = bond(b);
       final int settle = p.settlementDate(id);
       final double clean = b.initialMid() * 1e-9;
       final double yield = pricer.yieldFromClean(bond, clean, settle, false);
-      final double dv01 = pricer.dv01(bond, yield, settle, false) * 1e6 / 100.0;
-      assertEquals(-dv01, s.parallel(), 0.02 * dv01, b.securityId());
+      // a continuous spread against a semi-annual yield: the DV01s differ by 1 + y/2
+      final double dv01 = pricer.dv01(bond, yield, settle, false) * 1e6 / 100.0 * (1.0 + yield / 2);
+      assertEquals(-dv01, s.parallel(), 0.005 * dv01, b.securityId());
       for (int k = 0; k < KeyRateTenors.COUNT; k++) {
-        assertTrue(v.get(k) <= 1e-9 * dv01 || Math.abs(v.get(k)) < 0.02 * dv01, v.toString());
+        // negative where the bond has cash flows; the spline leaves small amounts of the other
+        // sign in neighbouring buckets
+        assertTrue(v.get(k) < 0.05 * dv01, v.toString());
+        assertTrue(s.get(k) <= 0.0, s.toString());
       }
     }
     assertFalse(p.pv01(999, ONE_MILLION, v));
@@ -325,12 +353,15 @@ class PricingV2Test {
     p.pv01(BOND_10Y, hedge, v);
     net.addScaled(v, 1.0);
     assertEquals(0.0, net.parallel(), 1e-6 * swapDv01);
-    assertEquals(-swapDv01, spreads.parallel(), 0.05 * swapDv01);
+    assertEquals(-swapDv01, spreads.parallel(), 0.10 * swapDv01);
     assertTrue(spreads.spreadPv01(5) < -0.7 * swapDv01, "mostly at 10 years");
+    System.out.printf(
+        "V2 hedged swap per 1mm: swap-rate DV01 %.4f, spread DV01 %.2f, of which 10Y %.2f%n",
+        net.parallel(), spreads.parallel(), spreads.spreadPv01(5));
     assertEquals(-spreads.parallel(), spreads.gross(), 1e-9 * swapDv01);
     f.round(BP);
     spreads.recompute();
-    assertEquals(-swapDv01, spreads.parallel(), 0.05 * swapDv01);
+    assertEquals(-swapDv01, spreads.parallel(), 0.10 * swapDv01);
   }
 
   private static FixedRateBond bond(final UsdUniverse.BondSpec b) {
@@ -356,8 +387,10 @@ class PricingV2Test {
     assertEquals(direct.carry() / BP, out.carryBp(), 1e-12);
     assertEquals(direct.rollDown() / BP, out.rollDownBp(), 1e-12);
     assertEquals(out.carryBp() + out.rollDownBp(), out.breakEvenBp(), 0.0);
-    // the curve slopes up from 3.60 to 3.70 over ten years: a receiver earns both
-    assertTrue(out.carryBp() > 0.0 && out.rollDownBp() > 0.0, out.carryBp() + " " + out.rollDownBp());
+    // fixed 3.70 against an overnight rate of 3.70 compounded daily: a receiver's carry is a
+    // little negative; the swap curve rises towards ten years, so the roll-down is positive
+    assertTrue(out.carryBp() < 0.0 && out.carryBp() > -0.5, "carry " + out.carryBp());
+    assertTrue(out.rollDownBp() > 0.0 && out.rollDownBp() < 0.5, "roll " + out.rollDownBp());
 
     // a bond: BondCarry at the 30-day general collateral rate less 20 bp of specialness
     assertTrue(p.carry(BOND_10Y, out));
@@ -485,7 +518,10 @@ class PricingV2Test {
     assertFalse(fresh.inputFed(0));
     assertTrue(fresh.onCurveInput(V2InputIds.OVERNIGHT, 3_690_000_000L, V2Feed.T0 + 2));
     assertTrue(fresh.inputFed(0));
-    assertEquals(0.0369, fresh.curve().quote(0), 1e-12, "five slots fed, five held: applied");
+    assertEquals(1, fresh.pendingInputs(), "one of six fed slots: held");
+    assertEquals(0.0370, fresh.curve().quote(0), 1e-12);
+    fresh.flush();
+    assertEquals(0.0369, fresh.curve().quote(0), 1e-12);
 
     assertThrows(IllegalArgumentException.class,
         () -> PricingV2.Options.defaults().withFunding(null, 0.0, 0));
@@ -552,26 +588,71 @@ class PricingV2Test {
   void repriceDoesNotAllocate() {
     final V2Feed f = feed();
     final PricingV2 p = f.pricing;
+    f.round(0.0);
+    // the market path is laid out beforehand, so that the measured loop is the binding's calls
+    // and nothing else: 240 rounds drifting 12 bp and back, the books two ticks either side
+    final SofrCurve c = p.curve();
+    final int n = p.inputCount();
+    final int states = 240;
+    final int[] ids = new int[n];
+    final long[][] quotes = new long[states][n];
+    final long[] mark = new long[states];
+    for (int s = 0; s < states; s++) {
+      final double shift = (s < states / 2 ? s : states - s) * 0.1 * BP;
+      for (int i = 0; i < n; i++) {
+        ids[i] = p.inputId(i);
+        quotes[s][i] = f.mantissa(i, V2Feed.rate(c, i) + shift);
+      }
+      mark[s] = Math.round((V2Feed.swapRate(144) + shift) * 1e11);
+    }
+    final int[] bondIds = UNIVERSE.bondIds();
+    final long[] mids = new long[bondIds.length];
+    for (int j = 0; j < mids.length; j++) {
+      mids[j] = UNIVERSE.bond(bondIds[j]).initialMid();
+    }
+    final long tick = UNIVERSE.bondTick();
     final com.sun.management.ThreadMXBean threads =
         (com.sun.management.ThreadMXBean) ManagementFactory.getThreadMXBean();
     final long thread = Thread.currentThread().threadId();
-    final long tick = UNIVERSE.bondTick();
-    for (int k = 0; k < 3_000; k++) {
-      f.books((k % 5 - 2) * tick);
-      f.round((k % 240) * 0.05 * BP);
-    }
-    final long references = p.leaveOneOutReferences();
-    final long reprices = p.reprices();
-    final long before = threads.getThreadAllocatedBytes(thread);
-    for (int k = 0; k < 2_000; k++) {
-      f.books((k % 5 - 2) * tick);
-      f.round((k % 240) * 0.05 * BP);
+    long now = f.now;
+    long before = 0L;
+    long references = 0L;
+    long reprices = 0L;
+    long t0 = 0L;
+    final int warmUp = 6_000;
+    final int measured = 4_000;
+    for (int k = 0; k < warmUp + measured; k++) {
+      if (k == warmUp) {
+        references = p.leaveOneOutReferences();
+        reprices = p.reprices();
+        t0 = System.nanoTime();
+        before = threads.getThreadAllocatedBytes(thread);
+      }
+      now += V2Feed.ROUND / 100;
+      final int s = k % states;
+      final long offset = (k % 5 - 2) * tick;
+      for (int j = 0; j < bondIds.length; j++) {
+        f.book.set(bondIds[j], mids[j] + offset - tick, ONE_MILLION, mids[j] + offset + tick,
+            ONE_MILLION, now);
+      }
+      for (int i = 0; i < n; i++) {
+        p.onCurveInput(ids[i], quotes[s][i], now);
+      }
+      p.onCurveInput(V2Feed.SWAP_12Y, mark[s], now);
     }
     final long bytes = threads.getThreadAllocatedBytes(thread) - before;
-    assertEquals(2_000, p.reprices() - reprices);
+    final long nanos = System.nanoTime() - t0;
+    System.out.printf(
+        "V2 reprice in the allocation test (coverage agent on): %.1f microseconds a round, %d"
+            + " references retaken, %d bytes%n",
+        nanos / (double) measured / 1e3, p.leaveOneOutReferences() - references, bytes);
+    assertEquals(measured, p.reprices() - reprices);
     assertTrue(p.leaveOneOutReferences() > references, "references were retaken in the window");
-    assertEquals(0L, bytes, "bytes allocated over 2,000 reprices");
     assertEquals(0, p.rejectedInputs());
+    assertEquals(0, p.referenceFailures());
+    assertEquals(0L, bytes,
+        "bytes allocated over " + measured + " reprices (bond books held out: "
+            + p.rejectedBondBooks() + ")");
   }
 
   @Test

@@ -83,6 +83,8 @@ public final class SofrCurve {
   private final double[] work;
   private final double[] ordered;
   private final double[] riskWork;
+  private final boolean riskAligned;
+  private boolean riskFactored;
 
   /**
    * Builds the curve with every input at one flat rate; call {@link #update} with market quotes.
@@ -131,6 +133,11 @@ public final class SofrCurve {
     work = new double[n];
     ordered = new double[n];
     riskWork = new double[riskCount];
+    boolean aligned = true;
+    for (final int months : riskMonths) {
+      aligned &= swapInput(months) >= 0;
+    }
+    riskAligned = aligned;
     refreshRiskMap();
   }
 
@@ -159,6 +166,20 @@ public final class SofrCurve {
   }
 
   private void refreshRiskMap() {
+    if (riskAligned) {
+      // every risk tenor is a build swap: its par rate is its own quote and its hat is its own
+      // tenor, so K W is the identity whatever the curve
+      if (!riskFactored) {
+        for (int j = 0; j < riskCount; j++) {
+          for (int k = 0; k < riskCount; k++) {
+            riskMatrix[j * riskCount + k] = j == k ? 1.0 : 0.0;
+          }
+        }
+        riskLu.factor(riskMatrix, riskCount);
+        riskFactored = true;
+      }
+      return;
+    }
     for (int j = 0; j < riskCount; j++) {
       pricer.parRateGradient(riskSwap[j], curve, fixings, today, row, work);
       builder.quoteSensitivities(row);

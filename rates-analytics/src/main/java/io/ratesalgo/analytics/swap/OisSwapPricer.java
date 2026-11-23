@@ -191,6 +191,22 @@ public final class OisSwapPricer {
       final double weight) {
     final int from = s.dayOffset[p];
     final int to = s.dayOffset[p + 1];
+    if (s.wholePeriodTelescopes[p]) {
+      final int first = s.fixingDate[from];
+      if (first > today || (first == today && !fixings.has(first))) {
+        // no day of the period has fixed and they all telescope: one ratio. The general loop
+        // below computes exactly this (1.0 times the same ratio, the same two gradient terms)
+        // after walking every day of the period to find that out; a 30-year swap has 7,500.
+        final double ratio = curve.df(s.valueStart[from]) / curve.df(s.valueEnd[to - 1]);
+        lastCompound = ratio;
+        if (grad != null) {
+          final double w = weight * ratio;
+          curve.accumulateLogDfGradient(s.valueStart[from], w, grad);
+          curve.accumulateLogDfGradient(s.valueEnd[to - 1], -w, grad);
+        }
+        return ratio;
+      }
+    }
     double c = 1.0;
     // first pass: value
     int k = from;

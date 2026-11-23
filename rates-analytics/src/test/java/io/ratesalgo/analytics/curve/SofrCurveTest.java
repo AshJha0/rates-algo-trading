@@ -510,6 +510,46 @@ class SofrCurveTest {
     assertEquals(df, c.curve().df(TODAY + 2000), 0.0, "same quotes: nothing is re-solved");
   }
 
+  /**
+   * A day of market data: every update must solve, to the same accuracy as a build from scratch,
+   * and cheaply. Before the global solve tried Newton first, Levenberg-Marquardt on the normal
+   * equations stalled at the rounding floor of the futures prices: an update took milliseconds
+   * and one in a few hundred failed its residual check.
+   */
+  @Test
+  void repeatedUpdatesSolveEveryTimeAndCheaply() {
+    final SofrCurve c = SofrMarket.standard();
+    final double[] base = SofrMarket.quotes(c);
+    final double[] q = base.clone();
+    final java.util.Random rnd = new java.util.Random(5);
+    double level = 0.0;
+    double worst = 0.0;
+    final int updates = 5_000;
+    final long t0 = System.nanoTime();
+    for (int k = 0; k < updates; k++) {
+      level += 0.3 * BP * rnd.nextGaussian();
+      for (int i = 0; i < q.length; i++) {
+        q[i] = base[i] + (level + 0.1 * BP * rnd.nextGaussian()) * c.quotePerRate(i);
+      }
+      assertTrue(c.update(q), "update " + k + " did not solve");
+      if (k % 100 == 0) {
+        worst = Math.max(worst, c.builder().maxRepricingError());
+      }
+    }
+    final long nanos = System.nanoTime() - t0;
+    System.out.printf(
+        "UPDATE %d updates, %.1f microseconds each (test JVM, coverage agent on), worst repricing"
+            + " error %.2e%n",
+        updates, nanos / 1e3 / updates, worst);
+    assertTrue(worst <= 1e-10, "repricing error " + worst);
+    // against a build from scratch at the last quotes
+    final SofrCurve fresh = new SofrCurve(TODAY, SofrCurveSpec.usd(), SofrMarket.fixings(TODAY, 0.039), 0.039);
+    assertTrue(fresh.update(q));
+    for (int d = TODAY + 30; d < TODAY + 30 * 365; d += 97) {
+      assertEquals(fresh.curve().df(d), c.curve().df(d), 1e-12, Dates.format(d));
+    }
+  }
+
   @Test
   void theLayoutFollowsTheCalendar() {
     // 3 December 2026: the December contract has started, so its average uses two fixings

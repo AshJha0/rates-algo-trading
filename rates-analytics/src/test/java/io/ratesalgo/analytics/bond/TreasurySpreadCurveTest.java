@@ -177,6 +177,21 @@ class TreasurySpreadCurveTest {
     assertEquals(1, c.terms(), "three usable bonds: a level");
     assertEquals(0.0, c.robustWeight(1), 0.0);
     assertTrue(Double.isFinite(c.spread(5.0)));
+    // no usable bond at all: the previous fit stands and the bonds are valued off it
+    final double[] good = {truth(2), truth(5), truth(10), truth(30)};
+    c.fit(4, years, good, new double[] {1, 1, 1, 1}, new boolean[4]);
+    final double kept = c.spread(7.0);
+    c.fit(4, years, s, new double[4], new boolean[4]);
+    assertEquals(4, c.rejectedCount());
+    assertEquals(kept, c.spread(7.0), 0.0);
+    assertEquals(c.spread(10.0), c.fitted(2), 1e-15);
+    assertEquals(c.fitted(2), c.leaveOneOut(2), 0.0);
+    assertEquals(0.0, c.leverage(2), 0.0);
+    // and before any fit there is nothing to stand: zeros, not an exception
+    final TreasurySpreadCurve empty = TreasurySpreadCurve.standard(4);
+    empty.fit(2, years, s, new double[4], new boolean[4]);
+    assertEquals(0.0, empty.fitted(0), 0.0);
+    assertEquals(0.0, empty.spread(5.0), 0.0);
     assertThrows(IllegalArgumentException.class, () -> c.fit(5, years, s, s, new boolean[5]));
     assertThrows(IllegalArgumentException.class, () -> c.fit(0, years, s, s, new boolean[4]));
     assertThrows(IllegalArgumentException.class, () -> new TreasurySpreadCurve(0, 5, 1e-4, 5e-4));

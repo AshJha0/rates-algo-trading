@@ -21,7 +21,12 @@ import java.util.Arrays;
  * avoid overflow.
  *
  * <p>The spline is linear in the node values, so its gradient is exact: z = M y for a matrix M
- * computed on first use after each update by solving the system for unit vectors.
+ * computed by solving the system for unit vectors. The system and M depend on the node times and
+ * the tension only, not on the values, so they are built when the node count changes (the
+ * sequential bootstrap activates pillars one by one) and kept across value updates; an update
+ * with the same count costs one tridiagonal solve. The node times must not change between
+ * updates with the same count, which holds for a {@link DiscountCurve}: its pillar dates are
+ * fixed at construction.
  */
 final class TensionSplineInterpolator extends Interpolator {
 
@@ -99,9 +104,11 @@ final class TensionSplineInterpolator extends Interpolator {
   void update(final double[] times, final double[] values, final int n) {
     System.arraycopy(times, 0, t, 0, n);
     System.arraycopy(values, 0, y, 0, n);
-    this.count = n;
-    this.mStale = true;
-    buildSystem();
+    if (n != count) {
+      this.count = n;
+      this.mStale = true;
+      buildSystem();
+    }
     for (int k = 1; k < n - 1; k++) {
       final double d1 = (y[k] - y[k - 1]) / (t[k] - t[k - 1]);
       final double d2 = (y[k + 1] - y[k]) / (t[k + 1] - t[k]);

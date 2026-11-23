@@ -18,16 +18,21 @@ import java.util.List;
  *   <li>Sequential: pillars are solved in date order, each by Brent's method on its log discount
  *       factor with later pillars switched off. Valid when the interpolation is local and no
  *       instrument depends on a date beyond its own pillar.
- *   <li>Global: Levenberg-Marquardt on all pillar values at once with the analytic Jacobian
- *       (instrument gradients by algorithmic differentiation), started from a sequential sweep.
- *       Used when instruments overlap (an instrument depends on dates past its pillar) or the
- *       interpolation is non-local (monotone convex, tension spline), where each residual depends
- *       on later pillars.
+ *   <li>Global: all pillar values at once with the analytic Jacobian (instrument gradients by
+ *       algorithmic differentiation), started from a sequential sweep. Used when instruments
+ *       overlap (an instrument depends on dates past its pillar) or the interpolation is non-local
+ *       (monotone convex, tension spline), where each residual depends on later pillars. The
+ *       system is square, so Newton's method on it (an LU solve of the Jacobian per step) is
+ *       tried first: from a start that is close, which a sequential sweep or the previous
+ *       solution is, it reaches the rounding floor in two or three steps. If Newton stops
+ *       contracting before the tolerance is met, Levenberg-Marquardt takes over from the same
+ *       start; it is slower and, working on the normal equations, less exact, but it does not
+ *       need a good start.
  * </ul>
  *
- * <p>Tolerances: the solve stops when every |implied - quote| is at or below {@link
- * #SOLVER_TOLERANCE} (1e-12 in quote units: decimal rate, or price for futures); the build throws
- * if it is not met. {@code CurveBuilderTest} asserts that every instrument reprices within 1e-10
+ * <p>Tolerances: a solve is accepted when every |implied - quote| is at or below {@link
+ * #SOLVER_TOLERANCE}, 1e-12, in rate (a futures price error is divided by 100, since the price is
+ * 100 times a rate and carries 100 times its rounding); the build throws if it is not met. {@code CurveBuilderTest} asserts that every instrument reprices within 1e-10
  * and that an incremental rebuild after one quote change equals a full rebuild to 1e-10 on
  * discount factors.
  *
@@ -59,6 +64,9 @@ public final class CurveBuilder {
   private final double[] lmX;
   private final double[] saved;
   private final double[] savedQuotes;
+  private final double[] newtonStart;
+  private final double[] newtonBest;
+  private final double[] newtonStep;
   private final PillarFunction pillarFunction = new PillarFunction();
   private Method lastMethod = Method.AUTO;
   private boolean jacobianValid;
@@ -118,6 +126,9 @@ public final class CurveBuilder {
     this.lmX = new double[n];
     this.saved = new double[n];
     this.savedQuotes = new double[n];
+    this.newtonStart = new double[n];
+    this.newtonBest = new double[n];
+    this.newtonStep = new double[n];
   }
 
   /** The curve being built. */
@@ -280,8 +291,21 @@ public final class CurveBuilder {
     return max;
   }
 
+  /** Largest |implied - quote| in rate: a price error is divided by its 100 per unit rate. */
+  private double maxRateError() {
+    curve.setActivePillars(n);
+    double max = 0.0;
+    for (int i = 0; i < n; i++) {
+      final CurveInstrument inst = instruments.get(i);
+      max =
+          Math.max(max,
+              Math.abs((inst.impliedQuote(context) - inst.quote()) / inst.quotePerRate()));
+    }
+    return max;
+  }
+
   private void checkResiduals() {
-    final double err = maxRepricingError();
+    final double err = maxRateError();
     if (!(err <= SOLVER_TOLERANCE)) {
       throw new IllegalStateException(
           "bootstrap did not reprice within " + SOLVER_TOLERANCE + ": max error " + err);
@@ -322,7 +346,77 @@ public final class CurveBuilder {
     }
   }
 
+  /**
+   * Newton's method on the square system implied(x) = quote from the current pillars. Returns
+   * true with the curve at the solution if the largest error in rate is within the tolerance;
+   * otherwise puts the pillars back and returns false.
+   *
+   * <p>If {@code warm}, the Jacobian factored at the current pillars (left by the last call of
+   * {@link #quoteSensitivities}) is used for the first step, which is then a true Newton step at
+   * no cost, and kept for later steps while each one cuts the error tenfold (the chord method:
+   * after a move of basis points the Jacobian has changed in its fourth digit). A step that
+   * does worse has the Jacobian rebuilt at the current point.
+   */
+  private boolean newton(final boolean warm) {
+    for (int i = 0; i < n; i++) {
+      newtonStart[i] = curve.pillarLogDf(i);
+      lmX[i] = newtonStart[i];
+    }
+    boolean factored = warm;
+    double best = Double.POSITIVE_INFINITY;
+    for (int iteration = 0; iteration < 20; iteration++) {
+      setAll(lmX);
+      double max = 0.0;
+      for (int i = 0; i < n; i++) {
+        final CurveInstrument inst = instruments.get(i);
+        newtonStep[i] = inst.impliedQuote(context) - inst.quote();
+        max = Math.max(max, Math.abs(newtonStep[i] / inst.quotePerRate()));
+      }
+      // written so that a NaN stops the iteration
+      if (!(max < 0.5 * best)) {
+        // no longer contracting: the rounding floor, or a start that was not close enough
+        break;
+      }
+      if (max > 0.1 * best) {
+        factored = false;
+      }
+      best = max;
+      System.arraycopy(lmX, 0, newtonBest, 0, n);
+      if (max <= SOLVER_TOLERANCE * 0.01) {
+        return true;
+      }
+      if (!factored) {
+        for (int i = 0; i < n; i++) {
+          instruments.get(i).impliedQuoteGradient(context, row);
+          System.arraycopy(row, 0, jacobian, i * n, n);
+        }
+        try {
+          lu.factor(jacobian, n);
+        } catch (final IllegalStateException ignored) {
+          // a singular Jacobian: leave it to the damped solver
+          break;
+        }
+        factored = true;
+      }
+      lu.solve(newtonStep);
+      for (int i = 0; i < n; i++) {
+        lmX[i] -= newtonStep[i];
+      }
+    }
+    if (best <= SOLVER_TOLERANCE) {
+      setAll(newtonBest);
+      return true;
+    }
+    setAll(newtonStart);
+    return false;
+  }
+
   private void global() {
+    final boolean warm = jacobianValid;
+    jacobianValid = false;
+    if (newton(warm)) {
+      return;
+    }
     final double[] x = lmX;
     for (int i = 0; i < n; i++) {
       x[i] = curve.pillarLogDf(i);
