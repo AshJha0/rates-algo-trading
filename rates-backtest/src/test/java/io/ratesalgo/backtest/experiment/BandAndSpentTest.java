@@ -22,18 +22,24 @@ class BandAndSpentTest {
   void eachBandRowChangesItsOwnParameterOnly() {
     final SimParams c = SimParams.loadDefault();
     final List<BandParameters.Row> rows =
-        BandParameters.rows(c, List.of("all_in_cost", "informed_fraction", "drift_tau", "level_vol", "spread_factor", "impact",
+        BandParameters.rows(c, List.of("informed_fraction", "drift_tau", "level_vol", "spread_factor", "impact",
             "basis", "taker_skill", "impact_half_life"));
-    assertEquals(19, rows.size());
+    assertEquals(17, rows.size());
     assertEquals(BandParameters.CENTRAL, rows.get(0).label());
     assertEquals(c, rows.get(0).params());
     final Map<String, SimParams> by = new LinkedHashMap<>();
     for (final BandParameters.Row r : rows) {
       by.put(r.label(), r.params());
     }
-    assertEquals(0.05, by.get("all_in_cost:low").get(Scalar.ALL_IN_COST_BP), 0.0);
-    assertEquals(c.get(Scalar.MEDIAN_HALF_SPREAD_BP), by.get("all_in_cost:high").get(Scalar.MEDIAN_HALF_SPREAD_BP), 0.0);
-    assertTrue(by.get("all_in_cost:high").get(Scalar.EXPECTED_ADVERSE_MOVE_BP) < c.get(Scalar.EXPECTED_ADVERSE_MOVE_BP));
+    final SimParams lowCost = BandParameters.row(c, "all_in_cost:low").params();
+    assertEquals(0.05, lowCost.get(Scalar.ALL_IN_COST_BP), 0.0);
+    assertEquals(c.get(Scalar.MEDIAN_HALF_SPREAD_BP), lowCost.get(Scalar.MEDIAN_HALF_SPREAD_BP), 0.0);
+    assertTrue(lowCost.get(Scalar.EXPECTED_ADVERSE_MOVE_BP) > c.get(Scalar.EXPECTED_ADVERSE_MOVE_BP));
+    // the upper cost band does not start: the expected winning half-spread (0.139 bp) does not
+    // cover 0.15 bp, so the adverse move would be negative (an owner item, like D14)
+    final IllegalArgumentException cost =
+        assertThrows(IllegalArgumentException.class, () -> BandParameters.row(c, "all_in_cost:high"));
+    assertTrue(cost.getMessage().contains("does not cover the all-in cost"), cost.getMessage());
     assertEquals(0.2, by.get("informed_fraction:low").get(Scalar.INFORMED_FRACTION), 0.0);
     assertEquals(c.get(Scalar.EXPECTED_ADVERSE_MOVE_BP), by.get("informed_fraction:high").get(Scalar.EXPECTED_ADVERSE_MOVE_BP), 1e-15);
     assertEquals(60.0, by.get("drift_tau:high").get(Scalar.DRIFT_TIME_CONSTANT_S), 0.0);

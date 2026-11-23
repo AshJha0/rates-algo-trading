@@ -154,7 +154,6 @@ class DeskSimV2Test {
     final Set<Integer> clients = new TreeSet<>();
     final long killAtRfq;
     long killedRfq;
-    StrategyContext ctx;
 
     Watched(final DeskStrategy desk, final long killAtRfq) {
       this.desk = desk;
@@ -168,14 +167,14 @@ class DeskSimV2Test {
 
     @Override
     public void onStart(final StrategyContext c) {
-      ctx = c;
+
       desk.onStart(c);
       desk.desk().desk().quoting().recorder(
           new QuotingEngine.RfqRecordListener() {
             @Override
             public void onDecision(final RfqOutcome o) {
               reasons.merge(String.valueOf(o.reason()), 1, Integer::sum);
-              clients.add(o.clientId);
+              clients.add(o.clientId());
             }
 
             @Override

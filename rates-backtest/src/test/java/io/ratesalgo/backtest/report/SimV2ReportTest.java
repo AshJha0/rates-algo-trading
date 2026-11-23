@@ -89,8 +89,16 @@ class SimV2ReportTest {
             * (day.model().latentMid(i, spec.sessionNanos()) - day.model().latentMid(i, fromStep * io.ratesalgo.sim.MarketSpec.STEP_NANOS));
     assertEquals(Prices.cents(grid), factor + impact + residual, 0.02);
     assertEquals(Prices.cents(r.total().inventoryMtm()), factor + impact + residual + timing, 0.03);
-    // the future moves with the level factor; only the basis and the 7-year node term are left over
-    assertTrue(Math.abs(residual) < Math.abs(factor), "factor " + factor + " residual " + residual);
+    // the factor part is the position times L x the change of the three factors over the hold
+    final int k0 = (int) fromStep;
+    final int k1 = spec.steps() - 1;
+    double dl = 0.0;
+    for (int j = 0; j < 3; j++) {
+      dl += spec.loading(i, j) * (day.model().factor(j, k1) - day.model().factor(j, k0));
+    }
+    final double expectedFactor =
+        fill.signedQuantity() * instruments.get(InstrumentSet.TY_FUTURE).valuePerUnit() * spec.instrument(i).priceChangePerBp() * dl;
+    assertEquals(Prices.cents(expectedFactor), factor, 0.02);
     // buying moved the level factor down in yield: the position gained from its own impact
     assertTrue(impact > 0.0, "own impact " + impact);
     assertTrue(String.valueOf(m.get("label")).startsWith("Simulator v2 output"));

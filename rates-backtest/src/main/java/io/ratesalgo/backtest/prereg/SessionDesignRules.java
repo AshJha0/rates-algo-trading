@@ -259,7 +259,7 @@ public final class SessionDesignRules {
         problems.add("config seeds.pilot_base must be the pilot base " + SessionSeeds.PILOT + ", found " + pilot);
       }
       for (final String key : List.of("confirmation_base", "base")) {
-        if (seeds.get(key) instanceof Number n && n.longValue() != base) {
+        if (base >= 0 && seeds.get(key) instanceof Number n && n.longValue() != base) {
           problems.add("config seeds." + key + " " + n + " differs from data_set.seed_base " + base);
         }
       }

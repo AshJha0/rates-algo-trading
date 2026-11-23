@@ -137,6 +137,41 @@ def test_every_rule_names_its_problem(repo: Path) -> None:
     ]
 
 
+def test_structural_problems(repo: Path) -> None:
+    text = (
+        _prereg("  seed_base: x\n  first: -1\n  sessions: 2\n", "")
+        .replace("treatments: [b]", "treatments: b")
+        .replace("c1154fd4\n", "c1154fd5\n")
+        .replace(
+            "parameters: [impact], points: [low, central, high]", "parameters: impact, points: low"
+        )
+        .replace("config: c.yaml", "config: missing.yaml")
+    )
+    assert _problems(repo, text, GOOD_CONFIG) == [
+        "treatments must be a list (empty for a description)",
+        "data_set.seed_base must be an integer",
+        "data_set.first must be a non-negative integer",
+        "data_set.simulator_params_sha256 does not match data/calibration/sim_v2_params.json"
+        " (3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4)",
+        "assumption_band.parameters must be a list of band parameter names",
+        "assumption_band.points must be a list",
+        "config file not found: missing.yaml",
+    ]
+
+
+def test_not_mappings(repo: Path) -> None:
+    text = (
+        "prereg_version: 2\nid: X\ntitle: t\nhypothesis: h\nmetric: m\nbaseline: a\n"
+        "treatments: []\ndata_set: [1]\nsuccess_threshold: s\nassumption_band: [1]\nauthor: a\n"
+        "date: 2026-11-23\nconfig: c.yaml\nconfig_sha256: CONFIG_SHA\n"
+    )
+    config = GOOD_CONFIG.replace("smallest_effect: {usd_per_session: 100}\n", "")
+    assert _problems(repo, text, config) == [
+        "data_set must be a mapping with seed_base, sessions and simulator_params",
+        "assumption_band must be a mapping",
+    ]
+
+
 def test_session_seed_rows_are_keyed_like_java() -> None:
     assert prereg.sessions_key(30_000_000, 0, 3) == "sessions:98deedb51466d9ff"
     assert prereg.sessions_key(32_000_000, 0, 2000) == "sessions:1099e6645df9e59b"

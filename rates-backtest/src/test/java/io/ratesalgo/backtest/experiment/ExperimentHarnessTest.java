@@ -140,7 +140,18 @@ class ExperimentHarnessTest {
       assertEquals(x.instrumentId(), y.instrumentId());
       assertEquals(x.quantity(), y.quantity());
       assertEquals(x.dealers(), y.dealers());
-      assertEquals(quiet.rfq(x.rfqId()), hedging.rfq(y.rfqId()));
+      final io.ratesalgo.sim.SimRfq q = quiet.rfq(x.rfqId());
+      final io.ratesalgo.sim.SimRfq h = hedging.rfq(y.rfqId());
+      assertEquals(q.arrivalNanos(), h.arrivalNanos());
+      assertEquals(q.tier(), h.tier());
+      assertEquals(q.informed(), h.informed());
+      assertEquals(q.reserveBp(), h.reserveBp(), 0.0);
+      assertEquals(q.doneAway(), h.doneAway());
+      for (int d = 0; d < q.competitors(); d++) {
+        assertEquals(q.answers(d), h.answers(d));
+        assertEquals(q.delayNanos(d), h.delayNanos(d));
+        assertEquals(q.halfSpreadBp(d), h.halfSpreadBp(d), 0.0);
+      }
     }
     final long end = 3L * 3600L * 1_000_000_000L;
     for (int i = 0; i < spec.instruments(); i++) {

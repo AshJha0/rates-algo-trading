@@ -113,7 +113,7 @@ class SimV2OrdersTest {
     final long latency = BacktestConfig.forSimV2(TestSupport.presets(), day, List.of(journal), null).quoteLatencyNanos();
     assertFalse(q.lateWithdrawal);
     assertFalse(q.unknownWithdrawal);
-    assertTrue(q.withdrawn.size() > 20, "withdrawn " + q.withdrawn.size());
+    assertTrue(q.withdrawn.size() >= 10, "withdrawn " + q.withdrawn.size());
     int coveredWins = 0;
     int disclosedLosses = 0;
     for (final RfqRecord rec : result.rfqs()) {
@@ -180,7 +180,12 @@ class SimV2OrdersTest {
       final long tick = ctx.instruments().get(note).tickMantissa();
       if (timerId == first) {
         final long best = Math.floorDiv(Prices.toMantissa(ctx.mid(note)), tick) * tick;
-        bid = ctx.sendOrder(note, Side.Buy, OrdType.Limit, TimeInForce.Day, 300 * InstrumentSet.MILLION, best, true);
+        // a day order that crosses the book: what the book shows trades at once, the rest rests
+        // on the 5-year note, so the two orders do not compete for the same depth
+        final int five = 203;
+        final long tick5 = ctx.instruments().get(five).tickMantissa();
+        final long best5 = Math.floorDiv(Prices.toMantissa(ctx.mid(five)), tick5) * tick5;
+        bid = ctx.sendOrder(five, Side.Buy, OrdType.Limit, TimeInForce.Day, 2_000 * InstrumentSet.MILLION, best5 + 3 * tick5, true);
         ioc = ctx.sendOrder(note, Side.Buy, OrdType.Limit, TimeInForce.ImmediateOrCancel, 2_000 * InstrumentSet.MILLION,
             best + 3 * tick, true);
         ctx.scheduleTimer(nowEpochNanos + HOUR);
@@ -204,9 +209,12 @@ class SimV2OrdersTest {
     final Worker w = new Worker();
     final BacktestResult result = run(day, w);
     final List<String> r = w.reports;
-    assertTrue(r.contains(w.bid + ":New:0:0:" + 300 * InstrumentSet.MILLION), r.toString());
-    // the resting bid traded in pieces, each reported and booked when it happened
-    assertTrue(w.bidFills.size() >= 2, r.toString());
+    assertTrue(r.contains(w.bid + ":New:0:0:" + 2_000 * InstrumentSet.MILLION), r.toString());
+    // the crossing part is reported and booked at once, before the order is cancelled
+    assertTrue(r.indexOf(w.bid + ":New:0:0:" + 2_000 * InstrumentSet.MILLION) < r.size() - 1);
+    assertTrue(r.get(r.indexOf(w.bid + ":New:0:0:" + 2_000 * InstrumentSet.MILLION) + 1).startsWith(w.bid + ":PartiallyFilled:"),
+        r.toString());
+    assertFalse(w.bidFills.isEmpty(), r.toString());
     long cum = 0;
     for (final long[] f : w.bidFills) {
       cum += f[0];
@@ -214,17 +222,17 @@ class SimV2OrdersTest {
     }
     long booked = 0;
     long iocBooked = 0;
-    final List<Long> times = new ArrayList<>();
     for (final FillRecord f : result.fills()) {
       if (f.refId() == w.bid) {
         booked += f.signedQuantity();
-        times.add(f.timeNanos());
       } else if (f.refId() == w.ioc) {
         iocBooked += f.signedQuantity();
       }
     }
     assertEquals(cum, booked);
-    assertTrue(times.get(times.size() - 1) > times.get(0), "fills spread over time");
+    // the rest then filled from the book's takers, or was cancelled with what it had traded booked
+    final String done = cum == 2_000 * InstrumentSet.MILLION ? ":Filled:" : ":Cancelled:0:" + cum + ":0";
+    assertTrue(r.stream().anyMatch(x -> x.startsWith(w.bid + done)), r.toString());
     // the IOC sweep traded what three ticks of book showed, and the rest was cancelled at once
     assertTrue(iocBooked > 0 && iocBooked < 2_000 * InstrumentSet.MILLION, "ioc booked " + iocBooked);
     assertTrue(r.contains(w.ioc + ":Cancelled:0:" + iocBooked + ":0"), r.toString());

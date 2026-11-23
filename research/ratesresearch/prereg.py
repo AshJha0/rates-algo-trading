@@ -390,7 +390,7 @@ def _v2_config(
             )
         for key in ("confirmation_base", "base"):
             v = seeds.get(key)
-            if _is_int(v) and v != base:
+            if base >= 0 and _is_int(v) and v != base:
                 problems.append(f"config seeds.{key} {v} differs from data_set.seed_base {base}")
         v = seeds.get("minimum_sessions")
         if _is_int(v) and v < MINIMUM_SESSIONS:

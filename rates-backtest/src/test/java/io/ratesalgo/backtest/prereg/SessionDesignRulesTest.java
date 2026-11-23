@@ -88,16 +88,35 @@ class SessionDesignRulesTest {
   }
 
   static final String GOOD_CONFIG =
-      "arms: {a: x, b: y}\nseeds: {pilot_base: 29000000, confirmation_base: 33000000, minimum_sessions: 2000}\n"
-          + "statistics: {block_sessions: 21, resamples: 2000, bootstrap_seed: 5}\nsmallest_effect: {usd_per_session: 100}\n";
+      """
+          arms: {a: x, b: y}
+          seeds: {pilot_base: 29000000, confirmation_base: 33000000, minimum_sessions: 2000}
+          statistics: {block_sessions: 21, resamples: 2000, bootstrap_seed: 5}
+          smallest_effect: {usd_per_session: 100}
+          """;
 
   static String prereg(final String dataSet, final String extra) {
-    return "prereg_version: 2\nid: X\ntitle: t\nhypothesis: h\nmetric: m\nbaseline: a\ntreatments: [b]\ntest: t\n"
-        + "data_set:\n" + dataSet
-        + "  simulator_params: data/calibration/sim_v2_params.json\n"
-        + "  simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4\n"
-        + "success_threshold: s\nassumption_band: {preset: sim_v2_params, parameters: [impact], points: [low, central, high]}\n"
-        + "author: a\ndate: 2026-11-23\nconfig: c.yaml\nconfig_sha256: CONFIG_SHA\n" + extra;
+    return """
+        prereg_version: 2
+        id: X
+        title: t
+        hypothesis: h
+        metric: m
+        baseline: a
+        treatments: [b]
+        test: t
+        data_set:
+        """ + dataSet
+        + """
+              simulator_params: data/calibration/sim_v2_params.json
+              simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+            success_threshold: s
+            assumption_band: {preset: sim_v2_params, parameters: [impact], points: [low, central, high]}
+            author: a
+            date: 2026-11-23
+            config: c.yaml
+            config_sha256: CONFIG_SHA
+            """ + extra;
   }
 
   @Test
@@ -138,8 +157,12 @@ class SessionDesignRulesTest {
             "config smallest_effect.usd_per_session must be a positive number, stated before the pilot"),
         problems(
             repo, prereg("  seed_base: 33000000\n  sessions: 2000\n", ""),
-            "arms: {a: x}\nseeds: {pilot_base: 33000000, minimum_sessions: 100}\n"
-                + "statistics: {block_sessions: 21, resamples: 0, bootstrap_seed: 5}\nguards: {speed: 1, hit_rate: 0}\n"));
+            """
+                arms: {a: x}
+                seeds: {pilot_base: 33000000, minimum_sessions: 100}
+                statistics: {block_sessions: 21, resamples: 0, bootstrap_seed: 5}
+                guards: {speed: 1, hit_rate: 0}
+                """));
     assertEquals(
         List.of(
             "missing or blank key 'test': a comparison names its test",
@@ -176,7 +199,7 @@ class SessionDesignRulesTest {
             repo,
             prereg("  seed_base: x\n  first: -1\n  sessions: 2\n", "")
                 .replace("treatments: [b]", "treatments: b")
-                .replace("1c154fd4\n", "1c154fd5\n")
+                .replace("c1154fd4\n", "c1154fd5\n")
                 .replace("parameters: [impact], points: [low, central, high]", "parameters: impact, points: low")
                 .replace("config: c.yaml", "config: missing.yaml"),
             GOOD_CONFIG));
@@ -184,8 +207,22 @@ class SessionDesignRulesTest {
         List.of("data_set must be a mapping with seed_base, sessions and simulator_params", "assumption_band must be a mapping"),
         problems(
             repo,
-            "prereg_version: 2\nid: X\ntitle: t\nhypothesis: h\nmetric: m\nbaseline: a\ntreatments: []\ndata_set: [1]\n"
-                + "success_threshold: s\nassumption_band: [1]\nauthor: a\ndate: 2026-11-23\nconfig: c.yaml\nconfig_sha256: CONFIG_SHA\n",
+            """
+                prereg_version: 2
+                id: X
+                title: t
+                hypothesis: h
+                metric: m
+                baseline: a
+                treatments: []
+                data_set: [1]
+                success_threshold: s
+                assumption_band: [1]
+                author: a
+                date: 2026-11-23
+                config: c.yaml
+                config_sha256: CONFIG_SHA
+                """,
             GOOD_CONFIG.replace("smallest_effect: {usd_per_session: 100}\n", "")));
   }
 
@@ -236,17 +273,21 @@ class SessionDesignRulesTest {
     final Path family = dir.resolve("family.yaml");
     Files.writeString(family, "family: T\nq: 0.05\nmembers: [A, B, C, D, E, F, Z]\n", StandardCharsets.UTF_8);
     final String expected =
-        "family T (q = 0.05): 6 tests from 6 ledger rows\n"
-            + "  A t_vs_baseline  seq 1  p 0.00100000  bh 0.00600000  ci [10.00, 20.00]  signs +2/-0  guards ok  verdict supported\n"
-            + "  B t_vs_baseline  seq 2  p 0.00400000  bh 0.01200000  ci [10.00, 20.00]  signs +2/-0  guards fail  verdict trading less\n"
-            + "  C t_vs_baseline  seq 3  p 0.01000000  bh 0.02000000  ci [-20.00, -10.00]  signs +0/-1  guards unchecked  verdict reversed\n"
-            + "  D t_vs_baseline  seq 4  p 0.30000000  bh 0.36000000  ci [-5.00, 9.00]  signs +1/-1  guards unchecked  verdict not robust\n"
-            + "  E t_vs_baseline  seq 5  p 0.02000000  bh 0.03000000  ci [1.00, 9.00]  signs +2/-0  guards unchecked  verdict supported if the guards hold\n"
-            + "  F t_vs_baseline  seq 6  p 0.90000000  bh 0.90000000  ci [-5.00, 9.00]  signs +2/-0  guards unchecked  verdict inconclusive\n";
+        """
+            family T (q = 0.05): 6 tests from 6 ledger rows
+              A t_vs_baseline  seq 1  p 0.00100000  bh 0.00600000  ci [10.00, 20.00]  signs +2/-0  guards ok  verdict supported
+              B t_vs_baseline  seq 2  p 0.00400000  bh 0.01200000  ci [10.00, 20.00]  signs +2/-0  guards fail  verdict trading less
+              C t_vs_baseline  seq 3  p 0.01000000  bh 0.02000000  ci [-20.00, -10.00]  signs +0/-1  guards unchecked  verdict reversed
+              D t_vs_baseline  seq 4  p 0.30000000  bh 0.36000000  ci [-5.00, 9.00]  signs +1/-1  guards unchecked  verdict not robust
+              E t_vs_baseline  seq 5  p 0.02000000  bh 0.03000000  ci [1.00, 9.00]  signs +2/-0  guards unchecked  verdict supported if the guards hold
+              F t_vs_baseline  seq 6  p 0.90000000  bh 0.90000000  ci [-5.00, 9.00]  signs +2/-0  guards unchecked  verdict inconclusive
+            """;
     assertEquals(expected, FamilyAdjustment.report(ledger.entries(), FamilyAdjustment.Family.of(family.toString())));
     assertEquals(
-        "family data_set:sessions:c (q = 0.05): 1 test from 1 ledger row\n"
-            + "  C t_vs_baseline  seq 3  p 0.01000000  bh 0.01000000  ci [-20.00, -10.00]  signs +0/-1  guards unchecked  verdict reversed\n",
+        """
+            family data_set:sessions:c (q = 0.05): 1 test from 1 ledger row
+              C t_vs_baseline  seq 3  p 0.01000000  bh 0.01000000  ci [-20.00, -10.00]  signs +0/-1  guards unchecked  verdict reversed
+            """,
         FamilyAdjustment.report(ledger.entries(), FamilyAdjustment.Family.of("data_set:sessions:c")));
     assertEquals(
         "family data_set:none (q = 0.05): 0 tests from 0 ledger rows\n",

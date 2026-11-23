@@ -118,7 +118,8 @@ public final class Checkpoints {
       for (final Map.Entry<String, Object> e : manifest.entrySet()) {
         if (!"created_utc".equals(e.getKey())
             && !"workers".equals(e.getKey())
-            && !String.valueOf(e.getValue()).equals(String.valueOf(existing.get(e.getKey())))) {
+            // compared as canonical JSON (sorted keys), so a map read back from the file matches
+            && !Json.write(e.getValue()).equals(Json.write(existing.get(e.getKey())))) {
           differences.add(e.getKey() + ": " + existing.get(e.getKey()) + " -> " + e.getValue());
         }
       }
