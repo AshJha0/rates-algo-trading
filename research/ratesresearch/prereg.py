@@ -10,7 +10,12 @@ Version 2 files (``prereg_version: 2``) are session-seed designs on simulator v2
 rules of the Java ``SessionDesignRules``: no date keys; a ``data_set`` of seed base, first session,
 session count and the simulator parameter file with its SHA-256; band parameters by name; a
 config that names every arm, the statistics, the pilot base and, for a comparison, the smallest
-effect. A draft (``status`` starting with ``draft``) validates but is never run.
+effect. A draft (``status`` starting with ``draft``) validates but is never run. A registered
+family (Java ``FamilyRules``) adds to the config its hypotheses (``family``), its data-set rows
+(``rows``: the central row with every arm, then band rows each with its own arms and session
+count) and the band points it leaves out with a reason (``excluded_band_points``); its ledger rows
+carry ``family_id``, ``family_run`` and ``hypothesis_id``, one row per hypothesis, and the rows of
+one run count as one look.
 
 ``looks_report`` counts looks per evaluation data set across pre-registration ids, with the keys
 of the Java ``DataSets``: the ledger's ``look`` field counts runs of one id, so several ids that
@@ -19,6 +24,8 @@ adjusted p and verdict of every primary test of a registered family, as ``Ledger
 
     python -m ratesresearch.prereg LEDGER                 verify the chain, print the looks
     python -m ratesresearch.prereg bh LEDGER FAMILY       the same, then the family's BH table
+                                                          (FAMILY: a family file, family:ID or
+                                                          data_set:KEY)
     python -m ratesresearch.prereg validate FILE [...]    problems of each pre-registration
 
 CI runs the first on ``data/ledger/ledger.jsonl``.
@@ -280,10 +287,139 @@ def validate_v2(raw: dict[str, Any], repo_root: Path) -> list[str]:
                 f"config_sha256 {raw['config_sha256']} does not match the config file ({actual})"
             )
         cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
-        _v2_config(
-            cfg if isinstance(cfg, dict) else {}, str(raw["baseline"]), treatments, base, problems
-        )
+        cfg = cfg if isinstance(cfg, dict) else {}
+        _v2_config(cfg, str(raw["baseline"]), treatments, base, problems)
+        if "family" in cfg or "rows" in cfg or "excluded_band_points" in cfg:
+            _v2_family(raw, cfg, [str(raw["baseline"]), *treatments], problems)
     return problems
+
+
+def _band_labels(raw: dict[str, Any]) -> list[str]:
+    band = raw.get("assumption_band")
+    names = band.get("parameters") if isinstance(band, dict) else None
+    if not isinstance(names, list):
+        return []
+    return [f"{n}:{point}" for n in names for point in ("low", "high")]
+
+
+def _v2_family(
+    raw: dict[str, Any], cfg: dict[str, Any], arms: list[str], problems: list[str]
+) -> None:
+    """A registered family (Java ``FamilyRules``): hypotheses, data-set rows, excluded points."""
+    fam = cfg.get("family")
+    if not isinstance(fam, dict):
+        problems.append("config family must be a mapping with id, q and hypotheses")
+    else:
+        if _blank(fam.get("id")):
+            problems.append("config family.id is missing")
+        q = fam.get("q")
+        if not (_is_number(q) and 0 < q < 1):
+            problems.append("config family.q must be a number between 0 and 1")
+        hyps = fam.get("hypotheses")
+        if not isinstance(hyps, list) or not hyps:
+            problems.append("config family.hypotheses must be a non-empty list")
+            hyps = []
+        seen: set[str] = set()
+        for n, h in enumerate(hyps):
+            if not isinstance(h, dict) or _blank(h.get("id")):
+                problems.append(f"config family.hypotheses[{n}] needs an id")
+                continue
+            hid = str(h["id"])
+            if hid in seen:
+                problems.append(f"config family: hypothesis id '{hid}' is listed twice")
+            seen.add(hid)
+            for role in ("treatment", "baseline"):
+                if str(h.get(role)) not in arms:
+                    problems.append(
+                        f"hypothesis {hid}: {role} '{h.get(role)}' is not an arm of the design"
+                    )
+            if str(h.get("treatment")) == str(h.get("baseline")):
+                problems.append(f"hypothesis {hid}: treatment and baseline are the same arm")
+            _guard_map(h.get("guards"), f"hypothesis {hid}: guards", problems)
+        if fam.get("guards_vs_default") is not None:
+            _guard_map(fam["guards_vs_default"], "config family.guards_vs_default", problems)
+            if "default" not in arms:
+                problems.append("config family.guards_vs_default needs an arm named 'default'")
+    sessions = raw["data_set"].get("sessions") if isinstance(raw.get("data_set"), dict) else None
+    band = _band_labels(raw)
+    rows = cfg.get("rows")
+    run: list[str] = []
+    if not isinstance(rows, list) or not rows:
+        problems.append("config rows must be a non-empty list of {row, arms, sessions}")
+        rows = []
+    for n, r in enumerate(rows):
+        if not isinstance(r, dict):
+            problems.append(f"config rows[{n}] must be a mapping of row, arms and sessions")
+            continue
+        label = str(r.get("row"))
+        r_arms = [str(a) for a in r.get("arms")] if isinstance(r.get("arms"), list) else []
+        if label in run:
+            problems.append(f"config rows: '{label}' is listed twice")
+        run.append(label)
+        if n == 0:
+            if label != "central":
+                problems.append("config rows[0] must be the central row")
+            elif sorted(r_arms) != sorted(arms):
+                problems.append("config rows[0] (central) must run every arm of the design")
+            if _is_int(sessions) and r.get("sessions") != sessions:
+                problems.append(
+                    f"config rows[0] sessions {r.get('sessions')} differs from data_set.sessions"
+                    f" {sessions}"
+                )
+            continue
+        if label not in band:
+            problems.append(
+                f"config rows: '{label}' is not a low or high row of the band's parameters"
+            )
+        if not r_arms:
+            problems.append(f"config rows '{label}': arms must be a non-empty list")
+        problems.extend(
+            f"config rows '{label}': arm '{a}' is not an arm of the design"
+            for a in r_arms
+            if a not in arms
+        )
+        s = r.get("sessions")
+        if not (_is_int(s) and s > 0 and (not _is_int(sessions) or s <= sessions)):
+            problems.append(
+                f"config rows '{label}': sessions must be a positive integer no larger than"
+                " data_set.sessions"
+            )
+    excluded = cfg.get("excluded_band_points") or []
+    if not isinstance(excluded, list):
+        problems.append("config excluded_band_points must be a list of {row, reason}")
+        excluded = []
+    dropped: list[str] = []
+    for e in excluded:
+        label = str(e.get("row")) if isinstance(e, dict) else str(e)
+        dropped.append(label)
+        if label not in band:
+            problems.append(
+                f"config excluded_band_points: '{label}' is not a low or high row of the band's"
+                " parameters"
+            )
+        if label in run:
+            problems.append(f"config excluded_band_points: '{label}' is also run as a row")
+        if not isinstance(e, dict) or _blank(e.get("reason")):
+            problems.append(f"config excluded_band_points '{label}' needs a reason")
+    problems.extend(
+        f"assumption_band point '{label}' is neither run (config rows) nor excluded with a"
+        " reason (config excluded_band_points)"
+        for label in band
+        if label not in run and label not in dropped
+    )
+
+
+def _guard_map(guards: Any, where: str, problems: list[str]) -> None:
+    if guards is None:
+        return
+    if not isinstance(guards, dict):
+        problems.append(f"{where} must be a mapping of guard name to minimum ratio")
+        return
+    for k, v in guards.items():
+        if str(k) not in GUARDS:
+            problems.append(f"{where}.{k} is not a guard; known: {_java_list(GUARDS)}")
+        elif not (_is_number(v) and v > 0):
+            problems.append(f"{where}.{k} must be a positive ratio")
 
 
 def _v2_data_set(
@@ -536,6 +672,23 @@ def undeclared_looks(
     return out
 
 
+def looks_of(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Rows grouped into looks, as ``DataSets.looksOf``: the rows of one family run (same
+    ``family_run``) are one look, every other row is a look of its own."""
+    out: list[list[dict[str, Any]]] = []
+    runs: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        run = r.get("family_run")
+        if isinstance(run, str) and run:
+            if run not in runs:
+                runs[run] = []
+                out.append(runs[run])
+            runs[run].append(r)
+        else:
+            out.append([r])
+    return out
+
+
 def looks_report(entries: list[dict[str, Any]]) -> str:
     """The looks of every data set as text, the same text as ``DataSets.report`` in Java."""
     groups = looks_by_data_set(entries)
@@ -544,19 +697,28 @@ def looks_report(entries: list[dict[str, Any]]) -> str:
     unkeyed = len(entries)
     for key, rows in groups.items():
         unkeyed -= len(rows)
+        looks = looks_of(rows)
         lines.append(
-            f"{key}  {_describe(rows[0])}: {len(rows)} look{'' if len(rows) == 1 else 's'}"
+            f"{key}  {_describe(rows[0])}: {len(looks)} look{'' if len(looks) == 1 else 's'}"
         )
-        for n, r in enumerate(rows, 1):
-            lines.append(
-                f"  look {n}  seq {r.get('seq')}  {r.get('prereg_id')}  {r.get('scope')}"
-                f"  {r.get('verdict')}  (recorded as look {r.get('look')})"
-            )
-        if len(rows) > 1:
+        for n, look in enumerate(looks, 1):
+            r = look[0]
+            if len(look) == 1:
+                lines.append(
+                    f"  look {n}  seq {r.get('seq')}  {r.get('prereg_id')}  {r.get('scope')}"
+                    f"  {r.get('verdict')}  (recorded as look {r.get('look')})"
+                )
+            else:
+                lines.append(
+                    f"  look {n}  seq {r.get('seq')}..{look[-1].get('seq')}  {r.get('prereg_id')}"
+                    f"  {r.get('scope')}  family {r.get('family_id')}, {len(look)} rows"
+                    f"  (recorded as look {r.get('look')})"
+                )
+        if len(looks) > 1:
             repeated += 1
-            ids = ", ".join(str(r.get("prereg_id")) for r in rows)
+            ids = ", ".join(str(look[0].get("prereg_id")) for look in looks)
             lines.append(
-                f"  warning: {len(rows)} looks at the same data by {ids}; treat their verdicts"
+                f"  warning: {len(looks)} looks at the same data by {ids}; treat their verdicts"
                 " as one family, not as independent results"
             )
     tail = f"{len(entries)} ledger rows, {len(groups)} data sets, {repeated} read more than once"
@@ -579,9 +741,12 @@ def benjamini_hochberg(p: list[float]) -> list[float]:
     return adjusted
 
 
-def _family(spec: str) -> tuple[str, float, list[str], str | None]:
+def _family(spec: str) -> tuple[str, float, list[str], str | None, str | None]:
+    """(name, q, members, data set key, family id) of a family spec, as ``Family.of``."""
     if spec.startswith("data_set:"):
-        return spec, 0.05, [], spec[len("data_set:") :]
+        return spec, 0.05, [], spec[len("data_set:") :], None
+    if spec.startswith("family:"):
+        return spec, 0.05, [], None, spec[len("family:") :]
     path = Path(spec)
     if not path.is_file():
         raise ValueError(f"family file not found: {spec}")
@@ -592,21 +757,36 @@ def _family(spec: str) -> tuple[str, float, list[str], str | None]:
         float(q) if _is_number(q) else 0.05,
         [str(x) for x in raw["members"]],
         None,
+        None,
     )
 
 
+def _member(
+    e: dict[str, Any], members: list[str], data_set: str | None, family_id: str | None
+) -> bool:
+    if data_set is not None:
+        return e.get("data_set") == data_set
+    if family_id is not None:
+        return e.get("family_id") == family_id
+    return str(e.get("prereg_id")) in members
+
+
 def family_report(entries: list[dict[str, Any]], spec: str) -> str:
-    """Benjamini-Hochberg over a family's primary tests, the same text as ``LedgerCli --bh``."""
-    name, q, members, data_set = _family(spec)
+    """Benjamini-Hochberg over a family's primary tests, the same text as ``LedgerCli --bh``.
+
+    A row of a registered family (it carries ``hypothesis_id``) is one test; its verdict does not
+    use the band rows, which the family reports as a secondary description only.
+    """
+    name, q, members, data_set, family_id = _family(spec)
     latest: dict[str, dict[str, Any]] = {}
     for e in entries:
-        if data_set is not None:
-            member = e.get("data_set") == data_set
-        else:
-            member = str(e.get("prereg_id")) in members
         results = e.get("results")
-        if member and isinstance(results, dict) and isinstance(results.get("primary"), dict):
-            latest[str(e.get("prereg_id"))] = e
+        if (
+            _member(e, members, data_set, family_id)
+            and isinstance(results, dict)
+            and isinstance(results.get("primary"), dict)
+        ):
+            latest[f"{e.get('prereg_id')}|{e.get('hypothesis_id', '')}"] = e
     tests = []
     for row in latest.values():
         for comparison, c in row["results"]["primary"].items():
@@ -628,15 +808,33 @@ def family_report(entries: list[dict[str, Any]], spec: str) -> str:
     if tests:
         adjusted = benjamini_hochberg([t[3] for t in tests])
         for (pid, comparison, seq, p, c, row), adj in zip(tests, adjusted, strict=True):
-            plus, minus = _signs(row, comparison)
             guards = _guards(row, c)
+            ci = f"ci [{_num(c.get('ci_low')):.2f}, {_num(c.get('ci_high')):.2f}]"
+            if row.get("hypothesis_id") is not None:
+                lines.append(
+                    f"  {pid} {row['hypothesis_id']} {comparison}  seq {seq}  p {p:.8f}"
+                    f"  bh {adj:.8f}  {ci}  guards {guards}"
+                    f"  verdict {_family_verdict(c, adj, q, guards)}"
+                )
+                continue
+            plus, minus = _signs(row, comparison)
             lines.append(
-                f"  {pid} {comparison}_vs_baseline  seq {seq}  p {p:.8f}  bh {adj:.8f}"
-                f"  ci [{_num(c.get('ci_low')):.2f}, {_num(c.get('ci_high')):.2f}]"
+                f"  {pid} {comparison}_vs_baseline  seq {seq}  p {p:.8f}  bh {adj:.8f}  {ci}"
                 f"  signs +{plus}/-{minus}  guards {guards}"
                 f"  verdict {_verdict(c, adj, q, plus, minus, guards)}"
             )
     return "\n".join(lines) + "\n"
+
+
+def _family_verdict(c: dict[str, Any], adjusted: float, q: float, guards: str) -> str:
+    if guards == "fail":
+        return "trading less"
+    low, high = _num(c.get("ci_low")), _num(c.get("ci_high"))
+    if adjusted < q and low > 0.0:
+        return "supported if the guards hold" if guards == "unchecked" else "supported"
+    if adjusted < q and high < 0.0:
+        return "reversed"
+    return "inconclusive"
 
 
 def _num(v: Any) -> float:

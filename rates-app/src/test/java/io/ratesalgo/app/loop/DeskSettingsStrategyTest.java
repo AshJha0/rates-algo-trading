@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.ratesalgo.app.TradingProcess;
@@ -55,18 +56,54 @@ class DeskSettingsStrategyTest {
     assertTrue(h.internalising());
     assertTrue(DeskSettings.V2_TIME_STOP_NANOS < 60_000_000_000L, "inside the stalled-parent timeout");
     assertTrue(DeskSettings.V2_BUDGET_STD_DEV > 20_000.0, "above the trigger");
-    // more than one tier, matching the markout store's priors
+    // three tiers, matching the markout store's priors, keyed by the simulator's wire ids (D12)
     final TierTable t = v2.tiers();
     assertEquals(TierPriors.TIER_A, t.tierOf(2001).tier());
-    assertEquals(TierPriors.TIER_B, t.tierOf(2003).tier());
-    assertEquals(TierPriors.TIER_C, t.tierOf(2005).tier());
+    assertEquals(TierPriors.TIER_B, t.tierOf(2002).tier());
+    assertEquals(TierPriors.TIER_C, t.tierOf(2003).tier());
+    assertEquals(TierPriors.TIER_B, t.tierOf(2005).tier(), "an id the simulator never sends is tier B");
     assertEquals(TierPriors.TIER_B, t.tierOf(42).tier());
     assertEquals(DeskSettings.defaults().tiers().tierOf(42).maxQuantity(), t.tierOf(2001).maxQuantity());
     final DeskSettings sizedV2 = v2.withLimits(DeskSettings.LimitPreset.DESK_SIZED);
     assertEquals(DeskSettings.StrategyPreset.V2, sizedV2.strategyPreset());
-    assertEquals(10_000_000_000L, sizedV2.tiers().tierOf(2005).maxQuantity());
+    assertEquals(10_000_000_000L, sizedV2.tiers().tierOf(2003).maxQuantity());
     assertEquals(DeskSettings.StrategyPreset.V2, v2.withQuoteRate(5.0).strategyPreset());
     assertEquals(DeskSettings.StrategyPreset.DEFAULT, v2.withStrategy(DeskSettings.StrategyPreset.DEFAULT).strategyPreset());
+  }
+
+  @Test
+  void theSettingsAreTheirSwitchesAndThePresetsAreTwoValues() {
+    final DeskSettings d = DeskSettings.defaults();
+    assertEquals(DeskSettings.StrategySwitches.DEFAULT, d.strategy());
+    assertEquals(DeskSettings.StrategySwitches.V2, DeskSettings.strategyV2().strategy());
+    // a preset named in the constructor is the same settings as its switches
+    assertEquals(DeskSettings.strategyV2(), new DeskSettings(10_000_000L, 250_000_000L, 2_000_000_000.0, 100_000_000L, 500.0,
+        2026L, 1_000.0, DeskSettings.LimitPreset.BACKTEST, DeskSettings.StrategyPreset.V2));
+    assertThrows(IllegalArgumentException.class, () -> d.withStrategy(DeskSettings.StrategyPreset.CUSTOM));
+    assertThrows(IllegalArgumentException.class,
+        () -> DeskSettings.StrategySwitches.V2.withQuoteProtection(true, -1.0));
+    assertThrows(NullPointerException.class, () -> d.withStrategy((DeskSettings.StrategySwitches) null));
+    // one switch off is a custom value; switching it back gives V2 again
+    final DeskSettings.StrategySwitches noCover = DeskSettings.StrategySwitches.V2.withCoverPricing(false);
+    assertEquals(DeskSettings.StrategyPreset.CUSTOM, d.withStrategy(noCover).strategyPreset());
+    assertEquals(DeskSettings.StrategySwitches.V2, noCover.withCoverPricing(true));
+    assertEquals(DeskSettings.StrategySwitches.V2,
+        DeskSettings.StrategySwitches.V2.withQuoteProtection(false, 0.0).withQuoteProtection(true, 0.5));
+    // the quoting config built from the switches is the preset's
+    final StrategyConfig built = DeskSettings.StrategySwitches.V2.strategyConfig();
+    final StrategyConfig preset = DeskSettings.strategyV2Switches();
+    assertEquals(built.coverPricing(), preset.coverPricing());
+    assertEquals(built.volatilityReferenceTenor(), preset.volatilityReferenceTenor());
+    assertTrue(Double.isNaN(DeskSettings.StrategySwitches.DEFAULT.strategyConfig().volatilityReferenceTenor()));
+    assertFalse(DeskSettings.StrategySwitches.DEFAULT.anyCapability());
+    // the default quoting path is untouched: no strategy object is set, so the engine's own default
+    // (every switch off) is what the recorded desk ran with
+    assertFalse(d.quoting().strategy().pricingActive());
+    assertEquals(1, d.tiers().tierOf(2001).tier());
+    // tiers and the internalising hedger follow their own switches, not the preset's name
+    final DeskSettings tiersOnly = d.withStrategy(DeskSettings.StrategySwitches.DEFAULT.withInternalisingHedger(true));
+    assertTrue(tiersOnly.hedger().internalising());
+    assertEquals(1, tiersOnly.tiers().tierOf(2003).tier());
   }
 
   @Test

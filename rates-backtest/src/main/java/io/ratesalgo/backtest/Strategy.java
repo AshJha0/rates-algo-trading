@@ -37,4 +37,13 @@ public interface Strategy {
   default void onExecutionReport(final ExecutionReportDecoder report, final StrategyContext ctx) {}
 
   default void onTimer(final long timerId, final long nowEpochNanos, final StrategyContext ctx) {}
+
+  /**
+   * Structural counts the strategy kept during the run, such as RFQs it could not quote because
+   * their instrument is outside its universe. Read once after the run and recorded per arm with
+   * the session; never a P&amp;L. Empty by default.
+   */
+  default java.util.Map<String, Long> counters() {
+    return java.util.Map.of();
+  }
 }

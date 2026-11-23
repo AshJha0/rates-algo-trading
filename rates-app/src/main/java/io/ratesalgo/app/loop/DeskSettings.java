@@ -32,7 +32,14 @@ import java.util.Map;
  * the capped reservation price, the fitted factor covariance and factor hedging, tick hedge costs,
  * the client markout store with three client tiers, tick rounding, the volatility time to live and
  * the pull at half the quoted distance, and an internalising hedger. It is for the
- * pre-registered runs R5-001 to R5-006 and is not recommended for anything until they are read.
+ * pre-registered family R5-FAM-001 and is not recommended for anything until it is read.
+ *
+ * <p>What a desk runs is the resolved {@link StrategySwitches}, not a preset's name: the presets are
+ * two values of it, and each ablation arm is {@link StrategySwitches#V2} with one capability
+ * switched off. {@link #quoting}, {@link #hedger} and {@link #tiers} are functions of the switches,
+ * so two settings with equal switches build the same desk. The other components of a desk (market,
+ * pricing binding, router) are {@link DeskProfile}'s; a profile with its settings is the whole
+ * configuration ({@link DeskProfile#resolved}).
  *
  * @param housekeepingNanos period of the loop timer that polls quotes, routers and the hedger
  * @param hedgeIntervalNanos how often the hedger measures its residual
@@ -43,8 +50,7 @@ import java.util.Map;
  * @param quoteRatePerSecond the risk engine's quote rate limit; orders get the same, messages five
  *     times it
  * @param limitPreset which limit set and client tiers {@link #limits} and {@link #tiers} build
- * @param strategyPreset which quoting and hedging strategy {@link #quoting}, {@link #tiers} and
- *     {@link #hedger} build
+ * @param strategy the strategy switches {@link #quoting}, {@link #tiers} and {@link #hedger} build
  */
 public record DeskSettings(
     long housekeepingNanos,
@@ -55,7 +61,7 @@ public record DeskSettings(
     long seed,
     double quoteRatePerSecond,
     LimitPreset limitPreset,
-    StrategyPreset strategyPreset) {
+    StrategySwitches strategy) {
 
   /** Which limit set a desk runs with. */
   public enum LimitPreset {
@@ -65,12 +71,141 @@ public record DeskSettings(
     DESK_SIZED
   }
 
-  /** Which strategy a desk runs. */
+  /** A named value of the strategy switches. */
   public enum StrategyPreset {
-    /** The recorded strategy: every Round 5 switch off. */
+    /** The recorded strategy: every Round 5 switch off ({@link StrategySwitches#DEFAULT}). */
     DEFAULT,
-    /** The Round 5 capabilities together (STRATEGY_V2.md); for the pre-registered runs only. */
-    V2
+    /** The Round 5 capabilities together (STRATEGY_V2.md, {@link StrategySwitches#V2}). */
+    V2,
+    /** Any other value of the switches, such as an ablation arm; never a starting point. */
+    CUSTOM;
+
+    /** The switches of a named preset. */
+    public StrategySwitches switches() {
+      return switch (this) {
+        case DEFAULT -> StrategySwitches.DEFAULT;
+        case V2 -> StrategySwitches.V2;
+        case CUSTOM -> throw new IllegalArgumentException("CUSTOM names no switches; pass StrategySwitches");
+      };
+    }
+  }
+
+  /**
+   * What the desk's quoting and hedging strategy is, switch by switch (STRATEGY_V2.md Section 8).
+   * The eight capability switches are {@link StrategyConfig}'s; the rest are the parts of the
+   * Round 5 desk that live outside it.
+   *
+   * @param coverPricing break-even, cover-relative pricing (Section 2)
+   * @param reservationPrice the capped inventory reservation price (Section 3)
+   * @param factorCovariance the fitted factor covariance (Section 4)
+   * @param factorHedging the factor hedge planner (Section 4)
+   * @param tickHedgeCost hedge cost from each instrument's tick (Section 4)
+   * @param markoutStore the client markout store (Section 6)
+   * @param tickRounding prices rounded to the venue tick, our way (Section 7)
+   * @param volatilityTtl the volatility time to live (Section 7)
+   * @param volatilityReferenceTenor tenor in years whose swap volatility drives the time to live;
+   *     NaN for the engine's own choice
+   * @param pullFraction pull a quote once this fraction of its quoted distance is gone; 0 for no
+   *     pull by fraction (Section 7)
+   * @param internalisingHedger hold risk up to a budget and a time stop, resting hedges at the touch
+   *     first (Section 5); false is the default hedger, which crosses at its trigger
+   * @param clientTiers three client tiers with the calibration's priors ({@link #V2_CLIENT_TIERS});
+   *     false is one tier for every client
+   */
+  public record StrategySwitches(
+      boolean coverPricing,
+      boolean reservationPrice,
+      boolean factorCovariance,
+      boolean factorHedging,
+      boolean tickHedgeCost,
+      boolean markoutStore,
+      boolean tickRounding,
+      boolean volatilityTtl,
+      double volatilityReferenceTenor,
+      double pullFraction,
+      boolean internalisingHedger,
+      boolean clientTiers) {
+
+    /** The recorded strategy: nothing on. */
+    public static final StrategySwitches DEFAULT =
+        new StrategySwitches(false, false, false, false, false, false, false, false, Double.NaN, 0.0, false, false);
+
+    /**
+     * The Round 5 desk: every capability on, the volatility read at the 10-year, the pull at half
+     * the quoted distance (review Q7), the internalising hedger and three client tiers.
+     */
+    public static final StrategySwitches V2 =
+        new StrategySwitches(true, true, true, true, true, true, true, true, 10.0, 0.5, true, true);
+
+    /** Validates the switches. */
+    public StrategySwitches {
+      if (!(pullFraction >= 0.0)) {
+        throw new IllegalArgumentException("pullFraction must be >= 0: " + pullFraction);
+      }
+    }
+
+    /** The same switches with cover pricing on or off. */
+    public StrategySwitches withCoverPricing(final boolean on) {
+      return new StrategySwitches(on, reservationPrice, factorCovariance, factorHedging, tickHedgeCost, markoutStore,
+          tickRounding, volatilityTtl, volatilityReferenceTenor, pullFraction, internalisingHedger, clientTiers);
+    }
+
+    /** The same switches with the reservation price on or off. */
+    public StrategySwitches withReservationPrice(final boolean on) {
+      return new StrategySwitches(coverPricing, on, factorCovariance, factorHedging, tickHedgeCost, markoutStore,
+          tickRounding, volatilityTtl, volatilityReferenceTenor, pullFraction, internalisingHedger, clientTiers);
+    }
+
+    /**
+     * The same switches with the factor covariance, factor hedging and tick hedge cost on or off
+     * together: one change to how risk is measured and hedged (STRATEGY_V2.md Section 8).
+     */
+    public StrategySwitches withFactorHedging(final boolean on) {
+      return new StrategySwitches(coverPricing, reservationPrice, on, on, on, markoutStore, tickRounding,
+          volatilityTtl, volatilityReferenceTenor, pullFraction, internalisingHedger, clientTiers);
+    }
+
+    /** The same switches with the markout store on or off. */
+    public StrategySwitches withMarkoutStore(final boolean on) {
+      return new StrategySwitches(coverPricing, reservationPrice, factorCovariance, factorHedging, tickHedgeCost, on,
+          tickRounding, volatilityTtl, volatilityReferenceTenor, pullFraction, internalisingHedger, clientTiers);
+    }
+
+    /**
+     * The same switches with quote protection on or off together: tick rounding, the volatility
+     * time to live and the pull at {@code pull} of the quoted distance (off: both false, pull 0).
+     */
+    public StrategySwitches withQuoteProtection(final boolean on, final double pull) {
+      return new StrategySwitches(coverPricing, reservationPrice, factorCovariance, factorHedging, tickHedgeCost,
+          markoutStore, on, on, volatilityReferenceTenor, on ? pull : 0.0, internalisingHedger, clientTiers);
+    }
+
+    /** The same switches with the internalising hedger or the default one. */
+    public StrategySwitches withInternalisingHedger(final boolean on) {
+      return new StrategySwitches(coverPricing, reservationPrice, factorCovariance, factorHedging, tickHedgeCost,
+          markoutStore, tickRounding, volatilityTtl, volatilityReferenceTenor, pullFraction, on, clientTiers);
+    }
+
+    /** True when any {@link StrategyConfig} capability is on. */
+    public boolean anyCapability() {
+      return coverPricing || reservationPrice || factorCovariance || factorHedging || tickHedgeCost || markoutStore
+          || tickRounding || volatilityTtl;
+    }
+
+    /** The quoting engine's switches, a fresh object. */
+    public StrategyConfig strategyConfig() {
+      final StrategyConfig s =
+          new StrategyConfig()
+              .coverPricing(coverPricing)
+              .reservationPrice(reservationPrice)
+              .factorCovariance(factorCovariance)
+              .factorHedging(factorHedging)
+              .tickHedgeCost(tickHedgeCost)
+              .markoutStore(markoutStore)
+              .tickRounding(tickRounding)
+              .volatilityTtl(volatilityTtl);
+      return Double.isNaN(volatilityReferenceTenor) ? s : s.volatilityReferenceTenor(volatilityReferenceTenor);
+    }
   }
 
   /**
@@ -89,11 +224,52 @@ public record DeskSettings(
   public static final long V2_TIME_STOP_NANOS = 45_000_000_000L;
 
   /**
-   * Strategy V2's client tiers: the D2C simulator's five clients split over the calibration's
-   * tiers A (2001, 2002), B (2003, 2004, and anyone unknown) and C (2005). An assumption until the
-   * Round 3 simulator fixes its client ids per tier; then this map follows it.
+   * The wire client id of simulator v2's tier A; tiers B and C follow it (SIM_V2_DESIGN.md Section
+   * 14, D12: the D2C venue sends 2001, 2002 and 2003 for tiers A, B and C). The one place the desk
+   * states the simulator's client ids: {@link #V2_CLIENT_TIERS} and the back-test's binding are
+   * derived from it, and {@code ClientTierWiringTest} checks it against the venue simulator's own
+   * RFQs.
    */
-  public static final Map<Integer, Integer> V2_CLIENT_TIERS = Map.of(2001, 0, 2002, 0, 2003, 1, 2004, 1, 2005, 2);
+  public static final int V2_CLIENT_ID_BASE = 2001;
+
+  /** The calibration's tiers in the simulator's order: tier index 0, 1, 2 is A, B, C. */
+  public static final List<Integer> V2_TIERS = List.of(TierPriors.TIER_A, TierPriors.TIER_B, TierPriors.TIER_C);
+
+  /**
+   * Strategy V2's client tiers: wire client id to the index of its tier in {@link
+   * #strategyV2Tiers} (A, B, C). Anyone else is tier B.
+   */
+  public static final Map<Integer, Integer> V2_CLIENT_TIERS =
+      Map.of(v2ClientId(0), 0, v2ClientId(1), 1, v2ClientId(2), 2);
+
+  /** The wire client id simulator v2 sends for a tier index (0 is tier A). */
+  public static int v2ClientId(final int tierIndex) {
+    if (tierIndex < 0 || tierIndex >= V2_TIERS.size()) {
+      throw new IllegalArgumentException("no simulator v2 tier with index " + tierIndex);
+    }
+    return V2_CLIENT_ID_BASE + tierIndex;
+  }
+
+  /** Validates the settings. */
+  public DeskSettings {
+    java.util.Objects.requireNonNull(limitPreset, "limitPreset");
+    java.util.Objects.requireNonNull(strategy, "strategy");
+  }
+
+  /** Settings with a named strategy preset. */
+  public DeskSettings(
+      final long housekeepingNanos,
+      final long hedgeIntervalNanos,
+      final double tradeRatePerSecond,
+      final long hedgeLotMinor,
+      final double hedgeMaxLots,
+      final long seed,
+      final double quoteRatePerSecond,
+      final LimitPreset limitPreset,
+      final StrategyPreset strategyPreset) {
+    this(housekeepingNanos, hedgeIntervalNanos, tradeRatePerSecond, hedgeLotMinor, hedgeMaxLots, seed,
+        quoteRatePerSecond, limitPreset, strategyPreset.switches());
+  }
 
   /** Settings with the given limit preset and the default strategy. */
   public DeskSettings(
@@ -106,7 +282,7 @@ public record DeskSettings(
       final double quoteRatePerSecond,
       final LimitPreset limitPreset) {
     this(housekeepingNanos, hedgeIntervalNanos, tradeRatePerSecond, hedgeLotMinor, hedgeMaxLots, seed,
-        quoteRatePerSecond, limitPreset, StrategyPreset.DEFAULT);
+        quoteRatePerSecond, limitPreset, StrategySwitches.DEFAULT);
   }
 
   /**
@@ -152,19 +328,32 @@ public record DeskSettings(
   /** The same settings with another quote rate limit (load tests send far faster than a venue). */
   public DeskSettings withQuoteRate(final double perSecond) {
     return new DeskSettings(housekeepingNanos, hedgeIntervalNanos, tradeRatePerSecond, hedgeLotMinor, hedgeMaxLots, seed,
-        perSecond, limitPreset, strategyPreset);
+        perSecond, limitPreset, strategy);
   }
 
   /** The same settings with another limit preset. */
   public DeskSettings withLimits(final LimitPreset preset) {
     return new DeskSettings(housekeepingNanos, hedgeIntervalNanos, tradeRatePerSecond, hedgeLotMinor, hedgeMaxLots, seed,
-        quoteRatePerSecond, preset, strategyPreset);
+        quoteRatePerSecond, preset, strategy);
   }
 
-  /** The same settings with another strategy preset. */
+  /** The same settings with a named strategy preset. */
   public DeskSettings withStrategy(final StrategyPreset preset) {
+    return withStrategy(preset.switches());
+  }
+
+  /** The same settings with these strategy switches. */
+  public DeskSettings withStrategy(final StrategySwitches switches) {
     return new DeskSettings(housekeepingNanos, hedgeIntervalNanos, tradeRatePerSecond, hedgeLotMinor, hedgeMaxLots, seed,
-        quoteRatePerSecond, limitPreset, preset);
+        quoteRatePerSecond, limitPreset, switches);
+  }
+
+  /** The preset the switches are, or {@link StrategyPreset#CUSTOM}. */
+  public StrategyPreset strategyPreset() {
+    if (strategy.equals(StrategySwitches.DEFAULT)) {
+      return StrategyPreset.DEFAULT;
+    }
+    return strategy.equals(StrategySwitches.V2) ? StrategyPreset.V2 : StrategyPreset.CUSTOM;
   }
 
   /**
@@ -175,7 +364,11 @@ public record DeskSettings(
    */
   public QuotingConfig quoting() {
     final QuotingConfig q = defaultQuoting();
-    return strategyPreset == StrategyPreset.V2 ? q.strategy(strategyV2Switches()).fairMoveWithdrawFraction(0.5) : q;
+    if (strategy.anyCapability()) {
+      q.strategy(strategy.strategyConfig());
+    }
+    // the recorded desk never sets the fraction, and 0 is the engine's own "off"
+    return strategy.pullFraction() > 0.0 ? q.fairMoveWithdrawFraction(strategy.pullFraction()) : q;
   }
 
   /**
@@ -188,7 +381,7 @@ public record DeskSettings(
    * venue's trade and disputing it keeps the risk engine's position true (DR-RV-Q03).
    */
   public static StrategyConfig strategyV2Switches() {
-    return StrategyConfig.allOn().volatilityReferenceTenor(10.0);
+    return StrategySwitches.V2.strategyConfig();
   }
 
   private QuotingConfig defaultQuoting() {
@@ -275,7 +468,7 @@ public record DeskSettings(
    */
   public TierTable tiers() {
     final TierTable single = limitPreset == LimitPreset.DESK_SIZED ? deskSizedTiers() : backtestTiers();
-    return strategyPreset == StrategyPreset.V2 ? strategyV2Tiers(single.tierOf(0).maxQuantity()) : single;
+    return strategy.clientTiers() ? strategyV2Tiers(single.tierOf(0).maxQuantity()) : single;
   }
 
   /**
@@ -285,14 +478,11 @@ public record DeskSettings(
    * #V2_CLIENT_TIERS}; anyone else is tier B.
    */
   public static TierTable strategyV2Tiers(final long maxQuantity) {
-    return new TierTable(
-        1,
-        List.of(
-            new ClientTier(TierPriors.TIER_A, 1.0, maxQuantity, true, false),
-            new ClientTier(TierPriors.TIER_B, 1.0, maxQuantity, true, false),
-            new ClientTier(TierPriors.TIER_C, 1.0, maxQuantity, true, false)),
-        V2_CLIENT_TIERS,
-        1);
+    final List<ClientTier> tiers = new java.util.ArrayList<>(V2_TIERS.size());
+    for (final int tier : V2_TIERS) {
+      tiers.add(new ClientTier(tier, 1.0, maxQuantity, true, false));
+    }
+    return new TierTable(1, tiers, V2_CLIENT_TIERS, 1);
   }
 
   /** The back-test preset: one tier for every client, firm quotes up to 1 billion. */
@@ -320,7 +510,7 @@ public record DeskSettings(
             .maxMidAgeNanos(5_000_000_000L)
             .parentTimeoutNanos(60_000_000_000L);
     // strategy V2 internalises: holds up to the budget, rests at the touch, crosses at the time stop
-    return strategyPreset == StrategyPreset.V2
+    return strategy.internalisingHedger()
         ? h.internalise(V2_BUDGET_STD_DEV, V2_TIME_STOP_NANOS).passiveFirst(true)
         : h;
   }

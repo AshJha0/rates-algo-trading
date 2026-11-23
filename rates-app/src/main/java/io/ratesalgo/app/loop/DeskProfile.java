@@ -116,4 +116,58 @@ public record DeskProfile(
   public boolean isRecorded() {
     return pricing == PricingBindings.Version.V1 && router == RouterModel.TOUCH && market == Market.STANDARD;
   }
+
+  /**
+   * The whole configuration this profile builds, one entry per setting in a fixed order: the
+   * settings' scalars and limit preset, every strategy switch, the pricing binding, the router
+   * model, the market and the markout files. Two profiles that build the same desk resolve to the
+   * same map, and an ablation differs from its reference in exactly the entries it switches, which
+   * is what the experiment's arm tests assert (not an outcome of a run).
+   */
+  public java.util.SequencedMap<String, String> resolved() {
+    final java.util.LinkedHashMap<String, String> m = new java.util.LinkedHashMap<>();
+    m.put("settings.housekeepingNanos", Long.toString(settings.housekeepingNanos()));
+    m.put("settings.hedgeIntervalNanos", Long.toString(settings.hedgeIntervalNanos()));
+    m.put("settings.tradeRatePerSecond", Double.toString(settings.tradeRatePerSecond()));
+    m.put("settings.hedgeLotMinor", Long.toString(settings.hedgeLotMinor()));
+    m.put("settings.hedgeMaxLots", Double.toString(settings.hedgeMaxLots()));
+    m.put("settings.seed", Long.toString(settings.seed()));
+    m.put("settings.quoteRatePerSecond", Double.toString(settings.quoteRatePerSecond()));
+    m.put("settings.limitPreset", settings.limitPreset().name());
+    final DeskSettings.StrategySwitches s = settings.strategy();
+    m.put("strategy.coverPricing", Boolean.toString(s.coverPricing()));
+    m.put("strategy.reservationPrice", Boolean.toString(s.reservationPrice()));
+    m.put("strategy.factorCovariance", Boolean.toString(s.factorCovariance()));
+    m.put("strategy.factorHedging", Boolean.toString(s.factorHedging()));
+    m.put("strategy.tickHedgeCost", Boolean.toString(s.tickHedgeCost()));
+    m.put("strategy.markoutStore", Boolean.toString(s.markoutStore()));
+    m.put("strategy.tickRounding", Boolean.toString(s.tickRounding()));
+    m.put("strategy.volatilityTtl", Boolean.toString(s.volatilityTtl()));
+    m.put("strategy.volatilityReferenceTenor", Double.toString(s.volatilityReferenceTenor()));
+    m.put("strategy.pullFraction", Double.toString(s.pullFraction()));
+    m.put("strategy.internalisingHedger", Boolean.toString(s.internalisingHedger()));
+    m.put("strategy.clientTiers", Boolean.toString(s.clientTiers()));
+    m.put("pricing", pricing.name());
+    m.put("router", router.name());
+    m.put("market", market.name());
+    m.put("markoutLoad", String.valueOf(markoutLoad));
+    m.put("markoutSave", String.valueOf(markoutSave));
+    return java.util.Collections.unmodifiableSequencedMap(m);
+  }
+
+  /** SHA-256, in hex, of {@link #resolved} written as {@code key=value} lines. */
+  public String configurationHash() {
+    final StringBuilder b = new StringBuilder(1024);
+    for (final java.util.Map.Entry<String, String> e : resolved().entrySet()) {
+      b.append(e.getKey()).append('=').append(e.getValue()).append('\n');
+    }
+    try {
+      return java.util.HexFormat.of()
+          .formatHex(
+              java.security.MessageDigest.getInstance("SHA-256")
+                  .digest(b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (final java.security.NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 is a required JDK algorithm", e);
+    }
+  }
 }

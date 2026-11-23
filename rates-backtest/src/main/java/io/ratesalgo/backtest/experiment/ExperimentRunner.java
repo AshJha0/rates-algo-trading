@@ -1,6 +1,7 @@
 package io.ratesalgo.backtest.experiment;
 
 import io.ratesalgo.backtest.prereg.DataSets;
+import io.ratesalgo.backtest.prereg.FamilyAdjustment;
 import io.ratesalgo.backtest.prereg.Ledger;
 import io.ratesalgo.backtest.prereg.PreRegistration;
 import io.ratesalgo.backtest.prereg.PreRegistrationException;
@@ -8,6 +9,7 @@ import io.ratesalgo.backtest.sim.PairedSessions;
 import io.ratesalgo.backtest.stats.Stats;
 import io.ratesalgo.backtest.util.Hashing;
 import io.ratesalgo.backtest.util.Json;
+import io.ratesalgo.backtest.util.Yaml;
 import io.ratesalgo.common.time.SystemClock;
 import io.ratesalgo.sim.SimParams;
 import java.io.IOException;
@@ -136,6 +138,10 @@ public final class ExperimentRunner {
     final PreRegistration prereg = PreRegistration.load(repo.resolve(require(opts, "prereg")));
     final SessionDesign design = SessionDesign.of(prereg, repo);
     final List<String> refusals = new ArrayList<>();
+    final String superseded = supersededRefusal(prereg, design);
+    if (superseded != null) {
+      return refuse(out, List.of(superseded));
+    }
     if (design.draft()) {
       refusals.add(prereg.id() + " is a draft: sign it (remove the draft status and commit it) before the run");
     }
@@ -151,11 +157,12 @@ public final class ExperimentRunner {
     }
     final List<BandParameters.Row> rows;
     try {
-      rows = BandParameters.rows(SimParams.loadDefault(), design.bandParameters());
+      rows = rows(design);
     } catch (final IllegalArgumentException e) {
       refusals.add(e.getMessage());
       return refuse(out, refusals);
     }
+    refusals.addAll(exclusionRefusals(design));
     final Path outDir = Path.of(require(opts, "out")).toAbsolutePath().normalize();
     final String insideGit = gitWorkTreeOf(outDir);
     if (insideGit != null) {
@@ -180,18 +187,168 @@ public final class ExperimentRunner {
     }
     cp.clearFailure();
     final List<Long> seeds = design.seeds();
-    final Map<String, Object> manifest = manifest("registered", prereg, rows, design.arms(), seeds, opts, repo, git);
+    final Map<String, Object> manifest =
+        manifest("registered", prereg, rows, design.arms(), seeds, opts, repo, git,
+            design.plan().family() ? design.plan().rows() : null, false);
     cp.writeOrCheckManifest(manifest);
     cp.prepare();
-    out.println(prereg.id() + ": " + cp.missing(seeds).size() + " of " + seeds.size() + " sessions to run, " + rows.size()
-        + " band rows x " + design.arms().size() + " arms each");
+    if (design.plan().family()) {
+      out.println(prereg.id() + ": " + cp.missing(seeds).size() + " of " + seeds.size() + " sessions to run; family "
+          + design.plan().familyId() + ", " + design.plan().hypotheses().size() + " hypotheses, " + rows.size() + " rows, "
+          + design.plan().armSessions() + " arm-sessions in all");
+    } else {
+      out.println(prereg.id() + ": " + cp.missing(seeds).size() + " of " + seeds.size() + " sessions to run, " + rows.size()
+          + " band rows x " + design.arms().size() + " arms each");
+    }
     execute(cp, seeds, opts, out);
     final List<Long> missing = cp.missing(seeds);
     if (!missing.isEmpty()) {
       out.println("incomplete: " + missing.size() + " of " + seeds.size() + " registered sessions missing; nothing recorded");
       return INCOMPLETE;
     }
-    return finish(prereg, design, rows, seeds, cp, ledger, key, git, out);
+    return design.plan().family()
+        ? finishFamily(prereg, design, seeds, cp, ledger, key, git, out)
+        : finish(prereg, design, rows, seeds, cp, ledger, key, git, out);
+  }
+
+  /** Why a superseded pre-registration is never run, or null. */
+  static String supersededRefusal(final PreRegistration prereg, final SessionDesign design) {
+    if (design.plan().supersededBy() == null) {
+      return null;
+    }
+    return prereg.id() + " was superseded before signing by " + design.plan().supersededBy() + " ("
+        + prereg.raw().get("superseded_on") + "); it is kept for the record and never run";
+  }
+
+  /** The rows a design evaluates: a family's own rows, or central and every band point. */
+  static List<BandParameters.Row> rows(final SessionDesign design) {
+    final SimParams central = SimParams.loadDefault();
+    if (!design.plan().family()) {
+      return BandParameters.rows(central, design.bandParameters());
+    }
+    final List<BandParameters.Row> rows = new ArrayList<>();
+    for (final SessionDesign.RowPlan r : design.plan().rows()) {
+      rows.add(BandParameters.row(central, r.label()));
+    }
+    return rows;
+  }
+
+  /**
+   * A band point a family excludes must be one the simulator refuses: an exclusion whose reason
+   * no longer holds would leave out a row that could run.
+   */
+  static List<String> exclusionRefusals(final SessionDesign design) {
+    final List<String> out = new ArrayList<>();
+    for (final Map.Entry<String, String> e : design.plan().excluded().entrySet()) {
+      try {
+        BandParameters.row(SimParams.loadDefault(), e.getKey());
+        out.add("excluded band point " + e.getKey() + " starts in the simulator; run it as a row or correct the reason ("
+            + e.getValue() + ")");
+      } catch (final IllegalArgumentException refused) {
+        // refused at start-up, as the pre-registration says
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A family's finish: the summary once, then one ledger row per hypothesis and one for the
+   * description, every row carrying the family id and the run's id, and the Benjamini-Hochberg
+   * table printed as {@code LedgerCli --bh family:<id>} prints it.
+   */
+  private static int finishFamily(
+      final PreRegistration prereg, final SessionDesign design, final List<Long> seeds, final Checkpoints cp,
+      final Ledger ledger, final String key, final GitState git, final PrintStream out) {
+    final List<Map<String, Object>> before = ledger.entries();
+    final String looked = lookRefusal(before, key, prereg);
+    if (looked != null) {
+      return refuse(out, List.of(looked));
+    }
+    final Map<Long, Map<String, Object>> sessions = cp.loadComplete(seeds);
+    final Map<String, Object> results = ExperimentSummary.computeFamily(design, sessions);
+    final String outputDigest = ExperimentSummary.outputDigest(sessions);
+    final SessionDesign.Plan plan = design.plan();
+    final Map<Long, Long> timings = cp.timings();
+    long total = 0;
+    for (final long s : seeds) {
+      total += timings.getOrDefault(s, 0L);
+    }
+    final Map<String, Object> wall = new LinkedHashMap<>();
+    wall.put("session_seconds_total", ExperimentSummary.round(total / 1000.0, 1));
+    wall.put("mean_seconds_per_session", ExperimentSummary.round(total / 1000.0 / seeds.size(), 3));
+    final Map<String, Object> common = new LinkedHashMap<>();
+    common.put("prereg_id", prereg.id());
+    common.put("prereg_sha256", prereg.sha256());
+    common.put("config_sha256", prereg.configSha256());
+    common.put("design", "session_seeds");
+    common.put("family_id", plan.familyId());
+    common.put("family_run", outputDigest.substring(0, 16));
+    final Map<String, Object> sessionSeeds = new LinkedHashMap<>();
+    sessionSeeds.put("base", design.seedBase());
+    sessionSeeds.put("first", (long) design.first());
+    sessionSeeds.put("count", (long) design.sessions());
+    common.put("session_seeds", sessionSeeds);
+    final List<Object> rowPlans = new ArrayList<>();
+    for (final SessionDesign.RowPlan r : plan.rows()) {
+      rowPlans.add(rowPlan(r));
+    }
+    common.put("row_plans", rowPlans);
+    common.put("arms", design.arms());
+    common.put("journal_sha256", ExperimentSummary.journalDigest(sessions));
+    common.put("output_sha256", outputDigest);
+    common.put("code_commit", git.commit);
+    common.put("code_dirty", git.dirty);
+    common.put("scope", design.seedBase() == io.ratesalgo.sim.SessionSeeds.EXPLORATION ? "exploration" : "confirmation");
+    common.put("look", DataSets.looksOf(before.stream().filter(e -> prereg.id().equals(e.get("prereg_id"))).toList()).size() + 1L);
+    common.put("recorded_utc", now().toString());
+    common.put("wall_clock", wall);
+    @SuppressWarnings("unchecked")
+    final Map<String, Object> tested = (Map<String, Object>) results.get("hypotheses");
+    @SuppressWarnings("unchecked")
+    final Map<String, Object> secondary = (Map<String, Object>) results.get("band_secondary");
+    final List<Map<String, Object>> records = new ArrayList<>();
+    for (final SessionDesign.Hypothesis h : plan.hypotheses()) {
+      final Map<String, Object> r = new LinkedHashMap<>(common);
+      r.put("hypothesis_id", h.id());
+      r.put("comparison", Map.of("treatment", h.treatment(), "baseline", h.baseline()));
+      final Map<String, Object> res = new LinkedHashMap<>();
+      res.put("primary", Map.of(h.comparison(), tested.get(h.id())));
+      if (secondary.containsKey(h.id())) {
+        res.put("band_secondary", secondary.get(h.id()));
+      }
+      r.put("results", res);
+      r.put("guards_min", ExperimentSummary.guardMinimums(h, plan));
+      r.put("verdict", "pending_family_adjustment");
+      DataSets.stamp(r, before, prereg);
+      records.add(r);
+    }
+    if (results.get("descriptive_baseline") != null) {
+      final Map<String, Object> d = new LinkedHashMap<>(common);
+      d.put("hypothesis_id", "D0");
+      d.put("results", Map.of("description", results.get("descriptive_baseline")));
+      d.put("verdict", "description");
+      DataSets.stamp(d, before, prereg);
+      records.add(d);
+    }
+    final Map<String, Object> summary = new LinkedHashMap<>(common);
+    summary.put("results", results);
+    Checkpoints.writeAtomically(cp.summaryFile(), Json.write(summary) + "\n");
+    for (final Map<String, Object> r : records) {
+      ledger.append(r);
+    }
+    out.println(prereg.id() + ": " + seeds.size() + " sessions complete; " + records.size() + " rows recorded in "
+        + ledger.file() + " (family " + plan.familyId() + ", data set " + records.get(0).get("data_set") + ", look "
+        + records.get(0).get("data_set_look") + ")");
+    out.print(FamilyAdjustment.report(ledger.entries(), FamilyAdjustment.Family.of("family:" + plan.familyId())));
+    return OK;
+  }
+
+  private static Map<String, Object> rowPlan(final SessionDesign.RowPlan r) {
+    final Map<String, Object> m = new LinkedHashMap<>();
+    m.put("row", r.label());
+    m.put("arms", r.arms());
+    m.put("sessions", (long) r.sessions());
+    return m;
   }
 
   private static int refuse(final PrintStream out, final List<String> refusals) {
@@ -271,6 +428,10 @@ public final class ExperimentRunner {
     final Path repo = Path.of(opts.getOrDefault("repo", ".")).toAbsolutePath().normalize();
     final PreRegistration prereg = PreRegistration.load(repo.resolve(require(opts, "prereg")));
     final SessionDesign design = SessionDesign.of(prereg, repo);
+    final String superseded = supersededRefusal(prereg, design);
+    if (superseded != null) {
+      return refuse(out, List.of(superseded));
+    }
     final int n = Integer.parseInt(require(opts, "pilot"));
     if (n < 2) {
       return refuse(out, List.of("--pilot needs at least two sessions"));
@@ -278,8 +439,12 @@ public final class ExperimentRunner {
     if (design.pilotBase() == design.seedBase()) {
       return refuse(out, List.of("the pilot base equals the registered base"));
     }
+    final boolean timingOnly = opts.containsKey("timing-only");
+    // a timing-only pilot measures every arm by default: it is what the budget needs
     final List<String> arms =
-        opts.containsKey("arms") ? Arrays.asList(opts.get("arms").split(",")) : List.of(design.baseline());
+        opts.containsKey("arms")
+            ? Arrays.asList(opts.get("arms").split(","))
+            : timingOnly ? design.arms() : List.of(design.baseline());
     final ArmFactory factory = ArmFactory.load(require(opts, "factory"));
     final List<String> refusals = new ArrayList<>();
     for (final String arm : arms) {
@@ -300,20 +465,111 @@ public final class ExperimentRunner {
     final List<Long> seeds = SessionDesign.seeds(design.pilotBase(), 0, n);
     final Checkpoints cp = new Checkpoints(outDir);
     cp.clearFailure();
-    cp.writeOrCheckManifest(manifest("pilot", prereg, rows, arms, seeds, opts, repo, GitState.of(repo, opts)));
+    cp.writeOrCheckManifest(
+        manifest(timingOnly ? "pilot_timing_only" : "pilot", prereg, rows, arms, seeds, opts, repo, GitState.of(repo, opts),
+            null, timingOnly));
     cp.prepare();
     out.println(prereg.id() + " pilot: " + cp.missing(seeds).size() + " of " + n + " sessions to run on pilot base "
-        + design.pilotBase() + ", arms " + arms + ", central parameters only; no ledger row");
+        + design.pilotBase() + ", arms " + arms + ", central parameters only; no ledger row"
+        + (timingOnly ? "; timing only: no P&L is written or read" : ""));
     final int workers = workers(opts);
     execute(cp, seeds, opts, out);
     if (!cp.missing(seeds).isEmpty()) {
       out.println("pilot incomplete: " + cp.missing(seeds).size() + " sessions missing");
       return INCOMPLETE;
     }
-    final Map<String, Object> report = pilotReport(design, arms, cp.loadComplete(seeds), cp.timings(), workers);
+    final Map<String, Object> report =
+        timingOnly
+            ? timingReport(design, arms, cp.loadComplete(seeds), workers, ArmFactory.load(require(opts, "factory")))
+            : pilotReport(design, arms, cp.loadComplete(seeds), cp.timings(), workers);
     Checkpoints.writeAtomically(cp.dir().resolve("pilot.json"), Json.write(report) + "\n");
     printPilot(report, out);
     return OK;
+  }
+
+  /**
+   * The timing-only pilot's report: per arm the wall-clock per session, the structural counts and
+   * guard metrics summed over the pilot's sessions, and the configuration hash; whether the arms
+   * shared their inputs bit for bit in every session; and the registered plan's projected cost.
+   * The session files hold no P&amp;L ({@link SessionExecutor#TIMING_KEYS}), and this reads only
+   * those keys.
+   */
+  static Map<String, Object> timingReport(
+      final SessionDesign design, final List<String> arms, final Map<Long, Map<String, Object>> sessions, final int workers,
+      final ArmFactory factory) {
+    final Map<String, Object> perArm = new LinkedHashMap<>();
+    final Map<String, Double> secondsPerArm = new LinkedHashMap<>();
+    final java.util.Set<String> hashes = new java.util.HashSet<>();
+    boolean sharedInputs = true;
+    long journals = 0;
+    for (final String arm : arms) {
+      final Map<String, Object> m = new LinkedHashMap<>();
+      long wallMs = 0;
+      final Map<String, Double> sums = new java.util.TreeMap<>();
+      for (final Map<String, Object> s : sessions.values()) {
+        final Map<String, Object> row = Yaml.asMap(Yaml.asMap(s.get("rows"), "rows").get(BandParameters.CENTRAL), "row");
+        final Map<String, Object> a = Yaml.asMap(Yaml.asMap(row.get("arms"), "arms").get(arm), "arm " + arm);
+        wallMs += ((Number) a.get("wall_ms")).longValue();
+        for (final Map.Entry<String, Object> e : a.entrySet()) {
+          if (SessionExecutor.TIMING_KEYS.contains(e.getKey()) && e.getValue() instanceof Number v
+              && !"wall_ms".equals(e.getKey())) {
+            sums.merge(e.getKey(), v.doubleValue(), Double::sum);
+          }
+        }
+        sharedInputs &= String.valueOf(row.get("journal_chain")).equals(String.valueOf(a.get("input_chain")));
+      }
+      final double seconds = wallMs / 1000.0 / sessions.size();
+      secondsPerArm.put(arm, seconds);
+      m.put("seconds_per_session", ExperimentSummary.round(seconds, 2));
+      final Map<String, Object> counts = new LinkedHashMap<>();
+      for (final Map.Entry<String, Double> e : sums.entrySet()) {
+        counts.put(e.getKey(), ExperimentSummary.round(e.getValue(), 2));
+      }
+      final double quoted = sums.getOrDefault("quoted", 0.0);
+      final double rfqs = sums.getOrDefault("rfqs", 0.0);
+      counts.put("quoted_share", rfqs > 0 ? ExperimentSummary.round(quoted / rfqs, 4) : "undefined");
+      counts.put("hit_rate", quoted > 0 ? ExperimentSummary.round(sums.getOrDefault("won", 0.0) / quoted, 4) : "undefined");
+      m.put("summed_over_sessions", counts);
+      final String hash = factory.configurationHash(arm);
+      m.put("config_hash", hash == null ? "none" : hash);
+      if (hash != null) {
+        hashes.add(hash);
+      }
+      perArm.put(arm, m);
+    }
+    for (final Map<String, Object> s : sessions.values()) {
+      journals += Yaml.asMap(s.get("rows"), "rows").size();
+    }
+    final Map<String, Object> r = new LinkedHashMap<>();
+    r.put("pre_registration", design.id());
+    r.put("mode", "timing only: no P&L, no attribution and no difference between arms is written or printed");
+    r.put("pilot_base", design.pilotBase());
+    r.put("sessions", (long) sessions.size());
+    r.put("journals", journals);
+    r.put("arms", perArm);
+    r.put("config_hashes_distinct", hashes.size() == arms.size());
+    r.put("inputs_identical_across_arms", sharedInputs);
+    r.put("workers", (long) workers);
+    double perSession = 0.0;
+    for (final double v : secondsPerArm.values()) {
+      perSession += v;
+    }
+    r.put("seconds_per_session_all_arms", ExperimentSummary.round(perSession, 2));
+    final Map<String, Object> projection = new LinkedHashMap<>();
+    double cpuSeconds = 0.0;
+    for (final SessionDesign.RowPlan row : design.plan().rows()) {
+      final int count = row.sessions() > 0 ? row.sessions() : PairedSessions.MINIMUM_CONFIRMATION_SESSIONS;
+      for (final String arm : row.arms()) {
+        cpuSeconds += count * secondsPerArm.getOrDefault(arm, Double.NaN);
+      }
+    }
+    projection.put("arm_sessions", design.plan().armSessions());
+    projection.put("cpu_hours_at_measured_seconds", ExperimentSummary.round(cpuSeconds / 3600.0, 1));
+    projection.put("hours_at_workers", ExperimentSummary.round(cpuSeconds / workers / 3600.0, 1));
+    projection.put("hours_at_25_s_per_arm_session", ExperimentSummary.round(design.plan().armSessions() * 25.0 / workers / 3600.0, 1));
+    r.put("projection", projection);
+    r.put("note", "pilot base only, discarded; wall-clock measured on this machine as loaded at the time");
+    return r;
   }
 
   /**
@@ -410,6 +666,18 @@ public final class ExperimentRunner {
     }
     final long workers = manifest.get("workers") instanceof Number w ? w.longValue() : 1L;
     out.println(manifest.get("kind") + " run of " + manifest.get("prereg_id") + ": " + done + " of " + count + " sessions done");
+    long parts = 0;
+    long started = 0;
+    for (final long s : registered) {
+      if (!cp.has(s)) {
+        final long p = cp.partCount(s);
+        parts += p;
+        started += p > 0 ? 1 : 0;
+      }
+    }
+    if (started > 0) {
+      out.println("in progress: " + started + " sessions with " + parts + " finished (row, arm) parts");
+    }
     if (done > 0) {
       final double mean = total / 1000.0 / done;
       out.println(String.format(java.util.Locale.ROOT, "mean wall-clock per session %.1f s; about %.1f h left at %d workers",
@@ -535,7 +803,8 @@ public final class ExperimentRunner {
 
   private static Map<String, Object> manifest(
       final String kind, final PreRegistration prereg, final List<BandParameters.Row> rows,
-      final List<String> arms, final List<Long> seeds, final Map<String, String> opts, final Path repo, final GitState git) {
+      final List<String> arms, final List<Long> seeds, final Map<String, String> opts, final Path repo, final GitState git,
+      final List<SessionDesign.RowPlan> rowPlans, final boolean timingOnly) {
     final Path presets = repo.resolve(opts.getOrDefault("presets", "data/presets.yaml")).toAbsolutePath().normalize();
     final Map<String, Object> m = new LinkedHashMap<>();
     m.put("kind", kind);
@@ -546,6 +815,17 @@ public final class ExperimentRunner {
     m.put("factory", require(opts, "factory"));
     m.put("arms", arms);
     m.put("rows", rows.stream().map(BandParameters.Row::label).toList());
+    if (rowPlans != null) {
+      // a family: each row runs its own arms on its own first sessions
+      final List<Object> plans = new ArrayList<>();
+      for (final SessionDesign.RowPlan r : rowPlans) {
+        plans.add(rowPlan(r));
+      }
+      m.put("row_plans", plans);
+    }
+    if (timingOnly) {
+      m.put("timing_only", true);
+    }
     final Map<String, Object> s = new LinkedHashMap<>();
     s.put("base", seeds.get(0) - seeds.get(0) % io.ratesalgo.sim.SessionSeeds.SPAN);
     s.put("first", seeds.get(0) % io.ratesalgo.sim.SessionSeeds.SPAN);
