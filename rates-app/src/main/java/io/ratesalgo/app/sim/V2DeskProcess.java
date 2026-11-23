@@ -27,6 +27,7 @@ import io.ratesalgo.messages.sbe.OrderCancelEncoder;
 import io.ratesalgo.messages.sbe.OrderWithdrawEncoder;
 import io.ratesalgo.messages.sbe.QuoteCancelEncoder;
 import io.ratesalgo.messages.sbe.QuoteWithdrawEncoder;
+import io.ratesalgo.messages.sbe.RiskLimitBreachDecoder;
 import io.ratesalgo.router.FrameSink;
 import io.ratesalgo.venues.clob.ClobSimulator;
 import java.io.IOException;
@@ -119,7 +120,9 @@ public final class V2DeskProcess implements AutoCloseable {
   private final CurveFeedV2 curve;
   private final UnsafeBuffer killBuffer = new UnsafeBuffer(ByteBuffer.allocateDirect(64));
   private final org.agrona.concurrent.MessageHandler controlHandler = this::onControl;
+  private final boolean[] feedPaused = new boolean[3];
   private long killSwitchMessages;
+  private long breachMessages;
   private boolean sessionEnded;
 
   private V2DeskProcess(final Options options) {
@@ -336,8 +339,10 @@ public final class V2DeskProcess implements AutoCloseable {
     for (final VenueSession s : sessions) {
       work += s.doWork();
     }
-    for (final FeedBinding f : feeds) {
-      work += f.doWork();
+    for (int v = 0; v < feeds.size(); v++) {
+      if (!feedPaused[v]) {
+        work += feeds.get(v).doWork();
+      }
     }
     return work + controlRing.read(controlHandler, 64);
   }
@@ -360,7 +365,18 @@ public final class V2DeskProcess implements AutoCloseable {
   private void onControl(final int msgTypeId, final org.agrona.MutableDirectBuffer buffer, final int index, final int length) {
     if (msgTypeId == KillSwitchEncoder.TEMPLATE_ID) {
       killSwitchMessages++;
+    } else if (msgTypeId == RiskLimitBreachDecoder.TEMPLATE_ID) {
+      breachMessages++;
     }
+  }
+
+  /**
+   * Fault injection: stops, or resumes, delivering the book feed of order-book venue {@code v}.
+   * The venue keeps publishing and nothing is lost: the frames wait in the channel. To the desk
+   * it is a feed that went silent without a gap, which only the book-age limit detects.
+   */
+  public void pauseFeed(final int v, final boolean paused) {
+    feedPaused[v] = paused;
   }
 
   /** Publishes a manual KillSwitch to the loop as a journaled input; false if its ring is full. */
@@ -447,6 +463,59 @@ public final class V2DeskProcess implements AutoCloseable {
   /** KillSwitch messages the loop published on its control ring. */
   public long killSwitchMessages() {
     return killSwitchMessages;
+  }
+
+  /**
+   * The desk's status as JSON, for an operator: the kill switch, live quotes and children, each
+   * order-book venue's health and book age, the curve inputs still seeded, and the net
+   * Treasury-to-SOFR spread ladder beside the swap-rate one. Loop thread, or a loop that is
+   * stepped by the caller.
+   */
+  public String statusJson() {
+    final long now = clock.epochNanos();
+    final StringBuilder sb = new StringBuilder(512);
+    sb.append("{\"killSwitch\":").append(!desk.desk().killSwitch().isActive())
+        .append(",\"liveQuotes\":").append(desk.desk().quoting().liveQuotes())
+        .append(",\"liveChildren\":").append(desk.liveChildren())
+        .append(",\"unfedCurveInputs\":").append(desk.pricingV2() == null ? -1 : desk.pricingV2().unfedInputs())
+        .append(",\"venues\":[");
+    for (int v = 0; v < desk.venueCount(); v++) {
+      final int venueId = desk.venueId(v);
+      final long seen = desk.venueBookNanos(venueId);
+      sb.append(v == 0 ? "" : ",").append("{\"venue\":").append(venueId)
+          .append(",\"usable\":").append(desk.venueUsable(venueId))
+          .append(",\"bookAgeMillis\":").append(seen == io.ratesalgo.router.BookView.AGE_UNKNOWN ? -1 : (now - seen) / 1_000_000L)
+          .append('}');
+    }
+    sb.append("],\"spreadPv01\":[");
+    for (int k = 0; k < io.ratesalgo.api.KeyRateTenors.COUNT; k++) {
+      sb.append(k == 0 ? "" : ",")
+          .append(desk.spreadRisk() == null ? 0L : Math.round(desk.spreadRisk().spreadPv01(k)));
+    }
+    return sb.append("]}").toString();
+  }
+
+  /** RiskLimitBreach messages the loop published on its control ring. */
+  public long breachMessages() {
+    return breachMessages;
+  }
+
+  /**
+   * A replayed desk and the comparison of what it sent with what was recorded.
+   *
+   * @param result the outbound comparison
+   * @param desk the desk the replay built, as it stood after the last journaled frame
+   */
+  public record Replayed(ReplayResult result, DeskGroup desk) {}
+
+  /**
+   * Replays the journals in {@code groupDir} through a fresh desk and hands the desk back: what a
+   * restart on these journals starts from.
+   */
+  public static Replayed replayDesk(final Path groupDir, final DeskProfile profile) {
+    final DeskLoopFactory factory = new DeskLoopFactory(profile, profile.newUniverse(), FrameSink.NONE);
+    final ReplayResult result = LoopReplay.run(groupDir, "in", "out", factory);
+    return new Replayed(result, factory.last());
   }
 
   @Override

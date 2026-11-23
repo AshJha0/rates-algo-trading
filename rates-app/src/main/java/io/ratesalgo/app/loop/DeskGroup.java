@@ -166,6 +166,7 @@ public final class DeskGroup {
   private long duplicateBusts;
   private long duplicateFills;
   private long tradePrints;
+  private long pendingSinceNanos;
   private long repricesPushed;
   private long ownOrdersRegistered;
   private long unknownBusts;
@@ -408,7 +409,7 @@ public final class DeskGroup {
    * instrument's router first, so the router neither crosses it nor counts it as liquidity
    * (ladder model; the recorded desk rests none).
    */
-  private void publishToVenue(final DirectBuffer buffer, final int offset, final int length) {
+  void publishToVenue(final DirectBuffer buffer, final int offset, final int length) {
     if (ladder && RingBufferContract.templateId(buffer, offset) == NewOrderDecoder.TEMPLATE_ID) {
       ownOrder.wrapAndApplyHeader(buffer, offset, ownHeader);
       final long price = ownOrder.price().mantissa();
@@ -656,9 +657,13 @@ public final class DeskGroup {
       return;
     }
     final long before = pricingV2.reprices();
+    final boolean held = pricingV2.pendingInputs() > 0;
     pricing.onCurveInput(instrumentId, curveInput.value().mantissa(), curveInput.timestampNanos());
     if (pricingV2.reprices() != before) {
       afterReprice();
+    } else if (!held && pricingV2.pendingInputs() > 0) {
+      // the first input of a round: the timer applies the round if the rest of it never comes
+      pendingSinceNanos = loop.clock().epochNanos();
     }
   }
 
@@ -876,7 +881,8 @@ public final class DeskGroup {
       if (v.seq != 0) {
         desk.health().onBookSequence(v.venueId, v.seq + 2);
       }
-      if (v.feedWhole) {
+      if (v.feedWhole && v.seq != 0) {
+        // before any frame arrived there was no book to lose: the first snapshot is not a gap
         feedGaps++;
       }
       v.seq = 0; // the snapshot that follows says where the sequence stands
@@ -889,10 +895,13 @@ public final class DeskGroup {
     final long epoch = loop.clock().epochNanos();
     if (pricingV2 != null) {
       // the business date changes at the cut without market data, and a round the feed left
-      // incomplete is applied once it has waited its conflation time
+      // incomplete is applied once it has waited its conflation time on this loop's clock (the
+      // binding itself only looks when another input arrives)
       final long before = pricingV2.reprices();
       pricingV2.advanceTo(epoch);
-      pricingV2.flush();
+      if (pricingV2.pendingInputs() > 0 && epoch - pendingSinceNanos >= pricingV2.options().conflationNanos()) {
+        pricingV2.flush();
+      }
       if (pricingV2.reprices() != before) {
         afterReprice();
       }
@@ -959,6 +968,26 @@ public final class DeskGroup {
       throw new UncheckedIOException(e);
     }
     return true;
+  }
+
+  /**
+   * Hedge parents the hedger counts as working that no router holds. The hedger and the routers
+   * must agree on what is working, since the reservation price counts working hedges as
+   * inventory ({@code Hedger.addWorking}); anything but 0 is a parent one side lost.
+   */
+  public int orphanWorkingParents() {
+    int n = 0;
+    for (int i = 0; i < hedger.workingParents(); i++) {
+      final long parent = hedger.workingParentId(i);
+      boolean held = false;
+      for (final SmartOrderRouter router : routers) {
+        held |= router.isActive(parent);
+      }
+      if (!held) {
+        n++;
+      }
+    }
+    return n;
   }
 
   /** Order-book venues this desk trades on. */

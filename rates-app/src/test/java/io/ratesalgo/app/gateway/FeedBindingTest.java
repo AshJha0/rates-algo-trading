@@ -116,8 +116,12 @@ class FeedBindingTest {
     // without the initial snapshot the loop's book would hold only the 99 bid
     assertEquals(venueBook(), loop.book);
     assertEquals(3, loop.book.size());
-    assertEquals("CLEAR " + A + " @3", loop.log.get(0));
+    // a first snapshot with levels is announced like any other: its frames all carry sequence 3,
+    // which a loop that thought the feed whole would read as a gap
+    assertEquals("DOWN", loop.log.get(0));
+    assertEquals("CLEAR " + A + " @3", loop.log.get(1));
     assertEquals("UP", loop.log.get(loop.log.size() - 1));
+    assertEquals(1, loop.log.stream().filter("DOWN"::equals).count());
     assertEquals(1, binding.rebuilds());
     assertEquals(1, binding.duplicates(), "the live frame the snapshot already covered");
     assertEquals(0, binding.frames());

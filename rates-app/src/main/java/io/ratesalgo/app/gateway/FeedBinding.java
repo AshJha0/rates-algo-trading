@@ -23,7 +23,9 @@ import org.agrona.concurrent.UnsafeBuffer;
  * <ul>
  *   <li>It starts unsynchronised and takes a snapshot from the venue's {@link SnapshotService}
  *       before it forwards any live frame; frames at or below the snapshot's sequence are dropped
- *       as already covered. No first sequence number is taken on trust.
+ *       as already covered. No first sequence number is taken on trust. A first snapshot that
+ *       has levels (a venue that was trading before this process connected) is delivered between
+ *       DISCONNECTED and CONNECTED like any later one.
  *   <li>A live frame is forwarded only if it is the next in sequence, and the sequence advances
  *       only when the inbound side took it. A gap on the wire and a frame the inbound ring refused
  *       are the same event: the loop's book is now wrong.
@@ -242,6 +244,16 @@ public final class FeedBinding {
   private boolean onSnapshotFrame(final DirectBuffer buffer, final int offset, final int length) {
     if (!snapshotWhole) {
       return false;
+    }
+    if (!downSent) {
+      // The first snapshot of a book that already has levels: its frames all carry the snapshot's
+      // sequence, which the loop would read as a gap in a feed it believes whole. It is told
+      // first, as before every other snapshot. An empty first snapshot has no frame and needs none.
+      if (!publishStatus(ControlMessages.STATUS_DISCONNECTED)) {
+        snapshotWhole = false;
+        return false;
+      }
+      downSent = true;
     }
     final int result = deliver(buffer, offset, length);
     if (result == InboundRouter.FULL) {
