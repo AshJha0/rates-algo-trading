@@ -10,7 +10,9 @@ import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.journal.Replayer;
 import io.ratesalgo.messages.sbe.AmendReason;
 import io.ratesalgo.messages.sbe.BustReason;
+import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.OrdStatus;
+import io.ratesalgo.messages.sbe.QuoteEncoder;
 import io.ratesalgo.messages.sbe.QuoteStatus;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TradeSource;
@@ -21,8 +23,10 @@ import io.ratesalgo.posttrade.records.OrderRecord;
 import io.ratesalgo.posttrade.trade.PositionKey;
 import io.ratesalgo.posttrade.trade.TradeKey;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
+import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -232,5 +236,19 @@ class PositionKeeperRecordsTest {
     assertFalse(k.trade(new TradeKey(2, TradeSource.Execution, 1)).isLive());
     assertFalse(k.trade(new TradeKey(2, TradeSource.Rfq, 82)).isLive(), "the held bust still found its RFQ trade");
     assertTrue(k.pendingBusts().isEmpty());
+  }
+
+  @Test
+  void eachSideOfATwoWayQuoteIsRecordedWithItsOwnQuantity() {
+    final byte[] bytes = new byte[256];
+    final UnsafeBuffer b = new UnsafeBuffer(bytes);
+    final QuoteEncoder q = new QuoteEncoder();
+    q.wrapAndApplyHeader(b, 0, new MessageHeaderEncoder()).venueId(2).rfqId(61).quoteId(81).instrumentId(2001)
+        .bidQuantity(700).askQuantity(300).referenceNanos(NINE).validUntilNanos(NINE + 100).sentNanos(NINE);
+    q.bidPrice().mantissa(px("4.25"));
+    q.askPrice().mantissa(px("4.26"));
+    final int length = MessageHeaderEncoder.ENCODED_LENGTH + q.encodedLength();
+    final PositionKeeper k = replay(s -> s.raw(NINE, QuoteEncoder.TEMPLATE_ID, Arrays.copyOf(bytes, length)));
+    assertEquals(List.of(700L, 300L), k.orderRecords().stream().map(OrderRecord::remainingQuantity).toList());
   }
 }

@@ -53,8 +53,36 @@ class SyntheticDayTest {
 
   @Test
   void theDefaultDayFollowsItsSpecification() {
-    final SyntheticDay.Params p = SyntheticDay.Params.DEFAULT;
-    final SyntheticDay.Result r = SyntheticDay.generate(dir.resolve("day.raj"), 20261030L, p);
+    audit(SyntheticDay.Params.DEFAULT, 20261030L, "day.raj");
+  }
+
+  @Test
+  void aDayWithSeveralFaultsOfEachKindFollowsItsSpecification() {
+    audit(new SyntheticDay.Params(30, 30, 4, 3, 4, 3, 4, 5), 77L, "many.raj");
+  }
+
+  /**
+   * A fixed seed reproduces the recorded day bit for bit: the chain hash of the journal and the
+   * drop copy are pinned. A deliberate change to the generator updates these values together with
+   * the recipe output that depends on them (COOKBOOK.md recipe 21).
+   */
+  @Test
+  void aFixedSeedReproducesTheRecordedDay() {
+    final SyntheticDay.Result r = SyntheticDay.generate(dir.resolve("pinned.raj"), 20261030L, SyntheticDay.Params.DEFAULT);
+    assertEquals(PINNED_HASH, Replayer.finalHash(r.journal()));
+    assertEquals(PINNED_FRAMES, r.frames());
+    assertEquals(PINNED_CUT, r.cutSequence());
+    assertEquals(PINNED_DROP_COPY_HASH,
+        r.dropCopy().stream().map(i -> i.matchKey() + " " + i.describe()).toList().toString().hashCode());
+  }
+
+  private static final long PINNED_HASH = -6_546_459_946_655_909_998L;
+  private static final long PINNED_FRAMES = 336L;
+  private static final long PINNED_CUT = 332L;
+  private static final int PINNED_DROP_COPY_HASH = 10_180_331;
+
+  private void audit(final SyntheticDay.Params p, final long seed, final String file) {
+    final SyntheticDay.Result r = SyntheticDay.generate(dir.resolve(file), seed, p);
     final List<Frame> frames = read(r.journal());
     assertEquals(SyntheticDay.DATE, r.date());
     assertEquals(frames.size(), r.frames());
@@ -258,8 +286,9 @@ class SyntheticDayTest {
         assertTrue(keys.contains(item.matchKey()), "a repeat of a line already sent");
       }
     }
-    assertEquals("duplicates=5 late-within-day=2 late-after-cut=3 busts=3 busts-after-cut=1 drop-copy-duplicates=2",
-        r.injected());
+    assertEquals("duplicates=" + p.duplicates() + " late-within-day=" + p.lateWithinDay() + " late-after-cut="
+        + p.lateAfterCut() + " busts=" + p.busts() + " busts-after-cut=" + p.bustsAfterCut()
+        + " drop-copy-duplicates=" + p.dropCopyDuplicates(), r.injected());
   }
 
   @Test
