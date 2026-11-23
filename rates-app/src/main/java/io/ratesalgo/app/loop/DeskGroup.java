@@ -111,6 +111,7 @@ public final class DeskGroup {
   private long cancelRejects;
   private long hedgesExpired;
   private long hedgesFailed;
+  private long hedgesStalled;
   private long feedGaps;
 
   /**
@@ -201,6 +202,8 @@ public final class DeskGroup {
                 settings.hedger(),
                 settings.clob()));
     hedger = desk.hedger(CurrencyCode.USD);
+    // a parent the hedger gave up waiting on is open risk it no longer counts as hedged
+    hedger.stallListener((parentId, instrumentId, remainingMinor, ageNanos) -> hedgesStalled++);
     desk.health().trackVenue(AppIds.D2C_VENUE);
     desk.health().trackVenue(AppIds.CLOB_VENUE);
   }
@@ -609,6 +612,11 @@ public final class DeskGroup {
   /** Hedge parents the routers ended Failed: a venue never answered for a child. */
   public long hedgesFailed() {
     return hedgesFailed;
+  }
+
+  /** Hedge parents the hedger stopped counting as hedged because they sat unfilled too long. */
+  public long hedgesStalled() {
+    return hedgesStalled;
   }
 
   /** Times the CLOB feed was marked gapped. */
