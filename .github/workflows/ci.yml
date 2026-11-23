@@ -111,6 +111,10 @@ jobs:
         run: mypy
       - name: Tests
         run: pytest -q research
+      - name: Experiment ledger hash chain and looks per data set
+        # Fails when a row of data/ledger/ledger.jsonl was edited, removed or reordered. The
+        # looks report is information: repeated looks at one data set are history, not an error.
+        run: python -m ratesresearch.prereg data/ledger/ledger.jsonl | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Cookbook quotes its programs and recorded output (runs the Python recipes)
         run: python tools/check_cookbook.py
       - name: Research notebooks execute

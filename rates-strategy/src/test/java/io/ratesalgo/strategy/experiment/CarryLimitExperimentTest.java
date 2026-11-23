@@ -82,6 +82,16 @@ class CarryLimitExperimentTest {
         run("--prereg", bad.toString(), "--repo", repo, "--ledger", dir.resolve("ledger.jsonl").toString())
             .contains("does not match the config file"),
         "a pre-registration whose config hash does not match is refused before any data is read");
+    // a new id on the sessions V1C-001 read is refused until it declares that look
+    final Path ledger = dir.resolve("ledger-copy.jsonl");
+    Files.copy(Support.repoRoot().resolve("data/ledger/ledger.jsonl"), ledger);
+    final long size = Files.size(ledger);
+    final Path late = dir.resolve("V1C-900.yaml");
+    Files.writeString(late, Files.readString(Support.repoRoot().resolve("data/preregs/V1C-001.yaml"))
+        .replace("id: V1C-001", "id: V1C-900"));
+    final String refused = run("--prereg", late.toString(), "--repo", repo, "--ledger", ledger.toString());
+    assertTrue(refused.contains("V1C-900 must declare them: add 'prior_looks: [V1C-001]'"), refused);
+    assertEquals(size, Files.size(ledger), "nothing is recorded");
   }
 
   @Test

@@ -23,6 +23,8 @@ import java.util.Map;
  * #append} verifies the whole chain before writing and refuses to extend a broken one. Every run
  * of a pre-registered experiment is recorded whatever its verdict, so the count of looks at the
  * data is public. A run that is refused before it starts reads no data and is not recorded.
+ * {@code look} counts runs of one pre-registration; {@link DataSets} counts looks at one data set
+ * across pre-registrations.
  */
 public final class Ledger {
 

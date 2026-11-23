@@ -81,4 +81,26 @@ class HedgeExperimentTest {
     assertEquals(HedgeExperimentCli.REFUSED, code, "--config is only for the fitting period");
     assertTrue(bytes.toString(StandardCharsets.UTF_8).contains("--config"));
   }
+
+  @Test
+  @DisplayName("a new id on the sessions V1H-001 and V1H-002 read is refused until it declares them")
+  void undeclaredLooksAreRefused(@org.junit.jupiter.api.io.TempDir final java.nio.file.Path dir)
+      throws java.io.IOException {
+    final java.nio.file.Path repo = Support.repoRoot();
+    final java.nio.file.Path ledger = dir.resolve("ledger.jsonl");
+    java.nio.file.Files.copy(repo.resolve("data/ledger/ledger.jsonl"), ledger);
+    final long size = java.nio.file.Files.size(ledger);
+    final java.nio.file.Path late = dir.resolve("V1H-900.yaml");
+    java.nio.file.Files.writeString(late,
+        java.nio.file.Files.readString(repo.resolve("data/preregs/V1H-001.yaml")).replace("id: V1H-001", "id: V1H-900"));
+    final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    final int code =
+        HedgeExperimentCli.run(
+            new String[] {"--preregs", late.toString(), "--repo", repo.toString(), "--ledger", ledger.toString()},
+            new PrintStream(bytes, true, StandardCharsets.UTF_8));
+    assertEquals(HedgeExperimentCli.REFUSED, code);
+    assertTrue(bytes.toString(StandardCharsets.UTF_8).contains("has already been read by V1H-001, V1H-002 (2 ledger rows)"),
+        bytes.toString(StandardCharsets.UTF_8));
+    assertEquals(size, java.nio.file.Files.size(ledger), "nothing is recorded");
+  }
 }
