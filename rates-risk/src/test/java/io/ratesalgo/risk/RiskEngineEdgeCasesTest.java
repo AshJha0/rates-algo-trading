@@ -499,6 +499,139 @@ class RiskEngineEdgeCasesTest {
     assertTrue(room <= 100_000.0 / 902.0 - 50.0 && room > 100_000.0 / 902.0 - 50.0 - 32_768.0 / M, "room " + room);
   }
 
+  // ---------------------------------------------------------------- exactly at a limit
+
+  @Test
+  void aPreTradeFigureExactlyAtItsLimitMayStayThereButNotGrowByAnyAmount() {
+    // short 100mm of the 10Y: +82k at the pillar, net and gross; every limit set to that figure
+    final RiskFixture s = new RiskFixture();
+    s.risk.onFill(BOND10, -100 * M, s.fairMid(BOND10));
+    final double at = s.risk.netPv01(CurrencyCode.USD);
+    s.limits.bucketPv01(at).netPv01(at).grossPv01(at);
+    assertEquals(RiskEngine.OK, s.risk.checkOrder(BOND10, Side.Buy, 10 * M, s.fairMid(BOND10), 1), "reducing");
+    assertEquals(LimitKind.BucketDv01.value(), s.risk.checkOrder(BOND10, Side.Sell, 1L, s.fairMid(BOND10), 2),
+        "one cent more is past the limit: no rounding allowance below it");
+
+    final RiskFixture l = new RiskFixture();
+    l.risk.onFill(BOND10, 100 * M, l.fairMid(BOND10));
+    final double lat = -l.risk.netPv01(CurrencyCode.USD);
+    l.limits.bucketPv01(lat).netPv01(lat).grossPv01(lat);
+    assertEquals(RiskEngine.OK, l.risk.checkOrder(BOND10, Side.Sell, 10 * M, l.fairMid(BOND10), 3));
+
+    final RiskFixture n = new RiskFixture();
+    n.risk.onFill(BOND10, -100 * M, n.fairMid(BOND10));
+    n.limits.netPv01(n.risk.netPv01(CurrencyCode.USD));
+    assertEquals(RiskEngine.OK, n.risk.checkOrder(BOND10, Side.Buy, 10 * M, n.fairMid(BOND10), 4));
+    final RiskFixture nl = new RiskFixture();
+    nl.risk.onFill(BOND10, 100 * M, nl.fairMid(BOND10));
+    nl.limits.netPv01(-nl.risk.netPv01(CurrencyCode.USD));
+    assertEquals(RiskEngine.OK, nl.risk.checkOrder(BOND10, Side.Sell, 10 * M, nl.fairMid(BOND10), 5));
+    final RiskFixture g = new RiskFixture();
+    g.risk.onFill(BOND10, -100 * M, g.fairMid(BOND10));
+    g.limits.grossPv01(g.risk.grossPv01(CurrencyCode.USD));
+    assertEquals(RiskEngine.OK, g.risk.checkOrder(BOND10, Side.Buy, 10 * M, g.fairMid(BOND10), 6));
+  }
+
+  @Test
+  void postTradeFiguresExactlyAtTheirLimitsAreNotBreaches() {
+    final RiskFixture f = new RiskFixture(new RiskLimits().killOnDailyLoss(false));
+    f.risk.onFill(BOND10, 100 * M, Decimal9.round(98.35)); // -82k, and a loss of 100k
+    f.risk.onFill(FUT10, -50 * M, f.fairMid(FUT10)); // basis 32.5k
+    f.risk.onFill(SWAP10, 50 * M, f.fairMid(SWAP10)); // swap spread: +41k against -49.5k of cash
+    final Dv01Vector v = new Dv01Vector(CurrencyCode.USD);
+    f.risk.ladder(CurrencyCode.USD, v);
+    for (int k = 0; k < KeyRateTenors.COUNT; k++) {
+      if (v.get(k) != 0.0) {
+        f.limits.bucketPv01(k, Math.abs(v.get(k)));
+      }
+    }
+    f.limits
+        .netPv01(Math.abs(f.risk.netPv01(CurrencyCode.USD)))
+        .grossPv01(f.risk.grossPv01(CurrencyCode.USD))
+        .dailyLoss(-f.risk.dailyPnl(CurrencyCode.USD))
+        .basisPv01(Math.abs(f.risk.basisExposure(CurrencyCode.USD)))
+        .swapSpreadPv01(Math.abs(f.risk.swapSpreadExposure(CurrencyCode.USD)));
+    final int before = f.alerts.size();
+    f.risk.onFairValue(BOND10, f.fairMid(BOND10)); // the mark it already has: re-runs the checks
+    assertEquals(before, f.alerts.size(), "nothing past its limit");
+    assertEquals(0L, f.risk.basisBreaches());
+  }
+
+  @Test
+  void aDailyLossExactlyAtTheLimitStillTrades() {
+    final RiskFixture f = new RiskFixture(new RiskLimits().killOnDailyLoss(false));
+    f.risk.onFill(BOND10, M, Decimal9.round(98.75));
+    f.limits.dailyLoss(-f.risk.dailyPnl(CurrencyCode.USD));
+    assertEquals(RiskEngine.OK, f.risk.checkOrder(BOND10, Side.Buy, M, f.fairMid(BOND10), 1));
+  }
+
+  @Test
+  void basisAndSwapSpreadChecksExactlyAtTheLimitPass() {
+    final RiskFixture probe = new RiskFixture();
+    probe.risk.onFill(FUT10, -50 * M, probe.fairMid(FUT10));
+    probe.risk.onFill(BOND10, 100 * M, probe.fairMid(BOND10));
+    final RiskFixture b = new RiskFixture(new RiskLimits().basisPv01(Math.abs(probe.risk.basisExposure(CurrencyCode.USD))));
+    b.risk.onFill(FUT10, -50 * M, b.fairMid(FUT10));
+    assertEquals(RiskEngine.OK, b.risk.checkOrder(BOND10, Side.Buy, 100 * M, b.fairMid(BOND10), 1));
+
+    final RiskFixture sprobe = new RiskFixture();
+    sprobe.risk.onFill(BOND10, 100 * M, sprobe.fairMid(BOND10));
+    sprobe.risk.onFill(SWAP10, 50 * M, sprobe.fairMid(SWAP10));
+    final RiskFixture s =
+        new RiskFixture(new RiskLimits().swapSpreadPv01(Math.abs(sprobe.risk.swapSpreadExposure(CurrencyCode.USD))));
+    s.risk.onFill(BOND10, 100 * M, s.fairMid(BOND10));
+    assertEquals(RiskEngine.OK, s.risk.checkOrder(SWAP10, Side.Buy, 50 * M, s.fairMid(SWAP10), 2));
+  }
+
+  @Test
+  void ordersInEachProductAreCheckedForTheBasisTheyOpen() {
+    // a bond bought against short futures: +32.5k futures against -41k bonds
+    final RiskFixture b = new RiskFixture(new RiskLimits().basisPv01(20_000.0));
+    b.risk.onFill(FUT10, -50 * M, b.fairMid(FUT10));
+    assertEquals(RiskEngine.REJECT_BASIS, b.risk.checkOrder(BOND10, Side.Buy, 50 * M, b.fairMid(BOND10), 1));
+    assertEquals(RiskEngine.OK, b.risk.checkOrder(BOND10, Side.Buy, 20 * M, b.fairMid(BOND10), 2), "16.4k");
+
+    // a payer swap bought against long bonds: +41k swaps against -82k cash
+    final RiskFixture s = new RiskFixture(new RiskLimits().swapSpreadPv01(30_000.0));
+    s.risk.onFill(BOND10, 100 * M, s.fairMid(BOND10));
+    assertEquals(RiskEngine.REJECT_SWAP_SPREAD, s.risk.checkOrder(SWAP10, Side.Buy, 50 * M, s.fairMid(SWAP10), 3));
+    assertEquals(RiskEngine.OK, s.risk.checkOrder(SWAP10, Side.Buy, 30 * M, s.fairMid(SWAP10), 4), "24.6k");
+
+    // cash is bonds plus futures: +82k swaps against -13k futures and a -41k bond order is 54k
+    final RiskFixture c = new RiskFixture(new RiskLimits().swapSpreadPv01(40_000.0));
+    c.risk.onFill(SWAP10, 100 * M, c.fairMid(SWAP10));
+    c.risk.onFill(FUT10, 20 * M, c.fairMid(FUT10));
+    assertEquals(RiskEngine.REJECT_SWAP_SPREAD, c.risk.checkOrder(BOND10, Side.Buy, 50 * M, c.fairMid(BOND10), 5));
+    assertEquals(RiskEngine.OK, c.risk.checkOrder(BOND10, Side.Buy, 30 * M, c.fairMid(BOND10), 6), "37.6k");
+  }
+
+  @Test
+  void aShortBookBoughtExactlyFlatIsRiskReducingAndAZeroOrderIsNot() {
+    final RiskFixture f = new RiskFixture(new RiskLimits().dailyLoss(1_000.0).killOnDailyLoss(false));
+    f.risk.onFill(BOND10, -100 * M, Decimal9.round(98.15)); // sold 0.1 under fair: -100k
+    assertEquals(RiskEngine.OK, f.risk.checkOrder(BOND10, Side.Buy, 100 * M, f.fairMid(BOND10), 1));
+    assertEquals(LimitKind.DailyLoss.value(), f.risk.checkOrder(BOND10, Side.Sell, 0L, f.fairMid(BOND10), 2),
+        "an order of nothing reduces nothing");
+  }
+
+  @Test
+  void anAbsentClientReadsAsZeroWhateverIsInSlotZero() {
+    final RiskFixture f = new RiskFixture();
+    f.risk.onClientFill(0, 5.0);
+    f.risk.reserveClient(0, 7.0);
+    assertEquals(0.0, f.risk.clientDealtDv01(12_345), 0.0);
+    assertEquals(0.0, f.risk.clientOpenDv01(12_345), 0.0);
+  }
+
+  @Test
+  void headroomCountsReservationsOnBothSidesAgainstThePositionLimit() {
+    final RiskFixture f = new RiskFixture(new RiskLimits().defaultMaxPosition(100 * M));
+    f.risk.onFill(BOND10, 30 * M, f.fairMid(BOND10));
+    f.risk.reserve(BOND10, 20 * M, 10 * M);
+    assertEquals(50 * M, f.risk.headroom(BOND10, Side.Buy), "100 - 30 held - 20 bid");
+    assertEquals(120 * M, f.risk.headroom(BOND10, Side.Sell), "100 + 30 held - 10 offered");
+  }
+
   /**
    * Headroom is documented as the largest additional quantity that passes. With no position and no
    * order-size limit the bisection runs over [0, Long.MAX_VALUE] and stops after 48 halvings, so it
