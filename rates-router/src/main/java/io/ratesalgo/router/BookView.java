@@ -21,6 +21,18 @@ public interface BookView {
   /** Displayed quantity at {@code level} (0 is the touch) on {@code side}; 0 if absent. */
   long depth(int venueId, Side side, int level);
 
+  /**
+   * Price of {@code level} (0 is the touch) on {@code side}, the level whose size {@link #depth}
+   * returns; 0 if the level is absent or the view does not know its price. The default knows only
+   * the touch, so a view that does not implement it gives the ladder model one level per venue.
+   */
+  default long levelPrice(final int venueId, final Side side, final int level) {
+    if (level != 0) {
+      return 0L;
+    }
+    return side == Side.Buy ? bestBid(venueId) : bestAsk(venueId);
+  }
+
   /** Recent traded quantity per second on the venue (both sides), for example an EWMA. */
   double tradeRatePerSecond(int venueId);
 

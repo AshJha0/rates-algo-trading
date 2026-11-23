@@ -51,6 +51,7 @@ public final class Allocator {
   private static final double MAX_WAIT_SECONDS = 1e6;
 
   private final QueueFillModel queue = new QueueFillModel();
+  private final LadderAllocator ladder = new LadderAllocator();
 
   private final long[] current = new long[CostTable.MAX_VENUES];
   private final double[] totalCost = new double[CostTable.MAX_VENUES];
@@ -121,6 +122,11 @@ public final class Allocator {
     return chosenCost;
   }
 
+  /** Uncalibrated fill probability of row {@code r} in the last ladder allocation. */
+  double ladderModelProbability(final int r) {
+    return ladder.modelProbability(r);
+  }
+
   /**
    * Price points by which row {@code r}'s mid is worse than the consolidated mid for the table's
    * side; zero when the row or the consolidated book has no two-sided quote.
@@ -145,11 +151,31 @@ public final class Allocator {
   }
 
   /**
-   * Allocates {@code t.sliceQuantity} across the table's rows and fills every output field.
+   * Allocates with the model the table was built for: the ladder model ({@link LadderAllocator})
+   * when {@code t} carries ladder inputs, the touch model otherwise.
+   *
+   * @param model the ladder model's parameters; ignored for a touch-model table
+   */
+  public void allocate(
+      final CostTable t, final RouterParams rp, final VenueParams[] vps, final ExecutionModel model) {
+    if (t.ladder) {
+      ladder.allocate(t, rp, vps, model);
+    } else {
+      allocate(t, rp, vps);
+    }
+  }
+
+  /**
+   * Allocates {@code t.sliceQuantity} across the table's rows with the touch model and fills every
+   * output field.
    *
    * @param vps venue parameters in row order
+   * @throws IllegalArgumentException for a table built for the ladder model
    */
   public void allocate(final CostTable t, final RouterParams rp, final VenueParams[] vps) {
+    if (t.ladder) {
+      throw new IllegalArgumentException("a ladder-model table needs its ExecutionModel");
+    }
     final int n = t.venueCount;
     long increment = 0;
     for (int r = 0; r < n; r++) {

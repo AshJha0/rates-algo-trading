@@ -1,6 +1,7 @@
 package io.ratesalgo.router;
 
 import io.ratesalgo.messages.sbe.OrdStatus;
+import io.ratesalgo.messages.sbe.Side;
 
 /**
  * Receives what venues say about child orders, and book changes. The router implements it; the
@@ -25,4 +26,12 @@ public interface ExecutionListener {
 
   /** The displayed book on the venue changed. */
   void onBookUpdate(int venueId);
+
+  /**
+   * A trade the venue's market data published (TradePrint, template 4): {@code aggressorSide} is
+   * the side that removed liquidity, so a Sell aggressor traded against resting bids. Ours are
+   * included, as on a real feed. Ignored by default.
+   */
+  default void onTrade(
+      final int venueId, final Side aggressorSide, final long price, final long quantity) {}
 }

@@ -60,6 +60,41 @@ public final class RouterPresets {
     return global().withControls(CONTROLS_CONFIG_VERSION, 0.75, 0.0001, volatility);
   }
 
+  /** Config version of {@link #ladder}. */
+  public static final int LADDER_CONFIG_VERSION = 3;
+
+  /**
+   * Router parameters for the ladder model (DECISIONS.md DR-R6-R01), config version 3: {@link
+   * #global} with the round-2 controls and a 2-tick maximum collar. The collar is only a safety
+   * bound under the ladder model, since each aggressive child is limited at the last level it
+   * needs. Pair with {@link ExecutionModel#defaults()}. {@link #global} stays the touch model the
+   * ledger's recorded runs used.
+   */
+  public static RouterParams ladder() {
+    final RouterParams c = globalWithControls(RouterParams.Volatility.NONE);
+    return new RouterParams(
+        LADDER_CONFIG_VERSION,
+        c.sigmaDailyPoints(),
+        c.tradingSecondsPerDay(),
+        c.impactY(),
+        c.impactAlpha(),
+        c.adverseFactor(),
+        c.latencyRiskFactor(),
+        c.passiveHorizonMaxNanos(),
+        c.passiveHorizonMinNanos(),
+        c.maxSlices(),
+        c.scheduleHorizonNanos(),
+        c.sizeJitter(),
+        c.intervalJitter(),
+        c.bookMoveThresholdTicks(),
+        2,
+        c.retryDelayNanos(),
+        c.maxSteps(),
+        c.filledAdverseFactor(),
+        c.messageCostPoints(),
+        c.volatility());
+  }
+
   /** Defaults for a cash Treasury central limit order book. */
   public static VenueParams clob(final int venueId) {
     return new VenueParams(
