@@ -27,9 +27,9 @@ The ruleset `main` exists (created 2026-11-01; CONTRIBUTING.md). It requires a p
 
 ## Secrets and variables (Settings, Secrets and variables, Actions)
 
-- [ ] None are needed today. CI uses only the default `GITHUB_TOKEN` with read permissions; the rehearsal generates a random control token per run.
+- [ ] None are needed today. CI uses only the default `GITHUB_TOKEN` with read permissions; the rehearsal generates a random control token, TLS key stores and FIX password per run, and deletes them when it ends.
 - [ ] If images are later pushed to a registry, add the registry credential as an environment secret on a protected `release` environment with a required reviewer, never as a repository-wide secret.
-- [ ] Production control tokens (`RATES_CONTROL_TOKEN`) live in the deployment's secret store, never in the repository or in Actions.
+- [ ] Production control tokens (`RATES_CONTROL_TOKEN`), key-store passwords (`RATES_HTTP_KEYSTORE_PASSWORD`, `RATES_FIX_TRUSTSTORE_PASSWORD`, `RATES_FIX_ACCEPTOR_KEYSTORE_PASSWORD`) and the FIX password (`RATES_FIX_PASSWORD`) live in the deployment's secret store, never in the repository or in Actions. Rotation: docs/runbooks/certificate-rotation.md.
 
 ## Security (Settings, Code security)
 

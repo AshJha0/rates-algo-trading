@@ -1,4 +1,4 @@
-%% Title: Live run, journals, replay and the outbound hash comparison
+%% Title: Live run, journals, replay and the outbound hash comparison, and restart on the same journals (1.1.0)
 flowchart LR
   subgraph live["Live run (LoopRunner)"]
     rings["Inbound rings<br/>InboundPublisher"]
@@ -30,3 +30,28 @@ flowchart LR
   verifier -->|counts and hashes| result
   result -->|yes| same
   result -->|no| diff
+
+  subgraph rst["Restart on existing journals (TradingProcess, 1.1.0)"]
+    repair{"JournalRecovery.repair<br/>failed last frame, only zeros after?"}
+    cut["Torn tail cut and counted<br/>journalTornTails"]
+    lrec["LoopRecovery<br/>inbound journal into the live EventLoop,<br/>RecoveryClock set to each frame"]
+    check{"Produced messages equal<br/>the recorded outbound journal?"}
+    golive["RecoveryClock goes live<br/>GatewayStatus DISCONNECTED journaled<br/>feed rebuild required"]
+    logon["Sessions log on<br/>sequence numbers resumed (MappedSequenceStore)"]
+    reconciling["CLOB RECONCILING (4)<br/>OrderMassStatusRequest"]
+    reconciled["RECONCILED (5)<br/>venue usable, ready once the book is whole"]
+    refuse["Restart refused<br/>process does not start"]
+  end
+
+  inj -->|on restart| repair
+  outj -->|on restart| repair
+  repair -->|yes| cut
+  repair -->|no damage| lrec
+  repair -->|"other damage, missing segment, bad header"| refuse
+  cut --> lrec
+  lrec --> check
+  check -->|"yes; extra messages journaled, not sent"| golive
+  check -->|"no, outbound past inbound, or trailing LoopError"| refuse
+  golive --> logon
+  logon --> reconciling
+  reconciling -->|answers passed to the loop| reconciled

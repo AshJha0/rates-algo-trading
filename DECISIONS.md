@@ -1944,3 +1944,63 @@ Context. Review finding E7: Actions were referenced by tag and Python dependenci
 Decision. Every workflow pins each action by commit SHA with the tag in a comment. `research/requirements-lock.txt` pins every Python dependency and is used as a pip constraints file by CI and the forward-log job; `research/pyproject.toml` keeps the supported ranges. Dependabot proposes grouped weekly updates; CodeQL scans Java and Python.
 
 Consequences. The lock has no hashes, so it pins versions, not artefacts. Container images are still referenced by tag and there is no bill of materials.
+
+## DR-RV-X01: State is restored only by replay through the live loop; divergence refuses to start
+
+Date: 2026-11-23
+
+Context. Review finding L6: the trading process always created new journals and threw if segments existed, so a crash left no way back but to start empty. A restart needs the loop's state as it was at the stop: positions, risk, live quotes, router children and hedge parents.
+
+Decision. `LoopRecovery` replays each group's inbound journal through the loop that will go live, on the existing replay path (`Replayer`, `EventLoop.onReplayFrame`), and compares every message it produces with the recorded outbound journal. There is no snapshot and no second way of restoring state. A produced message that differs, recorded outbound frames that replay does not produce, or a journal ending in a LoopError make recovery throw, and the process does not start. Messages replay produces after the recorded outbound journal ends are appended to it and counted (`outboundCompleted`), not sent. `RecoveryClock` carries time on from the last replayed frame.
+
+Consequences. A recovered loop is in the state the tests hold to an equal hash: `RestartRecoveryTest` compares the state digest and replay hash with those of the stopped process, and `LoopRecoveryTest` shows that a restarted loop's journals equal, frame by frame and by chain hash, those of a loop that never stopped. Start-up time grows with the journal's length. A build that does not reproduce its own journals cannot restart on them. A refused restart is not repaired automatically; the operator reconciles at the venues and starts empty (docs/runbooks/restart.md). The route journal is silent during replay, so a routing decision made at the crash instant can be missing from it.
+
+## DR-RV-X02: A torn tail is a failed last frame followed only by zeros; anything else is corruption
+
+Date: 2026-11-23
+
+Context. A process that dies while appending leaves a partial frame. The writer publishes a frame's length last and segments are zero-filled, so a partial frame shows as a frame that fails its checks at the end of the data. Damage elsewhere in a journal can look the same to a reader that stops at the first bad frame.
+
+Decision. `JournalRecovery.repair` cuts a failed frame only if every byte after it, to the end of its segment, is zero and no later segment holds a frame. A last segment shorter than its header declares is extended with zeros first, which turns a file cut short into an ordinary torn tail. A bad frame with data after it, a missing segment, or a header that is not a journal header is corruption: `JournalCorruptionException`, and the process does not start. A cut is reported in the `recovery: ` lines and counted (`journalTornTails`).
+
+Consequences. A crash at any byte of the last frame opens cleanly at the previous frame (`JournalRecoveryTest.aFileCutAtEveryByteOfItsLastFrameOpensCleanlyAtThePreviousFrame`). Damage that happens to be followed only by zeros cannot be told from a torn tail and is cut; the chain hash still protects every frame before it.
+
+## DR-RV-X03: Mapped sequence store; an unclean restart resumes from the journaled watermark; ExecID dedupe makes resends harmless
+
+Date: 2026-11-23
+
+Context. Review finding L6: `resetOnLogon` was always on, so fills a venue sent while the session was down were never resent. Resuming needs the sequence numbers to survive the process, and they change on every message on the session thread.
+
+Decision. `MappedSequenceStore` keeps each session's numbers in one memory-mapped 4 KiB page with two slots, each with a generation and a CRC32C. A write goes to the slot the previous write did not use; opening takes the good slot with the higher generation. Nothing is forced to disk on the message path. The inbound number has a second watermark, moved up only when the loops have journaled what came before it; after an unclean stop the session resumes from that lower number, so anything received but perhaps not processed is asked for again. `DeskGroup` books a fill once per venue and ExecID. `fix.resetOnLogon` is configurable: on in the simulator preset, off in the deployment files.
+
+Consequences. A resend after a crash books nothing twice (`RestartRecoveryTest.withSequenceNumbersResumedARestartBooksNothingTwice`, `VenueResumeTest`). The numbers survive a process crash, not a power loss or kernel crash; after one, a stale outbound number makes the venue refuse the Logon and an operator agrees a sequence reset. A file whose two slots both fail their checks is refused.
+
+## DR-RV-X04: Our own messages are gap-filled, never resent
+
+Date: 2026-11-23
+
+Context. A resumed session can be asked by the venue to resend what we sent before a drop or a crash. DR-P2V-03 already answers every ResendRequest with a gap fill; resuming makes such requests routine rather than rare.
+
+Decision. DR-P2V-03 stands for resumed sessions. A ResendRequest is answered with one SequenceReset-GapFill to our next number. A quote or order is never resent: the loop decides afresh once the venue is reconciled.
+
+Consequences. A stale quote or order never reaches a venue late (`SessionRecoveryTest.ourOwnMessagesAreGapFilledNeverResent`). What we had working at the venue is learned from the mass status after logon (DR-RV-X05), not from our own resend.
+
+## DR-RV-X05: RECONCILING and RECONCILED are journaled inputs
+
+Date: 2026-11-23
+
+Context. After a drop or a restart the CLOB may still hold, or may have filled, orders the loop believes in. DR-RV-R04 says absence from mass status is not evidence of no fill. The loop also must not route to the venue before the answers are in.
+
+Decision. A returning CLOB session publishes GatewayStatus RECONCILING (4), sends an OrderMassStatusRequest, passes the answers to the loop and then publishes RECONCILED (5). Both go on the inbound ring, so the loop journals them and replay sees them. The loop keeps the venue down, and its quotes withdrawn, until RECONCILED. An unanswered request is repeated twice, 5 s apart; then the connection is dropped and made again. A dropped session reconnects under `fix.reconnect`, up to `maxAttempts`; a halted one never does.
+
+Consequences. Replay reproduces when the venue became usable again. Readiness and the status JSON say `reconciling` while it lasts. Reconciliation with resting orders is tested at `DeskGroup` level (`DeskGroupTest.aReturningClobSessionStaysDownUntilItsOrdersAreReconciled`) and against a venue that never answers (`VenueSessionReconnectTest`), not against a venue holding our orders across a process restart.
+
+## DR-RV-X06: SSLEngine allocation on the session path is accepted and measured
+
+Date: 2026-11-23
+
+Context. Review finding L12: FIX had no TLS or Logon credentials. The hot path is allocation-free by rule (DR-002), and the JDK's `SSLEngine` allocates inside `wrap` and `unwrap`.
+
+Decision. `TcpInitiator` uses the JDK `SSLEngine`, TLS 1.3 only by default, with host-name and certificate checks, a handshake deadline and bounded writes; a plain connection is allowed to loopback only. Our own code reuses its buffers and allocates nothing. The engine's allocation is accepted on the session path and measured by `TlsAllocationTest`: about 1.3 KB per message sent and 1.4 KB received on JDK 25 with heap buffers (direct buffers measured higher), held under a 2 KB ceiling so that a regression fails the build. The plain path stays at zero.
+
+Consequences. Under TLS the gateway thread makes short-lived garbage of constant size per record, which a young collection clears. A link that must be allocation-free end to end needs TLS ended outside the JVM, on loopback. The loop thread is unaffected. The TLS KeyUpdate path is untested.
