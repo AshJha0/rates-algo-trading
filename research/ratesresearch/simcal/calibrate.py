@@ -61,6 +61,7 @@ def _micro_vector(total: micro.Stats) -> FloatArray:
     """Every microstructure estimate of one (resampled) sample as one flat vector."""
     rob = micro.est_robust(total)
     basic = micro.est_basic(total)
+    sig = micro.est_signature(total)
     mo = micro.est_markout(total, "mid")
     tick = micro.est_markout(total, "tick")
     season = micro.est_season(total, basic[:-1, 1] ** 2)
@@ -87,6 +88,7 @@ def _micro_vector(total: micro.Stats) -> FloatArray:
         season,
         per_day,
         shape,
+        np.array([sig["h"][-1], sig["realised"][-1], sig["drift"][-1]]),
     ]
     return np.concatenate([np.asarray(x, dtype=np.float64).ravel() for x in parts])
 
@@ -111,6 +113,7 @@ def _micro_layout() -> list[tuple[str, tuple[int, ...]]]:
         ("season", (micro.N_BINS + len(micro.EVENT_NAMES),)),
         ("prints_per_day", (nt,)),
         ("time_of_day_share", (micro.N_BINS,)),
+        ("ls_signature_h_realised_drift", (3,)),
     ]
 
 
