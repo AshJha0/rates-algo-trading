@@ -17,6 +17,7 @@ public final class SessionStats {
   long heartbeatsSent;
   long timeouts;
   long sequenceResets;
+  long resendTimeouts;
 
   /** Messages accepted from the transport (well formed). */
   public long received() {
@@ -86,6 +87,11 @@ public final class SessionStats {
   /** SequenceReset messages (reset mode) applied. */
   public long sequenceResets() {
     return sequenceResets;
+  }
+
+  /** Sessions ended because a ResendRequest stayed unanswered after its repeats. */
+  public long resendTimeouts() {
+    return resendTimeouts;
   }
 
   /** Gaps plus too-low sequence numbers: the figure the synthetic day requires to be zero. */
