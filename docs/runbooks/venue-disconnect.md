@@ -4,7 +4,7 @@ A venue disconnect is the loss of a FIX session or the SBE feed connection to on
 
 ## Detection
 
-- The gateway (P2) reports the session down and engages the kill switch for that venue's scope with reason `SessionLoss`.
+- The gateway reports the session down with GatewayStatus DISCONNECTED; the desk's input health pulls every live quote with reason `SessionLoss`, and for the CLOB the routers exclude the venue. No KillSwitch is engaged for a lost session.
 - Alert `VenueSimulatorDown` (simulated environment) or the gateway's session metric on a real deployment.
 - Missed heartbeats in the journal.
 
@@ -12,7 +12,8 @@ A venue disconnect is the loss of a FIX session or the SBE feed connection to on
 
 1. Confirm quoting is disabled for the venue and that other venues are unaffected.
 2. Call the venue's support desk and ask them to cancel all our orders and quotes (most venues offer cancel-on-disconnect; confirm it fired).
-3. Reconnect. On logon the gateway resends from the last confirmed sequence.
+3. Reconnect.
+<!-- RECOVERY-LANE: what the session does on logon (sequence numbers, resend, logon credentials, TLS) and the restart steps go here when that lane merges -->
 4. Run the venue part of the restart procedure: OrderMassStatusRequest and QuoteStatusRequest, compare with the journal (`RestartProcedure`, API_SPEC.md Section 17.9). Cancel anything the venue holds that the journal does not.
 5. Quoting at the venue resumes only when the procedure reports no blocking discrepancy.
 
