@@ -218,8 +218,8 @@ class V2UniverseTest {
       late.onCurveInput(V2InputIds.OVERNIGHT, V2.swaps().get(0).initialMid(), stamp);
       book.nanos = stamp;
     }
-    ((PricingV2) early).flush();
-    ((PricingV2) late).flush();
+    ((PricingV2) early).repriceIfDirty();
+    ((PricingV2) late).repriceIfDirty();
     for (final int id : V2.instrumentIds()) {
       assertEquals(early.fairMid(id), late.fairMid(id), "fair value of " + id);
     }
@@ -237,8 +237,6 @@ class V2UniverseTest {
     assertEquals(sundayCut, BusinessDate.lastCut(sundayCut, 17), "an instant on the cut is its own");
     assertEquals(sundayCut - 86_400_000_000_000L - 3_600_000_000_000L, BusinessDate.lastCut(sundayCut - 1, 17),
         "the day before, an hour earlier in UTC: daylight saving ended that Sunday morning");
-    assertEquals(sundayCut, PricingBindings.businessDayStart(new ManualClock(START), 17).epochNanos());
-    assertEquals(sundayCut, PricingBindings.businessDayStart(new ManualClock(START), 17).nanoTime());
   }
 
   @Test

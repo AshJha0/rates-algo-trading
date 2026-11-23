@@ -110,6 +110,16 @@ public final class FuturesOverlay implements PricingBinding, SpreadSensitivityPr
   }
 
   @Override
+  public boolean setInput(final int instrumentId, final long valueMantissa, final long timestampNanos) {
+    return base.setInput(instrumentId, valueMantissa, timestampNanos);
+  }
+
+  @Override
+  public boolean repriceIfDirty() {
+    return base.repriceIfDirty();
+  }
+
+  @Override
   public long fairMid(final int instrumentId) {
     if (future(instrumentId) < 0) {
       return base.fairMid(instrumentId);
