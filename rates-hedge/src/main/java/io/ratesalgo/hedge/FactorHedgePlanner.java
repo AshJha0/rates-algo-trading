@@ -2,6 +2,7 @@ package io.ratesalgo.hedge;
 
 import io.ratesalgo.api.Dv01Vector;
 import io.ratesalgo.api.Instrument;
+import io.ratesalgo.api.InstrumentDirectory;
 import io.ratesalgo.api.KeyRateTenors;
 import io.ratesalgo.api.ProductType;
 import io.ratesalgo.risk.RiskEngine;
@@ -44,7 +45,9 @@ public final class FactorHedgePlanner implements HedgePlanning {
   private static final int F = FactorModel.FACTORS;
 
   private final HedgeUniverse universe;
-  private final RiskEngine risk;
+  // the risk engine is read through these two views only, so the planner holds no reference to it
+  private final InstrumentDirectory directory;
+  private final PillarPv01 pv01;
   private final FactorModel model;
   private final HedgeCostModel costs;
   private final double kappa;
@@ -78,7 +81,8 @@ public final class FactorHedgePlanner implements HedgePlanning {
       throw new IllegalArgumentException("kappa must be positive: " + kappa);
     }
     this.universe = universe;
-    this.risk = risk;
+    this.directory = risk.directory();
+    this.pv01 = risk::unitPv01;
     this.model = model;
     this.costs = costs;
     this.kappa = kappa;
@@ -97,7 +101,7 @@ public final class FactorHedgePlanner implements HedgePlanning {
     model.exposures(r, before);
     for (int j = 0; j < m; j++) {
       final int id = universe.instrumentId(j);
-      final Instrument inst = risk.directory().byId(id);
+      final Instrument inst = directory.byId(id);
       lots[j] = 0.0;
       eligible[j] =
           inst != null
@@ -107,7 +111,7 @@ public final class FactorHedgePlanner implements HedgePlanning {
       final double lotMajor = inst == null ? 0.0 : inst.major(universe.lotMinor(j));
       double parallel = 0.0;
       for (int k = 0; k < K; k++) {
-        h[j][k] = eligible[j] ? risk.unitPv01(id, k) * lotMajor : 0.0;
+        h[j][k] = eligible[j] ? pv01.of(id, k) * lotMajor : 0.0;
         parallel += h[j][k];
       }
       model.exposures(h[j], g[j]);
@@ -273,6 +277,12 @@ public final class FactorHedgePlanner implements HedgePlanning {
   /** Daily sd of the idiosyncratic terms left after the last plan, currency. */
   public double residualIdioSd() {
     return Math.sqrt(model.idioVariance(rr));
+  }
+
+  /** PV01 of one unit of an instrument at one pillar. */
+  @FunctionalInterface
+  private interface PillarPv01 {
+    double of(int instrumentId, int pillar);
   }
 
   private void residualAfterPlan() {

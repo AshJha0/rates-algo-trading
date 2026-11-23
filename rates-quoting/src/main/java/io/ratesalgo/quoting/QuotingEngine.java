@@ -216,14 +216,6 @@ public final class QuotingEngine implements KillSwitchListener {
   private final double[] volVariance = new double[CurrencyCode.COUNT];
   private final int[] volSamples = new int[CurrencyCode.COUNT];
 
-  /** What the strategy path needs beyond the default collaborators; {@link #NONE} for none. */
-  public record StrategyParts(
-      CoverModel cover, MarkoutStore markouts, HedgePlanning quotePlanner, WorkingHedges working) {
-
-    /** No strategy parts: the strategy path prices with the default collaborators only. */
-    public static final StrategyParts NONE = new StrategyParts(null, null, null, WorkingHedges.NONE);
-  }
-
   /** Wires an engine; see the class comment for each collaborator's role. */
   public QuotingEngine(
       final InstrumentDirectory directory,
@@ -241,7 +233,7 @@ public final class QuotingEngine implements KillSwitchListener {
       final Clock clock,
       final QuotingConfig config) {
     this(directory, risk, fairValue, spread, tiers, toxicity, axes, hedgeUniverse, hedgeCosts, covariance, health, gateway,
-        clock, config, StrategyParts.NONE);
+        clock, config, null, null, null, WorkingHedges.NONE);
   }
 
   /**
@@ -264,7 +256,10 @@ public final class QuotingEngine implements KillSwitchListener {
       final OutboundSink gateway,
       final Clock clock,
       final QuotingConfig config,
-      final StrategyParts parts) {
+      final CoverModel coverModel,
+      final MarkoutStore markoutStore,
+      final HedgePlanning quoteHedgePlanner,
+      final WorkingHedges workingHedges) {
     this.directory = directory;
     this.risk = risk;
     this.fairValue = fairValue;
@@ -312,17 +307,17 @@ public final class QuotingEngine implements KillSwitchListener {
     volEstimated = config.volatilityEstimated();
     Arrays.fill(volLast, Double.NaN);
     strategy = config.strategy;
-    if (strategy.coverPricing && parts.cover() == null) {
+    if (strategy.coverPricing && coverModel == null) {
       throw new IllegalArgumentException("cover pricing is on but no cover model was given");
     }
-    if (strategy.markoutStore && parts.markouts() == null) {
+    if (strategy.markoutStore && markoutStore == null) {
       throw new IllegalArgumentException("the markout store is on but no store was given");
     }
     strategyPricing = strategy.coverPricing || strategy.reservationPrice || strategy.markoutStore || strategy.tickRounding;
-    cover = strategy.coverPricing ? parts.cover() : null;
-    markouts = strategy.markoutStore ? parts.markouts() : null;
-    quotePlanner = parts.quotePlanner();
-    working = parts.working() == null ? WorkingHedges.NONE : parts.working();
+    cover = strategy.coverPricing ? coverModel : null;
+    markouts = strategy.markoutStore ? markoutStore : null;
+    quotePlanner = quoteHedgePlanner;
+    working = workingHedges == null ? WorkingHedges.NONE : workingHedges;
     priors = strategy.tierPriorsOrCalibrated();
     for (int c = 0; c < CurrencyCode.COUNT; c++) {
       tradeLadder[c] = new Dv01Vector(CurrencyCode.ofIndex(c));

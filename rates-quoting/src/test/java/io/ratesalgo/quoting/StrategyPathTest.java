@@ -308,6 +308,19 @@ class StrategyPathTest {
   // ---------------------------------------------------------------- wiring and validation
 
   @Test
+  void theVolatilityReferenceResolvesToTheNearestSwapUnlessOneIsNamed() {
+    final TestMarket m = market(new StrategyConfig().volatilityReferenceTenor(9.0));
+    assertEquals(SW10, m.desk.quoting().config().volReference[CurrencyCode.USD.index()]);
+    assertEquals(TestMarket.ESTR10, m.desk.quoting().config().volReference[CurrencyCode.EUR.index()]);
+    final TestMarket named =
+        market(new QuotingConfig().requoteThrottleNanos(0L).volatilityReference(CurrencyCode.USD, UST30),
+            new StrategyConfig().volatilityReferenceTenor(9.0));
+    assertEquals(UST30, named.desk.quoting().config().volReference[CurrencyCode.USD.index()]);
+    assertEquals(0, market(new StrategyConfig()).desk.quoting().config().volReference[CurrencyCode.USD.index()]);
+    assertThrows(IllegalArgumentException.class, () -> new StrategyConfig().volatilityReferenceTenor(-1.0));
+  }
+
+  @Test
   void theEngineRefusesASwitchWithoutItsPart() {
     final TestMarket m = market(new StrategyConfig());
     for (final StrategyConfig sc : new StrategyConfig[] {new StrategyConfig().coverPricing(true), new StrategyConfig().markoutStore(true)}) {

@@ -131,15 +131,11 @@ public final class Desk {
     final HitRateModel hitRate = new HitRateModel(in.preset(), in.quotingConfig().learningRate);
     resolveVolatilityReference(in.directory(), in.quotingConfig());
     markouts = strategy.markoutStore() ? loadMarkouts(strategy) : null;
-    final QuotingEngine.StrategyParts parts =
-        new QuotingEngine.StrategyParts(
-            strategy.coverPricing() ? strategy.coverModelOrCalibrated() : null,
-            markouts,
-            strategy.factorHedging()
-                ? new FactorHedgePlanner(
-                    in.hedgeUniverse(), risk, model, hedgeCosts, strategy.hedgeKappaPerUsd(), strategy.hedgeAvailability())
-                : null,
-            (currency, ladder) -> hedgers[currency.index()].addWorking(ladder));
+    final HedgePlanning quotePlanner =
+        strategy.factorHedging()
+            ? new FactorHedgePlanner(
+                in.hedgeUniverse(), risk, model, hedgeCosts, strategy.hedgeKappaPerUsd(), strategy.hedgeAvailability())
+            : null;
     quoting =
         new QuotingEngine(
             in.directory(),
@@ -156,7 +152,10 @@ public final class Desk {
             in.gateway(),
             in.clock(),
             in.quotingConfig(),
-            parts);
+            strategy.coverPricing() ? strategy.coverModelOrCalibrated() : null,
+            markouts,
+            quotePlanner,
+            (currency, ladder) -> hedgers[currency.index()].addWorking(ladder));
     packages = new PackageQuoter(in.directory(), risk, fairValue, quoting, covariance);
     clob =
         new ClobQuoter(
