@@ -2,7 +2,7 @@
 
 ## How recipes work
 
-Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/cookbook/`. `RecipesTest` runs it in CI and compares its output with the block under "Expected output"; `tools/check_cookbook.py` checks that this page quotes both verbatim. The outputs were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11 and reproduced on JDK 27; they do not depend on the machine. Recipes 4 to 8 (P1) print values rounded well above double-precision noise so that they are the same on every platform. Recipes 14 to 16 (P3) were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11. Recipes 23 to 34 (round 2) were recorded on 2026-10-31 with JDK 25.0.5 and Python 3.12 on Windows 11; the analytics recipes among them (23 to 26) round their output in the same way as recipes 4 to 8.
+Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/cookbook/`. `RecipesTest` runs it in CI and compares its output with the block under "Expected output"; `tools/check_cookbook.py` checks that this page quotes both verbatim. The outputs were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11 and reproduced on JDK 27; they do not depend on the machine. Recipes 4 to 8 (P1) print values rounded well above double-precision noise so that they are the same on every platform. Recipes 14 to 16 (P3) were recorded on 2026-10-31 with JDK 25.0.5 on Windows 11. Recipes 40 to 45 (the opt-in 1.2.0 capabilities) were recorded on 2026-11-24 with JDK 25.0.5 on Windows 11; where they use simulator v2 their numbers are simulator output. Recipes 23 to 34 (round 2) were recorded on 2026-10-31 with JDK 25.0.5 and Python 3.12 on Windows 11; the analytics recipes among them (23 to 26) round their output in the same way as recipes 4 to 8.
 
 ## The recipes
 
@@ -45,6 +45,12 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 37. How do I check a forward-log ledger from Python? (written below; a Python recipe)
 38. How do I read a version 2 journal (WORD64 chain hash) from Python? (1.2.0, written below; a command, not a program)
 39. How do I validate the Round 5 family registration? (1.2.0, written below; a command, not a program)
+40. How do I open a simulator v2 session and read its calibrated parameters, RFQs and factor moves? (1.2.0, written below)
+41. How do I build pricing v2's SOFR curve and a leave-one-out fair value? (1.2.0, written below)
+42. How do I compute a break-even half-spread and a cover-relative quote? (1.2.0, written below)
+43. How do I plan a factor hedge with tick hedge costs? (1.2.0, written below)
+44. How do I compare the ladder router with the touch router on one book? (1.2.0, written below)
+45. How does the desk book a fill that crosses its cancel? (1.2.0, written below)
 
 The recipes were renumbered when the phase branches were combined, so that they run contiguously by phase (DECISIONS.md DR-P4-05 and DR-P2C-10, amended).
 
@@ -3338,3 +3344,801 @@ research/prereg/R5-FAM-001.yaml: valid
 
 This recipe is a command, not a program: `tools/check_cookbook.py` runs the commands above and compares their output with the block.
 
+## 40. How do I open a simulator v2 session and read its calibrated parameters, RFQs and factor moves?
+
+`rates-sim` holds one market model that the venue simulators and the back-test both read (API_SPEC.md Section 11.6). `SimParams.loadDefault()` loads the calibration strictly, `MarketSpec` derives what a session needs from it, and `SessionSeeds.session(spec, seed)` builds one session, a `MarketModel`, whose factor paths, RFQs and competitors are fixed by the seed. Everything below is simulator output, not market data. The seed is from the acceptance base; the pilot, exploration and confirmation bases belong to registered experiments.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.sim.MarketModel;
+import io.ratesalgo.sim.MarketSpec;
+import io.ratesalgo.sim.RfqDecision;
+import io.ratesalgo.sim.SessionSeeds;
+import io.ratesalgo.sim.SimInstrument;
+import io.ratesalgo.sim.SimParams;
+import io.ratesalgo.sim.SimParams.Scalar;
+import io.ratesalgo.sim.SimRfq;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 40: open a simulator v2 session and read its parameters, RFQs and factors. */
+public final class Recipe40SimV2Session {
+
+  private Recipe40SimV2Session() {}
+
+  public static void main(final String[] args) {
+    final SimParams p = SimParams.loadDefault();
+    final MarketSpec spec = new MarketSpec(p);
+    System.out.println("calibrated parameters");
+    System.out.printf(Locale.ROOT, "  swap RFQs per session %.1f%n", p.get(Scalar.SWAP_RFQS_PER_DAY));
+    System.out.printf(
+        Locale.ROOT, "  competitor median half-spread %.4f bp, log sd %.2f%n",
+        p.get(Scalar.MEDIAN_HALF_SPREAD_BP), p.get(Scalar.COMPETITOR_LOG_SD));
+    System.out.printf(
+        Locale.ROOT, "  informed fraction %.2f, move per informed trade %.3f bp%n",
+        p.get(Scalar.INFORMED_FRACTION), p.get(Scalar.MOVE_PER_INFORMED_TRADE_BP));
+    System.out.printf(
+        Locale.ROOT, "  factor sd per sqrt-minute: level %.4f, slope %.4f, curvature %.4f bp%n",
+        p.factorSdPerSqrtMinute(0), p.factorSdPerSqrtMinute(1), p.factorSdPerSqrtMinute(2));
+
+    // seeds of the acceptance base only: the other bases are reserved for registered experiments
+    final long seed = SessionSeeds.seed(SessionSeeds.ACCEPTANCE, 95_001);
+    final MarketModel day = SessionSeeds.session(spec, seed);
+    System.out.printf(
+        Locale.ROOT, "session %d, day type %s, %d steps of %d s%n",
+        seed, day.dayType(), spec.steps(), MarketSpec.STEP_NANOS / 1_000_000_000L);
+
+    int swaps = 0;
+    int informed = 0;
+    for (final SimRfq r : day.rfqs()) {
+      swaps += spec.instrument(r.instrument()).kind() == SimInstrument.Kind.SWAP ? 1 : 0;
+      informed += r.informed() ? 1 : 0;
+    }
+    System.out.printf(
+        Locale.ROOT, "RFQs %d: %d swaps, %d Treasuries; %d informed%n",
+        day.rfqs().size(), swaps, day.rfqs().size() - swaps, informed);
+    for (final SimRfq r : day.rfqs().subList(0, 3)) {
+      // the client's decision when the desk does not quote at all
+      final RfqDecision d = day.decide(r, Double.NaN, 0L);
+      System.out.printf(
+          Locale.ROOT, "  %s client %s %.0fm, tier index %d, %d dealers asked: %s%s%n",
+          spec.instrument(r.instrument()).key(), r.clientBuys() ? "buys" : "sells", r.quantityUnits() / 1e6,
+          r.tier(), r.dealersAsked(), d.outcome(),
+          d.traded() ? String.format(Locale.ROOT, " at %.3f bp from mid", d.winnerHalfSpreadBp()) : "");
+    }
+
+    // the 10-year yield change of the session is loadings times factors plus its own term
+    final int i = spec.indexOf("UST-10Y");
+    final int last = spec.steps() - 1;
+    final String[] names = {"level", "slope", "curvature"};
+    double sum = 0.0;
+    for (int f = 0; f < SimParams.FACTORS; f++) {
+      final double part = spec.loading(i, f) * day.factor(f, last);
+      sum += part;
+      System.out.printf(
+          Locale.ROOT, "%-9s moved %+.3f bp x loading %+.4f = %+.3f bp%n",
+          names[f], day.factor(f, last), spec.loading(i, f), part);
+    }
+    System.out.printf(
+        Locale.ROOT, "idiosyncratic %+.3f bp, 10-year yield change %+.3f bp%n",
+        day.yieldChangeBp(i, last) - sum, day.yieldChangeBp(i, last));
+    System.out.println(
+        "same seed, same session: " + (SessionSeeds.session(spec, seed).replayHash() == day.replayHash()));
+  }
+}
+```
+
+Expected output:
+
+```
+calibrated parameters
+  swap RFQs per session 116.4
+  competitor median half-spread 0.1827 bp, log sd 0.50
+  informed fraction 0.50, move per informed trade 0.118 bp
+  factor sd per sqrt-minute: level 0.3178, slope 0.1070, curvature 0.0362 bp
+session 28095001, day type NONE, 36000 steps of 1 s
+RFQs 233: 111 swaps, 122 Treasuries; 131 informed
+  SOFR-2Y client sells 8m, tier index 1, 4 dealers asked: DONE at 0.189 bp from mid
+  UST-2Y client sells 5m, tier index 0, 3 dealers asked: DONE at 0.057 bp from mid
+  SOFR-5Y client sells 49m, tier index 2, 3 dealers asked: DONE at 0.150 bp from mid
+level     moved +5.956 bp x loading +0.3945 = +2.350 bp
+slope     moved +0.145 bp x loading +0.1986 = +0.029 bp
+curvature moved -0.964 bp x loading -0.1959 = +0.189 bp
+idiosyncratic +0.185 bp, 10-year yield change +2.753 bp
+same seed, same session: true
+```
+
+The four parameter lines are read from `data/calibration/sim_v2_params.json`, where each entry says whether it is fitted, bounded or an assumption: 116.4 swap RFQs a session on average, a competitor median half-spread of 0.1827 bp with log sd 0.50, half of the RFQs informed with an expected 0.118 bp move after each of those, and the per-minute sd of the three curve factors (0.3178, 0.1070 and 0.0362 bp). Session 28095001 has an ordinary day type (NONE, no scheduled event) and 36,000 one-second steps, 07:00 to 17:00 New York. Its 233 RFQs are one draw: 111 swaps against the mean of 116.4, 122 Treasuries, and 131 informed against an expectation of half. The informed flag is simulator truth that no desk sees.
+
+The three RFQ lines are the first in time order; tier index 0, 1 and 2 are tiers A, B and C, dealers asked includes the desk, and the outcome is the client's decision when the desk does not quote (`NaN`). All three were done with a competitor, whose distance from the mid before tick rounding is printed: 0.189, 0.057 and 0.150 bp. The last block decomposes the session's 10-year yield change: each factor's move times the 10-year's loading, plus the node's own term, 2.350 + 0.029 + 0.189 + 0.185 = 2.753 bp. Moves are in factor units, so the 5.956 bp level move shifts the 10-year by only 2.350 bp. `replayHash()` folds every latent value and RFQ; equality says the rebuilt session is the same one.
+
+## 41. How do I build pricing v2's SOFR curve and a leave-one-out fair value?
+
+If a swap's quote builds the curve and the curve prices the swap, its fair value is its own quote, and a skewed quote can never look skewed. Pricing v2 (API_SPEC.md Section 18.3a, `docs/research/PRICING_V2.md`) values each quoted swap off the other inputs, the leave-one-out value, and lets a residual follow the quote with a 300-second half-life. The recipe feeds one round of a simulator v2 session's curve quotes, then moves the 10-year quote alone by 2 bp. `setInput` records a value and `repriceIfDirty` applies what was recorded with one solve.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.analytics.curve.SofrCurve;
+import io.ratesalgo.app.pricing.PricingV2;
+import io.ratesalgo.app.pricing.UsdUniverse;
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.refdata.RefData;
+import io.ratesalgo.sim.MarketModel;
+import io.ratesalgo.sim.MarketSpec;
+import io.ratesalgo.sim.SessionSeeds;
+import io.ratesalgo.sim.SimParams;
+import io.ratesalgo.venues.Venues;
+import io.ratesalgo.venues.sim.SimV2CurveRound;
+import io.ratesalgo.venues.sim.SimV2Session;
+import java.util.EnumMap;
+import java.util.Locale;
+import java.util.Map;
+
+/** COOKBOOK.md recipe 41: pricing v2's SOFR curve and a leave-one-out fair value. */
+public final class Recipe41PricingV2 {
+
+  private static final long ROUND_NANOS = 500_000_000L;
+  private static final double BP = 1e-4;
+
+  private Recipe41PricingV2() {}
+
+  public static void main(final String[] args) {
+    final ManualClock clock = new ManualClock(Venues.T0);
+    final MarketSpec spec = new MarketSpec(SimParams.loadDefault());
+    final MarketModel model =
+        SessionSeeds.session(spec, SessionSeeds.seed(SessionSeeds.ACCEPTANCE, 95_001));
+    final SimV2Session session =
+        new SimV2Session(
+            model, SimV2Session.instruments(spec, RefData.loadDefault(), Venues.TRADE_DATE), clock);
+    final SimV2CurveRound quotes = new SimV2CurveRound(session);
+    final UsdUniverse universe = UsdUniverse.simV2();
+    final PricingV2 pricing = new PricingV2(universe, PricingV2.Options.defaults());
+
+    // one round of the simulator's curve quotes: the whole build set under one timestamp
+    send(pricing, quotes, clock.epochNanos(), -1, 0L);
+    final SofrCurve curve = pricing.curve();
+    final Map<SofrCurve.Kind, Integer> kinds = new EnumMap<>(SofrCurve.Kind.class);
+    for (int i = 0; i < curve.inputCount(); i++) {
+      kinds.merge(curve.kind(i), 1, Integer::sum);
+    }
+    System.out.println("inputs " + kinds + ", not yet fed " + pricing.unfedInputs());
+    for (final int months : new int[] {24, 60, 120, 360}) {
+      final int in = curve.swapInput(months);
+      System.out.printf(
+          Locale.ROOT, "  %2dY par quote %.4f %%, zero rate %.4f %%%n",
+          months / 12, 100.0 * curve.quote(in), 100.0 * curve.curve().zeroRate(curve.pillarDate(in)));
+    }
+
+    final int tenYear = curve.swapInput(120);
+    final int tenYearId = idOf(universe, 120);
+    final int sevenYearId = idOf(universe, 84);
+    final double quote0 = curve.quote(tenYear);
+    final double model0 = pricing.modelValue(tenYearId);
+    final double fair0 = pricing.fairValue(tenYearId);
+    final double seven0 = pricing.modelValue(sevenYearId);
+    System.out.printf(
+        Locale.ROOT, "10Y quote %.4f %%, leave-one-out %.3f %%, fair %.4f %%%n",
+        100.0 * quote0, 100.0 * model0, 100.0 * fair0);
+
+    // half a second later the same quotes, except that the 10-year alone is 2 bp higher
+    clock.advance(ROUND_NANOS);
+    send(pricing, quotes, clock.epochNanos(), tenYear, 20_000_000L);
+    System.out.println("the 10Y quote alone moves up 2 bp:");
+    System.out.printf(
+        Locale.ROOT, "  curve's 10Y quote %+.3f bp%n", (pricing.curve().quote(tenYear) - quote0) / BP);
+    System.out.printf(
+        Locale.ROOT, "  10Y leave-one-out value moved %.3f bp%n",
+        Math.abs(pricing.modelValue(tenYearId) - model0) / BP);
+    System.out.printf(
+        Locale.ROOT, "  10Y fair value %+.4f bp%n", (pricing.fairValue(tenYearId) - fair0) / BP);
+    System.out.printf(
+        Locale.ROOT, "  7Y leave-one-out value %+.3f bp%n", (pricing.modelValue(sevenYearId) - seven0) / BP);
+  }
+
+  private static int idOf(final UsdUniverse universe, final int months) {
+    for (final UsdUniverse.SwapSpec s : universe.swaps()) {
+      if (s.tenorMonths() == months) {
+        return s.instrumentId();
+      }
+    }
+    throw new IllegalArgumentException("no swap of " + months + " months");
+  }
+
+  /** Sends every input of the build set; input {@code skewed} is sent {@code skew} higher (percent mantissa). */
+  private static void send(
+      final PricingV2 pricing, final SimV2CurveRound quotes, final long stamp, final int skewed, final long skew) {
+    pricing.advanceTo(stamp);
+    final SofrCurve c = pricing.curve();
+    for (int i = 0; i < pricing.inputCount(); i++) {
+      final long value =
+          switch (c.kind(i)) {
+            case OVERNIGHT -> quotes.overnight();
+            case SR1, SR3 -> quotes.futurePrice();
+            case SWAP -> quotes.parSwap(c.tenorMonths(i)) + (i == skewed ? skew : 0L);
+          };
+      pricing.setInput(pricing.inputId(i), value, stamp);
+    }
+    pricing.repriceIfDirty();
+  }
+}
+```
+
+Expected output:
+
+```
+inputs {OVERNIGHT=1, SR1=2, SR3=3, SWAP=8}, not yet fed 0
+   2Y par quote 3.6000 %, zero rate 3.5849 %
+   5Y par quote 3.6000 %, zero rate 3.5877 %
+  10Y par quote 3.8500 %, zero rate 3.8607 %
+  30Y par quote 3.9500 %, zero rate 3.9072 %
+10Y quote 3.8500 %, leave-one-out 3.851 %, fair 3.8500 %
+the 10Y quote alone moves up 2 bp:
+  curve's 10Y quote +2.000 bp
+  10Y leave-one-out value moved 0.000 bp
+  10Y fair value +0.0023 bp
+  7Y leave-one-out value +1.071 bp
+```
+
+The build set on this date is one overnight rate, two SR1 and three SR3 futures and eight par swaps; none is left for the binding to seed (not yet fed 0). The four par quotes are the simulator's opening levels, 3.60, 3.60, 3.85 and 3.95 percent, because no simulated time has passed; the zero rates are read off the solved curve at each swap's pillar date. The 10-year's leave-one-out value, 3.851 percent, is what the other thirteen inputs say about it. Its fair value equals the quote, 3.8500, at this point only because the first quote of the day is taken whole.
+
+Half a second later the 10-year quote is 2 bp higher. The curve has it as an input and reprices it: +2.000 bp. The leave-one-out value moves 0.000 bp, which is the non-circularity. The fair value moves +0.0023 bp: the residual takes in 1 - 2^(-0.5/300) = 0.1155 percent of the 2 bp gap. The 7-year's leave-one-out value moves +1.071 bp, because the 10-year is one of the inputs the 7-year is valued from; leaving a quote out of its own value does not stop it from influencing its neighbours. The levels are the simulator's, not a market's.
+
+## 42. How do I compute a break-even half-spread and a cover-relative quote?
+
+A dealer who wins an RFQ at half-spread s loses the adverse move a that follows on average and pays the hedge cost h, so it breaks even at s = a + h (inventory cost left out). `CoverModel` then asks how far above break-even to quote: the best competing distance is lognormal per cell, the win probability falls with distance, and the quote maximises win probability times margin, never below break-even (API_SPEC.md Section 12.12, `docs/research/STRATEGY_V2.md` Sections 1 and 2). This is arithmetic on the calibration, not a result; several inputs are assumptions with wide bands.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.api.CurrencyCode;
+import io.ratesalgo.api.Instrument;
+import io.ratesalgo.quoting.CoverModel;
+import io.ratesalgo.quoting.TierPriors;
+import io.ratesalgo.sim.Competition;
+import io.ratesalgo.sim.MarketSpec;
+import io.ratesalgo.sim.SimInstrument;
+import io.ratesalgo.sim.SimParams;
+import io.ratesalgo.sim.SimParams.Scalar;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 42: the break-even half-spread and the cover-relative quote above it. */
+public final class Recipe42BreakEven {
+
+  private Recipe42BreakEven() {}
+
+  public static void main(final String[] args) {
+    final SimParams p = SimParams.loadDefault();
+    final double median = p.get(Scalar.MEDIAN_HALF_SPREAD_BP);
+    final double bestPerMedian = Competition.expectedBestPerMedian(p);
+    final double winning = median * bestPerMedian;
+    System.out.printf(
+        Locale.ROOT, "expected winning half-spread %.4f x %.3f = %.3f bp%n", median, bestPerMedian, winning);
+    System.out.printf(
+        Locale.ROOT, "zero-profit identity: adverse move %.3f + all-in cost %.3f = %.3f bp%n",
+        p.get(Scalar.EXPECTED_ADVERSE_MOVE_BP), p.get(Scalar.ALL_IN_COST_BP),
+        p.get(Scalar.EXPECTED_ADVERSE_MOVE_BP) + p.get(Scalar.ALL_IN_COST_BP));
+
+    // hedge cost: crossing a book one tick wide costs half a tick of the 10-year note
+    final MarketSpec spec = new MarketSpec(p);
+    final SimInstrument note = spec.instrument(spec.indexOf("UST-10Y"));
+    final double hedge = 0.5 * Math.abs(note.toBp(note.tick()));
+    System.out.printf(Locale.ROOT, "half a tick of the 10-year note = %.3f bp%n", hedge);
+
+    // the average client, then tiers A, B and C; no inventory
+    final TierPriors priors = TierPriors.calibrated();
+    final String[] names = {"average", "tier A", "tier B", "tier C"};
+    final double[] adverse = {
+      p.get(Scalar.EXPECTED_ADVERSE_MOVE_BP),
+      priors.adverseBp(TierPriors.TIER_A),
+      priors.adverseBp(TierPriors.TIER_B),
+      priors.adverseBp(TierPriors.TIER_C)
+    };
+
+    // a 10-year swap of typical size shown to four dealers
+    final Instrument swap =
+        Instrument.swap(1, "SOFR-10Y", CurrencyCode.USD, 10.0, 8.11, 0, 0.0, 2_500_000_000L);
+    final int cell = CoverModel.cell(swap, 1.0, 4);
+    final CoverModel cover = CoverModel.calibrated();
+    final double fill = priors.fillProbability(TierPriors.TIER_A);
+    System.out.printf(Locale.ROOT, "predicted cover median %.3f bp%n", cover.predictedCoverBp(cell));
+    System.out.println("client   adverse  break-even  winning less break-even  quote  P(win)");
+    for (int k = 0; k < names.length; k++) {
+      final double breakEven = adverse[k] + hedge;
+      final double quote = cover.optimal(cell, fill, breakEven);
+      System.out.printf(
+          Locale.ROOT, "%-8s %.3f    %.3f       %+.3f                   %.3f  %.2f%n",
+          names[k], adverse[k], breakEven, winning - breakEven, quote, cover.winProbability(cell, fill, quote));
+    }
+
+    // outcomes teach the cell: a win with its cover shown, a loss and a win without one
+    cover.observeExact(cell, 0.100);
+    cover.observeBelow(cell, 0.150);
+    cover.observeAbove(cell, 0.110);
+    System.out.printf(
+        Locale.ROOT, "after %d outcomes: cover median %.3f bp, quote to the average client %.3f bp%n",
+        cover.observations(cell), cover.predictedCoverBp(cell), cover.optimal(cell, fill, adverse[0] + hedge));
+  }
+}
+```
+
+Expected output:
+
+```
+expected winning half-spread 0.1827 x 0.761 = 0.139 bp
+zero-profit identity: adverse move 0.059 + all-in cost 0.080 = 0.139 bp
+half a tick of the 10-year note = 0.048 bp
+predicted cover median 0.125 bp
+client   adverse  break-even  winning less break-even  quote  P(win)
+average  0.059    0.107       +0.032                   0.159  0.26
+tier A   0.030    0.077       +0.062                   0.135  0.40
+tier B   0.071    0.119       +0.020                   0.169  0.21
+tier C   0.115    0.163       -0.024                   0.209  0.09
+after 3 outcomes: cover median 0.115 bp, quote to the average client 0.138 bp
+```
+
+The expected winning half-spread is the competitors' median 0.1827 bp times 0.761, the mean of the best answering quote per unit median: 0.139 bp. The zero-profit identity says where it comes from: the calibration sets it equal to the average adverse move 0.059 plus the competitors' assumed all-in cost 0.080. Half of the 10-year note's 1/128 tick, at 0.0815 points per bp, is 0.048 bp. So the average client's break-even is 0.059 + 0.048 = 0.107 bp against 0.139 bp, and the +0.032 bp between them exists only because the assumed hedge is cheaper than the assumed competitor cost. It is not an edge claim.
+
+The predicted cover median is 0.125 bp (four dealers, so three competitors each answering with probability 0.9). In the table, adverse is the average client's move or the tier's prior (0.030, 0.071, 0.115), break-even adds the hedge (0.077, 0.119, 0.163), and the next column is the unrounded winning half-spread less break-even: +0.062 for tier A, +0.020 for B, -0.024 for C. Tier A differs by 0.001 from the table in STRATEGY_V2.md, which adds rounded numbers. The quote is the optimal distance in bp and P(win) the model's win probability there: 0.159 bp with 0.26 for the average client, 0.135 with 0.40 for A, 0.169 with 0.21 for B, and 0.209 with 0.09 for C, which is quoted wide rather than refused. Three outcomes then teach the cell: a win whose cover was 0.100 bp from fair, a loss at 0.150 bp without a cover (the cover was nearer), and a win at 0.110 bp without one (it was further). The median falls from 0.125 to 0.115 bp and the average client's quote from 0.159 to 0.138 bp. The first outcome carries a weight of one half, the next ones less, down to 1/500.
+
+## 43. How do I plan a factor hedge with tick hedge costs?
+
+`FactorHedgePlanner` hedges the level factor fully and adds a second instrument for slope only when the variance it removes, valued at the risk aversion kappa, exceeds the extra crossing cost (API_SPEC.md Section 14.6). `TickHedgeCostModel` prices a crossing in venue ticks: half a tick per lot for a book one tick wide. The same 30-year position is planned twice, with a small and a larger kappa.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.api.CurrencyCode;
+import io.ratesalgo.api.Decimal9;
+import io.ratesalgo.api.Dv01Vector;
+import io.ratesalgo.api.InMemoryFairValueSource;
+import io.ratesalgo.api.InMemoryInstrumentDirectory;
+import io.ratesalgo.api.Instrument;
+import io.ratesalgo.api.ParametricSensitivityProvider;
+import io.ratesalgo.api.RecordingOutboundSink;
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.hedge.FactorHedgePlanner;
+import io.ratesalgo.hedge.FactorModel;
+import io.ratesalgo.hedge.HedgeAvailability;
+import io.ratesalgo.hedge.HedgeUniverse;
+import io.ratesalgo.hedge.TickHedgeCostModel;
+import io.ratesalgo.quoting.VenueTickTable;
+import io.ratesalgo.risk.KillSwitchController;
+import io.ratesalgo.risk.RiskEngine;
+import io.ratesalgo.risk.RiskLimits;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 43: the factor hedge planner with tick hedge costs. */
+public final class Recipe43FactorHedge {
+
+  private static final long MILLION = 100_000_000L;
+
+  private Recipe43FactorHedge() {}
+
+  public static void main(final String[] args) {
+    final ManualClock clock = new ManualClock();
+    final InMemoryInstrumentDirectory instruments = new InMemoryInstrumentDirectory();
+    final InMemoryFairValueSource fair = new InMemoryFairValueSource();
+    // the price changes per basis point of the simulator v2 structure file, per unit of face
+    final String[] names = {"UST2", "UST10", "UST30"};
+    final double[] tenor = {2, 10, 30};
+    final double[] perUnit = {-1.90e-4, -8.15e-4, -17.30e-4};
+    for (int i = 0; i < names.length; i++) {
+      instruments.add(Instrument.bond(i + 1, names[i], CurrencyCode.USD, tenor[i], 25 * MILLION));
+      fair.set(i + 1, Decimal9.round(100.0), clock.epochNanos());
+    }
+    final ParametricSensitivityProvider pv01 = new ParametricSensitivityProvider(instruments);
+    for (int i = 0; i < names.length; i++) {
+      pv01.defineAtTenor(i + 1, perUnit[i], 0.0);
+    }
+    final RiskEngine risk =
+        new RiskEngine(
+            instruments, pv01, fair, new RiskLimits(),
+            new KillSwitchController(new RecordingOutboundSink(), clock), new RecordingOutboundSink(), clock);
+
+    // hedge with 2-year and 10-year notes in lots of 1m face; a crossing costs half a tick.
+    // Ticks: 1/256 of a point on the 2-year (3_906_250 as a Decimal9), 1/128 on the 10-year.
+    final HedgeUniverse universe = new HedgeUniverse().add(1, MILLION, 5_000).add(2, MILLION, 5_000);
+    final VenueTickTable ticks = VenueTickTable.simulatorDefaults().instrument(1, 3_906_250L);
+    final TickHedgeCostModel costs = new TickHedgeCostModel(instruments, universe, ticks, 0.5, 4);
+    for (int j = 0; j < universe.size(); j++) {
+      final int id = universe.instrumentId(j);
+      final double lotDv01 = Math.abs(perUnit[id - 1]) * 1e6;
+      System.out.printf(
+          Locale.ROOT, "%-5s tick %.4f USD a lot, half a tick %.4f USD = %.3f bp of the lot's DV01 of %.0f%n",
+          names[id - 1], costs.tickValuePerLot(id), costs.linearPerLot(id), costs.linearPerLot(id) / lotDv01, lotDv01);
+    }
+
+    // long 50m of 30-year notes
+    risk.onFill(3, 50 * MILLION, fair.fairMid(3));
+    final Dv01Vector ladder = new Dv01Vector(CurrencyCode.USD);
+    risk.ladder(CurrencyCode.USD, ladder);
+    System.out.printf(Locale.ROOT, "net PV01 %.0f, all at 30 years%n", ladder.parallel());
+    final FactorModel factors = FactorModel.calibrated();
+
+    // the risk aversion decides whether the second crossing is worth its cost
+    plan("small risk aversion (1e-9 per USD)", new FactorHedgePlanner(
+        universe, risk, factors, costs, 1e-9, HedgeAvailability.ALL), ladder, names);
+    plan("larger risk aversion (1e-5 per USD)", new FactorHedgePlanner(
+        universe, risk, factors, costs, 1e-5, HedgeAvailability.ALL), ladder, names);
+  }
+
+  private static void plan(
+      final String title, final FactorHedgePlanner planner, final Dv01Vector ladder, final String[] names) {
+    planner.plan(ladder);
+    System.out.printf(
+        Locale.ROOT, "%s: level hedged %s, slope hedged %s, modelled crossing cost %.0f USD%n",
+        title, planner.levelHedged(), planner.slopeHedged(), planner.plannedCost());
+    for (int j = 0; j < planner.universe().size(); j++) {
+      if (planner.lots(j) != 0.0) {
+        System.out.printf(
+            Locale.ROOT, "  %-5s %+.1f lots%n", names[planner.universe().instrumentId(j) - 1], planner.lots(j));
+      }
+    }
+    for (int f = 0; f < FactorModel.FACTORS; f++) {
+      // an exposure hedged to zero is zero up to rounding error, of either sign
+      final double left = Math.abs(planner.exposureAfter(f)) < 1e-3 ? 0.0 : planner.exposureAfter(f);
+      System.out.printf(
+          Locale.ROOT, "  %-9s exposure %+9.0f -> %+9.0f USD per bp, daily sd left %9.0f USD%n",
+          FactorModel.factorName(f), planner.exposureBefore(f), left, planner.residualSd(f));
+    }
+    System.out.printf(Locale.ROOT, "  idiosyncratic daily sd left %.0f USD%n", planner.residualIdioSd());
+  }
+}
+```
+
+Expected output:
+
+```
+UST2  tick 39.0625 USD a lot, half a tick 19.5313 USD = 0.103 bp of the lot's DV01 of 190
+UST10 tick 78.1250 USD a lot, half a tick 39.0625 USD = 0.048 bp of the lot's DV01 of 815
+net PV01 -86500, all at 30 years
+small risk aversion (1e-9 per USD): level hedged true, slope hedged false, modelled crossing cost 3579 USD
+  UST10 -91.6 lots
+  level     exposure    -29462 ->        +0 USD per bp, daily sd left         0 USD
+  slope     exposure    -44331 ->    -29499 USD per bp, daily sd left    131852 USD
+  curvature exposure    -33424 ->    -48054 USD per bp, daily sd left     72586 USD
+  idiosyncratic daily sd left 60157 USD
+larger risk aversion (1e-5 per USD): level hedged true, slope hedged true, modelled crossing cost 9574 USD
+  UST2  +219.3 lots
+  UST10 -135.5 lots
+  level     exposure    -29462 ->        +0 USD per bp, daily sd left         0 USD
+  slope     exposure    -44331 ->        +0 USD per bp, daily sd left         0 USD
+  curvature exposure    -33424 ->    -82268 USD per bp, daily sd left    124267 USD
+  idiosyncratic daily sd left 77596 USD
+```
+
+One 1/256 tick on 1m face of the 2-year is 39.0625 USD and half of it 19.5313, which is 0.103 bp of the lot's DV01 of 190; for the 10-year (1/128) the figures are 78.1250, 39.0625 and 0.048 bp of 815. Per unit of risk the 10-year is the cheaper hedge. The position is long 50m of the 30-year: PV01 -86,500 (50m times 17.30e-4), all on the 30-year pillar. Its factor exposures are that PV01 times the 30-year loadings: level -29,462, slope -44,331 and curvature -33,424 USD per bp of factor.
+
+At kappa 1e-9 one instrument is enough: sell 91.6 lots of the 10-year at 39.0625 each, 3,579 USD. Level goes to zero; slope -29,499 and curvature -48,054 remain, which at the model's factor sds are daily sds of 131,852 and 72,586 USD, and the idiosyncratic terms leave 60,157. At 1e-5 the second crossing pays: buy 219.3 lots of the 2-year and sell 135.5 of the 10-year for 9,574 USD, and slope goes to zero too. The pair leaves more curvature (-82,268, or 124,267 USD a day) and idiosyncratic risk (77,596), but the total variance is lower. Curvature is reported, never hedged. Lots are fractional here, and no impact is charged; the factor sds are the simulator calibration's.
+
+## 44. How do I compare the ladder router with the touch router on one book?
+
+The default touch model prices a sweep from the touch and an impact formula. The opt-in ladder model (API_SPEC.md Section 15.9) reads every displayed level, takes the cheapest all-in price first across venues, and limits each child at the last level it needs. Both routers get the same still book and the same parent order, with urgency 1 so that neither posts.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.messages.sbe.OrdType;
+import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.messages.sbe.TimeInForce;
+import io.ratesalgo.messages.sbe.VenueKind;
+import io.ratesalgo.router.BookView;
+import io.ratesalgo.router.ExecutionModel;
+import io.ratesalgo.router.FrameSink;
+import io.ratesalgo.router.OrderGateway;
+import io.ratesalgo.router.RandomSource;
+import io.ratesalgo.router.RouterParams;
+import io.ratesalgo.router.RouterPresets;
+import io.ratesalgo.router.RouterTimeouts;
+import io.ratesalgo.router.SmartOrderRouter;
+import io.ratesalgo.router.VenueParams;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+/** COOKBOOK.md recipe 44: the ladder router and the touch router on one book. */
+public final class Recipe44LadderRouter {
+
+  private static final long MILLION = RouterPresets.ONE_MILLION;
+  private static final long TICK = RouterPresets.TICK_64TH;
+  private static final long BID = 98_500_000_000L;
+
+  /** Millions offered at the touch, one tick and two ticks above it, per venue. */
+  private static final int[][] OFFERED = {{10, 20, 50}, {5, 20, 50}};
+
+  private static final double[] TAKER_FEE = {0.0005, 0.0002};
+
+  private Recipe44LadderRouter() {}
+
+  /** A still book: the same ladder is shown to both routers. */
+  private static final class StillBook implements BookView {
+
+    @Override
+    public long bestBid(final int venueId) {
+      return BID;
+    }
+
+    @Override
+    public long bestAsk(final int venueId) {
+      return BID + TICK;
+    }
+
+    @Override
+    public long depth(final int venueId, final Side side, final int level) {
+      return level >= 0 && level < 3 ? OFFERED[venueId - 1][level] * MILLION : 0L;
+    }
+
+    @Override
+    public long levelPrice(final int venueId, final Side side, final int level) {
+      if (level < 0 || level >= 3) {
+        return 0L;
+      }
+      return side == Side.Buy ? BID - level * TICK : BID + (1 + level) * TICK;
+    }
+
+    @Override
+    public double tradeRatePerSecond(final int venueId) {
+      return 0.0;
+    }
+  }
+
+  /** One child order. */
+  private record Child(int venue, TimeInForce tif, long price, long quantity) {}
+
+  /** Keeps the child orders; nothing is filled. */
+  private static final class Recorder implements OrderGateway {
+
+    private final List<Child> children = new ArrayList<>();
+
+    @Override
+    public void newOrder(
+        final int venueId,
+        final long clOrdId,
+        final long parentId,
+        final int instrumentId,
+        final Side side,
+        final OrdType ordType,
+        final TimeInForce timeInForce,
+        final long price,
+        final long quantity) {
+      children.add(new Child(venueId, timeInForce, price, quantity));
+    }
+
+    @Override
+    public void cancel(final int venueId, final long clOrdId) {
+      throw new IllegalStateException("nothing is cancelled in this recipe");
+    }
+  }
+
+  public static void main(final String[] args) {
+    for (int v = 1; v <= 2; v++) {
+      System.out.printf(
+          Locale.ROOT, "venue %d offers %dm at the touch %.6f, %dm one tick up, %dm two ticks up; taker fee %.4f%n",
+          v, OFFERED[v - 1][0], (BID + TICK) / 1e9, OFFERED[v - 1][1], OFFERED[v - 1][2], TAKER_FEE[v - 1]);
+    }
+    System.out.println("buy 30m now (urgency 1)");
+    route("touch", RouterPresets.global(), null);
+    route("ladder", RouterPresets.ladder(), ExecutionModel.defaults());
+  }
+
+  private static void route(final String name, final RouterParams params, final ExecutionModel model) {
+    final VenueParams[] venues = new VenueParams[2];
+    for (int v = 1; v <= 2; v++) {
+      venues[v - 1] =
+          new VenueParams(
+              v, VenueKind.Clob, TICK, MILLION, MILLION, TAKER_FEE[v - 1], 0.0002, 250_000L, 0.2,
+              30_000L * MILLION, 1.0, 5);
+    }
+    final Recorder gateway = new Recorder();
+    final SmartOrderRouter router =
+        new SmartOrderRouter(
+            params, venues, new StillBook(), gateway, FrameSink.NONE, new ManualClock(), RandomSource.seeded(44L),
+            4, 64, 1L, RouterTimeouts.DEFAULT, model);
+    router.submit(1, 1001, Side.Buy, 30 * MILLION, 1.0, 0L);
+
+    System.out.println(name + " router: " + gateway.children.size() + " children");
+    double filled = 0.0;
+    double cost = 0.0;
+    for (final Child c : gateway.children) {
+      // what the shown ladder gives this child, level by level, up to its limit price
+      long left = c.quantity();
+      for (int level = 0; level < 3; level++) {
+        final long price = BID + (1 + level) * TICK;
+        final long take = price <= c.price() ? Math.min(left, OFFERED[c.venue() - 1][level] * MILLION) : 0L;
+        left -= take;
+        filled += take;
+        cost += take * ((price - BID) / (double) TICK - 0.5 + TAKER_FEE[c.venue() - 1] * 1e9 / TICK);
+      }
+      System.out.printf(
+          Locale.ROOT, "  venue %d buy %.0fm %s, limit %d ticks above the touch, finds %.0fm%n",
+          c.venue(), (double) c.quantity() / MILLION, c.tif(), (c.price() - BID - TICK) / TICK,
+          (double) (c.quantity() - left) / MILLION);
+    }
+    System.out.printf(
+        Locale.ROOT, "  walk of the shown book: %.0fm at %.3f ticks from the mid, fees included%n",
+        filled / MILLION, cost / filled);
+  }
+}
+```
+
+Expected output:
+
+```
+venue 1 offers 10m at the touch 98.515625, 20m one tick up, 50m two ticks up; taker fee 0.0005
+venue 2 offers 5m at the touch 98.515625, 20m one tick up, 50m two ticks up; taker fee 0.0002
+buy 30m now (urgency 1)
+touch router: 2 children
+  venue 1 buy 15m ImmediateOrCancel, limit 8 ticks above the touch, finds 15m
+  venue 2 buy 15m ImmediateOrCancel, limit 8 ticks above the touch, finds 15m
+  walk of the shown book: 30m at 1.022 ticks from the mid, fees included
+ladder router: 2 children
+  venue 1 buy 10m ImmediateOrCancel, limit 0 ticks above the touch, finds 10m
+  venue 2 buy 20m ImmediateOrCancel, limit 1 ticks above the touch, finds 20m
+  walk of the shown book: 30m at 1.019 ticks from the mid, fees included
+```
+
+The first two lines are the book the program declares: each venue offers its size at the touch 98.515625, one 1/64 tick above and two ticks above, with the stated taker fee in price points. The touch router splits the 30m into 15m and 15m and gives each child a limit 8 ticks above the touch, its fixed collar; on this book each finds its 15m well before that limit. The ladder router sends venue 1 only the 10m at its touch (limit 0 ticks above), and venue 2 its 5m at the touch plus 15m of the next level (limit 1 tick above): at the second level venue 2 is cheaper by its fee. All four children are immediate-or-cancel, and both routers find all 30m.
+
+The walk is the program's own sum over the shown levels, as if the book did not move before the orders arrived: 1.022 against 1.019 ticks from the mid, fees included. Both take 15m at half a tick and 15m at one and a half ticks from the mid, so the 0.003-tick difference is fees alone. The other difference is the limit: if the book moves away, the touch router's children may trade up to 8 ticks above the touch, while the ladder's miss what is beyond their last level and the rest is retried. This is one hand-made book and not evidence that either router is better in a market; `docs/research/ROUTER_BENCHMARK.md` compares them in the router's own simulator.
+
+## 45. How does the desk book a fill that crosses its cancel?
+
+A venue can trade an order just before it processes the cancel, and the fill can reach the desk after the cancel confirmation. The router has let go of the child by then, but the trade is still a position. `DeskGroup` books it to the risk engine once, by venue and execution id, and counts it in `lateFills()` (DECISIONS.md DR-V12-D13). The recipe sends the messages through the loop's inbound ring, as a gateway publishes them.
+
+```java
+package io.ratesalgo.cookbook;
+
+import io.ratesalgo.app.loop.AppIds;
+import io.ratesalgo.app.loop.DeskGroup;
+import io.ratesalgo.app.loop.DeskLoopFactory;
+import io.ratesalgo.app.loop.DeskSettings;
+import io.ratesalgo.app.pricing.UsdUniverse;
+import io.ratesalgo.common.time.ManualClock;
+import io.ratesalgo.core.EventClock;
+import io.ratesalgo.core.EventLoop;
+import io.ratesalgo.core.InboundPublisher;
+import io.ratesalgo.core.RingBufferContract;
+import io.ratesalgo.messages.sbe.BookAction;
+import io.ratesalgo.messages.sbe.BookUpdateEncoder;
+import io.ratesalgo.messages.sbe.ExecutionReportEncoder;
+import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
+import io.ratesalgo.messages.sbe.OrdStatus;
+import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.messages.sbe.TradeBustEncoder;
+import io.ratesalgo.router.ChildOrderBook;
+import io.ratesalgo.router.FrameSink;
+import io.ratesalgo.router.SmartOrderRouter;
+import java.util.Locale;
+import org.agrona.concurrent.UnsafeBuffer;
+import org.agrona.concurrent.ringbuffer.ManyToOneRingBuffer;
+
+/** COOKBOOK.md recipe 45: a fill that crosses its cancel is booked once. */
+public final class Recipe45LateFill {
+
+  private static final long BID = 98_500_000_000L;
+
+  private final ManualClock source = new ManualClock(1_793_626_000_000_000_000L);
+  private final UnsafeBuffer buffer = new UnsafeBuffer(new byte[256]);
+  private final MessageHeaderEncoder header = new MessageHeaderEncoder();
+  private final DeskSettings settings = DeskSettings.defaults();
+  private final InboundPublisher publisher;
+  private final EventLoop loop;
+  private final DeskGroup group;
+  private final SmartOrderRouter router;
+  private final int bond;
+  private final long ask;
+
+  private Recipe45LateFill() {
+    final UsdUniverse universe = UsdUniverse.standard();
+    final ManyToOneRingBuffer ring = RingBufferContract.newInbound(1 << 16);
+    publisher = new InboundPublisher(ring);
+    final DeskLoopFactory factory = new DeskLoopFactory(universe, settings, FrameSink.NONE);
+    loop =
+        factory.create(
+            EventLoop.builder(new EventClock(source))
+                .inbound(ring)
+                .outbound(RingBufferContract.newOutbound(1 << 20))
+                .outbound(RingBufferContract.newOutbound(1 << 20))
+                .outbound(RingBufferContract.newOutbound(1 << 20)));
+    group = factory.last();
+    router = group.router(0);
+    bond = group.routerInstrument(0);
+    ask = BID + universe.bondTick();
+  }
+
+  public static void main(final String[] args) {
+    new Recipe45LateFill().run();
+  }
+
+  private void run() {
+    final long lot = settings.hedgeLotMinor();
+    level(1, Side.Buy, BID);
+    level(2, Side.Sell, ask);
+
+    // parent order 7: the router sends one child to the CLOB
+    router.submit(7, bond, Side.Buy, lot, 1.0, 0L);
+    final long child = onlyChild(router.children());
+    report(child, 501, OrdStatus.New, 0);
+    print("acknowledged");
+    router.cancel(7);
+    report(child, 502, OrdStatus.Cancelled, 0);
+    print("cancel confirmed");
+
+    // the venue had traded the order before it confirmed the cancel, and says so now
+    report(child, 503, OrdStatus.Filled, lot);
+    print("late fill 503");
+    // the same execution again, as a venue resends it after a reconnect
+    report(child, 503, OrdStatus.Filled, lot);
+    print("503 resent");
+    // the venue takes the trade back
+    bust(child, 503, lot);
+    print("503 busted");
+  }
+
+  private void print(final String step) {
+    System.out.printf(
+        Locale.ROOT, "%-16s parent active %-5s  position %d lot(s)  late fills %d  unrouted reports %d  busts %d%n",
+        step, router.isActive(7), group.desk().risk().position(bond) / settings.hedgeLotMinor(),
+        group.lateFills(), group.unroutedReports(), group.venueBusts());
+  }
+
+  private static long onlyChild(final ChildOrderBook children) {
+    for (int s = 0; s < children.highWater(); s++) {
+      if (children.inUse(s)) {
+        return children.clOrdId(s);
+      }
+    }
+    throw new IllegalStateException("no child was sent");
+  }
+
+  // the messages below are the ones a venue gateway publishes to the loop's inbound ring
+
+  private void send(final int length) {
+    if (!publisher.offer(buffer, 0, length)) {
+      throw new IllegalStateException("inbound ring full");
+    }
+    source.advance(1_000_000L);
+    loop.doWork();
+  }
+
+  private void level(final long sequence, final Side side, final long price) {
+    final BookUpdateEncoder e = new BookUpdateEncoder();
+    e.wrapAndApplyHeader(buffer, 0, header).venueId(AppIds.CLOB_VENUE).instrumentId(bond).venueSeqNo(sequence)
+        .side(side).action(BookAction.Add).level((short) 1).quantity(50 * settings.hedgeLotMinor()).orderCount(1)
+        .timestampNanos(source.epochNanos());
+    e.price().mantissa(price);
+    send(MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength());
+  }
+
+  private void report(final long clOrdId, final long execId, final OrdStatus status, final long quantity) {
+    final ExecutionReportEncoder e = new ExecutionReportEncoder();
+    e.wrapAndApplyHeader(buffer, 0, header).venueId(AppIds.CLOB_VENUE).clOrdId(clOrdId).venueOrderId(1)
+        .execId(execId).instrumentId(bond).side(Side.Buy).ordStatus(status).lastQuantity(quantity).leavesQuantity(0)
+        .cumQuantity(quantity).transactNanos(source.epochNanos());
+    e.lastPrice().mantissa(quantity > 0 ? ask : 0L);
+    send(MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength());
+  }
+
+  private void bust(final long clOrdId, final long execId, final long quantity) {
+    final TradeBustEncoder e = new TradeBustEncoder();
+    e.wrapAndApplyHeader(buffer, 0, header).venueId(AppIds.CLOB_VENUE).clOrdId(clOrdId).execId(execId)
+        .instrumentId(bond).side(Side.Buy).quantity(quantity).timestampNanos(source.epochNanos());
+    e.price().mantissa(ask);
+    send(MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength());
+  }
+}
+```
+
+Expected output:
+
+```
+acknowledged     parent active true   position 0 lot(s)  late fills 0  unrouted reports 0  busts 0
+cancel confirmed parent active false  position 0 lot(s)  late fills 0  unrouted reports 0  busts 0
+late fill 503    parent active false  position 1 lot(s)  late fills 1  unrouted reports 1  busts 0
+503 resent       parent active false  position 1 lot(s)  late fills 1  unrouted reports 2  busts 0
+503 busted       parent active false  position 0 lot(s)  late fills 1  unrouted reports 2  busts 1
+```
+
+Every row is the desk's state after one message. Once the order is acknowledged, parent 7 is active and nothing is held. The cancel confirmation (execution 502) ends the parent and releases its child, so a later report belongs to no child the router holds. Execution 503 fills one lot of it: the position is 1 lot, late fills 1, and unrouted reports 1, since it is also a report for a child the router no longer has. The same execution resent raises only unrouted reports, to 2; the position stays at 1 lot because the execution id was seen before. The bust of 503 returns the position to 0 and counts one bust. Late fills stays at 1: it counts events, not what is held. The parent stays inactive; the hedger would see the late lot in its next residual.

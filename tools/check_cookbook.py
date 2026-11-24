@@ -57,6 +57,12 @@ RECIPES = {
     30: ("Recipe30ClobWorkup.java", "recipe30.txt"),
     34: ("Recipe34ConfigSchema.java", "recipe34.txt"),
     36: ("Recipe36AllocationCheck.java", "recipe36.txt"),
+    40: ("Recipe40SimV2Session.java", "recipe40.txt"),
+    41: ("Recipe41PricingV2.java", "recipe41.txt"),
+    42: ("Recipe42BreakEven.java", "recipe42.txt"),
+    43: ("Recipe43FactorHedge.java", "recipe43.txt"),
+    44: ("Recipe44LadderRouter.java", "recipe44.txt"),
+    45: ("Recipe45LateFill.java", "recipe45.txt"),
 }
 
 PYTHON_RECIPES = {
