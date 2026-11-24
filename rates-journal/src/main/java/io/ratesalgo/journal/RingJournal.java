@@ -286,7 +286,10 @@ public final class RingJournal implements AutoCloseable {
     return stallNanos;
   }
 
-  /** The largest backlog the journal thread has found before a read, in bytes. Readable from any thread. */
+  /**
+   * The largest backlog the journal thread has found, in bytes: before a batch, and when one
+   * returns, counted from where it started. Readable from any thread.
+   */
   public long backlogHighWater() {
     return backlogHighWater.get();
   }
@@ -420,10 +423,8 @@ public final class RingJournal implements AutoCloseable {
     public void run() {
       try {
         while (true) {
-          final long backlog = ring.producerPosition() - ring.consumerPosition();
-          if (backlog > backlogHighWater.get()) {
-            backlogHighWater.lazySet(backlog);
-          }
+          final long from = ring.consumerPosition();
+          noteBacklog(ring.producerPosition() - from);
           final int n = ring.read(this, DRAIN_LIMIT);
           if (n == 0) {
             if (stopping && ring.consumerPosition() == ring.producerPosition()) {
@@ -432,10 +433,19 @@ public final class RingJournal implements AutoCloseable {
             idle.idle();
           } else {
             idle.reset();
+            // what was queued while this batch was being written: the consumer position moves only
+            // when the batch returns, so a batch that waited at a roll counts the ring filling behind it
+            noteBacklog(ring.producerPosition() - from);
           }
         }
       } catch (final Throwable t) {
         failure = t;
+      }
+    }
+
+    private void noteBacklog(final long backlog) {
+      if (backlog > backlogHighWater.get()) {
+        backlogHighWater.lazySet(backlog);
       }
     }
 
