@@ -17,7 +17,7 @@ Read this first:
 - **No experiment has been run.** The family registration R5-FAM-001 is unsigned and has not been run. The pilot measured timings and one session sd; no P&L of any arm was looked at. The ledger still has 32 rows.
 - **No P&L claim is made.** The router benchmark and every count below are simulator results under declared assumptions (DR-008).
 
-Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on the machine: 1,478 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped.
+Release build: `mvn -o -B -ntp verify` on the merged branch at dc132a3 (later commits change documentation only): 1,484 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped.
 
 ### Simulator (Round 3)
 
@@ -39,7 +39,7 @@ Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on
 ### Strategy (Round 5)
 
 - Strategy v2 behind switches, all off by default (`DeskSettings.StrategySwitches`; `DeskSettings.strategyV2()` turns all on): break-even, cover-relative pricing (`CoverModel`, Q1, Q3); one inventory reservation price capped at the hedge cost (Q4); fitted factor covariance and a factor hedge planner (`FactorModel`, `FactorHedgePlanner`, Q2); per-instrument tick hedge cost (`TickHedgeCostModel`, `VenueTicks`, Q5); internalisation budget with a time stop and passive-first hedges (`Hedger.Config.internalise`, `passiveFirst`); persisted multi-horizon client markouts with tier priors (`MarkoutStore`, Q6); time to live by volatility, pull at half the quoted distance and tick-correct prices (Q7, Q8). DR-R5-01 to DR-R5-06. docs/research/STRATEGY_V2.md.
-- Arithmetic from the calibration, not a result: at the 10-year the average client's break-even half-spread is 0.107 bp against an expected winning half-spread of 0.139 bp; at the 2-year the break-even is 0.265 bp.
+- Arithmetic from the calibration, not a result: at the 10-year the average client's break-even half-spread is 0.107 bp against an expected winning half-spread of 0.139 bp; at the 2-year the break-even is 0.162 bp on its 1/256 tick.
 
 ### Router (Round 6)
 
@@ -87,6 +87,7 @@ Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on
 - `Decimal9`: negative ties round away from zero as documented (`Math.round` took them toward positive infinity); `round`, `floor` and `ceil` are exact from 2^52 units up.
 - `DeskGroup`: a fill of a child order the router has already released (one that crossed its cancel, or an order left from before a restart) is booked as a position, once by execution id, and counted (`lateFills`); it was dropped before, so risk and the venue could differ (DR-V12-D13).
 - `BacktestRunner`, simulator v2: a cancel that finds the order filled reports `Filled` and is refused; it reported `PartiallyFilled` and then a `Cancelled` with nothing left, which the desk counted as an unrouted report (DR-V12-E09).
+- Tests: `LoopAllocationTest` fills the outbound ring in its warm-up and asks for one zero window of four, each after the first within 1,024 bytes; `ChildOrderBookAllocationTest` repeats its long window after a one-off of at most 256 bytes (DR-V12-T01). `ratesresearch.prereg` type guards for mypy strict. `tools/check_cookbook.py` runs the command recipes 38 and 39. Cookbook recipes 40 to 45 (simulator v2 session, leave-one-out fair value, break-even pricing, factor hedging, ladder routing, a fill after release); four tutorials (docs/tutorials).
 - Dead code removed in `RiskEngine.onFairValue` and `PositionKeeper`; behaviour unchanged.
 - `FeedBinding`: the first snapshot of a book that already has levels is announced between DISCONNECTED and CONNECTED, so it is no longer read as a gap (DR-V12-D09).
 - `Venues.simV2`: the three order books publish as venues 102, 103 and 104 (all were 102).
@@ -99,6 +100,8 @@ Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on
 
 - New research documents on the site: SIM_V2_CALIBRATION, SIM_V2_DESIGN, PRICING_V2, STRATEGY_V2, ROUTER_BENCHMARK, DESK_V2_WIRING. API_SPEC, DECISIONS (DR-R3, DR-R4, DR-R5, DR-R6-R, DR-R6-L, DR-V12-B, D, P and E records), LEARN, COOKBOOK (recipes 38 and 39), ARCHITECTURE and diagrams, BENCHMARKS, runbooks (v2 profile, low-latency profile, registered experiment), the RTS 6 and algorithm inventories, SECURITY.md and the review's follow-up table updated for 1.2.0.
 - docs/research/PNL_AUDIT.md: the old simulator's figures are superseded for new work, because the calibration puts its adverse-selection constants outside what the data supports. The recorded rows stand as records.
+
+- Documentation audit against the code (2026-11-24): pricing v2 input path, thread and journal threads, core pinning, module dependencies, cancel and late-fill states, the journaling gateway, deployment topology and the registered-run refusals corrected; six new diagrams (pricing v2 data path, v2 topology, cancel and fill race, family experiment, latency stages, simulator v2 components).
 
 ## [1.1.0] - 2026-11-23
 

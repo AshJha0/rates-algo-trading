@@ -7,7 +7,7 @@ Python research package for [rates-algo-trading](../README.md). Python 3.12, pyt
 Phase 0:
 
 - `ratesresearch/provenance.py`: the `DataSource` record, the `SOURCES` tuple of public data sources, and `sha256_of`, `write_manifest`, `load_manifest` for pinning files.
-- `ratesresearch/fnv.py`: `fnv1a64(data, seed_prev_hash)`, the exact chain hash the Java journal uses (`API_SPEC.md` Section 1).
+- `ratesresearch/fnv.py`: `fnv1a64(data, seed_prev_hash)`, the exact chain hash of the Java journal's format version 1, and since 1.2.0 `word64` and `chain_hash` for format version 2 (`API_SPEC.md` Sections 1.3 and 1.6).
 
 Phase 1 (analytics, workstream W1):
 
@@ -25,11 +25,18 @@ Phase 5 (back-testing and research, `API_SPEC.md` Section 16):
 - `markouts.py`: markout curves by tier, size and product; informed-flow share; toxicity table for tiering.
 - `spread.py`: expected edge and optimal half-spread per product across the band; sensitivity to volatility and dealer count (the same rule as the Java `ModelSpreadStrategy`).
 - `stats.py`: SplitMix64, moving-block bootstrap, Welch, Holm, identical to the Java `Stats` on the shared fixture; `paired_t` and `paired_block_bootstrap_ci` for designs where treatment and baseline replay the same sessions, and `benjamini_hochberg` across experiments.
-- `prereg.py`: pre-registration validator and ledger reader. `python -m ratesresearch.prereg data/ledger/ledger.jsonl` verifies the hash chain and prints the looks per evaluation data set across pre-registration ids (CI runs it).
+- `prereg.py`: pre-registration validator and ledger reader. `python -m ratesresearch.prereg data/ledger/ledger.jsonl` verifies the hash chain and prints the looks per evaluation data set across pre-registration ids (CI runs it); since 1.2.0 `bh LEDGER FAMILY` adds a family's Benjamini-Hochberg table and `validate FILE...` checks version 2 registrations (`API_SPEC.md` Section 16.10).
 - `forward/`: `fetch` downloads a day's real rates, `check` re-derives the forward ledger's arithmetic, `health` reports a business day without a decision (the forward-log workflow opens an issue from it).
 - `backtest_analysis.py`: reads the Java runner's tables, reconciles attribution, recomputes experiment statistics, renders tables.
 - `notebooks/`: thin wrappers over the modules, executed by `tools/run_notebooks.py` in CI and rendered into the site.
 - `recipes/`: Python cookbook recipes, run by `tools/check_cookbook.py`.
+
+Round 2 and later:
+
+- `edge/`: the edge studies E1 to E6 on public data; `python -m ratesresearch.edge.run` prints the summary ([EDGE_STUDIES.md](../docs/research/EDGE_STUDIES.md)).
+- `simcal/`: the calibration of simulator v2, SIM3-CAL-001 (`python -m ratesresearch.simcal manifest|calibrate|validate|params|competitor`; the DTCC files and the parsed cache stay outside the repository), which writes `data/calibration/sim_v2_params.json` ([SIM_V2_CALIBRATION.md](../docs/research/SIM_V2_CALIBRATION.md)).
+
+Beside the package: `prereg/` holds the audit, edge, Round 5 and calibration registrations (the back-test ones of P5, R2B, V1H and V1C are under `data/preregs/`); `audit/`, `hedge/` and `forward/` hold the scripts of the P&L audit, the hedge experiments and the forward log. R5-FAM-001 in `prereg/` is unsigned and has not run.
 
 How a fitted preset reaches the quoting engine is drawn in [research to production parameters](../docs/site/pages/diagrams.md#research-to-production-parameters).
 

@@ -35,7 +35,7 @@ Plan-days are the unit the plan was written in. Wall-clock days are calendar day
 | Round 6: router | Ladder model, learned fill rates, scorecard, own-order registry, trade prints in the schema; fair benchmark run once | not planned | one session | about 2 h (15:57 to 17:51 UTC) | 2026-11-23 | closed: merged 19:06 UTC (4eff841); benchmark check failed against passive-with-deadline and recorded; DR-R6-R01 to R06 |
 | Round 6: latency | Threads per session and feed, core pinning, runtime profiles, versioned journal hash, bounded ring back-pressure, conflation, FIX buffer lending, wired-desk benchmark | not planned | one session | about 4 h (17:00 to 21:05 UTC) | 2026-11-23 | closed: merged 21:39 UTC (ea45e7b); figures from one laptop, loaded and quiet runs; DR-R6-L01 to L08 |
 | Round 7: assurance | Mutation testing on six modules, property tests, exact risk headroom, Decimal9 rounding, dead code | not planned | one session | about 3 h (16:04 to 19:00 UTC) | 2026-11-23 | closed: merged 20:10 UTC (0e5d35f) |
-| v1.2 integration | The four components on one desk and one process (`DeskProfile`, three order-book venues), the experiment harness and family registration, the process lane (profiles, sequenced venues, bounded dedupe, pure pricing state), small fixes, this documentation pass | not planned | not planned | merges 19:06 to 23:48 UTC on 2026-11-23; documentation 2026-11-24 | 2026-11-23 | merged branch built and tested at 27b2677 (1,478 Java tests, no failures); R5-FAM-001 unsigned, not run |
+| v1.2 integration | The four components on one desk and one process (`DeskProfile`, three order-book venues), the experiment harness and family registration, the process lane (profiles, sequenced venues, bounded dedupe, pure pricing state), small fixes, this documentation pass | not planned | not planned | merges 19:06 to 23:48 UTC on 2026-11-23; documentation 2026-11-24 | 2026-11-23 | merged branch built and tested at dc132a3 (1,484 Java tests, no failures); R5-FAM-001 unsigned, not run |
 
 ## Estimate versus actual
 
@@ -100,7 +100,7 @@ Planned 9 plan-days and about 0.75 wall-clock days. Actual, 2026-10-31: first co
 
 | Gate item | Result | Where |
 |---|---|---|
-| Zero bytes allocated on the loop thread over one million messages | met at the gate: 0 bytes after warm-up; since DR-INT-02 the test measures three windows of one million messages, the last must allocate 0 bytes and the second and third at most 1,024 each (the per-window bytes are printed only on failure) | `LoopAllocationTest`, `rates-core` |
+| Zero bytes allocated on the loop thread over one million messages | met at the gate: 0 bytes after warm-up; since DR-V12-T01 the test measures four windows of one million messages, each after the first at most 1,024 bytes and at least one of them 0 (the per-window bytes are printed only on failure) | `LoopAllocationTest`, `rates-core` |
 | Replay-hash equality property | met | `LoopPropertiesTest`, `LoopReplayTest` |
 | ArchUnit hot-path rules | met, each rule also proven to fail on a violating fixture | `HotPathRulesTest` |
 | Segmented journal round trip and cross-segment corruption | met | `SegmentedJournalTest` |
@@ -225,7 +225,7 @@ Six read-only reviews of main at 44c4f45 produced docs/reviews/REVIEW_2026-11-23
 
 ### Rounds 3 to 7 and the v1.2 integration
 
-The review's plan (Section 9) set one pull request per round. Rounds 3 to 7 ran as parallel lanes on 2026-11-23, each briefed as one session, with no plan-day estimate; the actuals in the phase table are first to last branch commit, elapsed, not working time. They merged on `v1.2-integration` between 19:06 and 21:39 UTC. The integration then ran four more lanes (desk wiring, experiment harness, family registration, process) and a small-fixes lane, merged by 23:48 UTC, and this documentation pass on 2026-11-24. The first full build of the merged branch found four failing process tests on the v2 profile (the corrected client tiers change its quotes, and eight-minute windows no longer won a trade) and the review of it two defects (DR-V12-E09, DR-V12-D13). Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on the machine: 1,478 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped.
+The review's plan (Section 9) set one pull request per round. Rounds 3 to 7 ran as parallel lanes on 2026-11-23, each briefed as one session, with no plan-day estimate; the actuals in the phase table are first to last branch commit, elapsed, not working time. They merged on `v1.2-integration` between 19:06 and 21:39 UTC. The integration then ran four more lanes (desk wiring, experiment harness, family registration, process) and a small-fixes lane, merged by 23:48 UTC, and this documentation pass on 2026-11-24. The first full build of the merged branch found four failing process tests on the v2 profile (the corrected client tiers change its quotes, and eight-minute windows no longer won a trade) and the review of it two defects (DR-V12-E09, DR-V12-D13). Release build: `mvn -o -B -ntp verify` on the merged branch at dc132a3 (later commits change documentation only): 1,484 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped.
 
 What closed, with the review ids (the review's follow-up section has the full table):
 
@@ -264,7 +264,6 @@ Owner items:
 
 - Sign R5-FAM-001 (or not) and start its run.
 - Repository settings, checked 2026-11-23 with `gh api`: the repository is public; the `main` ruleset is active with nine required status checks, 0 required approvals, strict status checks off, and deletion and force pushes blocked; the Pages source is GitHub Actions. Turning on strict status checks is review item E5. CodeQL default setup off and Issues enabled (deploy/OWNER_CHECKLIST.md).
-- `deploy/config/trading-v2.yaml` says a change needs an approving review; practice is that CI is the only gate (CONTRIBUTING.md).
 
 Carried from earlier releases:
 

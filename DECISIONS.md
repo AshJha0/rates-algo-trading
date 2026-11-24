@@ -748,6 +748,8 @@ Decision. `EventLoop`'s constructor now encodes a Backpressure message into its 
 
 Consequences. The gate still fails on any per-message allocation, since one byte per message is a megabyte per window, and on any allocation in the last window. A one-off cost on a path first taken just after warm-up no longer fails the build, but it shows in the message. The test now always sends 4 million messages, where before it sent between 2.1 and 4 million.
 
+*Annotation 2026-11-24: the zero-byte last window is superseded by DR-V12-T01 (four windows, one after the first exactly zero).*
+
 ## DR-INT-03: The trading process binds its loop journals through LoopJournals
 
 Date: 2026-10-31
@@ -819,7 +821,7 @@ Amended 2026-11-01, `LoopAllocationTest` and the journals' wait paths. On pull r
 - **Cause.** With `-Xlog:deoptimization=debug` on the failing run (run 10 of a second batch), the loop thread's only trap in the measured part was `SegmentedJournal$Preparer.take()`, an OSR `unstable_if` trap at the exit of the wait loop. The loop's warm-up never waits, so C2 compiles the wait as never taken. The first real wait then deoptimises compiled frames on the loop thread and re-creates objects that escape analysis had removed. The 176 bytes are that one-off; they are not per message. A production loop would take the same deoptimisation, at its first waited roll, while quoting.
 - **Fix.** `JournalWarmUp.exerciseWaitPaths` runs both wait paths before any loop starts: the roll that waits for its segment, and the append to a full ring (`RingJournal.append`). It uses scratch journals with 64 KiB segments and a 64 KiB ring, appended in a tight loop until each path has waited 200 times, then deletes them. Branch profiles belong to the method, so the production journals are never written. `TradingProcess` calls it before it builds the loops, as do `LatencyHarness` and the test. The JIT-settled extra warm-up stays.
 - **After.** 10 of 10 runs passed on the same setup. Seven of them had a waited roll inside a measured window, and each such window allocated 0 bytes. The deoptimisation logs of all ten show no trap in `Preparer.take` on any thread. `SegmentedJournalTest.aWaitedRollAllocatesNothingOnTheAppendingThreadAfterWarmUp` checks the journal on its own.
-- **Window exclusion.** Excluding windows that contain a roll was not needed, so the measured windows, the 1,024-byte bound and the zero-byte last window are unchanged.
+- **Window exclusion.** Excluding windows that contain a roll was not needed, so the measured windows, the 1,024-byte bound and the zero-byte last window are unchanged. (The last-window rule is superseded by DR-V12-T01, 2026-11-24.)
 
 Amended 2026-11-01, latency harness accounting. The second of the three equalities above was wrong. `LoopCounters.OUTBOUND` counts every Quote the loop produced, delivered or not, so a run with drops failed on `inbound == outbound + outboundDropped` (windows-latest on pull request 4: inbound 58,025, outbound 58,025, outboundDropped 457). The equalities are now: processed equals generated less generator drops; produced equals processed (`inbound == outbound`, one Quote per request); and the gateway sees the produced less the dropped (`outbound - outboundDropped == seen`). Backpressure events are at most the drops, since one event covers a run of drops on a gateway. A Quote lost without being counted still fails the test.
 
@@ -2704,3 +2706,13 @@ Context. The loop dropped every execution report of a router order its router no
 Decision. `DeskGroup` books the fill to the risk engine at its own side, price and instrument, once by venue and execution id, and counts it (`lateFills`). The hedger sees it in the next residual. A report without a fill is still only counted.
 
 Consequences. A later bust of the same execution reverses it. The parent's accounting is not reopened; the router's outstanding quantity was freed when the child ended.
+
+## DR-V12-T01: Allocation gates ask for one clean window, not a named one
+
+Date: 2026-11-24
+
+Context. `LoopAllocationTest` required the last of three windows to allocate nothing. Run without escape analysis it failed twice on one-off costs that fell there: 96 bytes on the first backpressure events of a run, on Windows, and 184 bytes in a window with a waited segment roll, on Linux with Java 27. Neither scales with what it fell beside: 900,000 backpressure events a window allocated nothing, and with segments of 8 and 32 MB on Linux (2 CPUs) windows with up to 15 waited rolls in DIRECT mode and 29 in RING allocated nothing, while one window of each DIRECT run, the third or the fourth, showed 152 bytes once. What allocates them was not identified; a deoptimisation is the likely cause. `ChildOrderBookAllocationTest` failed the same way on Linux (128 bytes in one window of 50,134 fills).
+
+Decision. The loop gate takes the rule of `WiredLoopAllocationTest` (DR-R2W-12) over four windows: no window after the first above 1,024 bytes, and at least one of them exactly zero. Its warm-up fills the outbound ring, so the backpressure path has run. The dedupe gate repeats its long window, at most twice, only after one of at most 256 bytes; each repeat books more than twice every fill before it, and the last must allocate nothing.
+
+Consequences. A leak of one byte per message is still a megabyte in every window, and a set that grows with the day is still an array of many kilobytes in a window that outgrows the day. A one-off of a few hundred bytes no longer fails the build by where it falls. A cost paid once per rare event in some windows only, below the bound, would pass; the report prints every window.

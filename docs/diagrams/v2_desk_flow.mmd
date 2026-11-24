@@ -21,7 +21,7 @@ flowchart LR
   router_in["InboundRouter"]
   subgraph loop["Event loop rates-loop-usd: DeskGroup"]
     book["LoopBook<br/>per venue, trade prints"]
-    pricing["FuturesOverlay over PricingV2<br/>setInput, repriceIfDirty"]
+    pricing["FuturesOverlay over PricingV2<br/>onCurveInput, advanceTo"]
     spread["SpreadRiskBook<br/>displayed only"]
     strat["Strategy v2<br/>DeskSettings.strategyV2()"]
     hedger["Hedger and FactorHedgePlanner<br/>HedgeAvailability per instrument"]

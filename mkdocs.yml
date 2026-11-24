@@ -18,6 +18,12 @@ nav:
   - Reviewer summary: reviewer-summary.md
   - Learn: learn.md
   - Cookbook: cookbook.md
+  - Tutorials:
+      - Index: tutorials.md
+      - 1 A first back-test day: tutorial-first-backtest-day.md
+      - 2 The v2 desk in process: tutorial-v2-desk-profile.md
+      - 3 A registered experiment: tutorial-registered-experiment.md
+      - 4 Wired latency: tutorial-wired-latency.md
   - API contract: api-spec.md
   - Architecture: architecture.md
   - Benchmarks: benchmarks.md

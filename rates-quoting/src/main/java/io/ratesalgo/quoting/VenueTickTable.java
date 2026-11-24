@@ -22,7 +22,10 @@ public final class VenueTickTable implements VenueTicks {
   private final long[] byType = new long[ProductType.values().length];
   private final Long2LongHashMap byInstrument = new Long2LongHashMap(64, 0.5f, 0L);
 
-  /** The simulator's ticks: 1/128 for bonds and futures, 0.0001 percent for swaps. */
+  /**
+   * The version 1 simulator's ticks: 1/128 for bonds, 0.0001 percent for swaps. Futures default to
+   * 1/128 too; the desk sets each hedge instrument's own tick over these (TY trades in 1/64).
+   */
   public static VenueTickTable simulatorDefaults() {
     return new VenueTickTable()
         .type(ProductType.BOND, TREASURY_128THS)

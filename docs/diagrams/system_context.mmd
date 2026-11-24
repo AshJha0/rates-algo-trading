@@ -7,7 +7,7 @@ flowchart LR
     clob["D2D Treasury CLOB<br/>ClobSimulator"]
     sef["SEF, RFQ and order book<br/>SefSimulator"]
   end
-  platform["rates-algo-trading<br/>OpsProcessMain: event loop, quoting,<br/>risk, hedger, router, journal, post-trade"]
+  platform["rates-algo-trading<br/>TradingProcessMain: event loop, quoting,<br/>risk, hedger, router, journal, post-trade"]
   ccp["Clearing house<br/>ClearingHouseSimulator"]
   data["Public data sources<br/>data/SOURCES.md: NY Fed, ECB, BoE,<br/>US Treasury, DTCC SDR"]
   research["Research package<br/>research/ratesresearch"]
@@ -18,7 +18,7 @@ flowchart LR
   clients -->|RFQ to at least three| sef
   platform <-->|FIX 4.4 quotes| d2c
   platform <-->|FIX 4.4 orders, SBE book feed| clob
-  platform <-->|FIX 4.4 quotes and orders| sef
+  platform <-.->|FIX 4.4, certified, not connected to the process| sef
   platform -->|swap trades submitted| ccp
   ccp -->|accepted, cleared or rejected| platform
   data -->|downloads pinned by manifests| research
@@ -28,7 +28,7 @@ flowchart LR
   platform -->|/metrics| mon
   mon -->|alerts with runbook links| desk
   platform -->|end-of-day report, breaks, order records| desk
-  platform -.->|planned at integration| report
+  platform -.->|not built| report
 
   classDef planned stroke-dasharray: 5 5
   class report planned

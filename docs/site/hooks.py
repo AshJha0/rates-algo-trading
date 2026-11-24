@@ -44,6 +44,11 @@ PAGES: dict[str, str] = {
     "strategy-v2.md": "docs/research/STRATEGY_V2.md",
     "router-benchmark.md": "docs/research/ROUTER_BENCHMARK.md",
     "desk-v2-wiring.md": "docs/research/DESK_V2_WIRING.md",
+    "tutorials.md": "docs/tutorials/README.md",
+    "tutorial-first-backtest-day.md": "docs/tutorials/01-first-backtest-day.md",
+    "tutorial-v2-desk-profile.md": "docs/tutorials/02-v2-desk-profile.md",
+    "tutorial-registered-experiment.md": "docs/tutorials/03-registered-experiment.md",
+    "tutorial-wired-latency.md": "docs/tutorials/04-wired-latency.md",
 }
 
 # research notebooks (P5): page notebooks/<name>.md from research/notebooks/<name>.ipynb

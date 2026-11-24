@@ -1,0 +1,64 @@
+%% Title: The v2 process: venues, FIX threads, the sequencer, sessions, feeds and the loop (1.2.0, opt-in)
+flowchart LR
+  subgraph engines["QuickFIX/J acceptor threads, one engine per venue"]
+    e1["D2C 101"]
+    e2["CLOB 102"]
+    e3["CLOB 103"]
+    e4["Futures 104"]
+  end
+  subgraph vt["Thread rates-venues: the only one in the market model"]
+    seq["SimSequencer.drain<br/>inboxes in order D2C, CLOB 1, CLOB 2, futures;<br/>a second draining thread is refused"]
+    model["MarketModel and BookModel<br/>venue clock and timed events"]
+    curve["CurveFeedV2"]
+    ctl["Control ring 2 reader"]
+  end
+  subgraph st["One thread per FIX session"]
+    s1["rates-d2c<br/>VenueSession, ring 0"]
+    s2["rates-clob<br/>VenueSession, ring 1"]
+    s3["rates-clob2<br/>VenueSession, ring 4"]
+    s4["rates-fut<br/>VenueSession, ring 5"]
+  end
+  subgraph ft["One thread per book feed"]
+    f1["rates-feed<br/>status 3"]
+    f2["rates-feed2<br/>status 6"]
+    f3["rates-feed-fut<br/>status 7"]
+  end
+  inring["Inbound ring<br/>many producers, one reader"]
+  loopT["rates-loop-usd<br/>EventLoop, DeskGroup"]
+  jr["Journals in, out, route<br/>journal-prepare threads, and<br/>journal-drain threads in ring mode"]
+  sup["rates-supervisor"]
+  http["ops-http"]
+
+  e1 -->|inbox| seq
+  e2 -->|inbox| seq
+  e3 -->|inbox| seq
+  e4 -->|inbox| seq
+  seq --> model
+  model --> curve
+  e1 <-->|FIX| s1
+  e2 <-->|FIX| s2
+  e3 <-->|FIX| s3
+  e4 <-->|FIX| s4
+  model -->|in-process book channel| f1
+  model --> f2
+  model --> f3
+  s1 --> inring
+  s2 --> inring
+  s3 --> inring
+  s4 --> inring
+  f1 --> inring
+  f2 --> inring
+  f3 --> inring
+  curve --> inring
+  inring --> loopT
+  loopT -->|outbound ring| s1
+  loopT --> s2
+  loopT --> s3
+  loopT --> s4
+  loopT --> ctl
+  loopT --> jr
+  http -->|kill: halt flag| st
+  sup -->|watches, halts, closes sockets| st
+  sup --> ft
+  sup --> vt
+  sup --> loopT

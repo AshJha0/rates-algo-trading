@@ -32,7 +32,7 @@ flowchart TD
     sess["Per session: one journal written once from the seed;<br/>every arm on a fresh model of the same seed"]
     ckpt["Checkpoints per session and arm<br/>a killed run resumes at the next arm"]
     summary["summary.json once, after the last session"]
-    rows["Ledger rows: one per hypothesis<br/>plus the descriptive row; one look per family run"]
+    rows["Ledger rows: one per hypothesis<br/>plus the description rows (D0, D1...);<br/>one look per family run"]
     bh["LedgerCli --bh family:ID<br/>Benjamini-Hochberg, by command only"]
   end
   reg --> runner

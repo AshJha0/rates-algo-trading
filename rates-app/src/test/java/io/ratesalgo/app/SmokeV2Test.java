@@ -43,7 +43,7 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>The assertions are structural: what was wired works end to end. No P&amp;L is read here or
  * printed, and nothing in the profile was chosen by looking at one; the strategy's parameters are
  * the ones docs/research/STRATEGY_V2.md declares, and whether they make money is what the
- * pre-registered runs R5-001 to R5-007 are for. The counts printed are a record of this seed, not
+ * pre-registered family R5-FAM-001 is for. The counts printed are a record of this seed, not
  * a result.
  *
  * <p>Observed on this seed, recorded and not asserted: the factor hedge planner hedged every

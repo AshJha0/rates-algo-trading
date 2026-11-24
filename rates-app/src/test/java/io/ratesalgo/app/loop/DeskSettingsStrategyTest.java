@@ -20,7 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * Round 5: the strategy V2 preset turns the capabilities on together; the default preset turns
  * none of them on. The wiring run checks that the wired process builds and runs the V2 desk; it
- * reads no P&amp;L (the pre-registrations R5-001 to R5-006 decide what is read, and when).
+ * reads no P&amp;L (the pre-registered family R5-FAM-001 decides what is read, and when).
  */
 class DeskSettingsStrategyTest {
 
