@@ -111,6 +111,12 @@ class RestartRecoveryTest {
           new Stopped(desk.stateDigest(p.universe().instrumentIds()), out[0], out[1], in[0],
               desk.desk().quoting().quotesSent(), desk.desk().quoting().fills(), desk.liveChildren(),
               p.clock().epochNanos());
+      // the next segment is prepared by a background thread; the image is taken once it is there
+      final long deadline = System.nanoTime() + 60 * SECOND;
+      while (SegmentedJournal.segmentIndices(p.group(0).dir(), "in").length < 2) {
+        assertTrue(System.nanoTime() - deadline < 0, "timed out waiting for the prepared next segment");
+        java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L);
+      }
       crashImage(live, image);
       return stopped;
     } finally {
