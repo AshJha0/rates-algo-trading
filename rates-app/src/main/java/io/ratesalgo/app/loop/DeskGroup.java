@@ -166,7 +166,6 @@ public final class DeskGroup {
   private long duplicateBusts;
   private long duplicateFills;
   private long tradePrints;
-  private long pendingSinceNanos;
   private long repricesPushed;
   private long ownOrdersRegistered;
   private long unknownBusts;
@@ -656,14 +655,11 @@ public final class DeskGroup {
     if (kind != CurveInputKind.ParSwap && kind != CurveInputKind.Fixing && kind != CurveInputKind.Future) {
       return;
     }
+    // a round left incomplete is applied by advanceTo on the timer, from journaled instants only
     final long before = pricingV2.reprices();
-    final boolean held = pricingV2.pendingInputs() > 0;
     pricing.onCurveInput(instrumentId, curveInput.value().mantissa(), curveInput.timestampNanos());
     if (pricingV2.reprices() != before) {
       afterReprice();
-    } else if (!held && pricingV2.pendingInputs() > 0) {
-      // the first input of a round: the timer applies the round if the rest of it never comes
-      pendingSinceNanos = loop.clock().epochNanos();
     }
   }
 
@@ -894,14 +890,10 @@ public final class DeskGroup {
   private void onHousekeeping(final long timerId, final long nowNanos) {
     final long epoch = loop.clock().epochNanos();
     if (pricingV2 != null) {
-      // the business date changes at the cut without market data, and a round the feed left
-      // incomplete is applied once it has waited its conflation time on this loop's clock (the
-      // binding itself only looks when another input arrives)
+      // the business date changes at the cut without market data, and advanceTo applies a round
+      // the feed left incomplete, whole, once its conflation time has passed
       final long before = pricingV2.reprices();
       pricingV2.advanceTo(epoch);
-      if (pricingV2.pendingInputs() > 0 && epoch - pendingSinceNanos >= pricingV2.options().conflationNanos()) {
-        pricingV2.flush();
-      }
       if (pricingV2.reprices() != before) {
         afterReprice();
       }

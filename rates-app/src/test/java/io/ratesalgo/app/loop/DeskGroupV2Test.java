@@ -1,5 +1,6 @@
 package io.ratesalgo.app.loop;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -44,6 +45,7 @@ import io.ratesalgo.messages.sbe.TimeInForce;
 import io.ratesalgo.messages.sbe.TradeBustEncoder;
 import io.ratesalgo.messages.sbe.TradePrintEncoder;
 import io.ratesalgo.router.SmartOrderRouter;
+import io.ratesalgo.sim.SessionSeeds;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -199,21 +201,29 @@ class DeskGroupV2Test {
 
   /** One complete curve round of the binding's own build set, flat at {@code ratePercent}. */
   private void curveRound(final double ratePercent) {
-    final PricingV2 pricing = group.pricingV2();
     final long stamp = source.epochNanos();
-    for (int i = 0; i < pricing.inputCount(); i++) {
-      final int id = pricing.inputId(i);
-      final CurveInputKind kind =
-          id == V2InputIds.OVERNIGHT
-              ? CurveInputKind.Fixing
-              : V2InputIds.isSr1(id) || V2InputIds.isSr3(id) ? CurveInputKind.Future : CurveInputKind.ParSwap;
-      final double value = kind == CurveInputKind.Future ? 100.0 - ratePercent : ratePercent;
-      final CurveInputEncoder e = new CurveInputEncoder();
-      e.wrapAndApplyHeader(buffer, 0, header).curveId(AppIds.SOFR_CURVE).kind(kind).instrumentId(id).tenor("    ")
-          .timestampNanos(stamp);
-      e.value().mantissa(Math.round(value * 1e9));
-      run(MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength());
+    for (int i = 0; i < group.pricingV2().inputCount(); i++) {
+      curveInput(i, ratePercent, stamp);
     }
+    curveHeartbeat(stamp);
+  }
+
+  /** Input {@code i} of the build set, flat at {@code ratePercent}, stamped {@code stamp}. */
+  private void curveInput(final int i, final double ratePercent, final long stamp) {
+    final int id = group.pricingV2().inputId(i);
+    final CurveInputKind kind =
+        id == V2InputIds.OVERNIGHT
+            ? CurveInputKind.Fixing
+            : V2InputIds.isSr1(id) || V2InputIds.isSr3(id) ? CurveInputKind.Future : CurveInputKind.ParSwap;
+    final double value = kind == CurveInputKind.Future ? 100.0 - ratePercent : ratePercent;
+    final CurveInputEncoder e = new CurveInputEncoder();
+    e.wrapAndApplyHeader(buffer, 0, header).curveId(AppIds.SOFR_CURVE).kind(kind).instrumentId(id).tenor("    ")
+        .timestampNanos(stamp);
+    e.value().mantissa(Math.round(value * 1e9));
+    run(MessageHeaderEncoder.ENCODED_LENGTH + e.encodedLength());
+  }
+
+  private void curveHeartbeat(final long stamp) {
     final HeartbeatEncoder hb = new HeartbeatEncoder();
     hb.wrapAndApplyHeader(buffer, 0, header).sourceId(AppIds.CURVE_HEARTBEAT_SOURCE).timestampNanos(stamp);
     run(MessageHeaderEncoder.ENCODED_LENGTH + hb.encodedLength());
@@ -570,6 +580,173 @@ class DeskGroupV2Test {
     assertTrue(pricing.reprices() > reprices, "the held input was applied without another curve message");
     assertEquals(0, pricing.pendingInputs());
     assertTrue(group.repricesPushed() > pushed);
+  }
+
+  private long[] fairMids() {
+    final int[] ids = UNIVERSE.instrumentIds();
+    final long[] mids = new long[ids.length];
+    for (int k = 0; k < ids.length; k++) {
+      mids[k] = group.binding().fairMid(ids[k]);
+    }
+    return mids;
+  }
+
+  private long[] swapMids() {
+    final long[] mids = new long[UNIVERSE.swaps().size()];
+    for (int k = 0; k < mids.length; k++) {
+      mids[k] = group.binding().fairMid(UNIVERSE.swaps().get(k).instrumentId());
+    }
+    return mids;
+  }
+
+  private double[] curveQuotes() {
+    final PricingV2 pricing = group.pricingV2();
+    final double[] quotes = new double[pricing.inputCount()];
+    for (int i = 0; i < quotes.length; i++) {
+      quotes[i] = pricing.curve().quote(i);
+    }
+    return quotes;
+  }
+
+  @Test
+  void aRoundOnOneTimestampIsOneRepriceAndEveryFairValueIsPushedAfterIt() {
+    desk(DeskProfile.v2());
+    final PricingV2 pricing = group.pricingV2();
+    curveRound(3.60);
+    pass(500_000_000L);
+    final long reprices = pricing.reprices();
+    final long pushed = group.repricesPushed();
+    final long[] mids = fairMids();
+    final long stamp = source.epochNanos();
+    final int n = pricing.inputCount();
+    assertEquals(14, n, "a fixing, five futures, eight swaps");
+    for (int i = 0; i < n - 1; i++) {
+      curveInput(i, 3.65, stamp);
+      // the loop's clock moves 1 ms an input and the timer runs: still held, nothing pushed
+      assertEquals(reprices, pricing.reprices(), "input " + i + " of the round");
+      assertEquals(pushed, group.repricesPushed());
+      assertArrayEquals(mids, fairMids(), "no fair value moves before the round is complete");
+    }
+    curveInput(n - 1, 3.65, stamp);
+    assertEquals(reprices + 1, pricing.reprices(), "the last input applies the round once");
+    assertEquals(pushed + 1, group.repricesPushed(), "and its fair values are pushed once");
+    assertEquals(0, pricing.pendingInputs());
+    final long[] after = swapMids();
+    for (int k = 0; k < after.length; k++) {
+      assertNotEquals(mids[indexOf(UNIVERSE.swaps().get(k).instrumentId())], after[k], "every swap moved");
+    }
+    // the timer finds nothing held: no second reprice of the same round
+    curveHeartbeat(stamp);
+    pass(500_000_000L);
+    assertEquals(reprices + 1, pricing.reprices());
+    assertEquals(pushed + 1, group.repricesPushed());
+  }
+
+  private static int indexOf(final int instrumentId) {
+    final int[] ids = UNIVERSE.instrumentIds();
+    for (int k = 0; k < ids.length; k++) {
+      if (ids[k] == instrumentId) {
+        return k;
+      }
+    }
+    throw new AssertionError("not in the universe: " + instrumentId);
+  }
+
+  @Test
+  void aRepeatedIdenticalRoundSolvesNothingAndMovesNoFairValue() {
+    desk(DeskProfile.v2());
+    final PricingV2 pricing = group.pricingV2();
+    curveRound(3.60);
+    pass(500_000_000L);
+    final long stamp = source.epochNanos();
+    for (int i = 0; i < pricing.inputCount(); i++) {
+      curveInput(i, 3.65, stamp);
+    }
+    final long reprices = pricing.reprices();
+    final long pushed = group.repricesPushed();
+    final long rebuilds = pricing.rebuilds();
+    final long[] mids = fairMids();
+    // the same round delivered again on the same timestamp, as after a feed reconnect
+    for (int i = 0; i < pricing.inputCount(); i++) {
+      curveInput(i, 3.65, stamp);
+    }
+    pass(500_000_000L);
+    assertEquals(rebuilds, pricing.rebuilds(), "unchanged quotes: no curve solve");
+    assertArrayEquals(mids, fairMids(), "no fair value moved");
+    assertEquals(0, pricing.pendingInputs());
+    // the binding still applies a complete round once (a recompute without a solve); what the
+    // desk must not do is apply it per input or twice
+    assertEquals(reprices + 1, pricing.reprices(), "one reprice for the whole round");
+    assertEquals(pricing.reprices() - reprices, group.repricesPushed() - pushed, "every reprice is pushed, once");
+  }
+
+  @Test
+  void aRoundSplitAcrossTwoTimestampsEndsOnEveryInputOfIt() {
+    desk(DeskProfile.v2());
+    final PricingV2 pricing = group.pricingV2();
+    curveRound(3.60);
+    pass(500_000_000L);
+    final long reprices = pricing.reprices();
+    final long pushed = group.repricesPushed();
+    final long[] mids = swapMids();
+    final int n = pricing.inputCount();
+    final int half = n / 2;
+    // the feed conflated: the first half of the round on one timestamp, the rest 150 ms later
+    final long first = source.epochNanos();
+    for (int i = 0; i < half; i++) {
+      curveInput(i, 3.65, first);
+    }
+    pass(150_000_000L);
+    assertEquals(reprices + 1, pricing.reprices(), "the timer applied the first half once its 100 ms had passed");
+    assertEquals(0, pricing.pendingInputs());
+    final long second = source.epochNanos();
+    for (int i = half; i < n; i++) {
+      curveInput(i, 3.65, second);
+    }
+    assertEquals(n - half, pricing.pendingInputs(), "the second half waits for the rest of its round");
+    pass(150_000_000L);
+    assertEquals(reprices + 2, pricing.reprices(), "and is applied whole by the timer");
+    assertEquals(pushed + 2, group.repricesPushed(), "each reprice pushed");
+    assertEquals(0, pricing.pendingInputs());
+    final double[] split = curveQuotes();
+    final long[] splitMids = swapMids();
+    for (int k = 0; k < mids.length; k++) {
+      assertNotEquals(mids[k], splitMids[k], "every swap moved");
+    }
+
+    // a desk given the same round whole builds its curve on the same quotes
+    desk(DeskProfile.v2());
+    curveRound(3.60);
+    pass(500_000_000L);
+    curveRound(3.65);
+    assertArrayEquals(curveQuotes(), split, "the curve stands on every input of the round");
+  }
+
+  @Test
+  void aRecordedV2SessionReplaysToTheSameFairValuesAndJournal() {
+    final long seed = SessionSeeds.seed(SessionSeeds.ACCEPTANCE, 91_007);
+    final V2DeskProcess p =
+        V2DeskProcess.start(new V2DeskProcess.Options(dir, seed, DeskProfile.v2(), 120 * 60 * SECOND));
+    final long[] mids;
+    final long reprices;
+    final long digest;
+    try {
+      p.step(120 * SECOND, 20_000_000L);
+      group = p.desk();
+      assertTrue(group.pricingV2().reprices() > 100, "curve rounds reached the desk");
+      mids = fairMids();
+      reprices = group.pricingV2().reprices();
+      digest = group.stateDigest(p.universe().instrumentIds());
+    } finally {
+      p.close();
+    }
+    final V2DeskProcess.Replayed replay = V2DeskProcess.replayDesk(p.groupDir(), p.profile());
+    assertTrue(replay.result().matches(), "replay: " + replay.result());
+    assertEquals(replay.result().recordedHash(), replay.result().replayHash(), "the journal hash");
+    group = replay.desk();
+    assertEquals(reprices, group.pricingV2().reprices(), "the same reprices");
+    assertArrayEquals(mids, fairMids(), "the same fair values");
+    assertEquals(digest, group.stateDigest(p.universe().instrumentIds()));
   }
 
   @Test

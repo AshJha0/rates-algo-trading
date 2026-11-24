@@ -167,6 +167,15 @@ class SmokeV2Test {
       final String before = p.statusJson();
       System.out.println("status v2: " + before);
 
+      // a stepped day repeats frame for frame (three runs agreed), so its structural counts are
+      // asserted; they change with the seed, the simulator or the step, never with P&L
+      assertEquals(10_996, p.feed(0).frames(), "book frames, CLOB 1");
+      assertEquals(10_312, p.feed(1).frames(), "book frames, CLOB 2");
+      assertEquals(7_204, p.feed(2).frames(), "book frames, futures");
+      assertEquals(3_600, p.curve().rounds(), "curve rounds");
+      assertEquals(p.curve().rounds() + 1, desk.pricingV2().reprices(), "the start-of-day marks and one per round");
+      assertEquals(p.curve().rounds(), desk.repricesPushed(), "each round's reprice pushed once");
+
       // pricing v2 is fed whole by the simulator
       assertEquals(14, p.curve().inputsPerRound(), "the build set: a fixing, five futures, eight swaps");
       assertEquals(0, desk.pricingV2().unfedInputs(), "no curve input is seeded");
