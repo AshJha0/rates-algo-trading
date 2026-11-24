@@ -148,3 +148,7 @@ What it says, and no more:
 - lowLatency-direct-plain reached a p50 of 49 us with a p99 of 0.3 ms; lowLatency-ring-plain, three minutes later, a p50 of 62 us with a p99 of 8.5 ms and a generator lateness p99 of 1.3 ms against 0.06 ms. The machine was busier for that run. Ring against direct journaling cannot be separated in this data either.
 - One request of 120,000 was not answered (the desk's quoting decision); none was dropped (`outboundDropped` 0) and no run halted.
 - Nothing here is a target met, and nothing here is evidence about a production host.
+
+## Quiet run, 2026-11-24 (appended)
+
+The eight configurations and the Parallel comparison were repeated on a quiet laptop at commit 27b2677; the table and its reading are in docs/BENCHMARKS.md and the reports in `docs/benchmarks/wired-20261124-quiet/`. The suite was started from the checkout's own class directories rather than through `exec:exec@wired`, which, run alone on rates-bench, would take sibling modules from the local Maven repository.

@@ -17,7 +17,7 @@ Read this first:
 - **No experiment has been run.** The family registration R5-FAM-001 is unsigned and has not been run. The pilot measured timings and one session sd; no P&L of any arm was looked at. The ledger still has 32 rows.
 - **No P&L claim is made.** The router benchmark and every count below are simulator results under declared assumptions (DR-008).
 
-<!-- BUILD-RESULT -->
+Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on the machine: 1,478 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped.
 
 ### Simulator (Round 3)
 
@@ -53,7 +53,7 @@ Read this first:
 - `runtime.profile` (`default` or `lowLatency`) and `runtime.gatewayIdleStrategy`, `gatewayCpu`, `journalMode`, `journalHash`, `journalIdleStrategy`, `lockJournalPages`, `conflateCurveInputs`; `deploy/config/trading-lowlatency.yaml`. The default profile is unchanged.
 - Journal: chain hash named in the segment header. Format version 1 is FNV-1a, byte for byte as before, and stays the default; format version 2 names WORD64 at header offset 20 and hashes eight bytes a step. CRC32C was rejected because it keeps 32 bits (L8, DR-R6-L03). Ring journal: a full-ring wait and the segment preparer's retire wait fail after a stall limit instead of spinning for ever; the backlog high-water mark is reported; DIRECT stays the default; a restart works from a ring-mode crash image (L9, DR-R6-L04). Optional mlock of segments on Linux.
 - Curve-input conflation on the loop, opt-in (L10, DR-R6-L05). The FIX writer lends its buffer to the transport, so a plain send copies no body (L11, DR-R6-L08). Allocation tests also run with escape analysis off (L13, DR-R6-L07). The Dockerfile's JVM flags are justified one by one; ZGC kept (DR-R6-L06).
-- Wired-desk benchmark (`WiredDeskBenchmark`, `WiredDeskSuite`): the real trading process over loopback FIX, scheduled send to quote written, no run discarded (L4). Results in docs/BENCHMARKS.md from a loaded Windows laptop; a quiet-machine run is still owed. JMH: `ChainHashBenchmark`, `FixEncodeBenchmark`, `PricingV2RepriceBenchmark`.
+- Wired-desk benchmark (`WiredDeskBenchmark`, `WiredDeskSuite`): the real trading process over loopback FIX, scheduled send to quote written, no run discarded (L4). Results in docs/BENCHMARKS.md, from a loaded and a quiet run on one Windows laptop. JMH: `ChainHashBenchmark`, `FixEncodeBenchmark`, `PricingV2RepriceBenchmark`.
 
 ### Process and desk profiles
 

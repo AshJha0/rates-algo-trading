@@ -30,7 +30,7 @@ What is not built or not real is listed under "Limits" in the [README](https://g
 - [Cookbook](cookbook.md): 39 how-do-I recipes; 36 have their output checked in CI.
 - [API contract](api-spec.md): units, journal format, SBE schema, clock semantics, each module's interface.
 - [Architecture](architecture.md): components, the wired process, the event loop, threading and numerical rules.
-- [Benchmarks](benchmarks.md): the wired-desk benchmark from a loaded laptop, and the earlier event-loop runs as history.
+- [Benchmarks](benchmarks.md): the wired-desk benchmark on one laptop, quiet and loaded, and the earlier event-loop runs as history.
 - [Decisions](decisions.md): decision records.
 - [Status](status.md): estimate against actual for every phase and round, and open items.
 - [Diagrams](diagrams.md): module dependencies, data flow, the v2 desk, threads, the experiment pipeline, the journal frame.
