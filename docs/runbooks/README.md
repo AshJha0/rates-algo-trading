@@ -4,7 +4,7 @@ One runbook per incident class, plus the daily procedures and the warm-standby d
 
 | Incident class | Runbook | Alert rules |
 |---|---|---|
-| Market data feed gap | [feed-gap.md](feed-gap.md) | InboundQueueBacklog; GatewayStatus DISCONNECTED for the feed (status id 3); quotes pulled with reason FeedGap |
+| Market data feed gap | [feed-gap.md](feed-gap.md) | InboundQueueBacklog; GatewayStatus DISCONNECTED for the feed (status id 3; on the v2 profile 6 and 7 for its other two feeds); quotes pulled with reason FeedGap |
 | Venue session lost | [venue-disconnect.md](venue-disconnect.md) | VenueSimulatorDown; GatewayStatus DISCONNECTED; quotes pulled with reason SessionLoss |
 | Risk limit breach | [limit-breach.md](limit-breach.md) | LimitUtilisationHigh, KillSwitchEngaged, QuotesLiveAfterKill |
 | Pricing fault | [pricing-fault.md](pricing-fault.md) | PricingStageSlow; KillSwitch reason StaleReference |

@@ -11,6 +11,7 @@ sequenceDiagram
 
   GW->>IN: offer(SBE header + body), false if full
   Note over L: duty cycle starts: EventClock.latch()
+  L->>OUT: retry queued cancels and withdrawals (retryOnDrop, ring only)
   L->>IN: read(up to readLimit)
   IN-->>L: record (type = template id)
   L->>L: check framing and schema
@@ -22,6 +23,10 @@ sequenceDiagram
   alt messages were dropped
     L->>JI: append(Backpressure)
     L->>BL: onBackpressure(event)
+  end
+  opt conflation on (lowLatency profile)
+    L->>JI: append the held curve inputs dispatched this cycle
+    L->>H: onMessage(newest value per key)
   end
   L->>TW: poll(latched nanoTime)
   alt timers fired

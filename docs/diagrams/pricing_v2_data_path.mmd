@@ -1,0 +1,43 @@
+%% Title: Pricing v2, from one curve input to a fair value, a ladder and a quote (1.2.0, opt-in)
+flowchart TD
+  feed["CurveFeedV2, one round every 500 ms<br/>overnight fixing, SR1 x2, SR3 x3,<br/>par swaps at 8 tenors"]
+  ring["Inbound ring, journal, dispatch<br/>optional conflation: newest value per key,<br/>journaled when dispatched"]
+  handler["DeskGroup.onCurveInput<br/>kinds Fixing, Future, ParSwap"]
+  band{"PricingV2: within 100 bp<br/>of the previous value?"}
+  reject["Dropped, counted in rejectedInputs"]
+  hold["Held in the round"]
+  trigger{"Round complete, or 100 ms<br/>since its first input?"}
+  timer["Housekeeping timer, 10 ms<br/>advanceTo(journaled time):<br/>applies a timed-out round once,<br/>moves the date at the 17:00 New York cut"]
+  curve{"SofrCurve.update solves?"}
+  keep["Last good curve and quotes kept,<br/>counted in rejectedInputs"]
+  loo["SofrLeaveOneOut<br/>a pillar swap's value without its own quote"]
+  smooth["FairValueSmoother<br/>residual, 5 minute half-life"]
+  book["LoopBook<br/>composite Treasury and futures books"]
+  fit["TreasurySpreadCurve<br/>z-spread of a bond fitted to the others"]
+  bond["Bond fair value<br/>fitted spread plus smoothed residual"]
+  swap["Swap fair value"]
+  fut["FuturesOverlay<br/>TY: its book mid, declared sensitivity"]
+  ladder["Rate ladder on 8 tenors<br/>curve Jacobian, bonds at market z-spread"]
+  spread["SpreadRiskBook<br/>displayed only: no limit, no hedge"]
+  after["DeskGroup.afterReprice<br/>RiskEngine.onCurveMove, onFairValue"]
+  use["Quoting engine, risk checks, hedger"]
+
+  feed --> ring --> handler --> band
+  band -->|no| reject
+  band -->|yes| hold --> trigger
+  trigger -->|no, wait| hold
+  timer -.-> trigger
+  trigger -->|yes| curve
+  curve -->|no| keep
+  curve -->|yes| loo
+  keep -->|values recomputed off it| loo
+  loo --> smooth --> swap
+  curve -->|yes| fit
+  book --> fit --> bond
+  book --> fut
+  swap --> ladder
+  bond --> ladder
+  ladder --> after
+  fut --> after
+  after --> spread
+  after --> use

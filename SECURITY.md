@@ -20,7 +20,7 @@ There are no secrets in this repository and none are needed to build it or to ru
 
 ## Dependencies
 
-As of 1.2.0 (2026-11-24); nothing here changed since the 1.1.0 draft:
+As of 1.2.0 (2026-11-24):
 
 - Java: every dependency and plugin version is a fixed version in the Maven poms. There is no checksum verification beyond Maven Central's.
 - Python: `research/requirements-lock.txt` pins every dependency of the research package and its extras. CI and the forward-log job install with it as a pip constraints file (`ci.yml`, `forward.yml`); `research/pyproject.toml` keeps the supported ranges. The lock has no hashes. `QuantLib==1.44` stays pinned in the `golden` extra, so the committed golden file regenerates exactly (DR-P1-06). The documentation site pins exact versions in `docs/site/requirements.txt`.

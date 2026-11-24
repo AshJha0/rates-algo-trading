@@ -11,6 +11,82 @@ It is a dealer desk's stack in miniature, and it is a simulator: every venue is 
 
 Documentation site: <https://ashjha0.github.io/rates-algo-trading/>.
 
+## Where to start
+
+| You want to | Read |
+|---|---|
+| judge it in five minutes | [docs/REVIEWER_SUMMARY.md](docs/REVIEWER_SUMMARY.md), then [Limits](#limits) |
+| build it and run something | [Quick start](#quick-start) |
+| learn the subject | [LEARN.md](LEARN.md) |
+| do one specific thing | [COOKBOOK.md](COOKBOOK.md), 39 recipes |
+| see how it fits together | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [diagrams](docs/site/pages/diagrams.md) |
+| bind to an interface or read a file format | [API_SPEC.md](API_SPEC.md) |
+| know why something is the way it is | [DECISIONS.md](DECISIONS.md) |
+| operate a process | [docs/runbooks/README.md](docs/runbooks/README.md), [deploy/README.md](deploy/README.md) |
+| see what is open | [STATUS.md](STATUS.md) |
+
+The full list is under [Documents](#documents).
+
+## Quick start
+
+Requirements: JDK 25, Maven 3.9 or later, Python 3.12. Run everything from the repository root.
+
+Build the Java modules and run their tests, with the coverage floors, Error Prone and SpotBugs (this is the slow step):
+
+```bash
+mvn -B -ntp verify
+```
+
+Install and test the Python package:
+
+```bash
+python -m pip install -c research/requirements-lock.txt -e "research[dev]"
+```
+
+```bash
+pytest -q research
+```
+
+Run the trading process with its simulated venues, kill it, crash it and restart it, all on loopback (add `--profile v2` for the opt-in v2 desk):
+
+```bash
+mvn -B -ntp -DskipTests package -pl rates-app -am
+```
+
+```bash
+python deploy/rehearsal.py --mode process
+```
+
+To run a seeded synthetic day in one program and read its daily report, follow COOKBOOK.md recipe 22.
+
+Build the documentation site as CI does:
+
+```bash
+python -m pip install -r docs/site/requirements.txt
+```
+
+```bash
+mkdocs build --strict
+```
+
+Other checks CI runs: `ruff check research`, `ruff format --check research`, `mypy` (in `research/`), `python -m ratesresearch.prereg data/ledger/ledger.jsonl` (ledger chain and looks per data set), `python tools/check_cookbook.py`, `python tools/run_notebooks.py`, `python tools/check_site_current.py`, `python tools/validate_config.py` and `python tools/lint_dashboards.py`.
+
+## Default and opt-in
+
+The default desk is the recorded one: every recorded figure, recipe and ledger row was made on it.
+
+| Part | Default | Opt-in since 1.2.0 | Selected by |
+|---|---|---|---|
+| Whole desk | `DeskProfile.defaults()` | `DeskProfile.v2()` | `desk.profile: v2` ([runbook](docs/runbooks/v2-profile.md)) |
+| Market | version 1 simulators, one CLOB | simulator v2, two CLOBs and a futures book | `desk.market: simV2` |
+| Pricing | `AnalyticsPricing` | `PricingV2` | `desk.pricing: v2` |
+| Strategy | `DeskSettings.defaults()` | `DeskSettings.strategyV2()` | `desk.strategy: v2` |
+| Router | touch model | ladder model | `desk.router: ladder` |
+| Threads and journals | `default`: parked threads, direct journal, FNV-1a hash | `lowLatency`: spinning threads, ring journal, WORD64 hash, curve-input conflation | `runtime.profile: lowLatency` ([runbook](docs/runbooks/low-latency-profile.md)) |
+| Experiments | recorded ledger, 32 rows | family harness; R5-FAM-001 is unsigned and has not run | `DeskExperiment` ([runbook](docs/runbooks/registered-experiment.md)) |
+
+Only the two whole desk profiles are run by tests at process level. The 1.1.0 controls that are off by default are listed under [Limits](#limits).
+
 ## What it does
 
 One process, `rates-app` (`TradingProcessMain`, API_SPEC.md Section 18), runs a USD rates desk for one instrument group:
@@ -75,8 +151,8 @@ The daily Sharpe ratio and drawdown table that used to sit here is in [docs/rese
 Read these before reading any number above.
 
 - **Simulator only.** Every venue is a simulator in the same process. Client behaviour comes from declared models: a hit-rate slope, competitor counts and the share of informed flow. Each result is reported at three points of that band (DR-008). Simulator v2 (1.2.0, opt-in) takes its parameters from public data where the data identifies them and states the rest as assumptions with bands; it is still a simulator.
-- **The desk's P&L sign is fixed by declared constants.** The half-spread is clamped to 0.02 to 0.08 bp (`rates-app/src/main/java/io/ratesalgo/app/loop/DeskSettings.java:59-60`). In the D2C simulator 20% of RFQs are informed and move the mid by 4 competitor half-spreads of 0.25 bp after 30 s (`rates-venues/src/main/resources/io/ratesalgo/venues/presets.json`), an expected adverse cost of 0.2 x 4 x 0.25 = 0.20 bp per swap trade. A desk that earns at most 0.08 bp loses; AUDIT-21 measures that arithmetic (review Section 2.1). This is still true in 1.2.0: the default desk on the version 1 simulator, both still the defaults, loses by construction. The calibration of 1.2.0 puts those constants outside what the public data supports (docs/research/SIM_V2_CALIBRATION.md), so the old simulator's figures are superseded for new work (docs/research/PNL_AUDIT.md).
-- **Hedging cannot reduce risk in the session simulator.** Each instrument's mid in the D2C simulator is an independent random walk, rounded to the tick (`D2cRfqSimulator.java:160-171`), so a Treasury hedge does not offset a swap position there. The back-tester's own synthetic day (`SyntheticDay`) does have a common level factor. Simulator v2 (opt-in) moves every instrument on three fitted factors, so a hedge reduces variance there.
+- **The desk's P&L sign is fixed by declared constants.** The half-spread is clamped to 0.02 to 0.08 bp (`rates-app/src/main/java/io/ratesalgo/app/loop/DeskSettings.java:393-394`). In the D2C simulator 20% of RFQs are informed and move the mid by 4 competitor half-spreads of 0.25 bp after 30 s (`rates-venues/src/main/resources/io/ratesalgo/venues/presets.json`), an expected adverse cost of 0.2 x 4 x 0.25 = 0.20 bp per swap trade. A desk that earns at most 0.08 bp loses; AUDIT-21 measures that arithmetic (review Section 2.1). This is still true in 1.2.0: the default desk on the version 1 simulator, both still the defaults, loses by construction. The calibration of 1.2.0 puts those constants outside what the public data supports (docs/research/SIM_V2_CALIBRATION.md), so the old simulator's figures are superseded for new work (docs/research/PNL_AUDIT.md).
+- **Hedging cannot reduce risk in the session simulator.** Each instrument's mid in the D2C simulator is an independent random walk, rounded to the tick (`D2cRfqSimulator.java:196-211`), so a Treasury hedge does not offset a swap position there. The back-tester's own synthetic day (`SyntheticDay`) does have a common level factor. Simulator v2 (opt-in) moves every instrument on three fitted factors, so a hedge reduces variance there.
 - **The wired process uses little of `rates-analytics`.** Swap fair value comes from a curve whose pillars are the quoted swaps themselves, and bond fair value is the book mid (`rates-app/src/main/java/io/ratesalgo/app/pricing/AnalyticsPricing.java`). Turns, convexity, futures, fitted Treasury curves and repo are not used by the default process (review A1, A2). Pricing v2 (opt-in, `PricingBindings.Version.V2`) uses them; its limits are listed below.
 - **Bond DV01 is at zero spread to the OIS curve by default.** `AnalyticsPricing.Options.bondRiskAtMarket` takes it at the market z-spread instead, but it is off until a pre-registered run (DR-RV-P04). Pricing v2 always takes it at market and adds a spread ladder. On the fix-round run of `PricingRobustnessTest`, which prints and does not assert these figures, the default overstated 30-year DV01 by about 21% and 10-year by about 6%.
 - **Five curve pillars feed eight risk buckets.** The 1-year bucket is exactly empty; the 3-year and 7-year buckets hold only the spill of the 2-year and 5-year pillars (asserted below 0.2% of gross; 0.10% and 0.08% on the fix-round run); the 20-year bucket is fed by the 12-year pillar (`PricingRobustnessTest`, review A4). The simulator assigns starting rates in file order (`rates-venues/.../sim/Instruments.java:37-50`), so the 12-year swap starts at 3.80%, above the 30-year at 3.75%. Under pricing v2 every risk tenor is a pillar.
@@ -109,38 +185,8 @@ Read these before reading any number above.
 - **Not built:** Aeron replication and the quoting lease (DR-P6-06), APA publication, the Part 43 message and the pre-execution credit check (docs/compliance/RTS6_INVENTORY.md).
 - **The forward log is not a track record.** Its client flow and fills are synthetic, and the intraday market is held flat at the previous close, so informed clients carry no information and the session's spread capture has no adverse selection in it. Its synthetic income is close to deterministic, so a ratio of mean to standard deviation would be large and mean nothing; the summary prints none. Only the close mark of the session's book is a real outcome, and it measures no skill (docs/research/PAPER_TRADING_PLAN.md Section 6, review Section 2.5, DR-RV-C01).
 - **No independent review.** The code was written by AI sessions and merged by the owner with CI as the only gate (CONTRIBUTING.md). docs/compliance/RTS6_INVENTORY.md describes controls in simulation; it is not a claim of compliance.
-- **Cookbook.** 39 recipes are written. Recipe 9 is a comparison method checked by the golden tests, and recipes 38 and 39 (1.2.0) are not yet wired into `tools/check_cookbook.py`, so it checks 36.
+- **Cookbook.** 39 recipes are written. Recipe 9 is a comparison method checked by the golden tests; the other 38 are checked by `tools/check_cookbook.py` against their source and recorded output; recipes 38 and 39 (1.2.0) are shell commands, which it runs.
 - **Ledger flags.** Nine audit rows carry `code_dirty: true`: AUDIT-02 to 04, AUDIT-12 to 14 and AUDIT-22 to 24. Each was recorded at the same commit as the row before it, while the ledger file itself was uncommitted; docs/research/PNL_AUDIT.md explains. The ledger chain has no external anchor (review Section 2.4). Three data sets were read 11, 9 and 2 times under different pre-registration ids, and their rows say look 1; `python -m ratesresearch.prereg data/ledger/ledger.jsonl` prints the looks per data set.
-
-## Quick start
-
-Requirements: JDK 25, Maven 3.9 or later, Python 3.12.
-
-```bash
-mvn -B -ntp verify
-```
-
-```bash
-python -m pip install -c research/requirements-lock.txt -e "research[dev]"
-```
-
-```bash
-pytest -q research
-```
-
-To run the trading process on a synthetic day and read its daily report, follow COOKBOOK.md recipe 22.
-
-Documentation site, checked in CI with `--strict`:
-
-```bash
-python -m pip install -r docs/site/requirements.txt
-```
-
-```bash
-mkdocs build --strict
-```
-
-Other checks CI runs: `ruff check research`, `mypy research`, `python -m ratesresearch.prereg data/ledger/ledger.jsonl` (ledger chain and looks per data set), `python tools/check_cookbook.py`, `python tools/run_notebooks.py`, and `python deploy/rehearsal.py --mode process` (the process with the kill switch).
 
 ## Repository layout
 
@@ -151,7 +197,7 @@ rates-messages/      SBE schema v1 and generated codecs             (P0)
 rates-journal/       Journal writer, reader, segments, replayer     (P0, P2, round 2)
 rates-analytics/     Curves, swaps, bonds, futures, DV01 ladders    (P1)
 rates-core/          Event loop, ring-buffer contract, replay       (P2)
-rates-bench/         Latency harness and JMH                        (P2)
+rates-bench/         Latency harness, JMH, wired-desk benchmark     (P2, round 6)
 rates-refdata/       Securities master, calendars, parties          (P2)
 rates-fix/           FIX 4.4 codec, session and venue gateway       (P2)
 rates-venues/        D2C, CLOB and SEF simulators, SBE book feed    (P2)
@@ -160,18 +206,21 @@ rates-risk/          Risk engine, limits, kill switch               (P3)
 rates-hedge/         Cost-aware hedger                              (P3)
 rates-quoting/       RFQ, package and CLOB quoting, Desk            (P3)
 rates-router/        Smart order router                             (P4)
-rates-backtest/      Back-tester, pre-registration, daily report    (P5)
+rates-backtest/      Back-tester, pre-registration, daily report,   (P5, 1.2.0)
+                     experiment harness
 rates-posttrade/     Positions, records, marks, reconciliation      (P6)
 rates-ops/           Health, metrics, config, stress harness        (P6)
-rates-app/           The trading process: bindings and assembly     (round 2)
+rates-app/           The trading process: desk profiles, bindings   (round 2, 1.2.0)
+                     and assembly
 rates-strategy/      Desk features, DeskQuoter, desk experiments,   (round 2)
                      forward log (paper trading)
 rates-cookbook/      Cookbook recipes as programs, output checked   (P0 onward)
 research/            Python package ratesresearch, notebooks, audit (P0 onward)
 deploy/              Images, compose file, rehearsal                (P6, round 2)
-data/                Sources, presets, pre-registrations, ledger (no raw data)
+config/              SpotBugs exclusions, the forward log desk settings
+data/                Sources, presets, calibration, goldens, pre-registrations, ledger (no raw data)
 docs/                Architecture, benchmarks, research, compliance, runbooks, diagrams, site
-tools/               Cookbook, notebook, config and inventory checks
+tools/               Cookbook, notebook, config and inventory checks, journal query, simulator v2 runs
 ```
 
 ## Documents

@@ -1,0 +1,41 @@
+%% Title: Simulator v2: one market model behind the venues and the back-test (rates-sim, 1.2.0)
+flowchart TD
+  params["data/calibration/sim_v2_params.json<br/>calibrated values and declared bands"]
+  structure["sim_v2_structure.json<br/>constants the design fixes"]
+  load["SimParams and StrictJson<br/>a missing, unknown or duplicate key is refused"]
+  spec["MarketSpec<br/>grid, loadings, book scales;<br/>start-up checks (A12)"]
+  seed["SessionSeeds and Streams<br/>seed base plus n, day type,<br/>one random stream per quantity"]
+  flow["RfqFlow<br/>the session's RFQs, fixed before any dealer acts:<br/>tier, informed flag, competitors, reserve"]
+  drift["Informed arrivals<br/>drift of the level factor, whoever wins"]
+  model["MarketModel<br/>level, slope, curvature, swap spread,<br/>futures basis, own term per tenor; unrounded mid"]
+  books["BookModel, one per Treasury and future<br/>5 levels, other takers, impact, resilience"]
+  decision["RfqDecision<br/>done, done away, passed or expired; cover price"]
+  x1["X1: the desk's own permanent impact<br/>on the level factor"]
+  venue["SimV2Session (rates-venues)<br/>D2C, two CLOBs showing shares of one book, futures"]
+  round["SimV2CurveRound<br/>curve quotes from the same factors"]
+  proc["SimulatedVenuesV2 and SimSequencer<br/>the trading process"]
+  day["SimDay (rates-backtest)<br/>RFQ outcomes, hedge fills, marks"]
+  bt["BacktestRunner, SimBinding, DeskStrategy<br/>the experiment arms"]
+
+  params --> load
+  structure --> load
+  load --> spec
+  spec --> flow
+  seed --> flow
+  spec --> model
+  seed --> model
+  flow -->|informed RFQs| drift --> model
+  flow --> decision
+  model --> decision
+  model --> books
+  books -->|desk's marketable orders| x1 --> model
+  model --> venue
+  books --> venue
+  decision --> venue
+  model --> day
+  books --> day
+  decision --> day
+  venue --> round
+  venue --> proc
+  round --> proc
+  day --> bt

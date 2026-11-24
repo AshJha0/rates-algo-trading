@@ -10,7 +10,7 @@ flowchart LR
   journals["Journals<br/>in, out, route"]
   ring_out["Outbound rings<br/>D2C, CLOB, control"]
   control["Control endpoint<br/>kill switch, status (token), metrics"]
-  supervisor["Supervisor thread<br/>loop duty cycles, gateway thread"]
+  supervisor["Supervisor thread<br/>loop duty cycles; session, feed and venue threads"]
   replay["LoopReplay<br/>outbound hash comparison"]
   keeper["Position keeper<br/>venue reconciliation"]
   backtest["Back-tester (rates-backtest)<br/>DeskStrategy (rates-app) or<br/>DeskQuoter with sliced hedges (rates-strategy),<br/>daily report"]

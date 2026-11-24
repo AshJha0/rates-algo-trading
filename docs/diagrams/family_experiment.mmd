@@ -1,0 +1,36 @@
+%% Title: One registered family on simulator v2: refusals, checkpoints, failures and the one look (1.2.0)
+flowchart TD
+  reg["Registration, prereg_version 2, a family<br/>R5-FAM-001: unsigned, has not run"]
+  pilot["Optional timing-only pilot<br/>pilot base, no P&L written or read, no ledger row"]
+  run["DeskExperiment run"]
+  check{"Valid, signed, not superseded, clean checkout,<br/>session count fixed, arms and rows buildable,<br/>excluded points refused by the simulator,<br/>output outside git, data set not read before,<br/>earlier looks declared, no FAILED marker?"}
+  refused["Refused, exit 2<br/>nothing run, nothing recorded"]
+  manifest{"manifest.json absent,<br/>or the same run?"}
+  error["Stops: a resume must match the manifest"]
+  pool["Worker processes, one session each<br/>heartbeat.txt at least once a minute"]
+  journal{"Row journal written from the seed:<br/>first attempt, or the same hash?"}
+  arms["Each arm on its own fresh model<br/>parts/SEED: one file per row and arm"]
+  sess["sessions/SEED.json<br/>written atomically, parts removed"]
+  fail{"Second failure<br/>of this session?"}
+  failed["FAILED written<br/>no new session is started"]
+  all{"Every registered<br/>session present?"}
+  inc["Incomplete, exit 3<br/>nothing recorded"]
+  summary["summary.json, once<br/>the first code to read a P&L"]
+  ledger["Ledger: one row per hypothesis,<br/>D0 and one row per descriptive arm;<br/>one look"]
+  bh["LedgerCli --bh family:ID<br/>Benjamini-Hochberg, never stored"]
+
+  reg -.-> pilot
+  reg --> run --> check
+  check -->|any no| refused
+  check -->|all yes| manifest
+  manifest -->|no| error
+  manifest -->|yes| pool --> journal
+  journal -->|no| fail
+  journal -->|yes| arms --> sess --> all
+  arms -->|worker exits non-zero| fail
+  fail -->|"no: retried once, next missing arm"| pool
+  fail -->|yes| failed --> all
+  failed -.->|"read the log, --retry-failed"| run
+  all -->|no| inc
+  inc -.->|same command line resumes| run
+  all -->|yes| summary --> ledger --> bh
