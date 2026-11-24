@@ -37,16 +37,15 @@ public final class Recipe40SimV2Session {
         Locale.ROOT, "session %d, day type %s, %d steps of %d s%n",
         seed, day.dayType(), spec.steps(), MarketSpec.STEP_NANOS / 1_000_000_000L);
 
-    final int[] perKind = new int[SimInstrument.Kind.values().length];
+    int swaps = 0;
     int informed = 0;
     for (final SimRfq r : day.rfqs()) {
-      perKind[spec.instrument(r.instrument()).kind().ordinal()]++;
+      swaps += spec.instrument(r.instrument()).kind() == SimInstrument.Kind.SWAP ? 1 : 0;
       informed += r.informed() ? 1 : 0;
     }
     System.out.printf(
         Locale.ROOT, "RFQs %d: %d swaps, %d Treasuries; %d informed%n",
-        day.rfqs().size(), perKind[SimInstrument.Kind.SWAP.ordinal()],
-        perKind[SimInstrument.Kind.TREASURY.ordinal()], informed);
+        day.rfqs().size(), swaps, day.rfqs().size() - swaps, informed);
     for (final SimRfq r : day.rfqs().subList(0, 3)) {
       // the client's decision when the desk does not quote at all
       final RfqDecision d = day.decide(r, Double.NaN, 0L);

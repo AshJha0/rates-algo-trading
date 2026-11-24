@@ -1,1 +1,15 @@
-x
+calibrated parameters
+  swap RFQs per session 116.4
+  competitor median half-spread 0.1827 bp, log sd 0.50
+  informed fraction 0.50, move per informed trade 0.118 bp
+  factor sd per sqrt-minute: level 0.3178, slope 0.1070, curvature 0.0362 bp
+session 28095001, day type NONE, 36000 steps of 1 s
+RFQs 233: 111 swaps, 122 Treasuries; 131 informed
+  SOFR-2Y client sells 8m, tier index 1, 4 dealers asked: DONE at 0.189 bp from mid
+  UST-2Y client sells 5m, tier index 0, 3 dealers asked: DONE at 0.057 bp from mid
+  SOFR-5Y client sells 49m, tier index 2, 3 dealers asked: DONE at 0.150 bp from mid
+level     moved +5.956 bp x loading +0.3945 = +2.350 bp
+slope     moved +0.145 bp x loading +0.1986 = +0.029 bp
+curvature moved -0.964 bp x loading -0.1959 = +0.189 bp
+idiosyncratic +0.185 bp, 10-year yield change +2.753 bp
+same seed, same session: true

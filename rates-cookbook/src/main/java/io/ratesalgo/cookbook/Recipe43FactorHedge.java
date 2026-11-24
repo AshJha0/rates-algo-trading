@@ -31,7 +31,6 @@ public final class Recipe43FactorHedge {
     final ManualClock clock = new ManualClock();
     final InMemoryInstrumentDirectory instruments = new InMemoryInstrumentDirectory();
     final InMemoryFairValueSource fair = new InMemoryFairValueSource();
-    final ParametricSensitivityProvider pv01 = new ParametricSensitivityProvider(instruments);
     // the price changes per basis point of the simulator v2 structure file, per unit of face
     final String[] names = {"UST2", "UST10", "UST30"};
     final double[] tenor = {2, 10, 30};
@@ -39,6 +38,9 @@ public final class Recipe43FactorHedge {
     for (int i = 0; i < names.length; i++) {
       instruments.add(Instrument.bond(i + 1, names[i], CurrencyCode.USD, tenor[i], 25 * MILLION));
       fair.set(i + 1, Decimal9.round(100.0), clock.epochNanos());
+    }
+    final ParametricSensitivityProvider pv01 = new ParametricSensitivityProvider(instruments);
+    for (int i = 0; i < names.length; i++) {
       pv01.defineAtTenor(i + 1, perUnit[i], 0.0);
     }
     final RiskEngine risk =
@@ -69,8 +71,8 @@ public final class Recipe43FactorHedge {
     // the risk aversion decides whether the second crossing is worth its cost
     plan("small risk aversion (1e-9 per USD)", new FactorHedgePlanner(
         universe, risk, factors, costs, 1e-9, HedgeAvailability.ALL), ladder, names);
-    plan("larger risk aversion (4e-7 per USD)", new FactorHedgePlanner(
-        universe, risk, factors, costs, 4e-7, HedgeAvailability.ALL), ladder, names);
+    plan("larger risk aversion (1e-5 per USD)", new FactorHedgePlanner(
+        universe, risk, factors, costs, 1e-5, HedgeAvailability.ALL), ladder, names);
   }
 
   private static void plan(

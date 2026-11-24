@@ -1,1 +1,16 @@
-x
+UST2  tick 39.0625 USD a lot, half a tick 19.5313 USD = 0.103 bp of the lot's DV01 of 190
+UST10 tick 78.1250 USD a lot, half a tick 39.0625 USD = 0.048 bp of the lot's DV01 of 815
+net PV01 -86500, all at 30 years
+small risk aversion (1e-9 per USD): level hedged true, slope hedged false, modelled crossing cost 3579 USD
+  UST10 -91.6 lots
+  level     exposure    -29462 ->        +0 USD per bp, daily sd left         0 USD
+  slope     exposure    -44331 ->    -29499 USD per bp, daily sd left    131852 USD
+  curvature exposure    -33424 ->    -48054 USD per bp, daily sd left     72586 USD
+  idiosyncratic daily sd left 60157 USD
+larger risk aversion (1e-5 per USD): level hedged true, slope hedged true, modelled crossing cost 9574 USD
+  UST2  +219.3 lots
+  UST10 -135.5 lots
+  level     exposure    -29462 ->        +0 USD per bp, daily sd left         0 USD
+  slope     exposure    -44331 ->        +0 USD per bp, daily sd left         0 USD
+  curvature exposure    -33424 ->    -82268 USD per bp, daily sd left    124267 USD
+  idiosyncratic daily sd left 77596 USD

@@ -1,1 +1,11 @@
-x
+venue 1 offers 10m at the touch 98.515625, 20m one tick up, 50m two ticks up; taker fee 0.0005
+venue 2 offers 5m at the touch 98.515625, 20m one tick up, 50m two ticks up; taker fee 0.0002
+buy 30m now (urgency 1)
+touch router: 2 children
+  venue 1 buy 15m ImmediateOrCancel, limit 8 ticks above the touch, finds 15m
+  venue 2 buy 15m ImmediateOrCancel, limit 8 ticks above the touch, finds 15m
+  walk of the shown book: 30m at 1.022 ticks from the mid, fees included
+ladder router: 2 children
+  venue 1 buy 10m ImmediateOrCancel, limit 0 ticks above the touch, finds 10m
+  venue 2 buy 20m ImmediateOrCancel, limit 1 ticks above the touch, finds 20m
+  walk of the shown book: 30m at 1.019 ticks from the mid, fees included

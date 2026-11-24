@@ -1,1 +1,11 @@
-x
+inputs {OVERNIGHT=1, SR1=2, SR3=3, SWAP=8}, not yet fed 0
+   2Y par quote 3.6000 %, zero rate 3.5849 %
+   5Y par quote 3.6000 %, zero rate 3.5877 %
+  10Y par quote 3.8500 %, zero rate 3.8607 %
+  30Y par quote 3.9500 %, zero rate 3.9072 %
+10Y quote 3.8500 %, leave-one-out 3.851 %, fair 3.8500 %
+the 10Y quote alone moves up 2 bp:
+  curve's 10Y quote +2.000 bp
+  10Y leave-one-out value moved 0.000 bp
+  10Y fair value +0.0023 bp
+  7Y leave-one-out value +1.071 bp
