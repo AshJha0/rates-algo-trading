@@ -2445,7 +2445,7 @@ Decision. DESK_V2_WIRING.md Section 2. A v2 loop has six outbound rings with rin
 
 Consequences. Kill, gap, staleness, cancel-reject, overfill and reconciliation are per venue; a venue that is down is excluded and the others keep trading.
 
-## DR-V12-D03: The desk counts a future in face, the venue in contracts; the loop converts at its edge
+## DR-V12-D03: The desk counts a future in face, the venue in contracts; the loop converts where quantities cross it
 
 Date: 2026-11-23
 

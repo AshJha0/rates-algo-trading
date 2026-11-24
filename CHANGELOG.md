@@ -58,7 +58,7 @@ Read this first:
 ### Process and desk profiles
 
 - `DeskProfile` (`defaults()`, `v2()`, `withPricing`, `withRouter`, `withMarket`, `withSettings`): each component can be switched alone. The v2 desk trades on one D2C venue, two Treasury CLOBs that show shares of one book, and a futures book, with session, feed, sequence, book age and reconciliation kept per venue (DR-V12-D01, D02). docs/research/DESK_V2_WIRING.md.
-- `UsdUniverse.simV2()`: swaps at the eight risk tenors, the on-the-run Treasuries with their own ticks (S12 for the v2 universe), TYZ6 (`FuturesOverlay`, DR-V12-D06). Trade prints reach `LoopBook.applyTrade` and the router (DR-V12-D04). `CurveFeedV2` and `SimV2CurveRound` send the whole pricing v2 build set (DR-V12-D05). The loop converts futures contracts to face at its edge (DR-V12-D03). `AppIds`: `CLOB2_VENUE` 103, `FUTURES_VENUE` 104, gateways 4 and 5, feed status ids 6 and 7, `V2_OUTBOUND_RINGS` 6, `SWAP_1Y` 9012.
+- `UsdUniverse.simV2()`: swaps at the eight risk tenors, the on-the-run Treasuries with their own ticks (S12 for the v2 universe), TYZ6 (`FuturesOverlay`, DR-V12-D06). Trade prints reach `LoopBook.applyTrade` and the router (DR-V12-D04). `CurveFeedV2` and `SimV2CurveRound` send the whole pricing v2 build set (DR-V12-D05). The loop converts futures contracts to face where quantities enter and leave it (DR-V12-D03). `AppIds`: `CLOB2_VENUE` 103, `FUTURES_VENUE` 104, gateways 4 and 5, feed status ids 6 and 7, `V2_OUTBOUND_RINGS` 6, `SWAP_1Y` 9012.
 - `TradingProcess.Options.withProfile`; the `desk` config section (`profile: default|v2`, `market`, `pricing`, `strategy`, `router`; `ProcessConfig.DeskSelection`, `deploy/config/trading-v2.yaml`). A selection other than the recorded desk is written to `desk.selection` beside the journals; a start on journals another selection wrote is refused; replay follows the file. `python deploy/rehearsal.py --mode process --profile v2`.
 - Halt, out-of-band kill, the supervisor and the undelivered-message halt cover every session: a kill is confirmed only when all four venues report nothing working. A restarted v2 process resumes four FIX sessions from their stores.
 - The markout store is read from one file and written to another; the next fresh start promotes it (DR-V12-D07).
@@ -84,7 +84,7 @@ Read this first:
 
 ### Fixes
 
-- `RiskEngine.headroom` returns the exact edge; its bisection stopped after 48 halvings and could fall up to 2^15 minor units short.
+- `RiskEngine.headroom` returns the exact boundary; its bisection stopped after 48 halvings and could fall up to 2^15 minor units short.
 - A PV01 figure already past its limit can no longer grow by even one minor unit: the 1e-9 relative rounding allowance is removed from the pillar, net, gross, basis and swap-spread checks, and the before and after figures are built from the same partial sum.
 - `Decimal9`: negative ties round away from zero as documented (`Math.round` took them toward positive infinity); `round`, `floor` and `ceil` are exact from 2^52 units up.
 - Dead code removed in `RiskEngine.onFairValue` and `PositionKeeper`; behaviour unchanged.
