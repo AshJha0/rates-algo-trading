@@ -240,7 +240,7 @@ The v2 smoke day and the threaded-day determinism statement are in docs/research
 
 Experiments to run:
 
-- <!-- FAMILY-REG --> R5-FAM-001 (`research/prereg/R5-FAM-001.yaml`): unsigned, not run. The owner signs and commits it; then a timing-only pilot and the registered run on an otherwise idle machine, about 19 hours at 8 workers (tools/sim-v2/README.md, docs/runbooks/registered-experiment.md). It appends nine ledger rows; Benjamini-Hochberg by `LedgerCli --bh family:R5-FAM-001`. The eight earlier drafts are superseded and will not be run.
+- R5-FAM-001 (`research/prereg/R5-FAM-001.yaml`): unsigned, not run at 1.2.0. It is signed and committed first (by the owner, or by the maintainer on the owner's delegation); then a timing-only pilot and the registered run on an otherwise idle machine, about 19 hours at 8 workers (tools/sim-v2/README.md, docs/runbooks/registered-experiment.md). It appends ten ledger rows (H1 to H8, D0, D1); Benjamini-Hochberg by `LedgerCli --bh family:R5-FAM-001`. The eight earlier drafts are superseded and will not be run.
 - After it, and each by its own registration: whether any v2 component becomes the default (DR-V12-D01); whether the 1.1.0 opt-in controls (cover learning, widening after the clamp, fractional-lot carry, the desk-sized limits) are switched on; whether TY should be a normal-day hedge; the parameters the calibration could not identify, beyond the two sensitivity rows.
 - A quiet-machine run of the wired-desk benchmark for the README and BENCHMARKS headline (<!-- QUIET-RUN -->), and ZGC against Parallel on the TLS configurations on a quiet Linux host.
 
@@ -258,7 +258,6 @@ Known gaps of 1.2.0 (README "Limits" has each):
 - Simulator v2: the parameters listed in SIM_V2_CALIBRATION.md Section 11 are assumptions; Treasury competitors are not exactly at zero profit; the upper winner band does not start; deviations D1 to D18 (SIM_V2_DESIGN.md Section 14).
 - A restarted v2 market forgets the desk's earlier impact; per-component selections are not run at process level; a venue reusing an ExecID after release is booked; the TLS path allocates about 1.3 KB per message in the JDK.
 - Not delivered from Round 6: an AOT or CDS cache, a tighter allocation tolerance, a measurement of the write-protect fault fix (L9), repricing off the loop (L10), feed arbitration and heartbeat, `CompositeBuilder` in the process (S10, S11). No JMH benchmark for the router.
-- DESK_V2_WIRING.md Section 8 still describes the earlier five-id client tier map; `DeskSettings.V2_CLIENT_TIERS` follows the simulator's three ids since DR-V12-E03.
 - Mutation scores were measured once, on 2026-11-23; the reports are not committed, and five of the six measured modules are not in the pom's `pit` modules.
 
 Owner items:

@@ -118,7 +118,7 @@ class TradingProcessV2Test {
     }
   }
 
-  /** One stepped day of eight minutes, killed, reconciled; returns the journal digest. */
+  /** One stepped day of twenty minutes, killed, reconciled; returns the journal digest. */
   private long[] dayKillReconcile(final Path dir) {
     final TradingProcess p = TradingProcess.start(options(dir));
     try {
@@ -126,7 +126,7 @@ class TradingProcessV2Test {
       assertEquals(3, p.feedCount());
       assertNull(p.venues(), "the recorded market's venues are not started");
       assertNull(p.notReadyReason());
-      p.step(8 * MINUTE, STEP);
+      p.step(20 * MINUTE, STEP);
       final DeskGroup desk = p.group(0).desk();
       assertTrue(desk.desk().quoting().quotesSent() > 0, "quotes sent");
       assertTrue(desk.hedgesRouted() > 0 && desk.hedgeFills() > 0, "hedges routed and filled");
@@ -201,7 +201,7 @@ class TradingProcessV2Test {
     final TradingProcess first = TradingProcess.start(options(live).withFix(resume));
     try {
       assertFalse(first.recovered());
-      first.step(8 * MINUTE, STEP);
+      first.step(20 * MINUTE, STEP);
       final DeskGroup desk = first.group(0).desk();
       assertTrue(desk.desk().quoting().fills() > 0 && desk.hedgeFills() > 0, "fills before the stop");
       digest = desk.stateDigest(first.universe().instrumentIds());

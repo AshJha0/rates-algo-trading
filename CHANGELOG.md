@@ -70,11 +70,9 @@ Read this first:
 
 - Desk on simulator v2 in the back-tester (`SimBinding`, `DeskArms`, `DeskExperiment`): every arm of the Round 5 family is a `DeskProfile` built on one configuration; the strategy sees the live model's books with its own impact; experiment sessions publish every second; QuoteWithdraw is honoured in the v2 back-test (Q7) (DR-V12-B01 to B03, E02, E05).
 - `prereg_version: 2`: session-seed designs (`SessionDesign`), band rows (`BandParameters`), refusal of spent data (`SpentData`), families with rows and excluded band points. `ExperimentRunner`: checkpointed per session and arm, resumable, worker processes, no ledger row until complete, a timing-only pilot that writes no P&L (DR-V12-E07, E08). `LedgerCli --bh family:ID` computes Benjamini-Hochberg on command (DR-V12-B04). A dated pre-registration stays on the version 1 rules (DR-V12-B05). `SimV2Report`. Python twins in `ratesresearch.prereg`. tools/sim-v2/ (`build_classpath.sh`, `launch_detached.cmd`, `status.cmd`, README).
-- `research/prereg/R5-FAM-001.yaml`: one family of eight hypotheses (the v2 desk against the default, six leave-one-out ablations, cover pricing alone) and a descriptive baseline, on 2,000 shared sessions of seed base 31,000,000. UNSIGNED and not run (DR-V12-E01, E04, E06). The eight earlier drafts (SIM3-BASE-001, R5-001 to R5-007) are marked superseded before signing; kept, never run.
+- `research/prereg/R5-FAM-001.yaml`: one family of eight hypotheses (the v2 strategy against the 1.x strategy, six leave-one-out ablations, cover pricing alone), nine arms on one footing and the 1.1.0 desk as a descriptive tenth, on 2,000 shared sessions of seed base 31,000,000. UNSIGNED and not run (DR-V12-E01, E04, E06). The eight earlier drafts (SIM3-BASE-001, R5-001 to R5-007) are marked superseded before signing; kept, never run.
 - Client ids per simulator tier come from one place: 2001, 2002, 2003 (`DeskSettings.V2_CLIENT_ID_BASE`, DR-V12-E03).
 - Pilot on the pilot base (not an experiment, no ledger row): about 25 s per full-day session for one arm; session sd about 214k USD (8 sessions, imprecise).
-
-<!-- FAMILY-REG -->
 
 ### Assurance (Round 7)
 
@@ -87,6 +85,8 @@ Read this first:
 - `RiskEngine.headroom` returns the exact boundary; its bisection stopped after 48 halvings and could fall up to 2^15 minor units short.
 - A PV01 figure already past its limit can no longer grow by even one minor unit: the 1e-9 relative rounding allowance is removed from the pillar, net, gross, basis and swap-spread checks, and the before and after figures are built from the same partial sum.
 - `Decimal9`: negative ties round away from zero as documented (`Math.round` took them toward positive infinity); `round`, `floor` and `ceil` are exact from 2^52 units up.
+- `DeskGroup`: a fill of a child order the router has already released (one that crossed its cancel, or an order left from before a restart) is booked as a position, once by execution id, and counted (`lateFills`); it was dropped before, so risk and the venue could differ (DR-V12-D13).
+- `BacktestRunner`, simulator v2: a cancel that finds the order filled reports `Filled` and is refused; it reported `PartiallyFilled` and then a `Cancelled` with nothing left, which the desk counted as an unrouted report (DR-V12-E09).
 - Dead code removed in `RiskEngine.onFairValue` and `PositionKeeper`; behaviour unchanged.
 - `FeedBinding`: the first snapshot of a book that already has levels is announced between DISCONNECTED and CONNECTED, so it is no longer read as a gap (DR-V12-D09).
 - `Venues.simV2`: the three order books publish as venues 102, 103 and 104 (all were 102).

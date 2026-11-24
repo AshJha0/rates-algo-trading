@@ -52,7 +52,7 @@ class V2SteppedDeterminismTest {
   private long[] run(final Path journalDir) {
     try (V2DeskProcess p =
         V2DeskProcess.start(new V2DeskProcess.Options(journalDir, SEED, DeskProfile.v2(), 120 * MINUTE))) {
-      p.step(8 * MINUTE, 20_000_000L);
+      p.step(20 * MINUTE, 20_000_000L);
       long fills = 0;
       for (int v = 0; v < 3; v++) {
         fills += V2Reconciliation.fills(p.venues().books().get(v), AppIds.COMP_ID);

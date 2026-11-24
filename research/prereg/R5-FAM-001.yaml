@@ -240,15 +240,15 @@ known_limits: >
   model too small to report in whole venue units are not reported to the desk (counted per arm as
   futures_dust_fills): the desk's view of its TY position can lag the back-tester's by less than
   one contract until the cumulative fill reaches a whole unit. It touches only arms whose hedger
-  chooses TY, adds noise with no sign, and its count is reported. (7) The loop now and then
-  receives an execution report or cancel reject for a child order its router no longer holds,
-  and drops it (DeskGroup's unrouted-report count, recorded per arm and session as
-  unrouted_reports). The timing pilot shows it in every arm, 1 to 13 in 4 sessions against 694
-  to 10,085 child orders (baseline 2 in 1,099, v2 3 in 7,163). A dropped fill leaves the hedger's
-  view of its position short of the back-tester's, so it hedges again or less; the rate differs
-  between arms with no pattern by strategy, so the sign of its effect on any comparison is not
-  known. It is small but it is a defect of the harness, not of a strategy; the count of every arm
-  is in the summary. (8) Both sensitivity rows lie on the side that makes market making harder,
+  chooses TY, adds noise with no sign, and its count is reported. (7) Corrected on
+  2026-11-24, before any session of the seed base was generated: an earlier draft of this limit said
+  that the loop drops reports, possibly fills, of children its router no longer holds. Every such
+  report traced (five, in the sessions DeskSimV2Test runs) was a Cancelled without a fill, sent by
+  the back-tester for an order whose last fills had just completed it; no fill was dropped in them.
+  The back-tester now reports such an order Filled and refuses the cancel, and the loop books any
+  fill of a released child (DR-V12-E09, DR-V12-D13). The count stays in every session record
+  (unrouted_reports); the timing pilot's counts (1 to 13 in 4 sessions) predate the fix.
+  (8) Both sensitivity rows lie on the side that makes market making harder,
   because the favourable ends of both parameters are refused at start-up by the simulator's
   consistency checks, so the band says nothing about a friendlier market. (9) legacy runs the
   recorded universe and declines the 3, 7 and 20-year swap RFQs and every TY RFQ; it is

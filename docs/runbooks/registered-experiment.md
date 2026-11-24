@@ -40,6 +40,6 @@ The same command line resumes: finished sessions are kept (`sessions\<seed>.json
 
 ## After the run
 
-The run writes `summary.json` once, after the last session, and appends the ledger rows in the same step: one per hypothesis plus the descriptive row, each with the family id and one look for the family run. The Benjamini-Hochberg table is in `runner.log`; print it again with `LedgerCli --ledger data/ledger/ledger.jsonl --bh family:ID` using the run's `java.args` (tools/sim-v2/README.md, step 5), or `python -m ratesresearch.prereg bh`. A second run of the same family on the same seed base is refused.
+The run writes `summary.json` once, after the last session, and appends the ledger rows in the same step: one per hypothesis plus the descriptive rows (D0, D1), each with the family id and one look for the family run. The Benjamini-Hochberg table is in `runner.log`; print it again with `LedgerCli --ledger data/ledger/ledger.jsonl --bh family:ID` using the run's `java.args` (tools/sim-v2/README.md, step 5), or `python -m ratesresearch.prereg bh`. A second run of the same family on the same seed base is refused.
 
 Every number the run produces is a statement about the simulator under its declared assumptions (DR-008). Report it with its interval, its guard metrics and its verdict, whatever the verdict.

@@ -516,11 +516,8 @@ class DeskSimV2Test {
     assertTrue(r.rfqs().stream().anyMatch(q -> q.quoted() && Set.of(105, 106, 107).contains(q.instrumentId())));
     // hedges routed to the model's books by the ladder router, every report matched
     assertTrue(desk.orders() > 0 && r.hedgeFills() > 0, "orders " + desk.orders() + " hedges " + r.hedgeFills());
-    // a known defect outside the strategy, counted per arm in every session record: now and then a
-    // report or cancel reject reaches the loop for a child its router no longer holds (reported to
-    // the owner of DeskGroup; the v2 arm shows none on this window)
+    assertEquals(0L, desk.desk().unroutedReports(), "unrouted " + desk.counters());
     assertEquals(desk.desk().unroutedReports(), desk.counters().get("unrouted_reports"));
-    assertTrue(desk.desk().unroutedReports() * 100 <= desk.orders(), "unrouted " + desk.counters());
     assertEquals(0L, desk.desk().feedGaps());
     // one tier for every client, as the recorded desk has
     for (int t = 0; t < 3; t++) {

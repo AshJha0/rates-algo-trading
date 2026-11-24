@@ -362,8 +362,9 @@ public final class BacktestRunner {
      */
     private void bookRestingFills(final Order o) {
       final Instrument instrument = config.instruments().get(o.instrumentId);
-      final boolean complete = o.resting.onBook(0L, 0L, 0L);
-      final long filled = complete ? o.quantity : Math.min(o.quantity, o.resting.filledMinor());
+      final boolean done = o.resting.onBook(0L, 0L, 0L);
+      final long filled = done ? o.quantity : Math.min(o.quantity, o.resting.filledMinor());
+      final boolean complete = filled == o.quantity;
       final long delta = filled - o.cum;
       if (complete) {
         resting.remove(o.clOrdId);
@@ -750,8 +751,7 @@ public final class BacktestRunner {
     public boolean cancelOrder(final long clOrdId) {
       final Order r = resting.remove(clOrdId);
       if (r != null) {
-        cancelResting(r);
-        return true;
+        return cancelResting(r);
       }
       final Order f = inFlight.get(clOrdId);
       if (f != null && f.type != OrdType.Market && !f.cancelRequested) {
@@ -763,9 +763,12 @@ public final class BacktestRunner {
 
     /**
      * Takes a resting order off the book. Simulator v2: what it traded and was not yet booked is
-     * booked first, at its limit price. A version 1 order fills whole or not at all.
+     * booked first, at its limit price; when that completes the order it is reported {@code Filled}
+     * and there is nothing left to cancel. A version 1 order fills whole or not at all.
+     *
+     * @return true when the order was cancelled, false when it had filled
      */
-    private void cancelResting(final Order r) {
+    private boolean cancelResting(final Order r) {
       final long partial = Math.min(r.quantity, r.resting.cancel());
       final long delta = partial - r.cum;
       if (delta > 0) {
@@ -774,9 +777,13 @@ public final class BacktestRunner {
         bookFill(
             r.instrumentId, r.buy ? delta : -delta, Prices.toDouble(r.priceMantissa), hedgeCost.fee(instrument, delta),
             r.hedge, r.clOrdId, 0, 0);
-        report(r, OrdStatus.PartiallyFilled, r.priceMantissa, delta);
+        report(r, r.cum == r.quantity ? OrdStatus.Filled : OrdStatus.PartiallyFilled, r.priceMantissa, delta);
+      }
+      if (r.cum == r.quantity) {
+        return false;
       }
       report(r, OrdStatus.Cancelled, 0, 0);
+      return true;
     }
 
     private void arrive(final Order order) {

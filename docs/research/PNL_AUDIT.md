@@ -12,9 +12,7 @@ The figures below are kept as they were recorded. They are not to be used to siz
 
 New experiments run on simulator v2 (`rates-sim`, docs/research/SIM_V2_DESIGN.md) under the family registration below. Every number from simulator v2 is again a statement about a simulator under declared assumptions (DR-008), not an estimate of desk P&L.
 
-<!-- FAMILY-REG -->
-
-Until the placeholder above is filled: `research/prereg/R5-FAM-001.yaml` is unsigned and has not run. It replaces, before any was signed or run, the eight drafts SIM3-BASE-001 and R5-001 to R5-007; no ledger row reads its seed base.
+At the 1.2.0 release `research/prereg/R5-FAM-001.yaml` is unsigned and has not run. It replaces, before any was signed or run, the eight drafts SIM3-BASE-001 and R5-001 to R5-007; no ledger row reads its seed base.
 
 ## Original audit (2026-10-31)
 

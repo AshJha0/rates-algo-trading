@@ -314,6 +314,33 @@ class DeskGroupTest {
   }
 
   @Test
+  void aFillOfAChildTheRouterNoLongerHoldsIsStillAPositionBookedOnce() {
+    book();
+    router.submit(11, bond, Side.Buy, lot, 1.0, 0L);
+    final long released = onlyChild() + 77;
+    final long before = group.desk().risk().position(bond);
+    report(released, OrdStatus.Cancelled, 0, 0);
+    assertEquals(1, group.unroutedReports());
+    assertEquals(0, group.lateFills(), "a report without a fill books nothing");
+    assertEquals(before, group.desk().risk().position(bond));
+
+    report(released, OrdStatus.Filled, lot, lot);
+    assertEquals(1, group.lateFills());
+    assertEquals(before + lot, group.desk().risk().position(bond), "what the venue traded is our position");
+
+    // the venue resends it after a reconnect: same venue, same execution id
+    execId--;
+    report(released, OrdStatus.Filled, lot, lot);
+    assertEquals(1, group.lateFills());
+    assertEquals(before + lot, group.desk().risk().position(bond));
+    assertEquals(3, group.unroutedReports());
+
+    // a bust of that execution takes the position back
+    bust(released, execId, lot);
+    assertEquals(before, group.desk().risk().position(bond));
+  }
+
+  @Test
   void aFillOnTheQuotingEnginesOwnOrderIsShownToItOnce() {
     book();
     final long ownOrder = 4_242L; // not a router id

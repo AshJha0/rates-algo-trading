@@ -2503,7 +2503,7 @@ Context. A timer calling `flush` on every tick applied a round in pieces wheneve
 
 Decision. `DeskGroup` records when a round's first input arrived on the loop clock and flushes 100 ms later.
 
-Consequences. Superseded by DR-V12-P06, which makes the binding itself apply a round whole; the workaround is now unnecessary and harmless.
+Consequences. Superseded by DR-V12-P06, which makes the binding itself apply a round whole; the workaround was removed on 2026-11-24.
 
 ## DR-V12-D09: The first snapshot of a non-empty book is announced
 
@@ -2603,7 +2603,7 @@ Context. A loop that conflates its inputs wants to reprice once per burst; a tim
 
 Decision. `PricingBinding.setInput` records an input and never reprices; `repriceIfDirty` applies everything recorded with one solve; `advanceTo` applies a held round once and whole when its conflation time has passed, and `flush` only then. `onCurveInput` keeps its behaviour. Version 1 holds nothing, so its defaults apply each input at once. Supersedes DR-V12-D08.
 
-Consequences. A burst then one reprice costs one solve. Setting an input and repricing do not allocate. The `DeskGroup` workup of DR-V12-D08 can be removed by the owner of that file.
+Consequences. A burst then one reprice costs one solve. Setting an input and repricing do not allocate. The `DeskGroup` workaround of DR-V12-D08 was removed on 2026-11-24.
 
 ## DR-V12-E01: One registered family on shared sessions replaces the eight drafts
 
@@ -2621,7 +2621,7 @@ Date: 2026-11-23
 
 Context. An arm was described by presets, switches and router choices in several places.
 
-Decision. An arm is a `DeskProfile` plus its `DeskSettings.StrategySwitches`; `DeskArms` builds the nine arms of the family; the profile gives its resolved form and a configuration hash.
+Decision. An arm is a `DeskProfile` plus its `DeskSettings.StrategySwitches`; `DeskArms` builds the arms of the family (nine on the common footing and the descriptive `legacy`); the profile gives its resolved form and a configuration hash.
 
 Consequences. A ledger row names one configuration. The default desk and the v2 desk are two values of it.
 
@@ -2684,3 +2684,23 @@ Context. A 2,000-session family takes about 19 hours on eight workers; the machi
 Decision. `ExperimentRunner` checkpoints each finished session and each finished arm inside a session; a relaunch with the same command resumes. No summary and no ledger row is written until the last session. A pilot runs on the pilot base 29,000,000, which supports no claim; `--timing-only` writes timings and structural counts and no P&L.
 
 Consequences. The pilots of 2026-11-23 on the pilot base measured about 25 s per full-day session for the default desk run alone, and a session sd of about 214k USD from 8 sessions of the default desk (imprecise); no mean P&L was looked at. The sd sized N (the registration's `why_2000`) and is used for nothing else.
+
+## DR-V12-E09: A cancel that finds the order filled is refused
+
+Date: 2026-11-24
+
+Context. On simulator v2 the back-tester books a resting order's fills when the market moves. A cancel asked for in between booked the last fills, reported them `PartiallyFilled`, and then reported `Cancelled` with nothing left to cancel. The router had released the child by then, so the loop counted an unrouted report. R5-FAM-001's draft listed the count as a possible dropped fill.
+
+Decision. When the fills booked by a cancel complete the order, it is reported `Filled` and the cancel is refused (`StrategyContext.cancelOrder` returns false), as a venue does. An order whose booked fills reach its quantity is complete whether or not the queue model has said so.
+
+Consequences. `SimV2OrdersTest` covers it; `DeskSimV2Test` asserts zero unrouted reports on the baseline and v2 arms. Version 1 runs are unchanged: their orders fill whole or not at all. No registered session had been generated.
+
+## DR-V12-D13: A fill of a released child is a position
+
+Date: 2026-11-24
+
+Context. The loop dropped every execution report of a router order its router no longer held, including one with a fill: one that crossed the cancel's confirmation, or an order left from before a restart. The posttrade keeper books such a fill, so risk and books would differ.
+
+Decision. `DeskGroup` books the fill to the risk engine at its own side, price and instrument, once by venue and execution id, and counts it (`lateFills`). The hedger sees it in the next residual. A report without a fill is still only counted.
+
+Consequences. A later bust of the same execution reverses it. The parent's accounting is not reopened; the router's outstanding quantity was freed when the child ended.

@@ -77,7 +77,9 @@ public interface StrategyContext {
 
   /**
    * Cancels a limit order that has not filled. A resting order is reported {@code Cancelled} at
-   * once; one still on its way to the venue is reported {@code Cancelled} when it arrives.
+   * once; one still on its way to the venue is reported {@code Cancelled} when it arrives. A resting
+   * order whose last unreported fills complete it is reported {@code Filled} instead, and the cancel
+   * is refused.
    *
    * @return false when the order has filled, was already cancelled, is a market order, or is unknown
    */

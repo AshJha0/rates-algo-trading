@@ -17,6 +17,7 @@ import io.ratesalgo.backtest.TestSupport;
 import io.ratesalgo.backtest.model.BandPoint;
 import io.ratesalgo.backtest.synth.SyntheticDay;
 import io.ratesalgo.backtest.util.Prices;
+import io.ratesalgo.messages.sbe.BookUpdateDecoder;
 import io.ratesalgo.messages.sbe.ExecutionReportDecoder;
 import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.OrdType;
@@ -237,6 +238,67 @@ class SimV2OrdersTest {
     assertTrue(iocBooked > 0 && iocBooked < 2_000 * InstrumentSet.MILLION, "ioc booked " + iocBooked);
     assertTrue(r.contains(w.ioc + ":Cancelled:0:" + iocBooked + ":0"), r.toString());
     assertFalse(r.stream().anyMatch(s -> s.startsWith(w.ioc + ":Filled")));
+  }
+
+  /** Crosses the book with a small day order and cancels it on the next book it is shown. */
+  private static final class LateCanceller implements Strategy {
+    final List<String> reports = new ArrayList<>();
+    long order;
+    long first;
+    boolean acked;
+    boolean asked;
+    boolean cancelled;
+
+    @Override
+    public String name() {
+      return "late-canceller";
+    }
+
+    @Override
+    public void onStart(final StrategyContext ctx) {
+      first = ctx.scheduleTimer(ctx.nowEpochNanos() + HOUR / 4);
+    }
+
+    @Override
+    public void onQuoteRequest(final QuoteRequestDecoder rfq, final StrategyContext ctx) {
+      // declines
+    }
+
+    @Override
+    public void onTimer(final long timerId, final long nowEpochNanos, final StrategyContext ctx) {
+      if (timerId == first) {
+        final int note = InstrumentSet.UST_10Y;
+        final long tick = ctx.instruments().get(note).tickMantissa();
+        final long best = Math.floorDiv(Prices.toMantissa(ctx.mid(note)), tick) * tick;
+        order = ctx.sendOrder(note, Side.Buy, OrdType.Limit, TimeInForce.Day, InstrumentSet.MILLION, best + 5 * tick, true);
+      }
+    }
+
+    @Override
+    public void onBookUpdate(final BookUpdateDecoder update, final StrategyContext ctx) {
+      if (acked && !asked) {
+        asked = true;
+        cancelled = ctx.cancelOrder(order);
+      }
+    }
+
+    @Override
+    public void onExecutionReport(final ExecutionReportDecoder r, final StrategyContext ctx) {
+      acked |= r.ordStatus() == OrdStatus.New;
+      reports.add(r.ordStatus() + ":" + r.lastQuantity() + ":" + r.cumQuantity() + ":" + r.leavesQuantity());
+    }
+  }
+
+  /** The book has traded the whole order and not reported it yet when its cancel is asked for. */
+  @Test
+  void aCancelOfAnOrderTheBookHasFilledIsRefusedAndTheFillReportedOnce() {
+    final LateCanceller s = new LateCanceller();
+    final BacktestResult result = run(SimDay.of(spec, SEED, DATE), s);
+    assertTrue(s.asked);
+    assertFalse(s.cancelled, "too late to cancel: " + s.reports);
+    final long q = InstrumentSet.MILLION;
+    assertEquals(List.of("New:0:0:" + q, "Filled:" + q + ":" + q + ":0"), s.reports);
+    assertEquals(q, result.fills().stream().filter(f -> f.refId() == s.order).mapToLong(FillRecord::signedQuantity).sum());
   }
 
   /** Version 1 has no withdrawal, and the explicit time in force falls back to the old order path. */

@@ -163,6 +163,7 @@ public final class DeskGroup {
   private long venueBusts;
   private long hedgeFills;
   private long unroutedReports;
+  private long lateFills;
   private long duplicateBusts;
   private long duplicateFills;
   private long tradePrints;
@@ -734,6 +735,16 @@ public final class DeskGroup {
     final int slot = children.slotOf(child);
     if (slot < 0) {
       unroutedReports++;
+      if (execution.lastQuantity() > 0 && !seenBefore) {
+        // the venue traded an order of ours after the router let go of it (a fill that crossed its
+        // cancel, or an order left over from before a restart): still a position, booked once by
+        // its execution id; the hedger sees it in the next residual
+        final long late = execution.lastQuantity() * scale;
+        lateFills++;
+        desk.risk().onFill(
+            routerInstrument[r], execution.side() == Side.Buy ? late : -late, execution.lastPrice().mantissa());
+        syncSpreadRisk();
+      }
       return;
     }
     final long parentId = children.parentId(slot);
@@ -1169,6 +1180,11 @@ public final class DeskGroup {
   /** Execution reports for router ids no router holds. */
   public long unroutedReports() {
     return unroutedReports;
+  }
+
+  /** Fills of children the routers no longer held, booked as positions; included in {@link #unroutedReports}. */
+  public long lateFills() {
+    return lateFills;
   }
 
   /** Router children live now, over every router. */

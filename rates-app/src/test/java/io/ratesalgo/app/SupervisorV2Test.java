@@ -104,7 +104,7 @@ class SupervisorV2Test {
   void aDeadLoopIsWithdrawnAndLoggedOutOfAllFourVenuesFromTheGatewaySide() {
     final TradingProcess p = start(dir, 10 * SECOND, 60 * SECOND);
     try {
-      p.step(8 * MINUTE, STEP);
+      p.step(20 * MINUTE, STEP);
       assertTrue(p.group(0).quotesSent() > 0 && p.group(0).hedgesRouted() > 0);
       p.startThreads(1.0);
       await(() -> p.group(0).loop().counters().get(io.ratesalgo.core.LoopCounters.DUTY_CYCLES) > 0, "the loop thread");
@@ -137,7 +137,7 @@ class SupervisorV2Test {
     final CountDownLatch entered = new CountDownLatch(1);
     final CountDownLatch release = new CountDownLatch(1);
     try {
-      p.step(8 * MINUTE, STEP);
+      p.step(20 * MINUTE, STEP);
       p.startThreads(1.0);
       p.injectGatewayFault(GatewayThread.FUTURES, () -> {
         entered.countDown();
