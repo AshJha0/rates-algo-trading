@@ -111,11 +111,12 @@ class LoopAllocationTest {
       loop.register(QuoteRequestDecoder.TEMPLATE_ID, new TrivialQuoter(loop));
 
       final AtomicBoolean draining = new AtomicBoolean(true);
+      final AtomicBoolean drainOpen = new AtomicBoolean(true);
       final Thread drainer =
           new Thread(
               () -> {
                 while (draining.get()) {
-                  if (outbound.read((t, b, i, l) -> {}, 1024) == 0) {
+                  if (!drainOpen.get() || outbound.read((t, b, i, l) -> {}, 1024) == 0) {
                     Thread.onSpinWait();
                   }
                 }
@@ -142,6 +143,16 @@ class LoopAllocationTest {
       publish(publisher, 1, WARM_UP);
       awaitInbound(loop, WARM_UP);
       int sent = WARM_UP;
+      // The backpressure path, run before the windows: the JVM allocates once on a path's first
+      // execution, so a first full ring in the last window would show as 96 bytes there. With the
+      // drainer held back the ring fills and the path runs many times; the windows' bounds hold for
+      // it too.
+      drainOpen.set(false);
+      publish(publisher, sent + 1, sent + EXTRA_WARM_UP_WINDOW);
+      sent += EXTRA_WARM_UP_WINDOW;
+      awaitInbound(loop, sent);
+      drainOpen.set(true);
+      assertTrue(loop.counters().get(LoopCounters.BACKPRESSURE_EVENTS) > 0, "the warm-up filled the outbound ring");
       // Under machine load (a 2-CPU runner) the JIT's compiler threads fall behind, so
       // compilations and deoptimisations can land in the measured windows instead of the fixed
       // warm-up. Keep warming up, 250,000 messages at a time, until a whole extra window passes with
