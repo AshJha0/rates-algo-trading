@@ -1,7 +1,7 @@
 # Trading process with the v2 desk profile (docs/research/DESK_V2_WIRING.md). No recorded figure
 # was made with it; trading-blue.yaml is the recorded desk. Schema: schema/process-config.schema.json (API_SPEC.md Section 17.11).
 # A change to this file is a change to a production control: it goes through a pull request
-# with an approving review (docs/AI_USE_POLICY.md, RTS 6 Article 11).
+# that passes the required CI checks (docs/AI_USE_POLICY.md).
 schemaVersion: 1
 process:
   name: trading-v2

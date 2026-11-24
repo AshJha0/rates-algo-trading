@@ -6,7 +6,7 @@
   <parent>
     <groupId>io.ratesalgo</groupId>
     <artifactId>rates-algo-trading</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
   </parent>
 
   <artifactId>rates-backtest</artifactId>
