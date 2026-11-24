@@ -19,38 +19,42 @@ import java.util.Map;
  * <table>
  *   <caption>Arms</caption>
  *   <tr><th>Arm</th><th>Profile</th></tr>
- *   <tr><td>default (and engine, its older name)</td><td>{@link DeskProfile#defaults()}: the recorded desk</td></tr>
- *   <tr><td>v2</td><td>{@link DeskProfile#v2()}: strategy v2, pricing v2, the ladder router, the simulator v2 market</td></tr>
+ *   <tr><td>baseline</td><td>{@link DeskProfile#simV2} with {@link DeskSettings#defaults()}: every strategy switch off, on the common footing</td></tr>
+ *   <tr><td>v2</td><td>{@link DeskProfile#v2()}: every strategy switch on, on the common footing</td></tr>
  *   <tr><td>v2_minus_cover_pricing</td><td>v2 without break-even cover-relative pricing</td></tr>
  *   <tr><td>v2_minus_reservation_price</td><td>v2 without the capped reservation price</td></tr>
  *   <tr><td>v2_minus_factor_hedging</td><td>v2 without the factor covariance, factor hedging and tick hedge cost</td></tr>
  *   <tr><td>v2_minus_internalisation</td><td>v2 with the default hedger</td></tr>
  *   <tr><td>v2_minus_markouts</td><td>v2 without the client markout store</td></tr>
  *   <tr><td>v2_minus_quote_protection</td><td>v2 without tick rounding, the volatility time to live and the pull</td></tr>
- *   <tr><td>cover_only</td><td>default with cover pricing and nothing else</td></tr>
+ *   <tr><td>cover_only</td><td>baseline with cover pricing and nothing else</td></tr>
+ *   <tr><td>legacy (default and engine, its older names)</td><td>{@link DeskProfile#defaults()}: the desk as built in 1.1.0</td></tr>
  * </table>
  *
- * <p>Every arm is a value of one configuration, a profile and its settings' strategy switches, so
- * an ablation differs from {@code v2} in exactly the switches named for it ({@link
- * DeskProfile#resolved}). The v2 arms trade the simulator v2 universe ({@link UsdUniverse#simV2()},
- * every swap tenor of the model, the Treasuries and TY); the default and cover_only arms the
- * recorded one.
+ * <p>The common footing is the simulator v2 market and universe ({@link UsdUniverse#simV2()}: every
+ * swap tenor of the model, the Treasuries and TY), pricing v2 and the ladder router. Every arm but
+ * {@code legacy} stands on it, so any two of them differ only in their strategy switches ({@link
+ * DeskProfile#resolved}). {@code legacy} is the recorded universe, pricing v1 and the touch router;
+ * R5-FAM-001 reports it as description only and no hypothesis may use it.
  */
 public final class DeskArms implements ArmFactory {
 
-  /** The nine arms of the family R5-FAM-001, baseline first. */
+  /** The ten arms of the family R5-FAM-001, baseline first, the descriptive arm last. */
   public static final List<String> FAMILY =
       List.of(
-          "default", "v2", "v2_minus_cover_pricing", "v2_minus_reservation_price", "v2_minus_factor_hedging",
-          "v2_minus_internalisation", "v2_minus_markouts", "v2_minus_quote_protection", "cover_only");
+          "baseline", "v2", "v2_minus_cover_pricing", "v2_minus_reservation_price", "v2_minus_factor_hedging",
+          "v2_minus_internalisation", "v2_minus_markouts", "v2_minus_quote_protection", "cover_only", "legacy");
+
+  /** The arms of the family that stand on the common footing: all but {@code legacy}. */
+  public static final List<String> COMMON_FOOTING = FAMILY.subList(0, FAMILY.size() - 1);
 
   private static final Map<String, DeskProfile> ARMS = new LinkedHashMap<>();
 
   static {
+    final DeskProfile baseline = DeskProfile.simV2(DeskSettings.defaults());
     final DeskProfile v2 = DeskProfile.v2();
     final StrategySwitches s = v2.settings().strategy();
-    ARMS.put("default", DeskProfile.defaults());
-    ARMS.put("engine", DeskProfile.defaults());
+    ARMS.put("baseline", baseline);
     ARMS.put("v2", v2);
     ARMS.put("v2_minus_cover_pricing", ablation(v2, s.withCoverPricing(false)));
     ARMS.put("v2_minus_reservation_price", ablation(v2, s.withReservationPrice(false)));
@@ -58,8 +62,11 @@ public final class DeskArms implements ArmFactory {
     ARMS.put("v2_minus_internalisation", ablation(v2, s.withInternalisingHedger(false)));
     ARMS.put("v2_minus_markouts", ablation(v2, s.withMarkoutStore(false)));
     ARMS.put("v2_minus_quote_protection", ablation(v2, s.withQuoteProtection(false, 0.0)));
-    final DeskProfile d = DeskProfile.defaults();
-    ARMS.put("cover_only", ablation(d, d.settings().strategy().withCoverPricing(true)));
+    ARMS.put("cover_only", ablation(baseline, baseline.settings().strategy().withCoverPricing(true)));
+    ARMS.put("legacy", DeskProfile.defaults());
+    // older names of the recorded desk, for the superseded drafts
+    ARMS.put("default", DeskProfile.defaults());
+    ARMS.put("engine", DeskProfile.defaults());
   }
 
   private static DeskProfile ablation(final DeskProfile base, final StrategySwitches switches) {

@@ -803,6 +803,8 @@ public final class DeskStrategy implements Strategy {
     m.put("cancels", cancels);
     m.put("curve_rounds", curveRounds);
     m.put("futures_dust_fills", dustFills);
+    // reports and cancel rejects the loop could not hand to a router; a defect count, never a result
+    m.put("unrouted_reports", desk == null ? 0L : desk.unroutedReports());
     return m;
   }
 }

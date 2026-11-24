@@ -16,12 +16,15 @@ import io.ratesalgo.backtest.BacktestRunner;
 import io.ratesalgo.backtest.FillRecord;
 import io.ratesalgo.backtest.InstrumentSet;
 import io.ratesalgo.backtest.RfqRecord;
+import io.ratesalgo.backtest.experiment.BandParameters;
+import io.ratesalgo.backtest.experiment.SessionExecutor;
 import io.ratesalgo.backtest.Strategy;
 import io.ratesalgo.backtest.StrategyContext;
 import io.ratesalgo.backtest.model.Presets;
 import io.ratesalgo.backtest.sim.PairedSessions;
 import io.ratesalgo.backtest.sim.SimDay;
 import io.ratesalgo.backtest.synth.SyntheticDay;
+import io.ratesalgo.backtest.util.Yaml;
 import io.ratesalgo.messages.sbe.BookUpdateDecoder;
 import io.ratesalgo.messages.sbe.CurveInputDecoder;
 import io.ratesalgo.messages.sbe.ExecutionReportDecoder;
@@ -131,7 +134,7 @@ class DeskSimV2Test {
   }
 
   @Test
-  void theArmsAreTheFamilysNineAndEachIsBuildable() {
+  void theArmsAreTheFamilysTenAndEachIsBuildable() {
     final DeskArms arms = new DeskArms();
     for (final String a : DeskArms.names()) {
       assertNull(arms.refusal(a), a);
@@ -139,15 +142,99 @@ class DeskSimV2Test {
     }
     assertTrue(arms.refusal("nobody").startsWith("unknown desk arm"));
     assertThrows(IllegalArgumentException.class, () -> DeskArms.profile("nobody"));
-    assertEquals(9, DeskArms.FAMILY.size());
+    assertEquals(10, DeskArms.FAMILY.size());
+    assertEquals("baseline", DeskArms.FAMILY.get(0));
+    assertEquals("legacy", DeskArms.FAMILY.get(9));
+    assertEquals(DeskArms.FAMILY.subList(0, 9), DeskArms.COMMON_FOOTING);
     assertTrue(DeskArms.names().containsAll(DeskArms.FAMILY));
-    assertEquals(DeskArms.FAMILY.size() + 1, DeskArms.names().size(), "the family's nine and the old name 'engine'");
+    assertEquals(DeskArms.FAMILY.size() + 2, DeskArms.names().size(), "the family's ten and the old names 'default', 'engine'");
     assertEquals(DeskSettings.StrategyPreset.V2, DeskArms.settings("v2").strategyPreset());
+    assertEquals(DeskSettings.StrategyPreset.DEFAULT, DeskArms.settings("baseline").strategyPreset());
     assertEquals(DeskSettings.StrategyPreset.DEFAULT, DeskArms.settings("engine").strategyPreset());
-    assertEquals(DeskArms.profile("default"), DeskArms.profile("engine"));
+    // the older names are the desk as built, not the baseline on the common footing
+    assertEquals(DeskArms.profile("legacy"), DeskArms.profile("default"));
+    assertEquals(DeskArms.profile("legacy"), DeskArms.profile("engine"));
     assertEquals(DeskProfile.v2(), DeskArms.profile("v2"));
-    assertEquals(DeskProfile.defaults(), DeskArms.profile("default"));
+    assertEquals(DeskProfile.simV2(DeskSettings.strategyV2()), DeskArms.profile("v2"));
+    assertEquals(DeskProfile.simV2(DeskSettings.defaults()), DeskArms.profile("baseline"));
     assertEquals(DeskSettings.StrategyPreset.CUSTOM, DeskArms.settings("cover_only").strategyPreset());
+  }
+
+  @Test
+  void baselineAndV2StandOnOneFootingAndDifferExactlyInTheStrategySwitches() {
+    final DeskProfile baseline = DeskArms.profile("baseline");
+    final DeskProfile v2 = DeskArms.profile("v2");
+    // the same market, universe, pricing and router
+    assertEquals(v2.market(), baseline.market());
+    assertEquals(DeskProfile.Market.SIM_V2, baseline.market());
+    assertEquals(v2.pricing(), baseline.pricing());
+    assertEquals(io.ratesalgo.app.pricing.PricingBindings.Version.V2, baseline.pricing());
+    assertEquals(v2.router(), baseline.router());
+    assertEquals(DeskProfile.RouterModel.LADDER, baseline.router());
+    assertEquals(
+        java.util.Arrays.toString(v2.newUniverse().instrumentIds()),
+        java.util.Arrays.toString(baseline.newUniverse().instrumentIds()));
+    assertEquals(
+        java.util.Arrays.toString(UsdUniverse.simV2().instrumentIds()),
+        java.util.Arrays.toString(baseline.newUniverse().instrumentIds()));
+    // the default strategy with its declared settings, unchanged: only the footing is v2's
+    assertEquals(DeskSettings.defaults(), baseline.settings());
+    assertEquals(DeskSettings.StrategySwitches.DEFAULT, baseline.settings().strategy());
+    // swapping the strategy switches turns one arm into the other, and nothing else does
+    assertEquals(v2, baseline.withSettings(baseline.settings().withStrategy(v2.settings().strategy())));
+    assertEquals(baseline, v2.withSettings(v2.settings().withStrategy(baseline.settings().strategy())));
+    final Set<String> strategyKeys = new TreeSet<>();
+    for (final String k : baseline.resolved().keySet()) {
+      if (k.startsWith("strategy.")) {
+        strategyKeys.add(k);
+      }
+    }
+    assertEquals(12, strategyKeys.size());
+    assertEquals(strategyKeys, differences("baseline", "v2"));
+    // every arm on the common footing differs from the baseline in strategy switches only
+    for (final String arm : DeskArms.COMMON_FOOTING) {
+      for (final String k : differences("baseline", arm)) {
+        assertTrue(k.startsWith("strategy."), arm + " differs from baseline in " + k);
+      }
+    }
+    // the built objects follow: the baseline quotes and hedges as the recorded strategy does
+    assertFalse(DeskArms.settings("baseline").quoting().strategy().coverPricing());
+    assertFalse(DeskArms.settings("baseline").hedger().internalising());
+    assertEquals(1, DeskArms.settings("baseline").tiers().tierOf(DeskSettings.v2ClientId(0)).tier());
+  }
+
+  @Test
+  void legacyIsTheDeskAsBuiltIn110() {
+    // DeskSettings.defaults() of v1.1.0, pricing v1, the touch router, the recorded universe
+    final Map<String, String> expected = new java.util.LinkedHashMap<>();
+    expected.put("settings.housekeepingNanos", "10000000");
+    expected.put("settings.hedgeIntervalNanos", "250000000");
+    expected.put("settings.tradeRatePerSecond", "2.0E9");
+    expected.put("settings.hedgeLotMinor", "100000000");
+    expected.put("settings.hedgeMaxLots", "500.0");
+    expected.put("settings.seed", "2026");
+    expected.put("settings.quoteRatePerSecond", "1000.0");
+    expected.put("settings.limitPreset", "BACKTEST");
+    for (final String k : List.of("coverPricing", "reservationPrice", "factorCovariance", "factorHedging",
+        "tickHedgeCost", "markoutStore", "tickRounding", "volatilityTtl")) {
+      expected.put("strategy." + k, "false");
+    }
+    expected.put("strategy.volatilityReferenceTenor", "NaN");
+    expected.put("strategy.pullFraction", "0.0");
+    expected.put("strategy.internalisingHedger", "false");
+    expected.put("strategy.clientTiers", "false");
+    expected.put("pricing", "V1");
+    expected.put("router", "TOUCH");
+    expected.put("market", "STANDARD");
+    expected.put("markoutLoad", "null");
+    expected.put("markoutSave", "null");
+    assertEquals(expected, DeskArms.profile("legacy").resolved());
+    assertEquals(DeskProfile.defaults().resolved(), DeskArms.profile("legacy").resolved());
+    assertEquals(DeskProfile.defaults().configurationHash(), DeskArms.profile("legacy").configurationHash());
+    assertTrue(DeskArms.profile("legacy").isRecorded());
+    assertFalse(DeskArms.profile("baseline").isRecorded());
+    // it differs from the baseline in the footing only, never in a strategy switch
+    assertEquals(Set.of("pricing", "router", "market"), differences("baseline", "legacy"));
   }
 
   /** The keys of {@code arm}'s resolved configuration whose value differs from {@code reference}'s. */
@@ -176,14 +263,8 @@ class DeskSimV2Test {
     assertEquals(
         Set.of("strategy.tickRounding", "strategy.volatilityTtl", "strategy.pullFraction"),
         differences("v2", "v2_minus_quote_protection"));
-    // cover_only is the default desk with one switch on
-    assertEquals(Set.of("strategy.coverPricing"), differences("default", "cover_only"));
-    // the headline: every component of the desk differs, the shared settings do not
-    final Set<String> headline = differences("default", "v2");
-    assertTrue(headline.containsAll(Set.of("pricing", "router", "market", "strategy.clientTiers", "strategy.pullFraction")));
-    for (final String k : headline) {
-      assertFalse(k.startsWith("settings."), k);
-    }
+    // cover_only is the baseline with one switch on
+    assertEquals(Set.of("strategy.coverPricing"), differences("baseline", "cover_only"));
     // the resolved configuration is what each arm builds: the quoting engine's switches, the hedger
     final StrategyConfig r = DeskArms.settings("v2_minus_reservation_price").quoting().strategy();
     assertFalse(r.reservationPrice());
@@ -201,12 +282,12 @@ class DeskSimV2Test {
     assertTrue(c.coverPricing());
     assertFalse(c.reservationPrice() || c.factorHedging() || c.markoutStore() || c.tickRounding());
     assertFalse(DeskArms.settings("cover_only").hedger().internalising());
-    // nine distinct configurations
+    // ten distinct configurations
     final Set<String> hashes = new TreeSet<>();
     for (final String a : DeskArms.FAMILY) {
       hashes.add(DeskArms.profile(a).configurationHash());
     }
-    assertEquals(9, hashes.size());
+    assertEquals(10, hashes.size());
     assertEquals(DeskProfile.v2().configurationHash(), DeskArms.profile("v2").configurationHash());
   }
 
@@ -404,7 +485,7 @@ class DeskSimV2Test {
   @Test
   void everyArmIsPricedAsOfTheDesksOwnBusinessDateAndQuotesTreasuries() {
     final DeskArms arms = new DeskArms();
-    for (final String arm : List.of("default", "cover_only")) {
+    for (final String arm : List.of("legacy", "baseline", "cover_only")) {
       final DeskStrategy desk = (DeskStrategy) arms.create(arm, day());
       final Watched w = new Watched(desk, Long.MAX_VALUE);
       run(day(), w);
@@ -414,6 +495,100 @@ class DeskSimV2Test {
       assertTrue(w.byInstrument.keySet().stream().anyMatch(k -> k.startsWith("NONE:100")), arm + " " + w.byInstrument);
       assertTrue(desk.desk().desk().quoting().rfqs() > 0);
     }
+  }
+
+  @Test
+  void theBaselineRunsUnchangedOnTheCommonFooting() {
+    final SimDay day = day();
+    final DeskStrategy desk = (DeskStrategy) new DeskArms().create("baseline", day);
+    final Watched w = new Watched(desk, Long.MAX_VALUE);
+    final BacktestResult r = run(day, w);
+    // a healthy desk on the v2 market: fed whole by pricing v2, never short of an input or a price
+    for (final PassReason bad : List.of(PassReason.UNHEALTHY, PassReason.STALE_INPUT, PassReason.NO_FAIR_VALUE,
+        PassReason.UNKNOWN_INSTRUMENT)) {
+      assertFalse(w.reasons.containsKey(bad.name()), w.byInstrument.toString());
+    }
+    assertTrue(desk.curveRounds() > 3_000, "rounds " + desk.curveRounds());
+    assertEquals(0L, desk.desk().pricingV2().unfedInputs());
+    // the whole universe: nothing declined for its instrument, the v2 desk's extra tenors quoted
+    assertEquals(0L, desk.structuralDeclines());
+    assertTrue(desk.quotes() > 10, "quotes " + desk.quotes());
+    assertTrue(r.rfqs().stream().anyMatch(q -> q.quoted() && Set.of(105, 106, 107).contains(q.instrumentId())));
+    // hedges routed to the model's books by the ladder router, every report matched
+    assertTrue(desk.orders() > 0 && r.hedgeFills() > 0, "orders " + desk.orders() + " hedges " + r.hedgeFills());
+    // a known defect outside the strategy, counted per arm in every session record: now and then a
+    // report or cancel reject reaches the loop for a child its router no longer holds (reported to
+    // the owner of DeskGroup; the v2 arm shows none on this window)
+    assertEquals(desk.desk().unroutedReports(), desk.counters().get("unrouted_reports"));
+    assertTrue(desk.desk().unroutedReports() * 100 <= desk.orders(), "unrouted " + desk.counters());
+    assertEquals(0L, desk.desk().feedGaps());
+    // one tier for every client, as the recorded desk has
+    for (int t = 0; t < 3; t++) {
+      for (int k = 0; k < 8; k++) {
+        if (k != 1) {
+          assertEquals(0L, desk.tierRoutes(t, k), "model tier " + t + " reached desk tier " + k);
+        }
+      }
+    }
+  }
+
+  /** Session parts kept in memory, for a session run by the experiment's executor. */
+  private static final class MemoryParts implements SessionExecutor.Parts {
+    private final Map<String, Map<String, Object>> parts = new java.util.HashMap<>();
+
+    @Override
+    public Map<String, Object> row(final String row) {
+      return parts.get(row);
+    }
+
+    @Override
+    public void putRow(final String row, final Map<String, Object> value) {
+      parts.put(row, value);
+    }
+
+    @Override
+    public Map<String, Object> arm(final String row, final String arm) {
+      return parts.get(row + "/" + arm);
+    }
+
+    @Override
+    public void putArm(final String row, final String arm, final Map<String, Object> value) {
+      parts.put(row + "/" + arm, value);
+    }
+  }
+
+  @Test
+  void allTenArmsSeeTheSameInputsUnderCommonRandomNumbers(@TempDir final Path work) {
+    final long seed = SessionSeeds.seed(SessionSeeds.ACCEPTANCE, 64_002);
+    final BandParameters.Row central = new BandParameters.Row(BandParameters.CENTRAL, SimParams.loadDefault());
+    final Map<String, Object> session =
+        new SessionExecutor(presets, work)
+            .run(seed, List.of(new SessionExecutor.RowRun(central, DeskArms.FAMILY)), new DeskArms(), new MemoryParts(),
+                true, HOUR / 2);
+    final Map<String, Object> row = Yaml.asMap(Yaml.asMap(session.get("rows"), "rows").get(BandParameters.CENTRAL), "row");
+    final Map<String, Object> arms = Yaml.asMap(row.get("arms"), "arms");
+    assertEquals(DeskArms.FAMILY, List.copyOf(arms.keySet()));
+    final Set<String> configs = new TreeSet<>();
+    for (final String arm : DeskArms.FAMILY) {
+      final Map<String, Object> m = Yaml.asMap(arms.get(arm), arm);
+      // one journal, replayed bit for bit by every arm
+      assertEquals(row.get("journal_chain"), m.get("input_chain"), arm);
+      assertEquals(r(row.get("rfqs")), r(m.get("rfqs_seen")), arm);
+      configs.add(String.valueOf(m.get("config_hash")));
+      // timing only: the defect count is kept, no P&L line is
+      assertTrue(m.containsKey("unrouted_reports") && !m.containsKey("position_pnl"), arm);
+      final long structural = r(m.get("structural_declines"));
+      if ("legacy".equals(arm)) {
+        assertTrue(structural > 0, "the recorded universe declines the 3, 7 and 20-year swaps and TY");
+      } else {
+        assertEquals(0L, structural, arm + " stands on the common footing");
+      }
+    }
+    assertEquals(10, configs.size());
+  }
+
+  private static long r(final Object o) {
+    return ((Number) o).longValue();
   }
 
   @Test

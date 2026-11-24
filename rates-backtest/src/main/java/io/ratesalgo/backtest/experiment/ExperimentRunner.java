@@ -325,7 +325,19 @@ public final class ExperimentRunner {
     if (results.get("descriptive_baseline") != null) {
       final Map<String, Object> d = new LinkedHashMap<>(common);
       d.put("hypothesis_id", "D0");
-      d.put("results", Map.of("description", results.get("descriptive_baseline")));
+      d.put("results", description(plan.referenceArm(), results.get("descriptive_baseline"), null));
+      d.put("verdict", "description");
+      DataSets.stamp(d, before, prereg);
+      records.add(d);
+    }
+    // each descriptive arm is its own description row, D1 onwards; none has a primary test, so
+    // the Benjamini-Hochberg table never reads it
+    int described = 0;
+    for (final String arm : plan.descriptiveArms()) {
+      final Map<String, Object> d = new LinkedHashMap<>(common);
+      d.put("hypothesis_id", "D" + ++described);
+      d.put("results", description(arm, Yaml.asMap(results.get("descriptive_arms"), "descriptive_arms").get(arm),
+          ExperimentSummary.DESCRIPTIVE_ARMS_NOTE));
       d.put("verdict", "description");
       DataSets.stamp(d, before, prereg);
       records.add(d);
@@ -341,6 +353,17 @@ public final class ExperimentRunner {
         + records.get(0).get("data_set_look") + ")");
     out.print(FamilyAdjustment.report(ledger.entries(), FamilyAdjustment.Family.of("family:" + plan.familyId())));
     return OK;
+  }
+
+  /** A description row's results: the arm, its summary and, when given, a note. */
+  private static Map<String, Object> description(final String arm, final Object summary, final String note) {
+    final Map<String, Object> m = new LinkedHashMap<>();
+    m.put("arm", arm);
+    m.put("description", summary);
+    if (note != null) {
+      m.put("note", note);
+    }
+    return m;
   }
 
   private static Map<String, Object> rowPlan(final SessionDesign.RowPlan r) {
