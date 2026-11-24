@@ -15,12 +15,21 @@ package io.ratesalgo.analytics.curve;
  *   <li>{@link #TENSION_SPLINE}: exponential tension spline on y with natural end conditions
  *       (Schweikert 1966; Renka 1987, SIAM J. Sci. Stat. Comput. 8(3)), tension p per year. As p
  *       tends to zero it is the natural cubic spline; as p grows it tends to linear on y.
+ *   <li>{@link #STEP_THEN_MONOTONE_CONVEX}: linear on y over the first pillars (the step forwards of
+ *       a meeting-dated front end) and Hagan-West monotone convex over the rest. The number of
+ *       leading step pillars is given to the {@link DiscountCurve}; with none it is {@link
+ *       #MONOTONE_CONVEX}. The forward may jump at the join, which sits on a policy date.
+ *   <li>{@link #STEP_THEN_TENSION_SPLINE}: the same with the tension spline over the rest. The
+ *       spline is linear in its node values, so a value priced off this curve is a smooth function
+ *       of the quotes, which monotone convex is not (its four regions switch as quotes move).
  * </ul>
  */
 public enum Interpolation {
   LINEAR_LOG_DF,
   MONOTONE_CONVEX,
-  TENSION_SPLINE;
+  TENSION_SPLINE,
+  STEP_THEN_MONOTONE_CONVEX,
+  STEP_THEN_TENSION_SPLINE;
 
   /** True if moving one pillar changes the curve only on its two adjacent segments. */
   public boolean isLocal() {

@@ -1,4 +1,4 @@
-%% Title: Live run, journals, replay and the outbound hash comparison, and restart on the same journals (1.1.0)
+%% Title: Live run, journals, replay and the outbound hash comparison, restart on the same journals (1.1.0), and what repeats on the v2 desk profile (1.2.0)
 flowchart LR
   subgraph live["Live run (LoopRunner)"]
     rings["Inbound rings<br/>InboundPublisher"]
@@ -55,3 +55,12 @@ flowchart LR
   golive --> logon
   logon --> reconciling
   reconciling -->|answers passed to the loop| reconciled
+
+  subgraph det["What is promised (1.2.0, DESK_V2_WIRING.md Section 12.2)"]
+    p1["Replay of any journal, stepped or threaded:<br/>exact, outbound bytes equal"]
+    p2["Stepped day, same seed:<br/>repeats frame for frame, timestamps included"]
+    p3["Threaded live v2 day:<br/>NOT repeatable run to run<br/>(43,462 and 43,104 inbound frames in two runs);<br/>each run reconciles with 0 breaks and replays"]
+  end
+  inj -->|any run| p1
+  p2 -.->|writes| inj
+  p3 -.->|writes| inj

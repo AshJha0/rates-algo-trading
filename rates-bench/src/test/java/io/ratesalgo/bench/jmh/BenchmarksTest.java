@@ -63,4 +63,33 @@ class BenchmarksTest {
     }
     assertThrows(IllegalStateException.class, b::closeJournal);
   }
+
+  @Test
+  void theThreeFixEncodingsGiveTheSameBytes() {
+    final FixEncodeBenchmark b = new FixEncodeBenchmark();
+    b.setUp();
+    b.reset(5, 1_793_712_300_000_000_000L);
+    final int before = b.before();
+    final String legacy = b.out().getStringWithoutLengthAscii(0, before);
+    b.reset(5, 1_793_712_300_000_000_000L);
+    assertEquals(before, b.copy());
+    assertEquals(legacy, b.out().getStringWithoutLengthAscii(0, before));
+    b.reset(5, 1_793_712_300_000_000_000L);
+    assertEquals(before, b.inPlace());
+    assertEquals(legacy, b.writer().buffer().getStringWithoutLengthAscii(b.writer().messageOffset(), before));
+    assertTrue(legacy.startsWith("8=FIX.4.49=") && legacy.contains("10="));
+  }
+
+  @Test
+  void theChainHashBenchmarkChainsEachAlgorithm() {
+    final ChainHashBenchmark b = new ChainHashBenchmark();
+    b.length = 57;
+    b.setUp();
+    final long a = b.fnv1a();
+    assertTrue(a != b.fnv1a(), "each call chains to the last");
+    final long w = b.word64();
+    assertTrue(w != b.word64());
+    final long c = b.crc32c();
+    assertTrue(c != b.crc32c());
+  }
 }

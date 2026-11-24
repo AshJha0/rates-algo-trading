@@ -6,7 +6,7 @@
   <parent>
     <groupId>io.ratesalgo</groupId>
     <artifactId>rates-algo-trading</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
   </parent>
 
   <artifactId>rates-cookbook</artifactId>
@@ -97,6 +97,16 @@
     <dependency>
       <groupId>io.ratesalgo</groupId>
       <artifactId>rates-ops</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-sim</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-refdata</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>

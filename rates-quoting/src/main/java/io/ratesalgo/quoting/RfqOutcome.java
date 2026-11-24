@@ -26,6 +26,9 @@ public final class RfqOutcome {
   double winProbability;
   long validUntilNanos;
   int limitRejection;
+  double breakEvenBp = Double.NaN;
+  double predictedCoverBp = Double.NaN;
+  double distanceTicks = Double.NaN;
 
   void reset() {
     venueId = 0;
@@ -49,6 +52,9 @@ public final class RfqOutcome {
     winProbability = 0.0;
     validUntilNanos = 0;
     limitRejection = 0;
+    breakEvenBp = Double.NaN;
+    predictedCoverBp = Double.NaN;
+    distanceTicks = Double.NaN;
   }
 
   public int venueId() {
@@ -140,6 +146,24 @@ public final class RfqOutcome {
 
   public long validUntilNanos() {
     return validUntilNanos;
+  }
+
+  /**
+   * Strategy path (Round 5): the break-even distance the quote may not go below, bp (adverse
+   * cost, hedge cost and inventory term); NaN on the default path.
+   */
+  public double breakEvenBp() {
+    return breakEvenBp;
+  }
+
+  /** Strategy path with cover pricing: median of the predicted best competing distance, bp; else NaN. */
+  public double predictedCoverBp() {
+    return predictedCoverBp;
+  }
+
+  /** Strategy path with tick rounding: the quoted distance from fair in venue ticks; else NaN. */
+  public double distanceTicks() {
+    return distanceTicks;
   }
 
   /** The risk engine's code when the reason is RISK_REJECT. */

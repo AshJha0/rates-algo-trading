@@ -10,6 +10,11 @@
 // QuotingConfig (mutable, read live by QuotingEngine), the DeskSettings record, and the
 // back-tester's client rule, hedge fill rule and carry model. One ledger row per pre-registration;
 // a second evaluation look is refused.
+//
+// Simulator v2 entry point: DeskAudit.java --sim-v2 run|pilot|status|validate --prereg ... --out ...
+// hands over to io.ratesalgo.app.backtest.DeskExperiment (full-day sessions by seed base, the
+// desk's arms, checkpointed worker processes), which refuses the spent data sets (the AUDIT
+// sessions under seed bases 5,000,000 and 8,000,000, including the April 2026 holdout).
 
 import io.ratesalgo.app.TradingProcess;
 import io.ratesalgo.app.backtest.DeskBacktest;
@@ -71,6 +76,12 @@ public final class DeskAudit {
   private DeskAudit() {}
 
   public static void main(final String[] args) throws IOException {
+    if (args.length > 0 && "--sim-v2".equals(args[0])) {
+      // simulator v2: full-day sessions by seed through the experiment runner with the desk's
+      // arms (run, pilot, status, validate); it refuses spent data and the version 1 date keys
+      io.ratesalgo.app.backtest.DeskExperiment.main(java.util.Arrays.copyOfRange(args, 1, args.length));
+      return;
+    }
     final Map<String, String> opts = new LinkedHashMap<>();
     for (int i = 0; i + 1 < args.length; i += 2) {
       if (!args[i].startsWith("--")) {
@@ -80,6 +91,12 @@ public final class DeskAudit {
     }
     final Path repo = Path.of(opts.getOrDefault("repo", ".")).toAbsolutePath().normalize();
     final PreRegistration prereg = PreRegistration.load(repo.resolve(require(opts, "prereg"))).requireValid(repo);
+    if (prereg.version() != 1) {
+      // the dated version 1 audit cannot read a session-seed design, and must never fall back to
+      // the spent AUDIT sessions for one
+      System.out.println("refused: " + prereg.id() + " is a simulator v2 session-seed design; run it with --sim-v2 run");
+      System.exit(2);
+    }
     final Path ledgerFile = repo.resolve(opts.getOrDefault("ledger", "data/ledger/ledger.jsonl"));
     final Path work =
         Path.of(opts.getOrDefault("work", System.getProperty("java.io.tmpdir") + "/desk-audit")).toAbsolutePath();

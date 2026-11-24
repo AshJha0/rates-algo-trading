@@ -18,6 +18,12 @@ nav:
   - Reviewer summary: reviewer-summary.md
   - Learn: learn.md
   - Cookbook: cookbook.md
+  - Tutorials:
+      - Index: tutorials.md
+      - 1 A first back-test day: tutorial-first-backtest-day.md
+      - 2 The v2 desk in process: tutorial-v2-desk-profile.md
+      - 3 A registered experiment: tutorial-registered-experiment.md
+      - 4 Wired latency: tutorial-wired-latency.md
   - API contract: api-spec.md
   - Architecture: architecture.md
   - Benchmarks: benchmarks.md
@@ -41,6 +47,13 @@ nav:
   - Desk features: desk-features.md
   - P&L audit: pnl-audit.md
   - Band P&L risk: band-risk.md
+  - Release 1.2.0 (opt-in v2):
+      - Simulator calibration: sim-v2-calibration.md
+      - Simulator design: sim-v2-design.md
+      - Pricing v2: pricing-v2.md
+      - Strategy v2: strategy-v2.md
+      - Router benchmark: router-benchmark.md
+      - Desk v2 wiring: desk-v2-wiring.md
   - Review 2026-11-23: review-2026-11-23.md
   - Compliance inventory: compliance.md
   - Runbooks: runbooks.md

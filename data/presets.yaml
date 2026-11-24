@@ -19,6 +19,21 @@
 #                   { band: { low: number, central: number, high: number }, rationale: text }
 #                   for declared assumptions reported across a band (DR-008)
 #
+# SUPERSEDED FOR NEW EXPERIMENTS (simulator v2 harness, 2026-11-23). These version 1 market
+# presets are kept only so that recorded ledger rows reproduce; a new experiment runs on the
+# shared market model (docs/research/SIM_V2_DESIGN.md sections 2 to 9, parameters
+# data/calibration/sim_v2_params.json) and must not read them as market parameters:
+#   usd_synthetic_market        replaced by the market model; its latencies, clients_per_tier and
+#                               sofr_fixing_pct are still read as desk-side and transport settings
+#   usd_rfq_flow                replaced by rfq.*; its event calendar is still the fixing calendar
+#                               strategies see
+#   usd_rfq_competition         replaced by competitors.* (section 7)
+#   usd_sofr_ois_size_by_tenor  replaced by rfq.size_lognormal_by_tenor
+#   usd_time_of_day_spread      replaced by the flat multiplier and event windows of P
+#   usd_hedge_cost              replaced by the order-book model (section 8); fee_per_lot and
+#                               order_latency_ms are still read as desk-side settings
+# usd_rfq_hit_rate stays, for the sensitivity rule only. sim_v2_publication is the v2 transport.
+#
 # Dates are written as quoted strings so YAML readers do not turn them into timestamps.
 #
 # Example of the shape (not a real fit; values are placeholders and must not be used):
@@ -33,6 +48,28 @@
 #     notes: "placeholder, replaced in P1"
 
 presets:
+- name: sim_v2_publication
+  fitted_from: assumption
+  data_range:
+    start: '2026-11-23'
+    end: '2026-11-23'
+  sample_size: 0
+  method: declared transport setting of the simulator v2 back-test (rates-backtest SyntheticDay.Publication.simV2)
+  parameters:
+    curve_input_interval_s:
+      value: 1.0
+      standard_error: null
+    book_refresh_s:
+      value: 0.0
+      standard_error: null
+  notes: Simulator v2 sessions publish swap reference prices once per one-second grid step, the
+    step at which the latent state changes, so nothing the model knows is withheld and the curve
+    heartbeat (3 s timeout on the desk) never lapses between publications. The live curve feed
+    publishes every 0.5 s (TradingProcess.CURVE_INTERVAL_NANOS). book_refresh_s 0 writes the
+    journal's book tops on change only; in simulator v2 the back-tester shows a strategy the live
+    model's books every step instead (they carry its own impact), so the journal's books are not
+    read by a strategy. Version 1 keeps
+    usd_synthetic_market.curve_input_interval_s (5 s) so that its recorded runs reproduce.
 - name: usd_hedge_cost
   fitted_from: assumption
   data_range:

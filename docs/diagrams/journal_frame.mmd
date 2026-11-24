@@ -1,11 +1,12 @@
 classDiagram
   class FileHeader {
     +char4 magic_RAJ1 : offset 0
-    +uint16 formatVersion_1 : offset 4
+    +uint16 formatVersion : offset 4, 1 FNV-1a or 2 named hash
     +uint16 headerLength_32 : offset 6
-    +int32 segmentSize : offset 8
+    +int32 capacityBytes : offset 8
     +int64 createdEpochNanos : offset 12
-    +byte12 reserved_zero : offset 20
+    +uint16 hashAlgorithm : offset 20, version 2 only
+    +byte10 reserved_zero : offset 22
   }
   class Frame {
     +int32 frameLength : offset 0, zero marks end of data
@@ -17,7 +18,8 @@ classDiagram
     +bytes payload : offset 32 to frameLength, SBE message with header
   }
   class ChainHash {
-    +FNV1a 64 bit
+    +version 1, FNV1a 64 bit
+    +version 2, the algorithm the header names, WORD64
     +offset basis 0xcbf29ce484222325
     +prime 0x100000001b3
     +input = LE8 of previous chainHash then payload

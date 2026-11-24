@@ -1,0 +1,11 @@
+# Family of R5-FAM-001, for LedgerCli --bh and python -m ratesresearch.prereg bh.
+#
+# One pre-registration, eight primary tests (H1 to H8), one data set (seed base 31,000,000):
+# each hypothesis is one ledger row carrying family_id R5-FAM-001, and the rows of one run are
+# one look. Benjamini-Hochberg at q = 0.05 across the eight. Equivalent to --bh family:R5-FAM-001.
+# Replaces research/prereg/families/R5.yaml (superseded before signing). Unsigned with the
+# pre-registration.
+family: R5-FAM-001
+family_id: R5-FAM-001
+q: 0.05
+members: [R5-FAM-001]

@@ -297,6 +297,76 @@ class JournalWaitPathsTest {
     assertEquals(appended, frames("full"));
   }
 
+  /**
+   * The back-pressure bound (DR-R6-L04): a producer on a full ring whose journal thread makes no
+   * progress at all (stopped at a roll whose segment is held) fails after the stall limit instead
+   * of spinning for ever; once the journal thread moves again everything queued reaches the file.
+   */
+  @Test
+  void aProducerOnAFullRingGivesUpWhenTheJournalThreadMakesNoProgress() {
+    final GateClock clock = GateClock.holding();
+    final RingJournal ring =
+        RingJournal.start("stall", SegmentedJournal.create(dir, "stall", SEGMENT, clock, true), clock, 64 << 10,
+            RingJournal.defaultDrainIdle(), TimeUnit.MILLISECONDS.toNanos(200));
+    assertEquals(TimeUnit.MILLISECONDS.toNanos(200), ring.stallNanos());
+    clock.awaitHeld(1);
+    final UnsafeBuffer p = payload();
+    final IllegalStateException e =
+        assertThrows(IllegalStateException.class, () -> {
+          while (true) {
+            ring.append(1, 0, p, 0, PAYLOAD);
+          }
+        });
+    assertTrue(e.getMessage().contains("made no progress for 200 ms with the ring full"), e.getMessage());
+    assertEquals(1, ring.producerWaits());
+    assertTrue(ring.backlogHighWater() > 0, "the journal thread saw the backlog it was asked to drain");
+    final long queued = ring.nextSequence() - 1;
+    clock.release();
+    ring.close();
+    assertEquals(queued, frames("stall"), "every frame accepted before the failure is in the file");
+    assertThrows(IllegalArgumentException.class,
+        () -> RingJournal.start("bad", null, clock, 64 << 10, RingJournal.defaultDrainIdle(), 0L));
+  }
+
+  /**
+   * An outbound journal follows its inbound one (DR-R6-L04): a frame appended after inbound frame
+   * {@code n} is not written while the inbound journal thread is held before {@code n}, and is
+   * written as soon as it gets there. Without the order a crash could keep an outbound frame and
+   * lose its cause, and the restart would refuse the journals.
+   */
+  @Test
+  void anOutboundFrameIsNotWrittenBeforeTheInboundFrameItFollows() {
+    final GateClock held = GateClock.holding();
+    final ManualClock free = new ManualClock(1_000L);
+    final RingJournal in = RingJournal.start("lead", SegmentedJournal.create(dir, "lead", SEGMENT, held, true), held, 64 << 10);
+    final RingJournal out =
+        RingJournal.start("follow", SegmentedJournal.create(dir, "follow", SEGMENT, free, true), free, 64 << 10,
+            RingJournal.defaultDrainIdle(), RingJournal.STALL_NANOS, in);
+    final UnsafeBuffer p = payload();
+    out.append(1, 0, p, 0, PAYLOAD); // follows no inbound frame yet: written at once
+    await("the unordered first frame is written", () -> out.writtenSequence() == 1);
+    // fill the inbound segment: the inbound journal thread stops at its roll (the next segment is held)
+    final int inbound = 200; // about seven segments' worth
+    for (int i = 0; i < inbound; i++) {
+      in.append(1, 0, p, 0, PAYLOAD);
+    }
+    await("the inbound journal thread waits at its roll", () -> in.rollWaits() == 1);
+    assertTrue(in.writtenSequence() < inbound, "frames of the inbound journal are still in its ring");
+    out.append(1, 0, p, 0, PAYLOAD); // follows inbound frame `inbound`
+    final long until = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200);
+    while (System.nanoTime() - until < 0) {
+      assertEquals(1, out.writtenSequence(), "the outbound frame waits for its cause");
+      Thread.onSpinWait();
+    }
+    held.release();
+    await("the inbound journal catches up", () -> in.writtenSequence() == inbound);
+    await("then the outbound frame is written", () -> out.writtenSequence() == 2);
+    in.close();
+    out.close();
+    assertEquals(inbound, frames("lead"));
+    assertEquals(2, frames("follow"));
+  }
+
   /** Before the retry, a close that gave up left the files mapped with no way to close them. */
   @Test
   void aCloseThatGaveUpCanBeRetriedOnceTheJournalThreadMoves() {

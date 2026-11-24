@@ -5,9 +5,7 @@ import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.OrdType;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TimeInForce;
-import io.ratesalgo.router.BookView;
 import io.ratesalgo.router.ExecutionListener;
-import io.ratesalgo.router.OrderGateway;
 import java.util.SplittableRandom;
 import org.agrona.collections.Long2LongHashMap;
 
@@ -26,12 +24,17 @@ import org.agrona.collections.Long2LongHashMap;
  * levels up to their limit, deplete the depth they take, and move the common price permanently by
  * {@code permanentTicksPerLot} per lot. Orders and cancels reach the venue after its latency.
  *
+ * <p>Every trade is published as a trade print ({@link ExecutionListener#onTrade}), ours
+ * included, before the step's book updates; a fill from the price moving through a resting order
+ * is not a trade on the book and prints nothing. A fill-or-kill order that cannot fill completely
+ * on arrival is cancelled without trading.
+ *
  * <p>The exogenous random stream (price moves, arrivals) does not depend on our orders, so two
  * strategies run on the same seed face the same market apart from their own impact. Executions
  * are queued and delivered by {@link #drain}; {@link #newOrder} and {@link #cancel} never call
  * back. Nothing allocates after construction.
  */
-public final class SimMarket implements BookView, OrderGateway {
+public final class SimMarket implements SimulatedMarket {
 
   private static final int MAX_ORDERS = 2_048;
   private static final int MAX_EVENTS = 16_384;
@@ -85,6 +88,15 @@ public final class SimMarket implements BookView, OrderGateway {
   private final long[] oAhead = new long[MAX_ORDERS];
   private final long[] oArrive = new long[MAX_ORDERS];
   private final long[] oCancelArrive = new long[MAX_ORDERS];
+  private final boolean[] oFok = new boolean[MAX_ORDERS];
+
+  // trade prints of the current step
+  private final int[] tVenue = new int[MAX_EVENTS];
+  private final boolean[] tBuyAggressor = new boolean[MAX_EVENTS];
+  private final long[] tPriceTicks = new long[MAX_EVENTS];
+  private final long[] tLots = new long[MAX_EVENTS];
+  private int tCount;
+  private long printsDropped;
 
   // execution events
   private final boolean[] eCancelReject = new boolean[MAX_EVENTS];
@@ -155,7 +167,7 @@ public final class SimMarket implements BookView, OrderGateway {
     resetBooks();
   }
 
-  /** Advances the market by one step to the clock's current time. */
+  @Override
   public void step() {
     final long now = clock.nanoTime();
     processArrivals(now);
@@ -188,7 +200,7 @@ public final class SimMarket implements BookView, OrderGateway {
     }
   }
 
-  /** Delivers queued execution events and book changes to the listener, in order. */
+  @Override
   public void drain(final ExecutionListener listener) {
     while (eCount > 0) {
       final int i = eHead;
@@ -202,12 +214,35 @@ public final class SimMarket implements BookView, OrderGateway {
             eNanos[i]);
       }
     }
+    for (int i = 0; i < tCount; i++) {
+      listener.onTrade(
+          venueId[tVenue[i]], tBuyAggressor[i] ? Side.Buy : Side.Sell, tPriceTicks[i] * tick,
+          tLots[i] * lot);
+    }
+    tCount = 0;
     for (int v = 0; v < venueCount; v++) {
       if (changed[v]) {
         changed[v] = false;
         listener.onBookUpdate(venueId[v]);
       }
     }
+  }
+
+  private void print(final int v, final boolean buyAggressor, final long priceTicks, final long lots) {
+    if (tCount == MAX_EVENTS) {
+      printsDropped++;
+      return;
+    }
+    tVenue[tCount] = v;
+    tBuyAggressor[tCount] = buyAggressor;
+    tPriceTicks[tCount] = priceTicks;
+    tLots[tCount] = lots;
+    tCount++;
+  }
+
+  /** Trade prints dropped because more than the queue holds happened between drains. */
+  public long printsDropped() {
+    return printsDropped;
   }
 
   // ------------------------------------------------------------------ OrderGateway
@@ -236,7 +271,9 @@ public final class SimMarket implements BookView, OrderGateway {
     oParent[s] = parentId;
     oVenue[s] = v;
     oBuy[s] = buy;
-    oIoc[s] = timeInForce == TimeInForce.ImmediateOrCancel || ordType == OrdType.Market;
+    oFok[s] = timeInForce == TimeInForce.FillOrKill;
+    oIoc[s] =
+        timeInForce == TimeInForce.ImmediateOrCancel || ordType == OrdType.Market || oFok[s];
     oPriceTicks[s] =
         ordType == OrdType.Market
             ? (buy ? Long.MAX_VALUE / 4 : 0)
@@ -294,6 +331,15 @@ public final class SimMarket implements BookView, OrderGateway {
   }
 
   @Override
+  public long levelPrice(final int venue, final Side side, final int level) {
+    final int v = indexOf(venue);
+    if (v < 0 || level < 0 || level >= levels) {
+      return 0L;
+    }
+    return (side == Side.Buy ? bidTicks - level : bidTicks + spread[v] + level) * tick;
+  }
+
+  @Override
   public double tradeRatePerSecond(final int venue) {
     final int v = indexOf(venue);
     return v < 0 ? 0.0 : tradeRate[v];
@@ -302,29 +348,30 @@ public final class SimMarket implements BookView, OrderGateway {
   // ------------------------------------------------------------------ results
 
   /** Mid of the first venue, price mantissa; the arrival reference in the back-test. */
+  @Override
   public long referenceMid() {
     return bidTicks * tick + spread[0] * tick / 2;
   }
 
-  /** Quantity filled for a parent. */
+  @Override
   public long parentFilled(final long parentId) {
     final int i = (int) parentIndex.get(parentId);
     return i < 0 ? 0 : psFilled[i];
   }
 
-  /** Sum of fill price (price points) times quantity for a parent. */
+  @Override
   public double parentNotional(final long parentId) {
     final int i = (int) parentIndex.get(parentId);
     return i < 0 ? 0.0 : psNotional[i];
   }
 
-  /** Sum of fees (price points per unit) times quantity for a parent. */
+  @Override
   public double parentFees(final long parentId) {
     final int i = (int) parentIndex.get(parentId);
     return i < 0 ? 0.0 : psFees[i];
   }
 
-  /** Aggressive orders that would have traded against one of our resting orders. */
+  @Override
   public long selfCrosses() {
     return selfCrosses;
   }
@@ -334,9 +381,14 @@ public final class SimMarket implements BookView, OrderGateway {
     return executions;
   }
 
-  /** Our orders currently resting or in flight. */
+  @Override
   public int liveOrders() {
     return MAX_ORDERS - freeTop;
+  }
+
+  @Override
+  public int[] venueIds() {
+    return venueId.clone();
   }
 
   // ------------------------------------------------------------------ internals
@@ -357,7 +409,7 @@ public final class SimMarket implements BookView, OrderGateway {
     final int v = oVenue[s];
     final long ask = bidTicks + spread[v];
     final boolean marketable = oBuy[s] ? oPriceTicks[s] >= ask : oPriceTicks[s] <= bidTicks;
-    if (marketable) {
+    if (marketable && (!oFok[s] || fillable(s) >= oLeftLots[s])) {
       walk(s);
     }
     if (oLeftLots[s] == 0) {
@@ -389,6 +441,21 @@ public final class SimMarket implements BookView, OrderGateway {
     return (long) Math.floor(buy ? bidDepth[v][(int) level] : askDepth[v][(int) level]);
   }
 
+  /** Lots of others' depth an order could take on arrival, up to its limit. */
+  private long fillable(final int s) {
+    final int v = oVenue[s];
+    final boolean buy = oBuy[s];
+    long sum = 0;
+    for (int k = 0; k < levels; k++) {
+      final long px = buy ? bidTicks + spread[v] + k : bidTicks - k;
+      if (buy ? px > oPriceTicks[s] : px < oPriceTicks[s]) {
+        break;
+      }
+      sum += (long) Math.floor(buy ? askDepth[v][k] : bidDepth[v][k]);
+    }
+    return sum;
+  }
+
   private void walk(final int s) {
     final int v = oVenue[s];
     final boolean buy = oBuy[s];
@@ -413,6 +480,7 @@ public final class SimMarket implements BookView, OrderGateway {
         depth[k] -= take;
         taken += take;
         fill(s, take, px, cfg.venue(v).takerFee());
+        print(v, buy, px, take);
       }
     }
     if (taken > 0) {
@@ -474,6 +542,7 @@ public final class SimMarket implements BookView, OrderGateway {
     }
     if (front >= 0) {
       fill(front, 1, oPriceTicks[front], cfg.venue(v).makerFee());
+      print(v, buyerArrives, oPriceTicks[front], 1);
       if (oLeftLots[front] == 0) {
         finish(front);
       }
@@ -490,6 +559,7 @@ public final class SimMarket implements BookView, OrderGateway {
     }
     final double[] depth = restingBuy ? bidDepth[v] : askDepth[v];
     depth[0] = Math.max(0.0, depth[0] - 1.0);
+    print(v, buyerArrives, touch, 1);
   }
 
   private void cancelsAhead() {

@@ -748,6 +748,8 @@ Decision. `EventLoop`'s constructor now encodes a Backpressure message into its 
 
 Consequences. The gate still fails on any per-message allocation, since one byte per message is a megabyte per window, and on any allocation in the last window. A one-off cost on a path first taken just after warm-up no longer fails the build, but it shows in the message. The test now always sends 4 million messages, where before it sent between 2.1 and 4 million.
 
+*Annotation 2026-11-24: the zero-byte last window is superseded by DR-V12-T01 (four windows, one after the first exactly zero).*
+
 ## DR-INT-03: The trading process binds its loop journals through LoopJournals
 
 Date: 2026-10-31
@@ -819,7 +821,7 @@ Amended 2026-11-01, `LoopAllocationTest` and the journals' wait paths. On pull r
 - **Cause.** With `-Xlog:deoptimization=debug` on the failing run (run 10 of a second batch), the loop thread's only trap in the measured part was `SegmentedJournal$Preparer.take()`, an OSR `unstable_if` trap at the exit of the wait loop. The loop's warm-up never waits, so C2 compiles the wait as never taken. The first real wait then deoptimises compiled frames on the loop thread and re-creates objects that escape analysis had removed. The 176 bytes are that one-off; they are not per message. A production loop would take the same deoptimisation, at its first waited roll, while quoting.
 - **Fix.** `JournalWarmUp.exerciseWaitPaths` runs both wait paths before any loop starts: the roll that waits for its segment, and the append to a full ring (`RingJournal.append`). It uses scratch journals with 64 KiB segments and a 64 KiB ring, appended in a tight loop until each path has waited 200 times, then deletes them. Branch profiles belong to the method, so the production journals are never written. `TradingProcess` calls it before it builds the loops, as do `LatencyHarness` and the test. The JIT-settled extra warm-up stays.
 - **After.** 10 of 10 runs passed on the same setup. Seven of them had a waited roll inside a measured window, and each such window allocated 0 bytes. The deoptimisation logs of all ten show no trap in `Preparer.take` on any thread. `SegmentedJournalTest.aWaitedRollAllocatesNothingOnTheAppendingThreadAfterWarmUp` checks the journal on its own.
-- **Window exclusion.** Excluding windows that contain a roll was not needed, so the measured windows, the 1,024-byte bound and the zero-byte last window are unchanged.
+- **Window exclusion.** Excluding windows that contain a roll was not needed, so the measured windows, the 1,024-byte bound and the zero-byte last window are unchanged. (The last-window rule is superseded by DR-V12-T01, 2026-11-24.)
 
 Amended 2026-11-01, latency harness accounting. The second of the three equalities above was wrong. `LoopCounters.OUTBOUND` counts every Quote the loop produced, delivered or not, so a run with drops failed on `inbound == outbound + outboundDropped` (windows-latest on pull request 4: inbound 58,025, outbound 58,025, outboundDropped 457). The equalities are now: processed equals generated less generator drops; produced equals processed (`inbound == outbound`, one Quote per request); and the gateway sees the produced less the dropped (`outbound - outboundDropped == seen`). Backpressure events are at most the drops, since one event covers a run of drops on a gateway. A Quote lost without being counted still fails the test.
 
@@ -871,6 +873,8 @@ Date: 2026-10-31
 Context. P&L audit item 14 (docs/research/PNL_AUDIT.md; code reading of RiskEngine and Hedger): once a PV01 limit was breached, the checks refused flow that would have reduced the breach, and a kill froze the hedger with the loss on the book.
 
 Decision. Each worst-case PV01 figure (pillar, net, gross) may stay where it is when already past its limit, with a relative tolerance for rounding, but may not move further past it or overshoot through zero into a new breach. That applies to quotes, orders and headroom. A one-sided quote whose fill offsets net PV01 skips only the daily-loss check, as a risk-reducing order already did. When the kill comes from the engine's own post-trade daily-loss breach, `flattenOnly()` is true: quotes stay withdrawn and other orders are refused, but risk-reducing orders still pass. The `Hedger` keeps its parents working and keeps sending tranches. Any other kill still cancels everything. `flattenOnly()` is set before the trigger, because the listeners read it during the kill.
+
+*Annotation 2026-11-24 (1.2.0): the relative tolerance for rounding named above is removed. It let a breached 10-year pillar figure of about -82k grow by up to 10 minor units. The figures before and after an order are now built from the same partial sum of the other reservations, so a breached figure may stay exactly where it is or fall, and may not rise by one minor unit; the same holds in the basis and swap-spread checks (commit 700c2e9, `BreachedLimitPropertiesTest`, `RiskControlsTest`). The rest of the decision stands.*
 
 Consequences. The desk can always trade its way back inside a limit and flatten after a daily-loss stop. An operator kill or a kill of any other cause is unchanged. The desk-level oracle in `SinkAuditor` and `ChaosTest` follows the new rule.
 
@@ -2004,3 +2008,711 @@ Context. Review finding L12: FIX had no TLS or Logon credentials. The hot path i
 Decision. `TcpInitiator` uses the JDK `SSLEngine`, TLS 1.3 only by default, with host-name and certificate checks, a handshake deadline and bounded writes; a plain connection is allowed to loopback only. Our own code reuses its buffers and allocates nothing. The engine's allocation is accepted on the session path and measured by `TlsAllocationTest`: about 1.3 KB per message sent and 1.4 KB received on JDK 25 with heap buffers (direct buffers measured higher), held under a 2 KB ceiling so that a regression fails the build. The plain path stays at zero.
 
 Consequences. Under TLS the gateway thread makes short-lived garbage of constant size per record, which a young collection clears. A link that must be allocation-free end to end needs TLS ended outside the JVM, on loopback. The loop thread is unaffected. The TLS KeyUpdate path is untested.
+
+## Records of release 1.2.0
+
+Rounds 3 to 7 of the review's plan (docs/reviews/REVIEW_2026-11-23.md Section 9) and the v1.2 integration. Several records were written by the rounds into their design documents first; the source is named in each. Common to all of them: the default desk is unchanged, and every v2 component is opt-in until a registered experiment says otherwise.
+
+## DR-R3-01: One market model, in its own module, for the venue simulators and the back-test
+
+Date: 2026-11-23
+
+Context. Review Sections 2.1 and 2.2: every simulated P&L figure followed from hand-declared constants, instruments moved as independent walks, and the venue simulators and the back-tester each had their own idea of the market. A result from one could not be checked against the other.
+
+Decision. A new module, `rates-sim`, holds the one market model (`MarketModel`, `RfqFlow`, `BookModel`, `SessionSeeds`), specified in docs/research/SIM_V2_DESIGN.md and calibrated in docs/research/SIM_V2_CALIBRATION.md. The venue simulators (`SimV2Session`, `Venues.simV2`) and the back-test (`SimDay`, `SyntheticDay.generateSimV2`, `BacktestConfig.forSimV2`) both read it. `SplitMix64` moves to `io.ratesalgo.common.random` so that both sides draw from the same generator.
+
+Consequences. A session is a function of its seed wherever it runs; acceptance test A7 compares the back-test and the venues against the shared model. Callers of `SplitMix64` change one import. The module adds a dependency to rates-backtest and rates-venues.
+
+## DR-R3-02: No simulation constant in code; parameters load strictly
+
+Date: 2026-11-23
+
+Context. The old simulator's adverse-selection constants were declared in code and presets, and the calibration finds them outside what the public data supports.
+
+Decision. Every market parameter comes from `data/calibration/sim_v2_params.json`, each marked fitted, bounded or assumption with its band. The loader refuses a missing, unknown or duplicate key, a unit that does not match, loadings not of unit length, shares that do not sum to one, and an informed fraction and move whose product is not the calibrated adverse move (SIM_V2_DESIGN.md Section 14 D2). Structure that is not a parameter lives in `sim_v2_structure.json`.
+
+Consequences. A parameter cannot change without a visible change to a committed file with a hash; a pre-registration names that hash. Constants the parameter file does not yet carry are listed in D1 of the design's Section 14 as text constants.
+
+## DR-R3-03: Simulator version 1 stays the default until a registered run
+
+Date: 2026-11-23
+
+Context. Every recorded figure, recipe and ledger reproduction test depends on simulator version 1.
+
+Decision. `SyntheticDay.generate`, `BacktestConfig.fromPresets` and the version 1 venue configurations are unchanged. Simulator v2 is reached through its own entry points and presets (D17 of the design).
+
+Consequences. No recorded figure moved. The old simulator's figures stay as records; docs/research/PNL_AUDIT.md says they are superseded for new work.
+
+## DR-R3-04: The desk's own impact is a law of total volume, not of each slice
+
+Date: 2026-11-23
+
+Context. Section 8 of the design applied I = Y sigma sqrt(Q / V) to every marketable order. Read literally, twenty 2.5 mm slices leave sqrt(20) = 4.5 times the permanent impact of one 50 mm order, which contradicts acceptance test A9 and rewards slicing for no reason.
+
+Decision. Own permanent impact is a function of the total volume the desk has traded, over the day and recently, not of each slice (`BookModel`; D7 of the design's Section 14).
+
+Consequences. Slicing an order no longer lowers its permanent impact below that of the whole. The decay of the recent component is an assumption with a band. A restarted market forgets the desk's earlier impact (DR-V12-P01).
+
+## DR-R3-05: The two Treasury venues show shares of one book
+
+Date: 2026-11-23
+
+Context. The design has one book per instrument; the desk needs two order-book venues to route between.
+
+Decision. The two Treasury venues show 0.6 and 0.4 of the model's provider size at each level (`treasury_venue_shares`, an assumption) and receive the same shares of each other taker's trade, in whole lots. Depth taken on one is gone from both (D10).
+
+Consequences. Routing between them changes queue position and fees, not the price of the depth. One `BookModel` is shared by two venues, which needed one owner on threaded runs (DR-V12-P02).
+
+## DR-R3-06: Workup is off under simulator v2
+
+Date: 2026-11-23
+
+Context. With 0.13 taker trades a second and a 5 s workup the book would be in workup almost always, and immediate-or-cancel takers would be cancelled in every exclusive window.
+
+Decision. The `sim_v2` order-book preset turns workup off; `ClobBook` itself is unchanged (D11).
+
+Consequences. The v2 venues do not test the workup path; version 1 still does.
+
+## DR-R3-07: Test tolerances are the design's; sample sizes are raised for a 99 percent pass rate
+
+Date: 2026-11-23
+
+Context. Some acceptance tests of the design's Section 11 would fail a correct implementation more often than one run in a hundred at 400 sessions.
+
+Decision. Tolerances stay as written. Session counts are raised where needed: second moments use 1,000 sessions, so that the tolerance is 3.6 standard errors (D15).
+
+Consequences. The acceptance tests are slower. A tolerance is never widened to make a test pass.
+
+## DR-R4-01: Pricing v2 is selectable and version 1 stays the default
+
+Date: 2026-11-23
+
+Context. Every recorded figure depends on version 1. Source: docs/research/PRICING_V2.md Section 14.
+
+Decision. `PricingBindings.create(version, ...)`; `AnalyticsPricing` gains only `implements PricingBinding`. The default changes with simulator v2 in a pre-registered step.
+
+Consequences. Pricing v2 runs only in a desk profile that selects it (DR-V12-D01).
+
+## DR-R4-02: Step-then-tension-spline, not monotone convex
+
+Date: 2026-11-23
+
+Context. `SofrCurveTest.interpolationEvidence`. Monotone convex has continuous forwards, but its ladders differ from a 1 bp bump by 4.3 percent of parallel DV01, and a first-order leave-one-out value drifts 0.30 bp in a 10 bp move, because its regions switch within a basis point.
+
+Decision. Tension spline at 0.5 per year after the meeting steps; monotone convex stays selectable.
+
+Consequences. The spline is not local and can overshoot: a swap between pillars shows small risk of the other sign on neighbouring tenors (PRICING_V2.md Section 7).
+
+## DR-R4-03: Fair value is leave-one-out plus a half-life residual
+
+Date: 2026-11-23
+
+Context. Review finding A1: a quoted swap that is a curve input was its own fair value.
+
+Decision. PRICING_V2.md Section 5; half-life 300 s; an exact reference every 5 bp of input move. A single skewed quote moves its own fair value by 1 - 2^(-dt / 300 s) of the skew.
+
+Consequences. A persistent skew is absorbed with a 5 minute half-life: accepted, and stated.
+
+## DR-R4-04: The Treasury curve is a fitted z-spread to SOFR on a Nelson-Siegel basis
+
+Date: 2026-11-23
+
+Context. Four to ten bonds are not enough to fit a yield curve of their own.
+
+Decision. PRICING_V2.md Section 6.
+
+Consequences. With four bonds, the universe the process trades, the on-the-run premium is not identified and at most one bad book is found.
+
+## DR-R4-05: Two risk factors per tenor; the swap-rate ladder by Jacobian
+
+Date: 2026-11-23
+
+Context. Review findings A3 and A4.
+
+Decision. PRICING_V2.md Section 7. `Dv01Vector` and `KeyRateTenors` are unchanged; `SpreadSensitivityProvider` is added beside `SensitivityProvider`.
+
+Consequences. A swap hedged with a Treasury shows its whole risk on the spread ladder. Nothing limits, quotes or hedges on that ladder yet (DR-V12-D11).
+
+## DR-R4-06: In-arrears Hull-White convexity for SOFR futures; parameters remain assumptions
+
+Date: 2026-11-23
+
+Context. DR-P1-05 used Hull's forward-looking formula.
+
+Decision. PRICING_V2.md Section 4. `HullWhite.futuresConvexity` and the first golden file are unchanged.
+
+Consequences. a = 0.03 and sigma = 0.0085 are assumptions; the repository holds no option or futures prices to fit them.
+
+## DR-R4-07: Reprice on the loop, conflated, as a pure function of journaled inputs
+
+Date: 2026-11-23
+
+Context. Replay determinism; no new message template.
+
+Decision. PRICING_V2.md Section 10. Revisit if the measured cost of a round becomes a problem for the loop's latency budget.
+
+Consequences. A reprice is several hundred microseconds on the loop thread, and an RFQ that arrives during one waits for it.
+
+*Annotation 2026-11-24: the binding as merged still read the clock at construction, so its state was not yet a pure function of its inputs. DR-V12-P05 removes that; DR-V12-P06 separates recording an input from repricing.*
+
+## DR-R4-08: Business date from the clock with a 17:00 New York cut
+
+Date: 2026-11-23
+
+Context. Review finding A7.
+
+Decision. PRICING_V2.md Section 9. The instrument universe is still built on `Venues.TRADE_DATE`.
+
+Consequences. Settlement and accrued interest roll with the date; the list of on-the-run issues does not.
+
+*Annotation 2026-11-24: the date is fixed by the binding's first timed call, not read at construction (DR-V12-P05).*
+
+## DR-R4-09: Newton before Levenberg-Marquardt in the global bootstrap; tolerance in rate
+
+Date: 2026-11-23
+
+Context. On the v2 curve the damped solver stalled at the rounding floor of futures prices: milliseconds per update and occasional failed residual checks.
+
+Decision. PRICING_V2.md Section 10. The tolerance of 1e-12 now applies to the error in rate, so a futures price may be off by 1e-10.
+
+Consequences. Sequential solves, and so version 1 pricing, are bit for bit unchanged.
+
+## DR-R5-01: Strategy capabilities sit behind switches, all off by default
+
+Date: 2026-11-23
+
+Context. Review findings Q1 to Q8. Each capability changes recorded figures, and their effects interact.
+
+Decision. One switch per capability (`DeskSettings.StrategySwitches`, carried by `DeskSettings`; `Hedger.Config` for internalisation). `DeskSettings.defaults()` quotes and hedges exactly as before; `DeskSettings.strategyV2()` turns everything on. docs/research/STRATEGY_V2.md.
+
+Consequences. Each capability can be run alone or left out, which the family R5-FAM-001 uses for its ablations. Nothing is adopted without a registered result.
+
+## DR-R5-02: Never quote below break-even; widen rather than pass; bounds from the cover
+
+Date: 2026-11-23
+
+Context. Q1: the fixed clamp of 0.02 to 0.08 bp sits below every client's break-even on the calibrated market (STRATEGY_V2.md Section 1).
+
+Decision. The quote is the distance above break-even that maximises expected profit given the predicted best competing quote (`CoverModel`, learned from covers and censored outcomes). The search runs from break-even to a bound set by the cover distribution, never a fixed clamp. When cost rises the quote widens; nothing passes on cost.
+
+Consequences. The desk wins less from informed clients. If the cover prior is far from the simulator's competitors and learning is slow, it quotes in the wrong place for many sessions.
+
+## DR-R5-03: Inventory cost is capped at the planner's hedge cost; the axe is not added on this path
+
+Date: 2026-11-23
+
+Context. Q4: skew and size terms saturated far below a desk's inventory, and the default path counted inventory twice (skew and hedger axe).
+
+Decision. One reservation term from the whole book including working hedges, kappa (Delta' Sigma p + Delta' Sigma Delta / 2), clamped at the cost of the hedge planner's mix for the trade (STRATEGY_V2.md Section 3). kappa = 4e-7 in the preset, from the hedger's trigger.
+
+Consequences. The desk never pays more through its price than hedging would cost. If the planner's cost understates real costs, the cap is too low.
+
+## DR-R5-04: Level is always hedged; slope when it pays
+
+Date: 2026-11-23
+
+Context. Q2: the assumed correlation decay gave 10s30s about 0.30; the fitted factors give 0.93.
+
+Decision. `FactorModel` from the calibration's three factors; `FactorHedgePlanner` zeroes level with one instrument and adds a second for slope only when the variance removed is worth the second crossing, at per-instrument tick costs (`TickHedgeCostModel`). Futures carry basis variance and are used only when a futures book is available.
+
+Consequences. A level-only hedge of 30-year risk with the 10-year note leaves 13 percent of its variance (STRATEGY_V2.md Section 4). At declared costs the planner never chose the future on the v2 smoke day (DR-V12-D10).
+
+## DR-R5-05: Resting hedges do not count as hedged; the time stop sits inside the stall timeout
+
+Date: 2026-11-23
+
+Context. Design change 5 of the review: internalise inside a variance budget and hedge passively first.
+
+Decision. Below the trigger nothing is done; between trigger and budget the residual is held and, with `passiveFirst`, the hedge rests at the touch; at the budget or after the time stop (45 s in the preset) resting orders are withdrawn and the hedge crosses. Resting orders count neither in the residual nor in the reservation price. DR-RV-Q01's freshness and timeout rules still apply; the time stop is inside its 60 s timeout.
+
+Consequences. Whether resting hedges fill often enough, and how adversely, is a question for the registered run (H5 of R5-FAM-001). The budget and time stop are declared, not derived.
+
+## DR-R5-06: Client markouts shrink to tier priors; the store is written at session end
+
+Date: 2026-11-23
+
+Context. Q6: one client tier was wired and the toxicity table never learned.
+
+Decision. `MarkoutStore` keeps each client's markouts by side at 1 s, 5 s, 30 s, 60 s and 5 min, shrunk to a tier prior with n0 = 20. It is written at the end of a session (temporary file, atomic move, the same store gives the same bytes) and read at the next start.
+
+Consequences. A client's own history takes half the weight only after 20 fills, deliberately slow. Replay needs the store the session read, which led to DR-V12-D07.
+
+## DR-R6-R01: The ladder model is opt-in; the touch model stays for the ledger
+
+Date: 2026-11-23
+
+Context. Review Section 5 and finding S6: the router priced the touch half-spread while a child could walk several levels, with an 8-tick collar.
+
+Decision. `ExecutionModel` and `LadderAllocator`: a consolidated, fee-adjusted sweep in which each aggressive child is limited at the last level it needs, a risk charge on the time an order stays open, a 2-tick collar as a safety bound (`RouterPresets.ladder()`). A router built without an `ExecutionModel` runs the touch model of `RouterPresets.global()` unchanged.
+
+Consequences. The ledger's recorded runs stay reproducible. Ladder decisions are journaled with their inputs (templates 83 and 84).
+
+## DR-R6-R02: Queue and fill rates are learned; simulator parameters are never passed in
+
+Date: 2026-11-23
+
+Context. Review Section 5.1: the old benchmark gave the router's queue model the simulator's own generating parameters.
+
+Decision. Cancellation and market-order rates are learned from trade prints and from touch decrements no print explains, starting from a declared prior (0.2 per second); the passive fill probability is calibrated from the router's own outcomes per venue and queue bucket (`FillCalibration`). No simulator parameter reaches the router.
+
+Consequences. A fresh router knows only its prior. A trade print lost on a full ring makes the router read the size decrement as cancellations.
+
+## DR-R6-R03: A venue scorecard with throttles and outage exclusion
+
+Date: 2026-11-23
+
+Context. The review's fix direction: a venue scorecard (rejects, fill rate, markout, latency) feeding the router.
+
+Decision. `VenueScorecard` keeps decaying averages of reject and cancel-reject rates, IOC fill ratio, markouts at 1, 5 and 30 s, acknowledgement latency and print rates, each applied from the event's own clock so the state is a function of what the router was told. It holds a token bucket and an order-to-trade ratio per venue, and excludes a venue that rejects or ignores orders in a row for a cool-down that doubles on each repeat (`VenueExclusion` 7 Throttled, 8 Outage).
+
+Consequences. Penalties are declared assumptions, not fits. The values a decision used are journaled with it.
+
+## DR-R6-R04: Child timing gaps are gamma-distributed
+
+Date: 2026-11-23
+
+Context. A uniform jitter of plus or minus 25 percent keeps slices near a fixed period that another participant can detect.
+
+Decision. Slice gaps are drawn from a gamma distribution with the schedule's mean and a coefficient of variation near 1 / sqrt(2), clamped (`ChildRandomiser`, `ChildRandomiserTest.gammaGapsHaveNoDetectablePeriod`).
+
+Consequences. Same seed, same gaps: replay is unaffected.
+
+## DR-R6-R05: A benchmark scenario fixed before the run; the declared check and its failure are recorded
+
+Date: 2026-11-23
+
+Context. Review Section 5.1: the 2.94 bp row compared the router with orders fired whole into thin touch depth.
+
+Decision. Scenario `ust10y_impact_v1` (`RouterBenchmarkScenario`, `ImpactMarket`) was fixed in a commit before the comparison, with real baselines: a sweep on arrival, the router's schedule on the best venue, TWAP, and passive with a deadline. It was run once. Declared before the run: the router's risk-adjusted cost (mean + 0.5 sd) no worse than any of them by more than 0.25 ticks. docs/research/ROUTER_BENCHMARK.md is generated by `RouterBenchmarkTest`.
+
+Consequences. The check held against three baselines and failed against passive-with-deadline (router worse by 0.40 ticks, 95 percent [0.2, 0.5]). The scenario was not changed. The ladder router is not distinguishable from the touch router in this simulator. The result is a statement about the router's own simulator, not a market finding (DR-008), and replaces the 2.94 bp row.
+
+## DR-R6-R06: Schema additions for routing are additive
+
+Date: 2026-11-23
+
+Context. The ladder model needs trade prints and a journal of its inputs; the schema is pinned (API_SPEC.md).
+
+Decision. New templates 4 `TradePrint`, 83 `RouteDecisionLadder` and 84 `RouteDecisionModel`, and `VenueExclusion` values 7 and 8. No existing field changes; the schema version is unchanged.
+
+Consequences. Old journals decode as before. A reader that does not know the new templates skips them by template id.
+
+## DR-R6-L01: Core affinity through the foreign function API
+
+Date: 2026-11-23
+
+Context. Review finding L3: no thread was ever pinned.
+
+Decision. `CoreAffinity` calls `sched_setaffinity` through the foreign function API on Linux; elsewhere it reports that pinning is not available. A CPU is given per thread in the `runtime` section.
+
+Consequences. No native library is shipped; the process needs `--enable-native-access`. Pinning is measured only off Linux so far, where it is refused.
+
+## DR-R6-L02: One thread per FIX session and feed; two runtime profiles
+
+Date: 2026-11-23
+
+Context. L3: one gateway thread served both sessions, parking 200 us, and the deployed threading was not what was benchmarked.
+
+Decision. Each FIX session and each feed has its own thread on `DutyCycleRunner`, with its own idle strategy and CPU. `runtime.profile` names a set of values: `default` (parking as before, nothing pinned, direct journals, FNV-1a) or `lowLatency` (loop, session, feed and journal threads busy-spin, ring journals with WORD64, locked segments, curve inputs conflated). Individual keys override the profile. `deploy/config/trading-lowlatency.yaml` is an example.
+
+Consequences. The default profile has more threads but the same idle behaviour. A busy-spinning thread belongs on a reserved core; the profile does not reserve one.
+
+## DR-R6-L03: The chain hash is versioned in the segment header; FNV-1a stays the default
+
+Date: 2026-11-23
+
+Context. L8: byte-at-a-time FNV-1a costs tens of nanoseconds per frame on the loop. The review suggested CRC32C.
+
+Decision. Format version 1 is FNV-1a, byte for byte as before, and is what a journal is written with by default. Format version 2 names its hash at header offset 20; WORD64 hashes eight bytes a step. Readers verify either and refuse a mix or a version-2 file naming FNV-1a. CRC32C is rejected because it keeps 32 bits and the chain keeps 64.
+
+Consequences. Recorded journals and replay hashes are unchanged. WORD64 measured 4.8 to 7.8 times faster than FNV-1a on a loaded laptop (docs/BENCHMARKS.md). The Python readers follow the same rules (`ratesresearch.fnv`, `tools/journal_query.py`). The hash detects damage; it is not cryptographic.
+
+## DR-R6-L04: Ring journal back-pressure is bounded and crash-ordered; DIRECT stays the default
+
+Date: 2026-11-23
+
+Context. A full ring made the producer spin for ever, and so did the segment preparer's retire wait when the journal thread had died. Review finding L9: pretouch does not hold on a shared mapping.
+
+Decision. A full-ring wait fails after a stall limit without progress, or when the journal thread has died; the backlog high-water mark is reported. The preparer's retire wait is bounded the same way and keeps the window ahead of the appender writable. Frames reach the file in order, so a ring-mode crash image restarts like a direct one (`RestartRecoveryTest`). Segments can be locked in memory on Linux. `journalMode: direct` stays the default.
+
+Consequences. A stalled journal halts the process instead of hanging it. Whether the write-protect fault of L9 is gone is not measured.
+
+## DR-R6-L05: Curve-input conflation is opt-in
+
+Date: 2026-11-23
+
+Context. Review finding L10: a curve rebuild runs inline on the loop, ahead of RFQs and the kill.
+
+Decision. `EventLoop.Builder.conflate`: a level input is held back per key, the rest of the ring is dispatched first, and at most a set number of held inputs per duty cycle are dispatched. A held input is journaled when dispatched; one replaced by a newer is counted and never journaled.
+
+Consequences. The inbound journal holds exactly what the handlers saw, so replay is exact. In the benchmark at 1,000 requests a second conflation replaced 10 inputs in one run and none in the others.
+
+## DR-R6-L06: JVM flags justified one by one; ZGC kept
+
+Date: 2026-11-23
+
+Context. L3: the deployment used ZGC at 512 MB while benchmarks used the Parallel collector at 1 GB.
+
+Decision. Each flag in `deploy/trading/Dockerfile` is justified in a comment, and the wired-desk benchmark runs with exactly those flags (a test keeps the two lists equal). ZGC stays: its pauses in the benchmark were at most 0.47 ms, and a Parallel young collection would stop the loop under TLS every few seconds.
+
+Consequences. ZGC against Parallel on the TLS configurations on a quiet Linux host is still to be measured.
+
+## DR-R6-L07: Allocation tests also run without escape analysis
+
+Date: 2026-11-23
+
+Context. L13: allocation tests ran only at C2 steady state, so a deoptimised path could allocate unseen.
+
+Decision. `NoEscapeAnalysisAllocationTest` in rates-core and rates-app runs the allocation checks in a child JVM with `-XX:-DoEscapeAnalysis`.
+
+Consequences. The 1,024-byte tolerance is not tightened in this round.
+
+## DR-R6-L08: The FIX writer lends its buffer to the transport
+
+Date: 2026-11-23
+
+Context. L11: the FIX send path copied the body twice.
+
+Decision. `FixWriter` writes the header in front of the body in place and the plain transport sends from the writer's buffer (`FixWriter.buffer()`). The date part of the three timestamps is cached.
+
+Consequences. The buffer is valid only until the next message, which SpotBugs is told (`config/spotbugs-exclude.xml`). The JMH run on a loaded laptop could not tell the old and new encoders apart.
+
+## DR-V12-B01: Each session's journal is written once; every arm gets a fresh model of the seed
+
+Date: 2026-11-23
+
+Context. A paired comparison needs every arm to see the same exogenous session, while each arm's own orders change the market it trades in.
+
+Decision. For each session and row the harness writes one journal from the seed. Every arm replays that journal against its own fresh `MarketModel` of the same seed (`SessionExecutor`), so the exogenous path, the RFQs, the competitors' quotes and the clients' reserves are identical and only the arm's actions and their impact differ.
+
+Consequences. Common random numbers hold across arms by construction. A changed journal fails the session (`FamilyHarnessTest`).
+
+## DR-V12-B02: Under simulator v2 the strategy sees the live model's books
+
+Date: 2026-11-23
+
+Context. A journal's book is written with no desk in it. A desk that saw it kept re-sending IOC children at prices its own orders had moved, without end.
+
+Decision. In simulator v2 the back-tester publishes the live model's top every step and after each of the desk's orders, with the desk's own impact; the journal's book frames are not passed on (commit 16b4bd5).
+
+Consequences. The desk's curve still comes from the published swap rates of the journal, which carry no own impact (D18 of the design).
+
+## DR-V12-B03: Experiment sessions publish every second
+
+Date: 2026-11-23
+
+Context. Reference prices every 5 s against a 3 s heartbeat timeout made the desk read every input as unhealthy and pass every RFQ.
+
+Decision. Experiment sessions publish every grid step (preset `sim_v2_publication`); version 1 publication is untouched.
+
+Consequences. Larger journals per session. A v2 pilot run passes RFQs only for its own reasons.
+
+## DR-V12-B04: Benjamini-Hochberg is computed only by command
+
+Date: 2026-11-23
+
+Context. DR-RV-C03 adopted Benjamini-Hochberg across experiments. Computing it on every ledger append would make an earlier row's adjusted value change silently.
+
+Decision. `LedgerCli --bh family:ID` (and `python -m ratesresearch.prereg bh`) prints the table from the ledger on request. A family run prints it once when it appends its rows. The ledger stores raw p-values only.
+
+Consequences. The adjusted values are reproducible from the rows at any time and are never stored.
+
+## DR-V12-B05: A dated pre-registration stays on the version 1 rules
+
+Date: 2026-11-23
+
+Context. Pre-registrations written before version 2 are dated by session date; version 2 uses session-seed designs. A file that claims version 2 but keeps date keys would mix the rules.
+
+Decision. A pre-registration keyed by dates is validated under version 1 whatever version it claims, and the date-key problem is reported for a file that claims version 2 (commit 384df09; the Python twin mirrors it).
+
+Consequences. `LedgerTest`'s version 1 refusal is unchanged.
+
+## DR-V12-D01: A desk profile selects each component; the recorded profile stays the default
+
+Date: 2026-11-23
+
+Context. Four components were built off by default and every recorded figure depends on version 1 of each. Source: docs/research/DESK_V2_WIRING.md Section 11.
+
+Decision. `DeskProfile` with `defaults()` and `v2()`; `DeskLoopFactory(universe, settings, journal)` builds the recorded profile. The default changes in a pre-registered step.
+
+Consequences. Each component can also be switched alone. The live loop and its replay must be built from equal profiles.
+
+## DR-V12-D02: Per-venue state in the desk; ids 103 and 104, gateways 4 and 5
+
+Date: 2026-11-23
+
+Context. Gateway ids and feed status ids share one id space, and 3 is the first CLOB's feed.
+
+Decision. DESK_V2_WIRING.md Section 2. A v2 loop has six outbound rings with ring 3 unused.
+
+Consequences. Kill, gap, staleness, cancel-reject, overfill and reconciliation are per venue; a venue that is down is excluded and the others keep trading.
+
+## DR-V12-D03: The desk counts a future in face, the venue in contracts; the loop converts where quantities cross it
+
+Date: 2026-11-23
+
+Context. API_SPEC.md Section 0 fixes face in minor units; the futures venue's FIX quantities are contracts.
+
+Decision. DESK_V2_WIRING.md Section 2: `LoopBook`, `LoopOrderGateway` and `DeskGroup` convert where a quantity enters or leaves the loop.
+
+Consequences. The journals and the post-trade keeper are in venue units; the risk engine, the hedger and the routers in face.
+
+## DR-V12-D04: A trade print is not part of the delta stream
+
+Date: 2026-11-23
+
+Context. DR-RV-R02 makes a refused book delta a gap.
+
+Decision. Prints have their own sequence, are forwarded while the book is whole, and a lost one is counted (`printsDropped`), never a gap.
+
+Consequences. The version 1 venue publishes none, so its recorded feed is unchanged.
+
+## DR-V12-D05: The simulated front end follows the two-year node; the overnight rate is constant in a session
+
+Date: 2026-11-23
+
+Context. The market model has no instrument shorter than two years; pricing v2 needs a fixing, five futures and a 1-year swap.
+
+Decision. DESK_V2_WIRING.md Section 3; assumptions declared in `SimV2CurveRound`.
+
+Consequences. Pricing v2's front end on the v2 market carries no independent information.
+
+## DR-V12-D06: A Treasury future is priced off its book and risked at the model's declared sensitivity
+
+Date: 2026-11-23
+
+Context. The hedge planner needs TY as an instrument; a cheapest-to-deliver calculation was not in scope.
+
+Decision. `FuturesOverlay`: fair value is the futures book mid; rate risk is the contract's declared price change per basis point at its node.
+
+Consequences. The futures basis is not a risk factor of the desk.
+
+## DR-V12-D07: The markout store is loaded from one file and saved to another
+
+Date: 2026-11-23
+
+Context. A replay rebuilds the desk, which reads the store again; a session that saved over the file it loaded would replay from another store.
+
+Decision. `markouts.start` is read at build and never written during a session; `markouts.end` is written at the end; the next fresh start promotes end to start. `Desk.saveMarkouts`, which writes the file it loaded, is not used by the v2 process.
+
+Consequences. A restart does not promote, so the rebuilt desk reads the store the stopped process read (DESK_V2_WIRING.md Section 12.1).
+
+## DR-V12-D08: The loop timer flushes a held curve round after its conflation time, not on every tick
+
+Date: 2026-11-23
+
+Context. A timer calling `flush` on every tick applied a round in pieces whenever it straddled a tick.
+
+Decision. `DeskGroup` records when a round's first input arrived on the loop clock and flushes 100 ms later.
+
+Consequences. Superseded by DR-V12-P06, which makes the binding itself apply a round whole; the workaround was removed on 2026-11-24.
+
+## DR-V12-D09: The first snapshot of a non-empty book is announced
+
+Date: 2026-11-23
+
+Context. `FeedBinding.rebuild` delivered the first snapshot of a book that already had levels without DISCONNECTED, which the loop read as a gap at every start against a venue already trading.
+
+Decision. Supersedes nothing in DR-RV-R02; it applies that rule to the first snapshot. A DISCONNECTED before any frame is not counted as a gap.
+
+Consequences. The default profile's journals are unchanged, because its venue starts empty.
+
+## DR-V12-D10: The smoke day asserts hedges on both CLOBs; the future is exercised by an outage
+
+Date: 2026-11-23
+
+Context. At declared costs the factor hedge planner never chose TY on the v2 smoke day: half a 1/64 tick of TY is 0.109 bp of its DV01 against 0.048 bp for the 10-year note.
+
+Decision. No parameter was changed to make the planner choose TY. `SmokeV2Test` exercises the futures path with a Treasury feed outage.
+
+Consequences. Whether TY should be a normal-day hedge is a question for a registered run.
+
+## DR-V12-D11: Spread risk follows the risk engine's positions and is displayed only
+
+Date: 2026-11-23
+
+Context. Fills are booked inside rates-quoting and rates-risk.
+
+Decision. `SpreadRiskBook` is brought to the risk engine's positions after every message that can fill. Nothing limits, quotes or hedges on it.
+
+Consequences. A desk long swaps and short Treasuries carries its swap-spread risk unhedged. A limit or hedge needs an input the hedger does not have.
+
+## DR-V12-D12: Pricing v2 is built as of the last New York cut
+
+Date: 2026-11-23
+
+Context. Replay and restart build the desk at another instant than the live process did, and the binding stamped its start-of-day marks with the construction clock.
+
+Decision. `PricingBindings.create` passed the binding a clock standing at the last cut.
+
+Consequences. Superseded by DR-V12-P05 the same day: the binding no longer reads a clock at construction.
+
+## DR-V12-P01: The trading process runs desk profiles; the selection is recorded beside the journals
+
+Date: 2026-11-23
+
+Context. The v2 desk ran stepped in `V2DeskProcess` only; `TradingProcess` could not run it, and a replay must be built from the profile that wrote the journals.
+
+Decision. `TradingProcess.Options` carries a `DeskProfile`. The `desk` config section names it (`profile: default|v2`, then `market`, `pricing`, `strategy`, `router` on top; `ProcessConfig.DeskSelection`). A selection other than the recorded desk is written to `desk.selection` in the journal directory before anything is journaled; a start on journals another selection wrote is refused; `--replay` follows the file. On the v2 market the process runs four FIX sessions, three feeds and `CurveFeedV2`, and starts at 09:00 New York. A restarted v2 market is the seed's market taken alone to the restart time.
+
+Consequences. The recorded profile is built exactly as before. A restarted v2 market forgets the desk's earlier impact and the venues' trade registers start again. Only the two whole profiles are run by tests at process level; per-component selections are built and started but not run.
+
+## DR-V12-P02: One owner for the simulator v2 market model
+
+Date: 2026-11-23
+
+Context. The four v2 venues share one `MarketModel`, and the two Treasury venues each `BookModel`. Each venue handled the desk's messages on its own FIX thread under its own lock, so two threads could be inside one `BookModel` at once (DESK_V2_WIRING.md Section 8).
+
+Decision. The venues of a session share a `SimSequencer`. A FIX thread only puts a message in its venue's inbox; the thread that moves the venues' clock drains the inboxes venue by venue (D2C, CLOB 1, CLOB 2, futures), each first in first out; a second draining thread is refused. The stepped process settles each session before the next (`SteppedDelivery`). Partitioning the model was rejected, because one book on two venues is the design; one lock across venues was rejected, because it leaves the order to whichever thread wins.
+
+Consequences. What a venue does is a function of the sequence of (time, venue, message) its owner handed it. If the venues' thread stops, no venue answers, and a halt ends with the sockets closed.
+
+## DR-V12-P03: What determinism is promised
+
+Date: 2026-11-23
+
+Context. The brief asked for a test in which a threaded day run several times gives identical journals.
+
+Decision. The promise is: replay of any journal is exact; a stepped day (`V2DeskProcess`, `TradingProcess.step`) repeats frame for frame, timestamps included; a threaded live v2 day is not repeatable run to run and is not claimed to be. Two threaded runs of one seed gave 43,462 and 43,104 inbound frames; each reconciled with 0 breaks and replayed (`SupervisorV2Test`, `V2SteppedDeterminismTest`, `TradingProcessV2Test`).
+
+Consequences. No test claims a threaded day repeats. A repeatable threaded run would need time to advance only when every thread is idle, which is the stepped process.
+
+## DR-V12-P04: Execution-id dedupe is bounded to the children in the book
+
+Date: 2026-11-23
+
+Context. `ChildOrderBook` kept every (venue, ExecID) in a set that grew all day on the loop thread: a 131 kB array after about 4,500 fills.
+
+Decision. Ids are held per child while it is in the book, cancelled children waiting for late fills included, in a preallocated pool (`ChildExecIds`); release returns them. At the bound a new fill is refused, counted as an anomaly and left outstanding, never booked without its id. A report for a child that has left the book is unknown and books nothing, as before. `resetDay()` is removed.
+
+Consequences. Duplicates, reordered reports and resends after a reconnect are dropped as before. 50,127 fills allocate 0 bytes (`ChildOrderBookAllocationTest`). A venue reusing an ExecID on another order after the first is released is booked.
+
+## DR-V12-P05: Pricing v2 state is a function of the journaled inputs
+
+Date: 2026-11-23
+
+Context. The binding stamped its start-of-day marks with the clock at construction, and its residuals depended on that stamp, so a desk rebuilt from its journals priced a Treasury 5e-9 of a point away from the desk that wrote them. DR-V12-D12 moved the stamp to the last cut, which still differed for a desk built just before a cut and replayed after it.
+
+Decision. The binding reads no clock for its state. It stands on the universe's trade date with the starting quotes as marks until its first timed call; that call fixes the business date and dates the marks at the last New York cut. `PricingBindings.businessDayStart` is removed. Supersedes DR-V12-D12 and amends DR-R4-07 and DR-R4-08.
+
+Consequences. Two bindings built seconds apart, either side of a cut, price bit-identically after the same timed calls (commit 8c471ec). The first quote of each instrument is taken whole.
+
+## DR-V12-P06: Recording an input and repricing are separate
+
+Date: 2026-11-23
+
+Context. A loop that conflates its inputs wants to reprice once per burst; a timer that flushed on every tick split a round (DR-V12-D08).
+
+Decision. `PricingBinding.setInput` records an input and never reprices; `repriceIfDirty` applies everything recorded with one solve; `advanceTo` applies a held round once and whole when its conflation time has passed, and `flush` only then. `onCurveInput` keeps its behaviour. Version 1 holds nothing, so its defaults apply each input at once. Supersedes DR-V12-D08.
+
+Consequences. A burst then one reprice costs one solve. Setting an input and repricing do not allocate. The `DeskGroup` workaround of DR-V12-D08 was removed on 2026-11-24.
+
+## DR-V12-E01: One registered family on shared sessions replaces the eight drafts
+
+Date: 2026-11-23
+
+Context. Eight drafts (SIM3-BASE-001, R5-001 to R5-007) would have run on eight seed bases with up to 15 parameter rows each: weeks of compute and eight looks.
+
+Decision. Owner's decision, taken by the maintainer on the owner's delegation before any result existed: one family, `research/prereg/R5-FAM-001.yaml`, on one data set (seed base 31,000,000, 2,000 sessions), every arm on the same seeds, Benjamini-Hochberg across its eight hypotheses, the default arm's P&L as a descriptive row. The eight drafts are marked superseded before signing and kept; none was run.
+
+Consequences. One look at the data set. Ablations are read at the central parameters only; the full band of the design is not tested. The registration is unsigned: the runner refuses it until the owner signs and commits it.
+
+## DR-V12-E02: The configuration is one value
+
+Date: 2026-11-23
+
+Context. An arm was described by presets, switches and router choices in several places.
+
+Decision. An arm is a `DeskProfile` plus its `DeskSettings.StrategySwitches`; `DeskArms` builds the arms of the family (nine on the common footing and the descriptive `legacy`); the profile gives its resolved form and a configuration hash.
+
+Consequences. A ledger row names one configuration. The default desk and the v2 desk are two values of it.
+
+## DR-V12-E03: One source for simulator client ids per tier
+
+Date: 2026-11-23
+
+Context. `DeskSettings.V2_CLIENT_TIERS` mapped five client ids to tiers A, A, B, B, C, while simulator v2 sends 2001, 2002 and 2003 for tiers A, B and C, so tier B was priced as tier A.
+
+Decision. `DeskSettings.V2_CLIENT_ID_BASE` (2001) plus the tier index, checked against the simulator.
+
+Consequences. Each simulated tier is priced as its own.
+
+## DR-V12-E04: v2 arms trade the full universe; structural declines are a guard
+
+Date: 2026-11-23
+
+Context. The recorded universe has four swap templates; the simulator sends swap RFQs at seven tenors.
+
+Decision. v2 arms run the simulator v2 universe. The default and cover-only arms run the recorded universe and decline the 3, 7 and 20-year swap RFQs (about 18 percent of swap flow by the calibrated tenor mix). Every arm's structural declines are counted, and a treatment may not decline more for that reason than its baseline.
+
+Consequences. H1 compares the two desks as built, not two strategies on one universe; the registration says so.
+
+## DR-V12-E05: The back-test shows the v2 market as the venues do
+
+Date: 2026-11-23
+
+Context. The back-tested desk saw the v2 market differently from the wired desk: one Treasury venue, no futures, a curve not built like the venues' round, and a business date in 2030 at which the reference data's on-the-run Treasuries had matured.
+
+Decision. The back-test runs a v2 profile on the v2 loop with both Treasury CLOBs at their venue shares and TY on the futures venue; the curve comes from the published swap rates through the pricing v2 round; the desk is priced as of the v2 desk's business date (`DeskStrategy.atSessionOpen`).
+
+Consequences. The back-test publishes no trade prints, so the ladder router's queue estimates see book changes only there.
+
+## DR-V12-E06: Two sensitivity rows, descriptive; the high points are excluded with reasons
+
+Date: 2026-11-23
+
+Context. Of the parameters the data could not identify, two decide whether market making is viable at all: the competitors' all-in cost (which sets the adverse-selection level) and their winning half-spread.
+
+Decision. Two rows at N = 1,000 for the default and v2 arms only: `all_in_cost:low` and `winner_half_spread:low`. Their high points are refused at start-up by the simulator's own consistency checks; the runner checks that each excluded point is in fact refused. The rows are descriptive and enter no verdict and no Benjamini-Hochberg.
+
+Consequences. Both sensitivity rows lie on the side that makes market making harder. The rest of the band is not tested.
+
+## DR-V12-E07: One ledger row per hypothesis; one look per family run
+
+Date: 2026-11-23
+
+Context. DR-RV-C02 counts looks per data set. A family reads one data set for several hypotheses at once.
+
+Decision. A family run appends one ledger row per hypothesis and one for the descriptive baseline, all with the family id, as one look. A second run of the family on the same data set is refused.
+
+Consequences. Error control is across the family, by Benjamini-Hochberg on command (DR-V12-B04).
+
+## DR-V12-E08: Checkpoints per session and arm; a timing-only pilot writes no P&L
+
+Date: 2026-11-23
+
+Context. A 2,000-session family takes about 19 hours on eight workers; the machine restarts itself; and a pilot must size the run without becoming a look.
+
+Decision. `ExperimentRunner` checkpoints each finished session and each finished arm inside a session; a relaunch with the same command resumes. No summary and no ledger row is written until the last session. A pilot runs on the pilot base 29,000,000, which supports no claim; `--timing-only` writes timings and structural counts and no P&L.
+
+Consequences. The pilots of 2026-11-23 on the pilot base measured about 25 s per full-day session for the default desk run alone, and a session sd of about 214k USD from 8 sessions of the default desk (imprecise); no mean P&L was looked at. The sd sized N (the registration's `why_2000`) and is used for nothing else.
+
+## DR-V12-E09: A cancel that finds the order filled is refused
+
+Date: 2026-11-24
+
+Context. On simulator v2 the back-tester books a resting order's fills when the market moves. A cancel asked for in between booked the last fills, reported them `PartiallyFilled`, and then reported `Cancelled` with nothing left to cancel. The router had released the child by then, so the loop counted an unrouted report. R5-FAM-001's draft listed the count as a possible dropped fill.
+
+Decision. When the fills booked by a cancel complete the order, it is reported `Filled` and the cancel is refused (`StrategyContext.cancelOrder` returns false), as a venue does. An order whose booked fills reach its quantity is complete whether or not the queue model has said so.
+
+Consequences. `SimV2OrdersTest` covers it; `DeskSimV2Test` asserts zero unrouted reports on the baseline and v2 arms. Version 1 runs are unchanged: their orders fill whole or not at all. No registered session had been generated.
+
+## DR-V12-D13: A fill of a released child is a position
+
+Date: 2026-11-24
+
+Context. The loop dropped every execution report of a router order its router no longer held, including one with a fill: one that crossed the cancel's confirmation, or an order left from before a restart. The posttrade keeper books such a fill, so risk and books would differ.
+
+Decision. `DeskGroup` books the fill to the risk engine at its own side, price and instrument, once by venue and execution id, and counts it (`lateFills`). The hedger sees it in the next residual. A report without a fill is still only counted.
+
+Consequences. A later bust of the same execution reverses it. The parent's accounting is not reopened; the router's outstanding quantity was freed when the child ended.
+
+## DR-V12-T01: Allocation gates ask for one clean window, not a named one
+
+Date: 2026-11-24
+
+Context. `LoopAllocationTest` required the last of three windows to allocate nothing. Run without escape analysis it failed twice on one-off costs that fell there: 96 bytes on the first backpressure events of a run, on Windows, and 184 bytes in a window with a waited segment roll, on Linux with Java 27. Neither scales with what it fell beside: 900,000 backpressure events a window allocated nothing, and with segments of 8 and 32 MB on Linux (2 CPUs) windows with up to 15 waited rolls in DIRECT mode and 29 in RING allocated nothing, while one window of each DIRECT run, the third or the fourth, showed 152 bytes once. What allocates them was not identified; a deoptimisation is the likely cause. `ChildOrderBookAllocationTest` failed the same way on Linux (128 bytes in one window of 50,134 fills).
+
+Decision. The loop gate takes the rule of `WiredLoopAllocationTest` (DR-R2W-12) over four windows: no window after the first above 1,024 bytes, and at least one of them exactly zero. Its warm-up fills the outbound ring, so the backpressure path has run. The dedupe gate repeats its long window, at most twice, only after one of at most 256 bytes; each repeat books more than twice every fill before it, and the last must allocate nothing.
+
+Consequences. A leak of one byte per message is still a megabyte in every window, and a set that grows with the day is still an array of many kilobytes in a window that outgrows the day. A one-off of a few hundred bytes no longer fails the build by where it falls. A cost paid once per rare event in some windows only, below the bound, would pass; the report prints every window.

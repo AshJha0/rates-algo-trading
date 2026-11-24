@@ -4,7 +4,7 @@ stateDiagram-v2
   New --> PartiallyFilled: ER fill, cum below ordered
   New --> Filled: ER fill, cum equals ordered
   New --> Rejected: ER Rejected
-  New --> CancelRequested: time limit, book move, deadline,<br/>or no ack / IOC report within RouterTimeouts
+  New --> CancelRequested: no ack or IOC report in time, kill, deadline
   New --> Cancelled: ER Cancelled (IOC remainder)
   Acknowledged --> PartiallyFilled: ER fill
   Acknowledged --> Filled: ER fill, cum equals ordered
@@ -15,23 +15,32 @@ stateDiagram-v2
   PartiallyFilled --> Filled: ER fill, cum equals ordered
   PartiallyFilled --> CancelRequested: cancel sent
   PartiallyFilled --> Cancelled: ER Cancelled
-  CancelRequested --> CancelRequested: ER fill (raced the cancel)
-  CancelRequested --> CancelRequested: no answer within cancelNanos, cancel sent again
-  CancelRequested --> Unresolved: no answer after maxCancelAttempts, parent ends Failed
+  CancelRequested --> CancelRequested: ER fill that raced the cancel, or cancel sent again after cancelNanos
   CancelRequested --> Filled: ER fill, cum equals ordered
   CancelRequested --> Cancelled: ER Cancelled, plain cancel
   CancelRequested --> Replaced: ER Cancelled, quantity to be re-routed
-  CancelRequested --> Acknowledged: OrderCancelReject (45), nothing filled, one more wait
-  CancelRequested --> PartiallyFilled: OrderCancelReject (45), some filled, one more wait
+  CancelRequested --> Rejected: ER Rejected crossed the cancel
+  CancelRequested --> New: OrderCancelReject (45), was New, nothing filled
+  CancelRequested --> Acknowledged: OrderCancelReject (45), was Acknowledged, nothing filled
+  CancelRequested --> PartiallyFilled: OrderCancelReject (45), some filled
   Cancelled --> Cancelled: late fill up to the venue's reported cum
   Replaced --> Replaced: late fill up to the venue's reported cum
-  Filled --> [*]
-  Cancelled --> [*]: leaves zero, slot released
-  Replaced --> [*]: leaves zero, slot released
-  Rejected --> [*]
-  Unresolved --> [*]: a report or a reconciliation settles it
-  note right of Unresolved
-    Quantity stays reserved: it may or may not have traded.
-    A child absent from mass status is sent a cancel,
-    not freed (DR-RV-R04).
+  Cancelled --> Filled: late fills reach ordered
+  Replaced --> Filled: late fills reach ordered
+  Filled --> Released: leaves zero
+  Cancelled --> Released: leaves zero
+  Replaced --> Released: leaves zero
+  Rejected --> Released: leaves zero
+  Released --> [*]
+  note right of CancelRequested
+    After a refused cancel: one more cancelNanos wait, then cancel
+    again. After maxCancelAttempts without an answer the child is
+    flagged unresolved: not a state, its quantity stays reserved and
+    the parent ends Failed. An order absent from a mass status is
+    sent a cancel, not freed (DR-RV-R04).
+  end note
+  note right of Released
+    The slot is free and the book no longer knows the order.
+    A fill reported now is booked by DeskGroup as a position, once
+    by venue and execId (lateFills, DR-V12-D13).
   end note

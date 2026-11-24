@@ -20,6 +20,7 @@ public final class SegmentedJournalReader implements FrameSource {
   private final Path dir;
   private final String name;
   private final int lastIndex;
+  private final int hashAlgorithm;
 
   private JournalReader current;
   private int nextIndex = 1;
@@ -31,6 +32,35 @@ public final class SegmentedJournalReader implements FrameSource {
     this.dir = dir;
     this.name = name;
     this.lastIndex = lastIndex;
+    this.hashAlgorithm = lastIndex == 0 ? ChainHash.DEFAULT : headerAlgorithm(dir, name, lastIndex);
+  }
+
+  /**
+   * The chain hash the first segment present names, read from its header without mapping it, so
+   * a replay knows the algorithm before the first frame. A missing or unreadable header is left
+   * for {@link #next} to report with the right sequence.
+   */
+  private static int headerAlgorithm(final Path dir, final String name, final int lastIndex) {
+    for (int index = 1; index <= lastIndex; index++) {
+      final Path path = SegmentedJournal.segmentPath(dir, name, index);
+      if (!Files.isRegularFile(path)) {
+        continue;
+      }
+      try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(path)) {
+        final java.nio.ByteBuffer header =
+            java.nio.ByteBuffer.allocate(JournalFormat.FILE_HEADER_LENGTH).order(JournalFormat.BYTE_ORDER);
+        while (header.hasRemaining() && channel.read(header) > 0) {
+          // a header is 32 bytes; a short file is reported by the reader
+        }
+        final int version = header.getShort(JournalFormat.FORMAT_VERSION_OFFSET) & 0xFFFF;
+        return version == JournalFormat.FORMAT_VERSION_NAMED_HASH
+            ? header.getShort(JournalFormat.HASH_ALGORITHM_OFFSET) & 0xFFFF
+            : ChainHash.FNV1A;
+      } catch (final java.io.IOException e) {
+        return ChainHash.DEFAULT;
+      }
+    }
+    return ChainHash.DEFAULT;
   }
 
   /** Opens every segment of journal {@code name} present in {@code dir}. */
@@ -57,6 +87,12 @@ public final class SegmentedJournalReader implements FrameSource {
               expectedSequence, "segment " + nextIndex + " of journal " + name + " is missing");
         }
         current = JournalReader.open(path, expectedSequence, chainHash);
+        if (current.hashAlgorithm() != hashAlgorithm) {
+          current.close();
+          current = null;
+          throw new JournalCorruptionException(
+              expectedSequence, "segment " + nextIndex + " of journal " + name + " uses another chain hash than segment 1");
+        }
       }
       if (current.next(handler)) {
         expectedSequence = current.expectedSequence();
@@ -78,6 +114,11 @@ public final class SegmentedJournalReader implements FrameSource {
   @Override
   public long chainHash() {
     return chainHash;
+  }
+
+  @Override
+  public int hashAlgorithm() {
+    return hashAlgorithm;
   }
 
   /** Segments read to their end so far. */

@@ -4,7 +4,7 @@ flowchart LR
   inst["CurveInstrument<br/>one per pillar"]
   builder{"CurveBuilder<br/>Method.AUTO"}
   seq["Sequential<br/>Brent per pillar"]
-  glob["Global<br/>Levenberg-Marquardt"]
+  glob["Global<br/>Newton, then Levenberg-Marquardt<br/>if it does not converge (DR-R4-09)"]
   curve["DiscountCurve<br/>ln P at pillars,<br/>interpolation, turns"]
   proj["Projection curve<br/>EUR 6M, OIS discounting fixed"]
   pricers["Pricers<br/>OIS swaps, bonds, futures"]

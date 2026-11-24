@@ -8,7 +8,6 @@ import io.ratesalgo.messages.sbe.OrdStatus;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.messages.sbe.TransitionCause;
 import org.agrona.collections.Long2LongHashMap;
-import org.agrona.collections.LongHashSet;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
@@ -29,9 +28,16 @@ import org.agrona.concurrent.UnsafeBuffer;
  * never re-routed. Every state change and every applied fill is written as a
  * ChildOrderTransition (template 82) to the audit sink.
  *
- * <p>Storage is flat arrays sized at construction; nothing allocates after warm-up as long as
- * the live child count stays within capacity and the day's fills within the execution-id set's
- * initial capacity. Single-threaded.
+ * <p>Execution ids are held per child, from its first fill until its slot is released ({@link
+ * ChildExecIds}). That covers every report that can still be booked: a report for a released
+ * child is {@link #UNKNOWN} and books nothing, so a resend after a reconnect or a restart, a late
+ * fill after a cancel and a plain duplicate are all caught while their child is in the book. The
+ * ids are pooled and bounded; a new fill that finds the pool full is not booked but {@link
+ * #REFUSED}, counted and left outstanding (see {@link #refusedFills()}), because booking it
+ * without its id would let a resend book it again.
+ *
+ * <p>Storage is flat arrays sized at construction; nothing allocates after construction as long as
+ * the live child count stays within capacity. Single-threaded.
  */
 public final class ChildOrderBook {
 
@@ -47,6 +53,12 @@ public final class ChildOrderBook {
   public static final int UNKNOWN = 16;
   /** The report contradicted the book (overfill, wrong venue, bad ids). */
   public static final int ANOMALY = 32;
+  /**
+   * The report carried a new fill that was not booked because every execution-id entry is in use;
+   * always together with {@link #ANOMALY}. The fill stays outstanding and a resend books it once
+   * an entry is free.
+   */
+  public static final int REFUSED = 64;
 
   private static final long NONE = -1L;
   private static final long MAX_EXEC_ID = 1L << 43;
@@ -77,7 +89,7 @@ public final class ChildOrderBook {
   private int highWater;
 
   private final Long2LongHashMap slotById;
-  private final LongHashSet execSeen;
+  private final ChildExecIds execIds;
 
   private final UnsafeBuffer auditBuffer = new UnsafeBuffer(new byte[128]);
   private final MessageHeaderEncoder header = new MessageHeaderEncoder();
@@ -97,10 +109,12 @@ public final class ChildOrderBook {
   private long stale;
   private long unknown;
   private long anomalies;
+  private long refusedFills;
 
   /**
    * @param capacity most child orders alive at once
-   * @param expectedFills fills per day the execution-id set holds without growing
+   * @param expectedFills most execution ids held at once, summed over the children in the book;
+   *     a fill beyond it is {@link #REFUSED}
    * @param clock source of audit timestamps
    * @param audit where ChildOrderTransition records go
    */
@@ -135,7 +149,7 @@ public final class ChildOrderBook {
     }
     freeTop = capacity;
     slotById = new Long2LongHashMap(capacity * 2, 0.65f, NONE);
-    execSeen = new LongHashSet(expectedFills * 2);
+    execIds = new ChildExecIds(capacity, expectedFills);
   }
 
   /** Records a child order as sent; returns its slot. */
@@ -202,8 +216,8 @@ public final class ChildOrderBook {
    * Applies one ExecutionReport.
    *
    * @return a combination of {@link #FILL}, {@link #STATE}, {@link #DUPLICATE}, {@link #STALE},
-   *     {@link #UNKNOWN}, {@link #ANOMALY}; {@link #lastFill()} and {@link #lastFreed()} describe
-   *     the effect
+   *     {@link #UNKNOWN}, {@link #ANOMALY}, {@link #REFUSED}; {@link #lastFill()} and {@link
+   *     #lastFreed()} describe the effect
    */
   public int onExecutionReport(
       final int venue,
@@ -359,14 +373,11 @@ public final class ChildOrderBook {
       return false;
     }
     slotById.remove(clOrdId[s]);
+    // from here a report for this child is unknown and books nothing, so its ids can go
+    execIds.clear(s);
     inUse[s] = false;
     freeStack[freeTop++] = s;
     return true;
-  }
-
-  /** Forgets the day's execution ids. Call between days, with no child live. */
-  public void resetDay() {
-    execSeen.clear();
   }
 
   private int fill(
@@ -376,8 +387,15 @@ public final class ChildOrderBook {
       return ANOMALY;
     }
     final long key = ((long) venue << 43) | execId;
-    if (execSeen.contains(key)) {
+    if (execIds.contains(key)) {
       return DUPLICATE;
+    }
+    if (!execIds.add(s, key)) {
+      // booking it without its id would let a resend book it twice; left unbooked it stays
+      // outstanding (venueCum holds it out of any cancel), and a resend books it once ids free up
+      refusedFills++;
+      anomalies++;
+      return REFUSED | ANOMALY;
     }
     int flags = FILL;
     long over = 0;
@@ -391,7 +409,6 @@ public final class ChildOrderBook {
       anomalies++;
       flags |= ANOMALY;
     }
-    execSeen.add(key);
     // quantity beyond what the child still had outstanding was already freed by a cancel (and
     // possibly routed again): the venue traded it anyway, so it is booked, but it was no longer
     // part of the parent's outstanding quantity
@@ -565,13 +582,28 @@ public final class ChildOrderBook {
     return excess[s];
   }
 
-  /** True if a fill with this venue execution id has been applied today. */
+  /** True if a fill with this venue execution id was applied to a child still in the book. */
   public boolean hasExecution(final int venue, final long execId) {
     return execId >= 0
         && execId < MAX_EXEC_ID
         && venue >= 0
         && venue < MAX_VENUE_ID
-        && execSeen.contains(((long) venue << 43) | execId);
+        && execIds.contains(((long) venue << 43) | execId);
+  }
+
+  /** Execution ids held now, across the children in the book. */
+  public int heldExecutions() {
+    return execIds.size();
+  }
+
+  /** Most execution ids held at once; a new fill beyond it is {@link #REFUSED}. */
+  public int executionCapacity() {
+    return execIds.entries();
+  }
+
+  /** Reports whose new fill was refused because every execution-id entry was in use. */
+  public long refusedFills() {
+    return refusedFills;
   }
 
   /** Quantity that may still fill: {@code ordered - cum - cancelled}. */

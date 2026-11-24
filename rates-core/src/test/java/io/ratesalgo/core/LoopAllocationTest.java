@@ -31,9 +31,11 @@ import org.junit.jupiter.api.io.TempDir;
  * windows (DR-R2J-02).
  *
  * <p>The check is windowed (DR-INT-02). Warm-up is one million messages, extended 250,000 at a time
- * while the JIT is still compiling, up to four times (DR-INT-06); then three consecutive
- * windows of one million messages are measured. The last window must allocate exactly nothing and
- * no window after the first may allocate more than {@link #LATER_WINDOW_BOUND} bytes. The first
+ * while the JIT is still compiling, up to four times (DR-INT-06); then four consecutive
+ * windows of one million messages are measured. No window after the first may allocate more than
+ * {@link #LATER_WINDOW_BOUND} bytes and at least one of them must allocate exactly nothing, the rule
+ * of {@code WiredLoopAllocationTest}: a one-off deoptimisation can fall in any one window
+ * (DR-V12-T01). The first
  * window is reported but not bounded: a one-off allocation of a few hundred bytes just after
  * warm-up (a late JIT recompile, a rare path such as backpressure taken for the first time) is not
  * a per-message leak, and a per-message leak of even one byte shows as at least a megabyte in every
@@ -51,7 +53,7 @@ class LoopAllocationTest {
 
   private static final int WARM_UP = 1_000_000;
   private static final int WINDOW = 1_000_000;
-  private static final int WINDOWS = 3;
+  private static final int WINDOWS = 4;
   private static final int EXTRA_WARM_UP = 4;
   private static final int EXTRA_WARM_UP_WINDOW = 250_000;
   private static final long LATER_WINDOW_BOUND = 1024L;
@@ -111,11 +113,12 @@ class LoopAllocationTest {
       loop.register(QuoteRequestDecoder.TEMPLATE_ID, new TrivialQuoter(loop));
 
       final AtomicBoolean draining = new AtomicBoolean(true);
+      final AtomicBoolean drainOpen = new AtomicBoolean(true);
       final Thread drainer =
           new Thread(
               () -> {
                 while (draining.get()) {
-                  if (outbound.read((t, b, i, l) -> {}, 1024) == 0) {
+                  if (!drainOpen.get() || outbound.read((t, b, i, l) -> {}, 1024) == 0) {
                     Thread.onSpinWait();
                   }
                 }
@@ -142,6 +145,16 @@ class LoopAllocationTest {
       publish(publisher, 1, WARM_UP);
       awaitInbound(loop, WARM_UP);
       int sent = WARM_UP;
+      // The backpressure path, run before the windows: the JVM allocates once on a path's first
+      // execution, so a first full ring in the last window would show as 96 bytes there. With the
+      // drainer held back the ring fills and the path runs many times; the windows' bounds hold for
+      // it too.
+      drainOpen.set(false);
+      publish(publisher, sent + 1, sent + EXTRA_WARM_UP_WINDOW);
+      sent += EXTRA_WARM_UP_WINDOW;
+      awaitInbound(loop, sent);
+      drainOpen.set(true);
+      assertTrue(loop.counters().get(LoopCounters.BACKPRESSURE_EVENTS) > 0, "the warm-up filled the outbound ring");
       // Under machine load (a 2-CPU runner) the JIT's compiler threads fall behind, so
       // compilations and deoptimisations can land in the measured windows instead of the fixed
       // warm-up. Keep warming up, 250,000 messages at a time, until a whole extra window passes with
@@ -196,7 +209,11 @@ class LoopAllocationTest {
       for (int w = 1; w < WINDOWS; w++) {
         assertTrue(bytes[w] <= LATER_WINDOW_BOUND, "a window after the first exceeded " + LATER_WINDOW_BOUND + " bytes: " + report);
       }
-      assertEquals(0L, bytes[WINDOWS - 1], "the last window allocated on the loop thread: " + report);
+      long fewest = Long.MAX_VALUE;
+      for (int w = 1; w < WINDOWS; w++) {
+        fewest = Math.min(fewest, bytes[w]);
+      }
+      assertEquals(0L, fewest, "no window after the first was allocation-free: " + report);
     }
   }
 

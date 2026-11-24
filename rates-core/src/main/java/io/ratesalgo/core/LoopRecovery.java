@@ -173,7 +173,8 @@ public final class LoopRecovery {
     @Override
     public long append(
         final int templateId, final int schemaVersion, final DirectBuffer buffer, final int offset, final int length) {
-      hash = ChainHash.next(hash, buffer, offset, length);
+      // chained as the recorded journal is, whichever hash its files name
+      hash = ChainHash.next(recorded.hashAlgorithm(), hash, buffer, offset, length);
       observer.onMessage(templateId, buffer, offset, length);
       if (!recordedEnded && !recorded.next(capture)) {
         recordedEnded = true;

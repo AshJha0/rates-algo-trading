@@ -1,0 +1,60 @@
+# Configuration of R5-FAM-001 (UNSIGNED). Hashed into research/prereg/R5-FAM-001.yaml.
+# Machine-readable: the runner (ExperimentRunner / DeskExperiment) and both validators read the
+# arms, the family, the data-set rows, the excluded band points, the seeds and the statistics
+# from here. Nothing in it was chosen after any session of seed base 31,000,000 was generated.
+study: R5-FAM-001
+design: docs/research/SIM_V2_DESIGN.md Section 12; docs/research/STRATEGY_V2.md Section 8
+simulator: Round 3 MarketModel (docs/research/SIM_V2_DESIGN.md)
+simulator_params: data/calibration/sim_v2_params.json
+simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+client_rule: best_price
+# The common footing of every arm but legacy: DeskProfile.simV2, i.e. the simulator v2 market
+# (one D2C venue, two Treasury CLOBs showing shares of one book, the futures book), the universe
+# UsdUniverse.simV2 (eight swap tenors, the four Treasuries, TY), pricing v2 and the ladder
+# router. On it the arms differ only in DeskSettings.StrategySwitches (DeskSimV2Test asserts it).
+arms:
+  baseline: "DeskProfile.simV2(DeskSettings.defaults()): every strategy switch off (the 1.x quoting and hedging logic with its declared settings: clamp 0.02 to 0.08 bp, winner's curse 0.02 bp, default hedger, one client tier) on the common footing"
+  v2: "DeskProfile.v2() = DeskProfile.simV2(DeskSettings.strategyV2()): every strategy switch on, on the common footing"
+  v2_minus_cover_pricing: "v2 with StrategySwitches.coverPricing false"
+  v2_minus_reservation_price: "v2 with StrategySwitches.reservationPrice false"
+  v2_minus_factor_hedging: "v2 with factorCovariance, factorHedging and tickHedgeCost false"
+  v2_minus_internalisation: "v2 with the default hedger (internalisingHedger false: no budget, no time stop, no passive first)"
+  v2_minus_markouts: "v2 with markoutStore false"
+  v2_minus_quote_protection: "v2 with tickRounding and volatilityTtl false and pull fraction 0"
+  cover_only: "baseline with StrategySwitches.coverPricing true (and nothing else)"
+  legacy: "DeskProfile.defaults(): the desk as built in 1.1.0 (recorded universe: four swap tenors and the Treasuries; pricing v1; touch router). Descriptive only"
+family:
+  id: R5-FAM-001
+  q: 0.05
+  # the arm the description D0 and guards_vs_reference read
+  reference_arm: baseline
+  # run on the central row and described (ledger row D1); in no hypothesis, outside BH
+  descriptive_arms: [legacy]
+  # guards: treatment over the hypothesis' own baseline, summed over the set; the drafts' marks
+  hypotheses:
+    - {id: H1, treatment: v2, baseline: baseline, from_draft: R5-007, guards: {quoted_share: 0.8, hit_rate: 0.25, client_dv01: 0.25}}
+    - {id: H2, treatment: v2, baseline: v2_minus_cover_pricing, from_draft: none (R5-001 marks), guards: {quoted_share: 0.8, hit_rate: 0.25, client_dv01: 0.25}}
+    - {id: H3, treatment: v2, baseline: v2_minus_reservation_price, from_draft: R5-002, guards: {quoted_share: 0.8, hit_rate: 0.5, client_dv01: 0.6}}
+    - {id: H4, treatment: v2, baseline: v2_minus_factor_hedging, from_draft: R5-003, guards: {quoted_share: 0.8, hit_rate: 0.5, client_dv01: 0.6}}
+    - {id: H5, treatment: v2, baseline: v2_minus_internalisation, from_draft: R5-004, guards: {quoted_share: 0.9, hit_rate: 0.8, client_dv01: 0.8}}
+    - {id: H6, treatment: v2, baseline: v2_minus_markouts, from_draft: R5-005, guards: {quoted_share: 0.8, hit_rate: 0.5, client_dv01: 0.6}}
+    - {id: H7, treatment: v2, baseline: v2_minus_quote_protection, from_draft: R5-006, guards: {quoted_share: 0.8, hit_rate: 0.5, client_dv01: 0.6}}
+    - {id: H8, treatment: cover_only, baseline: baseline, from_draft: R5-001, guards: {quoted_share: 0.8, hit_rate: 0.25, client_dv01: 0.25}}
+  # every treatment's client DV01 traded over the baseline arm's, so no arm wins by not trading
+  guards_vs_reference: {client_dv01: 0.25}
+  # every treatment declines no more RFQs for a structural reason than its baseline; on the
+  # common footing every arm's count is zero by construction, so this guard cannot bind and is
+  # kept as a wiring check (a non-zero count is a defect of the run, not a result)
+  structural_declines: not_above_baseline
+rows:
+  - {row: central, arms: [baseline, v2, v2_minus_cover_pricing, v2_minus_reservation_price, v2_minus_factor_hedging, v2_minus_internalisation, v2_minus_markouts, v2_minus_quote_protection, cover_only, legacy], sessions: 2000}
+  - {row: "all_in_cost:low", arms: [baseline, v2], sessions: 1000}
+  - {row: "winner_half_spread:low", arms: [baseline, v2], sessions: 1000}
+excluded_band_points:
+  - {row: "all_in_cost:high", reason: "refused by the simulator's start-up checks: at all-in cost 0.15 bp the zero-profit identity at the central median (0.1827 x 0.761 = 0.139 bp) leaves a negative adverse move"}
+  - {row: "winner_half_spread:high", reason: "refused by the simulator's start-up checks: median 0.2719 bp with the adverse move re-solved needs informed variance of 54 of the level factor's 60.6 bp^2, above the 60 percent limit (SIM_V2_DESIGN.md Section 14 D14)"}
+seeds: {confirmation_base: 31000000, pilot_base: 29000000, minimum_sessions: 2000}
+smallest_effect: {usd_per_session: 24000, bp_of_client_dv01: 0.02, ablations_usd_per_session: 12000}
+session: {start_ny: "07:00", end_ny: "17:00", step_seconds: 1, day_type: "index mod 21: 0-3 release, 4 FOMC, 5-10 auction, else none"}
+marking: latent mid (SIM_V2_DESIGN.md Section 4)
+statistics: {test: paired_t, interval: moving_block_bootstrap, block_sessions: 21, resamples: 2000, bootstrap_seed: 5, family: benjamini_hochberg_q_0.05}

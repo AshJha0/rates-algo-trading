@@ -32,25 +32,51 @@ import org.agrona.concurrent.ringbuffer.RingBufferDescriptor;
  * by the ring's backlog, normally microseconds.
  *
  * <p>{@link #append} is called on one thread only, does not allocate, and returns the sequence the
- * frame will get. When the ring is full it spins until the journal thread makes room and counts the
- * wait ({@link #producerWaits()}); it never drops a frame, because a journal with a hole cannot be
- * replayed. A frame larger than an empty segment can hold is refused on the producer's thread
+ * frame will get. A frame larger than an empty segment can hold is refused on the producer's thread
  * ({@link JournalFullException}), so the journal thread never meets that error. If the journal
  * thread fails, the next {@code append} throws {@link IllegalStateException} with the cause.
  *
- * <p>A process crash loses the frames still in the ring; the direct mode loses none that reached
- * the mapping. {@link #close()} drains the ring, then closes the segmented journal.
+ * <p>Back-pressure (DECISIONS.md DR-R6-L04). The ring is bounded. When it is full the producer
+ * waits for the journal thread to make room, counted in {@link #producerWaits()}; it never drops a
+ * frame, because a journal with a hole cannot be replayed. The wait is bounded too: as long as the
+ * journal thread moves (its consumer position, or the segment preparer a roll waits for) the
+ * producer keeps waiting; after {@link #stallNanos()} with neither, or as soon as the journal thread
+ * has died, {@code append} throws {@link IllegalStateException}. For a loop that is a loop failure:
+ * its runner stops and the process supervisor withdraws from the gateway side. A loop that waits
+ * makes no duty cycle, so the supervisor's own stall limit acts first when it is the shorter.
+ *
+ * <p>Crash semantics. A process crash loses the frames still in the ring, at most {@link
+ * #backlog()} bytes, which the journal thread keeps to microseconds at the benchmark rates ({@link
+ * #backlogHighWater()} records the most seen); the direct mode loses none that reached the mapping.
+ * Both modes lose what the operating system had not written back if the machine itself fails. A
+ * restart repairs whatever tail is left ({@link JournalRecovery}) and replays it the same way in
+ * either mode, because the files are the same. {@link #close()} drains the ring, then closes the
+ * segmented journal.
+ *
+ * <p>Order between two journals ({@link #start(String, SegmentedJournal, Clock, int, IdleStrategy, long, RingJournal)}). A loop's outbound frames are consequences of its
+ * inbound frames. In direct mode the inbound frame is in the file before its handler runs, so the
+ * outbound journal can never be ahead of the inbound one, and a restart that replays the inbound
+ * journal produces at least every recorded outbound frame. With two rings and two journal threads
+ * that order would be lost: the outbound thread could write a frame whose cause was still in the
+ * inbound ring when the process died, and the restart would refuse the journals. So an outbound
+ * journal follows its inbound one: each record carries the inbound sequence appended before it,
+ * and the outbound journal thread writes it only once the inbound journal thread has written that
+ * far. A crash then loses a tail of each journal, never the cause of a frame that survived.
  */
 public final class RingJournal implements AutoCloseable {
 
   /** Default ring size: 64 MiB, about 0.5 million QuoteRequest frames. */
   public static final int DEFAULT_RING_CAPACITY = 64 << 20;
 
-  /** Ring record: timestamp (int64), schema version (int32), four zero bytes, then the payload. */
+  /**
+   * Ring record: timestamp (int64), schema version (int32), four zero bytes, the followed
+   * journal's sequence this frame waits for (int64, 0 for none), then the payload.
+   */
   private static final int RECORD_TIMESTAMP_OFFSET = 0;
 
   private static final int RECORD_VERSION_OFFSET = 8;
-  private static final int RECORD_HEADER_LENGTH = 16;
+  private static final int RECORD_AFTER_OFFSET = 16;
+  private static final int RECORD_HEADER_LENGTH = 24;
 
   /** Frames drained per read of the ring. */
   private static final int DRAIN_LIMIT = 1024;
@@ -65,9 +91,16 @@ public final class RingJournal implements AutoCloseable {
   private final int maxPayload;
   private final int maxFrame;
   private final Thread drainer;
+  private final long stallNanos;
 
   /** Read and written on the producing thread only. */
   private long nextSequence;
+
+  /** The journal whose frames this one's must not overtake in the files, or null. */
+  private final RingJournal leader;
+
+  /** The last sequence the journal thread has written to the file. Written by it; read by followers. */
+  private final AtomicLong written = new AtomicLong();
 
   /** Written by {@link #close()}, which may run on another thread once the producer has stopped. */
   private volatile boolean closed;
@@ -79,18 +112,29 @@ public final class RingJournal implements AutoCloseable {
   private volatile Throwable failure;
   /** Written by the producer only; read from any thread. */
   private final AtomicLong producerWaits = new AtomicLong();
+  /** Written by the journal thread only; read from any thread. */
+  private final AtomicLong backlogHighWater = new AtomicLong();
 
   private RingJournal(
-      final String name, final SegmentedJournal journal, final Clock clock, final int ringCapacity) {
+      final String name,
+      final SegmentedJournal journal,
+      final Clock clock,
+      final int ringCapacity,
+      final IdleStrategy drainIdle,
+      final long stallNanos,
+      final RingJournal leader) {
     this.journal = journal;
     this.clock = clock;
+    this.stallNanos = stallNanos;
+    this.leader = leader;
     final int bytes = ringCapacity + RingBufferDescriptor.TRAILER_LENGTH;
     this.ring = new OneToOneRingBuffer(new UnsafeBuffer(ByteBuffer.allocateDirect(bytes)));
     this.ringBuffer = ring.buffer();
     this.maxPayload = ring.maxMsgLength() - RECORD_HEADER_LENGTH;
     this.maxFrame = journal.segmentCapacity() - FILE_HEADER_LENGTH - Integer.BYTES;
     this.nextSequence = journal.nextSequence();
-    final Drain drain = new Drain(journal);
+    this.written.set(journal.nextSequence() - 1);
+    final Drain drain = new Drain(journal, drainIdle);
     this.drainer = new Thread(drain, "journal-drain-" + name);
     this.drainer.setDaemon(true);
     this.drainer.start();
@@ -106,10 +150,57 @@ public final class RingJournal implements AutoCloseable {
    */
   public static RingJournal start(
       final String name, final SegmentedJournal journal, final Clock clock, final int ringCapacity) {
+    return start(name, journal, clock, ringCapacity, defaultDrainIdle(), STALL_NANOS);
+  }
+
+  /**
+   * {@link #start(String, SegmentedJournal, Clock, int)} with the journal thread's idle strategy
+   * (a busy spin keeps the backlog shortest and burns a core) and the producer's stall limit.
+   *
+   * @param drainIdle what the journal thread does when the ring is empty
+   * @param stallNanos how long a producer waiting on a full ring tolerates no progress at all
+   */
+  public static RingJournal start(
+      final String name,
+      final SegmentedJournal journal,
+      final Clock clock,
+      final int ringCapacity,
+      final IdleStrategy drainIdle,
+      final long stallNanos) {
+    return start(name, journal, clock, ringCapacity, drainIdle, stallNanos, null);
+  }
+
+  /**
+   * {@link #start(String, SegmentedJournal, Clock, int, IdleStrategy, long)} for a journal that
+   * follows {@code leader}: a frame appended here after leader frame {@code n} reaches the file only
+   * once the leader's journal thread has written frame {@code n} (see the class comment). Both
+   * journals must be appended to on the same thread.
+   *
+   * @param leader the journal to follow, or null for none
+   */
+  public static RingJournal start(
+      final String name,
+      final SegmentedJournal journal,
+      final Clock clock,
+      final int ringCapacity,
+      final IdleStrategy drainIdle,
+      final long stallNanos,
+      final RingJournal leader) {
     if (!BitUtil.isPowerOfTwo(ringCapacity) || ringCapacity < (64 << 10)) {
       throw new IllegalArgumentException("ring capacity must be a power of two >= 64 KiB: " + ringCapacity);
     }
-    return new RingJournal(name, journal, clock, ringCapacity);
+    if (stallNanos <= 0) {
+      throw new IllegalArgumentException("stall limit must be positive: " + stallNanos);
+    }
+    return new RingJournal(name, journal, clock, ringCapacity, drainIdle, stallNanos, leader);
+  }
+
+  /** How long a producer on a full ring waits with no progress before {@code append} fails, by default. */
+  public static final long STALL_NANOS = SegmentedJournal.STALL_NANOS;
+
+  /** The journal thread's idle strategy unless one is given: spin, yield, then park up to 100 us. */
+  public static IdleStrategy defaultDrainIdle() {
+    return new BackoffIdleStrategy(100, 10, TimeUnit.MICROSECONDS.toNanos(1), TimeUnit.MICROSECONDS.toNanos(100));
   }
 
   /**
@@ -143,18 +234,66 @@ public final class RingJournal implements AutoCloseable {
     final int typeId = templateId + 1;
     int index = ring.tryClaim(typeId, recordLength);
     if (index == RingBuffer.INSUFFICIENT_CAPACITY) {
-      producerWaits.lazySet(producerWaits.get() + 1);
-      do {
-        checkFailure();
-        Thread.onSpinWait();
-        index = ring.tryClaim(typeId, recordLength);
-      } while (index == RingBuffer.INSUFFICIENT_CAPACITY);
+      index = awaitRoom(typeId, recordLength);
     }
     ringBuffer.putLong(index + RECORD_TIMESTAMP_OFFSET, clock.epochNanos(), JournalFormat.BYTE_ORDER);
     ringBuffer.putLong(index + RECORD_VERSION_OFFSET, schemaVersion & 0xFFFFL, JournalFormat.BYTE_ORDER);
+    // both producers are the same loop thread, so the leader's counter is read where it is written
+    ringBuffer.putLong(index + RECORD_AFTER_OFFSET, leader == null ? 0L : leader.nextSequence - 1, JournalFormat.BYTE_ORDER);
     ringBuffer.putBytes(index + RECORD_HEADER_LENGTH, payload, offset, length);
     ring.commit(index);
     return nextSequence++;
+  }
+
+  /**
+   * The full-ring wait, out of line so that {@code append} stays small. Waits while the journal
+   * thread makes progress; throws once it has died or made none for the stall limit. Reading the
+   * time and the positions allocates nothing.
+   */
+  private int awaitRoom(final int typeId, final int recordLength) {
+    producerWaits.lazySet(producerWaits.get() + 1);
+    // both counts only rise, so their sum moves exactly when either does
+    long seen = ring.consumerPosition() + journal.preparerProgress();
+    long since = System.nanoTime();
+    int index;
+    do {
+      checkFailure();
+      if (!drainer.isAlive()) {
+        checkFailure(); // a failure recorded just before the thread ended is the better message
+        throw new IllegalStateException("journal thread " + drainer.getName() + " has stopped; the ring is full");
+      }
+      Thread.onSpinWait();
+      index = ring.tryClaim(typeId, recordLength);
+      if (index == RingBuffer.INSUFFICIENT_CAPACITY) {
+        final long count = ring.consumerPosition() + journal.preparerProgress();
+        final long now = System.nanoTime();
+        if (count != seen) {
+          seen = count;
+          since = now;
+        } else if (now - since >= stallNanos) {
+          throw new IllegalStateException(
+              "journal thread " + drainer.getName() + " made no progress for "
+                  + TimeUnit.NANOSECONDS.toMillis(stallNanos) + " ms with the ring full: backlog " + ring.size()
+                  + " bytes, roll waits " + journal.rollWaits());
+        }
+      }
+    } while (index == RingBuffer.INSUFFICIENT_CAPACITY);
+    return index;
+  }
+
+  /** The producer's stall limit on a full ring. */
+  public long stallNanos() {
+    return stallNanos;
+  }
+
+  /** The largest backlog the journal thread has found before a read, in bytes. Readable from any thread. */
+  public long backlogHighWater() {
+    return backlogHighWater.get();
+  }
+
+  /** The last sequence written to the file by the journal thread. Readable from any thread. */
+  public long writtenSequence() {
+    return written.get();
   }
 
   /** The sequence the next queued frame will get. Call on the appending thread. */
@@ -270,17 +409,21 @@ public final class RingJournal implements AutoCloseable {
   private final class Drain implements Runnable, MessageHandler {
 
     private final SegmentedJournal target;
-    private final IdleStrategy idle =
-        new BackoffIdleStrategy(100, 10, TimeUnit.MICROSECONDS.toNanos(1), TimeUnit.MICROSECONDS.toNanos(100));
+    private final IdleStrategy idle;
 
-    Drain(final SegmentedJournal target) {
+    Drain(final SegmentedJournal target, final IdleStrategy idle) {
       this.target = target;
+      this.idle = idle;
     }
 
     @Override
     public void run() {
       try {
         while (true) {
+          final long backlog = ring.producerPosition() - ring.consumerPosition();
+          if (backlog > backlogHighWater.get()) {
+            backlogHighWater.lazySet(backlog);
+          }
           final int n = ring.read(this, DRAIN_LIMIT);
           if (n == 0) {
             if (stopping && ring.consumerPosition() == ring.producerPosition()) {
@@ -299,13 +442,37 @@ public final class RingJournal implements AutoCloseable {
     @Override
     public void onMessage(
         final int typeId, final MutableDirectBuffer buffer, final int index, final int length) {
-      target.append(
+      final long after = buffer.getLong(index + RECORD_AFTER_OFFSET, JournalFormat.BYTE_ORDER);
+      if (after > 0) {
+        awaitLeader(after);
+      }
+      final long sequence = target.append(
           typeId - 1,
           (int) buffer.getLong(index + RECORD_VERSION_OFFSET, JournalFormat.BYTE_ORDER),
           buffer.getLong(index + RECORD_TIMESTAMP_OFFSET, JournalFormat.BYTE_ORDER),
           buffer,
           index + RECORD_HEADER_LENGTH,
           length - RECORD_HEADER_LENGTH);
+      written.lazySet(sequence);
+    }
+
+    /**
+     * Waits until the followed journal has written {@code sequence}. The leader's journal thread
+     * never waits on this one, so the wait ends as long as it runs; if it has failed this thread
+     * fails too, and the producer hears of it on its next append.
+     */
+    private void awaitLeader(final long sequence) {
+      final RingJournal l = leader;
+      while (l.written.get() < sequence) {
+        final Throwable t = l.failure;
+        if (t != null) {
+          throw new IllegalStateException("the journal this one follows failed", t);
+        }
+        if (!l.drainer.isAlive() && l.written.get() < sequence) {
+          throw new IllegalStateException("the journal this one follows stopped before frame " + sequence);
+        }
+        Thread.onSpinWait();
+      }
     }
   }
 }

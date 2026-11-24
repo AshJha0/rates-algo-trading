@@ -6,12 +6,12 @@
   <parent>
     <groupId>io.ratesalgo</groupId>
     <artifactId>rates-algo-trading</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
   </parent>
 
   <artifactId>rates-bench</artifactId>
   <name>rates-bench</name>
-  <description>Fixed-rate latency harness for the event core (HdrHistogram, coordinated-omission correction, JSON and Markdown reports) and JMH microbenchmarks of the ring-buffer publish and the journal append.</description>
+  <description>Fixed-rate latency harness for the event core, the wired-desk benchmark of the whole trading process over loopback FIX (HdrHistogram, coordinated-omission free, JSON reports) and JMH microbenchmarks of the ring-buffer publish, the journal append, the chain hash and the FIX encoder.</description>
 
   <properties>
     <!-- Versions used only by this module, so the parent pom keeps one line per module. -->
@@ -29,6 +29,15 @@
     <latency.cpu>-1</latency.cpu>
     <latency.label>local</latency.label>
     <latency.out>${project.build.directory}/latency</latency.out>
+
+    <!-- Wired-desk suite for `mvn -pl rates-bench exec:exec@wired` (docs/BENCHMARKS_V2.md). -->
+    <wired.rate>1000</wired.rate>
+    <wired.warmup>20</wired.warmup>
+    <wired.measure>60</wired.measure>
+    <wired.label>local</wired.label>
+    <wired.configs>default-direct-plain,default-ring-plain,lowLatency-direct-plain,lowLatency-ring-plain,default-direct-tls,default-ring-tls,lowLatency-direct-tls,lowLatency-ring-tls</wired.configs>
+    <wired.gcCompare>false</wired.gcCompare>
+    <wired.out>${project.build.directory}/wired</wired.out>
   </properties>
 
   <dependencies>
@@ -50,6 +59,18 @@
     <dependency>
       <groupId>io.ratesalgo</groupId>
       <artifactId>rates-journal</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-fix</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <!-- the real trading process for WiredDeskBenchmark, and the pricing bindings for
+           PricingV2RepriceBenchmark -->
+      <groupId>io.ratesalgo</groupId>
+      <artifactId>rates-app</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
@@ -81,6 +102,17 @@
               <version>${jmh.version}</version>
             </path>
           </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+      <plugin>
+        <!-- The wired-desk benchmark's stage stamps are compiled out unless rates.probes is set when
+             the probe interfaces initialise; the module's tests run it, so they set it. -->
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <systemPropertyVariables>
+            <rates.probes>true</rates.probes>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
       <plugin>
@@ -129,6 +161,31 @@
                 <argument>--cpu=${latency.cpu}</argument>
                 <argument>--label=${latency.label}</argument>
                 <argument>--out=${latency.out}</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <!-- The wired-desk suite: mvn -pl rates-bench exec:exec@wired. The suite starts one JVM
+                 per configuration with the trading image's flags (WiredDeskSuite.shippedFlags). -->
+            <id>wired</id>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <phase>none</phase>
+            <configuration>
+              <executable>${java.home}/bin/java</executable>
+              <arguments>
+                <argument>-Xmx256m</argument>
+                <argument>-classpath</argument>
+                <classpath />
+                <argument>io.ratesalgo.bench.wired.WiredDeskSuite</argument>
+                <argument>--rate=${wired.rate}</argument>
+                <argument>--warmup-seconds=${wired.warmup}</argument>
+                <argument>--measure-seconds=${wired.measure}</argument>
+                <argument>--label=${wired.label}</argument>
+                <argument>--configs=${wired.configs}</argument>
+                <argument>--gc-compare=${wired.gcCompare}</argument>
+                <argument>--out=${wired.out}</argument>
               </arguments>
             </configuration>
           </execution>

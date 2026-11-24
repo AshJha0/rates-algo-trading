@@ -13,11 +13,18 @@ import java.util.Arrays;
  * reference period and CA the futures convexity adjustment.
  *
  * <ul>
- *   <li>Three-month (CME SR3, ICE SONIA): reference period from the third Wednesday of the
- *       contract month to the third Wednesday three months later; R is the daily compounded rate
- *       (CME SOFR futures contract specifications, Rulebook Chapter 460).
- *   <li>One-month (CME SR1): the calendar month; R is the arithmetic average of daily rates, each
- *       weighted by its calendar days (Rulebook Chapter 461).
+ *   <li>Three-month (CME SR3, ICE SONIA): reference period from (and including) the third
+ *       Wednesday of the contract month to (and excluding) the third Wednesday three months later;
+ *       R is daily compounded SOFR, a non-business day carrying the previous business day's rate.
+ *       The contract is named for the month its reference quarter begins. CME Rulebook Chapter
+ *       460, Rules 46002.B-C (100 minus R, $25 per basis point) and 46003.A.1-2 (Reference Quarter,
+ *       final settlement), as filed with the CFTC in CME Submission No. 18-069 (April 2018);
+ *       Rules 46002.B and 46003.A.1 still cited in CME Submission No. 24-204 (May 2024). Read
+ *       2026-11-23.
+ *   <li>One-month (CME SR1): the calendar month; R is the arithmetic average of daily SOFR, a day
+ *       without a published rate taking the last published one, so each rate is weighted by its
+ *       calendar days. CME Rulebook Chapter 461, Rules 46102.B-C (100 minus R, $41.67 per basis
+ *       point) and 46103.A (final settlement), Submission No. 18-069. Read 2026-11-23.
  * </ul>
  *
  * <p>Both are computed exactly as QuantLib 1.44 {@code OvernightIndexFuture} computes them,

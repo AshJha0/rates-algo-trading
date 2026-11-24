@@ -1,5 +1,8 @@
 package io.ratesalgo.backtest.model;
 
+import io.ratesalgo.backtest.sim.SimDay;
+import io.ratesalgo.backtest.util.Prices;
+
 /**
  * Queue-position fill model for one resting limit order on a central limit order book.
  *
@@ -19,22 +22,57 @@ package io.ratesalgo.backtest.model;
  * {@code queue_trade_share}). Partial fills are not modelled in this version: the order fills in
  * one execution once the queue ahead is exhausted. This is optimistic for large orders and is
  * stated in API_SPEC.md Section 16.3.
+ *
+ * <p>Simulator v2 ({@link #simV2}): the order rests on the shared market model's book, behind the
+ * provider size displayed at its price, and is filled by the model's other takers or when the
+ * market comes through it (docs/research/SIM_V2_DESIGN.md section 8). The back-tester books each
+ * passive fill when the model reports it, at the order's limit price, and reports it to the
+ * strategy as a partial fill until the whole quantity has traded.
  */
 public final class ClobFillModel {
 
   private final double tradeShare;
+  private final SimDay simDay;
 
   public ClobFillModel(final double tradeShare) {
     if (!(tradeShare > 0 && tradeShare <= 1)) {
       throw new IllegalArgumentException("trade share must be in (0, 1]: " + tradeShare);
     }
     this.tradeShare = tradeShare;
+    this.simDay = null;
+  }
+
+  private ClobFillModel(final SimDay simDay) {
+    this.tradeShare = 1.0;
+    this.simDay = simDay;
+  }
+
+  /** The simulator v2 queue model of one session. */
+  public static ClobFillModel simV2(final SimDay day) {
+    return new ClobFillModel(day);
+  }
+
+  /** The simulator v2 session orders rest in, or null for version 1. */
+  public SimDay simDay() {
+    return simDay;
+  }
+
+  /**
+   * Places a limit order on the simulator v2 book. Its {@link Resting#onBook} ignores its
+   * arguments and reports whether the whole quantity has traded; the caller advances the session
+   * first.
+   */
+  public Resting joinSimV2(
+      final int instrumentId, final boolean buy, final long priceMantissa, final long quantity, final long epochNanos) {
+    final int handle = simDay.rest(instrumentId, buy, quantity, Prices.toDouble(priceMantissa), epochNanos);
+    return new Resting(buy, priceMantissa, handle);
   }
 
   /** Mutable state of one resting order. */
   public final class Resting {
     private final boolean buy;
     private final long price;
+    private final int handle;
     private double ahead;
     private long lastDisplayed;
 
@@ -43,6 +81,29 @@ public final class ClobFillModel {
       this.price = price;
       this.ahead = displayedAtPrice;
       this.lastDisplayed = displayedAtPrice;
+      this.handle = 0;
+    }
+
+    Resting(final boolean buy, final long price, final int handle) {
+      this.buy = buy;
+      this.price = price;
+      this.handle = handle;
+    }
+
+    /**
+     * Cancels a simulator v2 order and returns the quantity it had filled, minor units; 0 for a
+     * version 1 order, which fills whole or not at all.
+     */
+    public long cancel() {
+      return handle == 0 ? 0L : Math.round(simDay.cancel(handle));
+    }
+
+    /**
+     * Quantity a simulator v2 order has traded so far, whole minor units rounded down, so that a
+     * fill is never booked before it has happened; 0 for a version 1 order.
+     */
+    public long filledMinor() {
+      return handle == 0 ? 0L : (long) Math.floor(simDay.filledMinor(handle) + 1e-6);
     }
 
     /**
@@ -54,6 +115,9 @@ public final class ClobFillModel {
      * @return true if the order is now filled
      */
     public boolean onBook(final long sameSideBest, final long sameSideQty, final long oppositeBest) {
+      if (handle != 0) {
+        return simDay.complete(handle);
+      }
       if (oppositeBest != 0 && (buy ? oppositeBest <= price : oppositeBest >= price)) {
         ahead = 0;
         return true;

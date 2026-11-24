@@ -62,7 +62,7 @@ jobs:
   latency:
     name: Latency harness (informational)
     # Hosted runners share hardware, so these numbers never gate (DR-005); the JSON
-    # report is uploaded so runs can be compared by hand.
+    # reports and the JVM logs are uploaded so runs can be compared by hand.
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -79,15 +79,27 @@ jobs:
           mvn -B -ntp -pl rates-bench exec:exec@latency
           -Dlatency.warmup=10 -Dlatency.measure=20 -Dlatency.idle=yield
           -Dlatency.label=github-hosted-ubuntu
+      - name: Wired desk over loopback FIX, eight configurations (10 s warm-up, 30 s measured, 1,000 RFQ/s)
+        # The real trading process with the trading image's JVM flags (docs/BENCHMARKS_V2.md). Every
+        # run is kept; a configuration that fails is reported and the others still run.
+        if: always()
+        run: >
+          mvn -B -ntp -pl rates-bench exec:exec@wired
+          -Dwired.warmup=10 -Dwired.measure=30 -Dwired.rate=1000
+          -Dwired.label=github-hosted-ubuntu
       - name: Percentiles to the job summary
         if: always()
-        run: python3 tools/latency_summary.py rates-bench/target/latency/latency-*.json | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          python3 tools/latency_summary.py rates-bench/target/latency/latency-*.json | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 tools/latency_summary.py rates-bench/target/wired/wired-*.json | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upload latency report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: latency-report
-          path: rates-bench/target/latency/
+          path: |
+            rates-bench/target/latency/
+            rates-bench/target/wired/
           if-no-files-found: warn
 
   python:

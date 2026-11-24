@@ -7,6 +7,7 @@ import io.ratesalgo.core.HotPath;
 import io.ratesalgo.messages.sbe.BookAction;
 import io.ratesalgo.messages.sbe.BookUpdateDecoder;
 import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.messages.sbe.TradePrintDecoder;
 import io.ratesalgo.router.BookView;
 
 /**
@@ -18,13 +19,23 @@ import io.ratesalgo.router.BookView;
  * best first. Add and Change set a level's quantity, Delete removes it, Clear empties both sides
  * of that venue's book (the first frame of a snapshot). A level beyond the capacity is ignored and
  * counted. The composite best bid is the highest bid over venues, its size the sum over venues at
- * that price. Allocation-free after construction; the loop thread owns it.
+ * that price. The router view gives every kept level's price and size ({@link
+ * BookView#levelPrice}), which the ladder model sweeps.
+ *
+ * <p>TradePrint messages (template 4), once the feed publishes them, feed a per-venue rate of
+ * traded quantity per second ({@link #applyTrade}): an exponentially weighted sum with a
+ * 60-second time constant, normalised by the time since the first print so it is unbiased from
+ * the start. Before the first print the view returns the configured rate. Allocation-free after
+ * construction; the loop thread owns it.
  */
 @HotPath
 public final class LoopBook implements BookSource {
 
   /** Levels kept per side per venue. */
   public static final int MAX_LEVELS = 16;
+
+  /** Time constant of the trade-print rate, nanoseconds. */
+  public static final long TRADE_RATE_TAU_NANOS = 60_000_000_000L;
 
   private final InstrumentDirectory directory;
   private final int[] venueIds;
@@ -33,6 +44,12 @@ public final class LoopBook implements BookSource {
   private final int[] count;
   private final long[] updateNanos;
   private long overflow;
+  // traded quantity per (instrument, venue): decayed sum, its time, and the first print
+  private final double[] tradeSum;
+  private final long[] tradeNanos;
+  private final long[] firstTrade;
+  // desk minor units per venue minor unit, per instrument: 1 except for futures
+  private final long[] quantityScale;
 
   /** A book for every instrument in {@code directory} on each of {@code venueIds}. */
   public LoopBook(final InstrumentDirectory directory, final int[] venueIds) {
@@ -44,6 +61,76 @@ public final class LoopBook implements BookSource {
     this.count = new int[ladders];
     this.updateNanos = new long[directory.size()];
     java.util.Arrays.fill(updateNanos, FairValueSource.NO_VALUE);
+    final int pairs = directory.size() * venueIds.length;
+    this.tradeSum = new double[pairs];
+    this.tradeNanos = new long[pairs];
+    this.firstTrade = new long[pairs];
+    java.util.Arrays.fill(firstTrade, Long.MIN_VALUE);
+    this.quantityScale = new long[directory.size()];
+    java.util.Arrays.fill(quantityScale, 1L);
+  }
+
+  /**
+   * Sets what a venue quantity of an instrument is multiplied by to give the desk's quantity. A
+   * futures venue counts contracts and the desk counts face (API_SPEC.md Section 0), so a future's
+   * book and prints are scaled by the contract size as they come in; every other instrument keeps
+   * 1. Call before the first update. Returns false for an unknown instrument or a scale below 1.
+   */
+  public boolean quantityScale(final int instrumentId, final long deskPerVenue) {
+    final int index = directory.indexOf(instrumentId);
+    if (index < 0 || deskPerVenue < 1) {
+      return false;
+    }
+    quantityScale[index] = deskPerVenue;
+    return true;
+  }
+
+  /**
+   * Applies one TradePrint. Returns false (and changes nothing) for an unknown instrument or
+   * venue, or a print with no quantity.
+   */
+  public boolean applyTrade(final TradePrintDecoder d) {
+    final int index = directory.indexOf(d.instrumentId());
+    final int v = venueSlot(d.venueId());
+    if (index < 0 || v < 0 || d.quantity() <= 0) {
+      return false;
+    }
+    final int i = index * venueIds.length + v;
+    final long now = d.timestampNanos();
+    if (firstTrade[i] == Long.MIN_VALUE) {
+      firstTrade[i] = now;
+      tradeNanos[i] = now;
+    }
+    final long dt = now - tradeNanos[i];
+    if (dt > 0) {
+      tradeSum[i] *= StrictMath.exp(-(double) dt / TRADE_RATE_TAU_NANOS);
+      tradeNanos[i] = now;
+    }
+    tradeSum[i] += (double) d.quantity() * quantityScale[index];
+    return true;
+  }
+
+  /**
+   * Traded quantity per second on a venue at {@code nowNanos} from trade prints, or -1 before the
+   * first print.
+   */
+  public double tradeRate(final int instrumentId, final int venueId, final long nowNanos) {
+    final int index = directory.indexOf(instrumentId);
+    final int v = venueSlot(venueId);
+    if (index < 0 || v < 0) {
+      return -1.0;
+    }
+    return rateAt(index * venueIds.length + v, nowNanos);
+  }
+
+  private double rateAt(final int i, final long nowNanos) {
+    if (firstTrade[i] == Long.MIN_VALUE) {
+      return -1.0;
+    }
+    final double tau = TRADE_RATE_TAU_NANOS;
+    final double sum = tradeSum[i] * StrictMath.exp(-Math.max(0L, nowNanos - tradeNanos[i]) / tau);
+    final double seen = Math.max(1L, Math.max(nowNanos, tradeNanos[i]) - firstTrade[i]);
+    return sum / (tau * (1.0 - StrictMath.exp(-seen / tau))) * 1e9;
   }
 
   private int venueSlot(final int venueId) {
@@ -81,7 +168,7 @@ public final class LoopBook implements BookSource {
     if (action == BookAction.Delete || d.quantity() <= 0) {
       remove(l, px);
     } else {
-      set(l, bid, px, d.quantity());
+      set(l, bid, px, d.quantity() * quantityScale[index]);
     }
     return true;
   }
@@ -195,7 +282,8 @@ public final class LoopBook implements BookSource {
 
   /**
    * The router's view of one instrument across this book's venues. {@code tradeRatePerSecond} is
-   * the configured rate: the book feed carries no trades (DECISIONS.md DR-R2W-08).
+   * the rate from trade prints once the feed has published one for that venue (measured at the
+   * venue's last book or print time), and the configured rate before (DECISIONS.md DR-R2W-08).
    */
   public BookView view(final int instrumentId, final double tradeRatePerSecond) {
     final int index = directory.indexOf(instrumentId);
@@ -233,8 +321,26 @@ public final class LoopBook implements BookSource {
       }
 
       @Override
+      public long levelPrice(final int venueId, final Side side, final int level) {
+        final int v = venueSlot(venueId);
+        if (v < 0 || level < 0) {
+          return 0L;
+        }
+        final int l = ladder(index, v, side == Side.Buy);
+        return level < count[l] ? price[l][level] : 0L;
+      }
+
+      @Override
       public double tradeRatePerSecond(final int venueId) {
-        return venueSlot(venueId) < 0 ? 0.0 : tradeRatePerSecond;
+        final int v = venueSlot(venueId);
+        if (v < 0) {
+          return 0.0;
+        }
+        final int i = index * venueIds.length + v;
+        if (firstTrade[i] == Long.MIN_VALUE) {
+          return tradeRatePerSecond;
+        }
+        return rateAt(i, Math.max(updateNanos[index], tradeNanos[i]));
       }
     };
   }

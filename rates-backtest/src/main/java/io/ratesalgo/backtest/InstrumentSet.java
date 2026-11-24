@@ -1,5 +1,7 @@
 package io.ratesalgo.backtest;
 
+import io.ratesalgo.sim.SimInstrument;
+import io.ratesalgo.sim.SimParams;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -64,6 +66,35 @@ public final class InstrumentSet {
             15_625_000L,
             10_000_000L,
             0.0));
+    return new InstrumentSet(list);
+  }
+
+  /**
+   * The simulator v2 universe as back-test instruments (docs/research/SIM_V2_DESIGN.md section 3):
+   * ids, ticks, price change per bp and swap annuities come from the shared parameter files, so
+   * the valuation here and the market model cannot use different figures. A Treasury's funding
+   * rate is the one of {@link #usdDefault()}.
+   */
+  public static InstrumentSet simV2(final SimParams params) {
+    final double funding = usdDefault().get(UST_2Y).fundingRate();
+    final List<Instrument> list = new ArrayList<>();
+    for (final SimInstrument i : params.instruments()) {
+      final long tick = Math.round(i.tick() * 1e9);
+      final long lot = Math.round(i.minQuantity() * i.unitFaceUsd() * 100.0);
+      list.add(
+          switch (i.kind()) {
+            case SWAP ->
+                new Instrument(
+                    i.id(), i.key(), Instrument.Kind.SWAP, i.nodeYears(), i.annuity() * 1e-4, i.priceChangePerBp(), tick,
+                    lot, 0.0);
+            case TREASURY ->
+                new Instrument(
+                    i.id(), i.key(), Instrument.Kind.BOND, i.nodeYears(), 1e-4, i.priceChangePerBp(), tick, lot, funding);
+            case FUTURE ->
+                new Instrument(
+                    i.id(), i.key(), Instrument.Kind.FUTURE, i.nodeYears(), 1e-4, i.priceChangePerBp(), tick, lot, 0.0);
+          });
+    }
     return new InstrumentSet(list);
   }
 

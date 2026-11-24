@@ -367,6 +367,60 @@ public final class BondPricer {
     return spread;
   }
 
+  /**
+   * Adds {@code weight * d dirtyFromCurve(spread) / d spread} into {@code out}, split over spread
+   * tenors, and returns the total added. The derivative of flow i is -v_i (t_i - t_settle); it is
+   * placed on {@code tenorYears} by a hat function of its time from settlement (all of it on the
+   * first tenor before it, on the last after it, shared linearly between two neighbours). This is
+   * the bond's exposure to a spread curve that is piecewise linear in time with nodes at the
+   * tenors, at the point where that curve is flat at the bond's z-spread: the ladder of the
+   * Treasury-to-SOFR spread factor. The parts sum to the scalar derivative exactly.
+   *
+   * @param tenorYears increasing tenors in years
+   * @param out one slot per tenor
+   */
+  public double spreadLadder(
+      final FixedRateBond b,
+      final DiscountCurve curve,
+      final int settlement,
+      final double spread,
+      final double weight,
+      final double[] tenorYears,
+      final double[] out) {
+    final double dfs = curve.df(settlement);
+    final double ts = curve.time(settlement);
+    final int n = b.couponCount();
+    final int last = tenorYears.length - 1;
+    double total = 0.0;
+    for (int i = 0; i < n; i++) {
+      final int pay = b.payAdjusted[i];
+      if (pay <= settlement) {
+        continue;
+      }
+      double a = settlement >= b.exDate[i] ? 0.0 : b.amount[i];
+      if (i == n - 1) {
+        a += 100.0;
+      }
+      final double t = curve.time(pay) - ts;
+      final double d = -weight * a * curve.df(pay) / dfs * Math.exp(-spread * t) * t;
+      total += d;
+      if (t <= tenorYears[0]) {
+        out[0] += d;
+      } else if (t >= tenorYears[last]) {
+        out[last] += d;
+      } else {
+        int k = 1;
+        while (tenorYears[k] < t) {
+          k++;
+        }
+        final double w = (t - tenorYears[k - 1]) / (tenorYears[k] - tenorYears[k - 1]);
+        out[k - 1] += d * (1.0 - w);
+        out[k] += d * w;
+      }
+    }
+    return total;
+  }
+
   /** Z-spread (continuous, decimal) that reprices the dirty price on the curve; to 1e-15. */
   public double zSpread(
       final FixedRateBond b, final DiscountCurve curve, final double dirty, final int settlement) {

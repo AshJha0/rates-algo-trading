@@ -1,4 +1,4 @@
-package io.ratesalgo.backtest.util;
+package io.ratesalgo.common.random;
 
 /**
  * SplitMix64 pseudo-random generator (Steele, Lea and Flood, 2014).

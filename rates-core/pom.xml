@@ -6,7 +6,7 @@
   <parent>
     <groupId>io.ratesalgo</groupId>
     <artifactId>rates-algo-trading</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
   </parent>
 
   <artifactId>rates-core</artifactId>
@@ -38,14 +38,6 @@
     <dependency>
       <groupId>org.agrona</groupId>
       <artifactId>agrona</artifactId>
-    </dependency>
-    <dependency>
-      <!-- Core pinning on Linux only (CoreAffinity). Optional: a deployment that does not pin
-           leaves it off the class path and the runner skips pinning. -->
-      <groupId>net.openhft</groupId>
-      <artifactId>affinity</artifactId>
-      <version>${affinity.version}</version>
-      <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>com.tngtech.archunit</groupId>

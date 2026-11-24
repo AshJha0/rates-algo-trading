@@ -41,6 +41,8 @@ class RiskControlsTest {
     assertTrue(sellRoom > 0, "selling 10Y reduces the 10Y breach");
     // stops where net PV01 reaches its +20k limit: (20k + 6k) / 820 per million
     assertEquals(26_000.0 / 820.0, (double) sellRoom / M, 0.01);
+    // buying 10Y adds to the breach: not even one minor unit (a 1e-9 rounding allowance once let
+    // 10 through)
     assertEquals(0L, f.risk.headroom(BOND10, Side.Buy), "buying 10Y adds to the breach");
 
     // RFQ: the client buys 10m from us, so we quote an offer and sell

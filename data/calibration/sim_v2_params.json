@@ -1,0 +1,829 @@
+{
+  "schema": "sim_v2_params/1",
+  "pre_analysis_note": "research/prereg/SIM3-CAL-001.yaml",
+  "evidence": "docs/research/SIM_V2_CALIBRATION.md",
+  "specification": "docs/research/SIM_V2_DESIGN.md",
+  "reproduce": "python -m ratesresearch.simcal calibrate --raw RAW --cache CACHE --out cal.json; python -m ratesresearch.simcal params --cal cal.json",
+  "tenors_years": [
+    2,
+    3,
+    5,
+    7,
+    10,
+    20,
+    30
+  ],
+  "session": {
+    "start_ny": "07:00",
+    "end_ny": "17:00",
+    "minutes": 600.0
+  },
+  "curve_factors": {
+    "loadings": {
+      "value": {
+        "2y": [
+          0.3383,
+          -0.5378,
+          0.6533
+        ],
+        "3y": [
+          0.3785,
+          -0.4176,
+          -0.0498
+        ],
+        "5y": [
+          0.4097,
+          -0.1897,
+          -0.4024
+        ],
+        "7y": [
+          0.4177,
+          0.0127,
+          -0.4127
+        ],
+        "10y": [
+          0.3945,
+          0.1986,
+          -0.1959
+        ],
+        "20y": [
+          0.3583,
+          0.445,
+          0.2255
+        ],
+        "30y": [
+          0.3406,
+          0.5125,
+          0.3864
+        ]
+      },
+      "unit": "bp of par yield per unit of factor (columns: level, slope, curvature; unit-length columns)",
+      "interval": null,
+      "window": "2015-01-02 to 2025-12-31",
+      "fitted_from": "data/manifests/edge_par_curve.json",
+      "status": "fitted",
+      "note": "PCA of the covariance of daily par-yield changes"
+    },
+    "daily_sd": {
+      "value": [
+        13.27695,
+        4.46964,
+        1.51051
+      ],
+      "unit": "bp per day (factor units)",
+      "interval": [
+        [
+          12.75278,
+          13.77717
+        ],
+        [
+          4.24983,
+          4.74753
+        ],
+        [
+          1.43447,
+          1.59336
+        ]
+      ],
+      "window": "2015-01-02 to 2025-12-31",
+      "fitted_from": "data/manifests/edge_par_curve.json",
+      "status": "fitted",
+      "note": "subperiod values are in the evidence document; the level factor ranges from 10.1 to 17.1 across the three subperiods"
+    },
+    "session_variance_share": {
+      "value": 0.344,
+      "unit": "share of the daily variance that is diffusive variance inside the session",
+      "interval": [
+        0.285,
+        0.551
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json, data/manifests/edge_par_curve.json",
+      "status": "fitted",
+      "note": "pooled robust print volatility squared times 600 minutes over the mean daily variance of the par yields in the same window; interval = range over tenors"
+    },
+    "sd_per_sqrt_minute": {
+      "value": [
+        0.3178,
+        0.107,
+        0.0362
+      ],
+      "unit": "bp per sqrt-minute (factor units), outside event windows",
+      "interval": [
+        [
+          0.3052,
+          0.3298
+        ],
+        [
+          0.1017,
+          0.1136
+        ],
+        [
+          0.0343,
+          0.0381
+        ]
+      ],
+      "window": "2015-01-02 to 2025-12-31; share from 2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/edge_par_curve.json, data/manifests/sim_v2_dtcc.json",
+      "status": "fitted",
+      "note": "daily_sd times sqrt(session_variance_share / 600)"
+    },
+    "idiosyncratic_sd_per_sqrt_minute": {
+      "value": {
+        "2y": 0.0094,
+        "3y": 0.0187,
+        "5y": 0.013,
+        "7y": 0.0122,
+        "10y": 0.0136,
+        "20y": 0.0129,
+        "30y": 0.0118
+      },
+      "unit": "bp per sqrt-minute, independent per tenor",
+      "interval": null,
+      "window": "2015-01-02 to 2025-12-31",
+      "fitted_from": "data/manifests/edge_par_curve.json",
+      "status": "fitted",
+      "note": "daily residual of the three-factor fit, same intraday scaling"
+    },
+    "time_of_day_multiplier": {
+      "value": 1.0,
+      "unit": "multiplier of the per-minute variance, flat over the session",
+      "interval": null,
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "the 30-minute multipliers are not stable between print subsets (evidence document, table 6); flat is used outside the event windows"
+    },
+    "event_windows": {
+      "release_0830": {
+        "value": 181.4,
+        "unit": "extra variance per minute inside the window, as a multiple of the normal per-minute variance of every curve factor",
+        "interval": [
+          96.9,
+          323.6
+        ],
+        "window": "2024-11-25 to 2025-12-31",
+        "fitted_from": "data/manifests/sim_v2_dtcc.json, data/manifests/edge_alfred.json, data/manifests/edge_fomc.json, data/manifests/edge_auctions.json",
+        "status": "fitted",
+        "note": "window 08:30 to 08:35 New York on days with the event; least-squares estimate rescaled to the robust variance unit by 3.29"
+      },
+      "auction_1300": {
+        "value": 16.3,
+        "unit": "extra variance per minute inside the window, as a multiple of the normal per-minute variance of every curve factor",
+        "interval": [
+          1.4,
+          39.1
+        ],
+        "window": "2024-11-25 to 2025-12-31",
+        "fitted_from": "data/manifests/sim_v2_dtcc.json, data/manifests/edge_alfred.json, data/manifests/edge_fomc.json, data/manifests/edge_auctions.json",
+        "status": "fitted",
+        "note": "window 13:00 to 13:05 New York on days with the event; least-squares estimate rescaled to the robust variance unit by 3.29"
+      },
+      "fomc_1400": {
+        "value": 30.2,
+        "unit": "extra variance per minute inside the window, as a multiple of the normal per-minute variance of every curve factor",
+        "interval": [
+          11.1,
+          51.5
+        ],
+        "window": "2024-11-25 to 2025-12-31",
+        "fitted_from": "data/manifests/sim_v2_dtcc.json, data/manifests/edge_alfred.json, data/manifests/edge_fomc.json, data/manifests/edge_auctions.json",
+        "status": "fitted",
+        "note": "window 14:00 to 14:30 New York on days with the event; least-squares estimate rescaled to the robust variance unit by 3.29"
+      }
+    }
+  },
+  "swap_spread_factor": {
+    "daily_sd": {
+      "value": 0.7,
+      "unit": "bp per day, added to every swap rate with loading 1",
+      "interval": [
+        0.3,
+        1.3
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json, data/manifests/edge_par_curve.json",
+      "status": "bounded",
+      "note": "the measured daily change of swap minus par yield has sd 1.4 to 2.3 bp including measurement noise and 0.9 to 1.7 bp after the autocovariance correction; these are upper figures because the two legs are observed at different minutes"
+    },
+    "sd_per_sqrt_minute": {
+      "value": 0.0168,
+      "unit": "bp per sqrt-minute",
+      "interval": [
+        0.0072,
+        0.0311
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json, data/manifests/edge_par_curve.json",
+      "status": "bounded",
+      "note": "daily_sd with the curve factors' intraday scaling"
+    },
+    "loading_by_tenor": {
+      "value": 1.0,
+      "unit": "bp of swap rate per bp of factor, every tenor",
+      "interval": null,
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "first component of the residual spread changes at 5, 10 and 30 years has near-equal weights; 3, 7 and 20 years have too few closing prints to test"
+    }
+  },
+  "futures_basis": {
+    "stationary_sd": {
+      "value": 0.15,
+      "unit": "bp of yield of the cheapest-to-deliver (net basis in yield terms)",
+      "interval": [
+        0.05,
+        0.4
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "no futures data in the repository; Ornstein-Uhlenbeck"
+    },
+    "half_life": {
+      "value": 14.0,
+      "unit": "minutes",
+      "interval": [
+        5.0,
+        60.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "no futures data in the repository"
+    }
+  },
+  "rfq": {
+    "market_prints_per_day_by_tenor": {
+      "value": {
+        "2y": 27.97445,
+        "3y": 19.63504,
+        "5y": 47.43066,
+        "7y": 12.81387,
+        "10y": 78.47445,
+        "20y": 9.76642,
+        "30y": 36.71168
+      },
+      "unit": "D2C facility prints per day (strict subset)",
+      "interval": {
+        "2y": [
+          26.59097,
+          29.48923
+        ],
+        "3y": [
+          18.83549,
+          20.48193
+        ],
+        "5y": [
+          45.59845,
+          49.37226
+        ],
+        "7y": [
+          12.2115,
+          13.49635
+        ],
+        "10y": [
+          75.14443,
+          81.98184
+        ],
+        "20y": [
+          9.2115,
+          10.31752
+        ],
+        "30y": [
+          34.98796,
+          38.50438
+        ]
+      },
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "fitted"
+    },
+    "tenor_mix": {
+      "value": {
+        "2y": 0.1202,
+        "3y": 0.0843,
+        "5y": 0.2037,
+        "7y": 0.055,
+        "10y": 0.3371,
+        "20y": 0.042,
+        "30y": 0.1577
+      },
+      "unit": "probability",
+      "interval": null,
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "fitted"
+    },
+    "time_of_day_share": {
+      "value": [
+        0.0193,
+        0.03438,
+        0.05441,
+        0.07462,
+        0.05984,
+        0.06172,
+        0.07111,
+        0.06485,
+        0.06713,
+        0.0586,
+        0.04797,
+        0.04542,
+        0.04327,
+        0.03844,
+        0.03856,
+        0.04432,
+        0.06322,
+        0.04542,
+        0.04078,
+        0.02665
+      ],
+      "unit": "share of the day's prints per 30-minute bin from 07:00 New York (20 bins)",
+      "interval": [
+        [
+          0.01763,
+          0.02101
+        ],
+        [
+          0.03196,
+          0.03709
+        ],
+        [
+          0.0514,
+          0.05754
+        ],
+        [
+          0.06914,
+          0.08037
+        ],
+        [
+          0.05658,
+          0.06289
+        ],
+        [
+          0.05897,
+          0.06431
+        ],
+        [
+          0.06713,
+          0.07525
+        ],
+        [
+          0.06223,
+          0.06797
+        ],
+        [
+          0.06408,
+          0.07024
+        ],
+        [
+          0.05582,
+          0.06144
+        ],
+        [
+          0.04585,
+          0.05021
+        ],
+        [
+          0.04304,
+          0.04773
+        ],
+        [
+          0.0406,
+          0.04591
+        ],
+        [
+          0.03637,
+          0.04035
+        ],
+        [
+          0.03599,
+          0.04103
+        ],
+        [
+          0.04165,
+          0.04718
+        ],
+        [
+          0.06024,
+          0.06641
+        ],
+        [
+          0.04308,
+          0.04816
+        ],
+        [
+          0.03872,
+          0.04315
+        ],
+        [
+          0.02488,
+          0.02851
+        ]
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "fitted"
+    },
+    "desk_inquiry_share": {
+      "value": 0.5,
+      "unit": "desk swap RFQs per market D2C print",
+      "interval": [
+        0.2,
+        1.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "prints are completed trades of the whole market; the share of inquiries one dealer sees is not in the data"
+    },
+    "swap_rfqs_per_day": {
+      "value": 116.4,
+      "unit": "RFQs per session, swaps",
+      "interval": [
+        46.6,
+        232.8
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "market prints per day times desk_inquiry_share"
+    },
+    "size_lognormal_by_tenor": {
+      "value": {
+        "2y": {
+          "log_mean_mm": 3.5783,
+          "log_sd": 1.3176,
+          "cap_mm": 1100.0,
+          "capped_share": 0.0043
+        },
+        "3y": {
+          "log_mean_mm": 3.2545,
+          "log_sd": 1.3476,
+          "cap_mm": 650.0,
+          "capped_share": 0.0112
+        },
+        "5y": {
+          "log_mean_mm": 2.8425,
+          "log_sd": 1.3992,
+          "cap_mm": 650.0,
+          "capped_share": 0.0043
+        },
+        "7y": {
+          "log_mean_mm": 2.9477,
+          "log_sd": 1.372,
+          "cap_mm": 470.0,
+          "capped_share": 0.0111
+        },
+        "10y": {
+          "log_mean_mm": 2.5838,
+          "log_sd": 1.223,
+          "cap_mm": 470.0,
+          "capped_share": 0.0032
+        },
+        "20y": {
+          "log_mean_mm": 2.023,
+          "log_sd": 1.3079,
+          "cap_mm": 250.0,
+          "capped_share": 0.0086
+        },
+        "30y": {
+          "log_mean_mm": 1.966,
+          "log_sd": 1.1858,
+          "cap_mm": 250.0,
+          "capped_share": 0.0035
+        }
+      },
+      "unit": "notional in USD millions: exp(N(log_mean_mm, log_sd^2)), truncated at cap_mm",
+      "interval": {
+        "2y": {
+          "log_mean_se": 0.0151,
+          "log_sd_se": 0.0107
+        },
+        "3y": {
+          "log_mean_se": 0.0184,
+          "log_sd_se": 0.0131
+        },
+        "5y": {
+          "log_mean_se": 0.0123,
+          "log_sd_se": 0.0087
+        },
+        "7y": {
+          "log_mean_se": 0.0232,
+          "log_sd_se": 0.0165
+        },
+        "10y": {
+          "log_mean_se": 0.0083,
+          "log_sd_se": 0.0059
+        },
+        "20y": {
+          "log_mean_se": 0.0253,
+          "log_sd_se": 0.018
+        },
+        "30y": {
+          "log_mean_se": 0.0118,
+          "log_sd_se": 0.0084
+        }
+      },
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "fitted",
+      "note": "right-censored maximum likelihood; standard errors instead of bootstrap intervals"
+    },
+    "treasury_rfqs": {
+      "value": 1.0,
+      "unit": "Treasury RFQs per swap RFQ, with the size ladder of the present presets.json",
+      "interval": [
+        0.5,
+        2.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "no Treasury trade data (FINRA needs an account)"
+    }
+  },
+  "competitors": {
+    "winner_half_spread_rms": {
+      "value": 0.1526,
+      "unit": "bp of yield, root mean square half-spread of the winning quote",
+      "interval": [
+        0.10256,
+        0.22707
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "geometric mean of the short-gap dispersion 0.10256 [0.09619, 0.10506] (lower figure) and the long-gap dispersion 0.22707 [0.20689, 0.24585] (upper figure)"
+    },
+    "log_sd": {
+      "value": 0.5,
+      "unit": "log standard deviation of a competitor's half-spread",
+      "interval": [
+        0.35,
+        0.7
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "kept from presets.json; the prints do not separate dispersion across dealers from other noise"
+    },
+    "dealers_min_max": {
+      "value": 3.0,
+      "unit": "dealers asked, uniform from min to max inclusive (max 5)",
+      "interval": [
+        3.0,
+        5.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "kept from presets.json"
+    },
+    "response_probability": {
+      "value": 0.9,
+      "unit": "probability",
+      "interval": [
+        0.8,
+        1.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "kept from presets.json"
+    },
+    "median_half_spread": {
+      "value": 0.1827,
+      "unit": "bp of yield, all tenors and sizes",
+      "interval": [
+        0.1228,
+        0.2719
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "winner_half_spread_rms / 0.8353 (root mean square of the lowest of the answering quotes per unit median); expected winning half-spread = 0.139 bp"
+    },
+    "all_in_cost": {
+      "value": 0.08,
+      "unit": "bp of client DV01: hedge spread, fees and capital of a competitor; equals its realised half-spread at zero profit",
+      "interval": [
+        0.05,
+        0.15
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "lower figure 0.05 is the measured raw 5-minute realised half-spread, which misclassified sides pull towards zero"
+    },
+    "treasury_half_spread_multiple": {
+      "value": 0.5,
+      "unit": "Treasury competitor median half-spread in bp of yield, as a multiple of the swap median",
+      "interval": [
+        0.3,
+        1.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "no Treasury RFQ data; 0.5 is the ratio in the present back-test competitor model"
+    },
+    "size_and_tenor_scaling": {
+      "value": 0.0,
+      "unit": "exponent of size and of tenor in the median half-spread",
+      "interval": null,
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "dispersion in bp of yield is flat across tenors and does not rise with size on the D2C facilities (evidence document, tables 7 and 8)"
+    }
+  },
+  "informed_flow": {
+    "expected_adverse_move": {
+      "value": 0.059,
+      "unit": "bp of yield per trade, averaged over all client trades, in the direction of the client",
+      "interval": [
+        0.0,
+        0.2027
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "zero-profit value: expected winning half-spread minus all_in_cost. Upper end: largest winning half-spread the dispersion supports minus the smallest realised half-spread the markouts support"
+    },
+    "informed_fraction": {
+      "value": 0.5,
+      "unit": "probability that an RFQ is informed, averaged over client tiers",
+      "interval": [
+        0.2,
+        1.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "only the product fraction x move is constrained by the data; 0.5 rather than the old 0.2 because a smaller fraction with a larger move makes the desk's own RFQs explain an implausible share of the level factor's variance (design document, section 6)"
+    },
+    "tier_weights_and_informed_probability": {
+      "value": 0.5,
+      "unit": "weights of client tiers A, B, C; informed probabilities 0.25, 0.60, 0.975 (weighted mean = informed_fraction)",
+      "interval": [
+        0.3,
+        0.2
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "tier structure kept from the back-test synthetic day, rescaled; no client data"
+    },
+    "move_per_informed_trade": {
+      "value": 0.118,
+      "unit": "bp of yield at the traded tenor, expected, delivered through the level factor",
+      "interval": null,
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "bounded",
+      "note": "expected_adverse_move / informed_fraction"
+    },
+    "drift_time_constant": {
+      "value": 10.0,
+      "unit": "seconds (exponential approach)",
+      "interval": [
+        2.0,
+        60.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "not identified: the signed markout changes by 0.01302 [-0.03028, 0.06032] bp between about 3 s and 5 min"
+    },
+    "measured_raw_realised_half_spread_5min": {
+      "value": 0.0457,
+      "unit": "bp, mean of -s (r_ref - r), all sizes, D2C strict prints",
+      "interval": [
+        0.0041,
+        0.0836
+      ],
+      "window": "2024-11-25 to 2025-12-31",
+      "fitted_from": "data/manifests/sim_v2_dtcc.json",
+      "status": "fitted",
+      "note": "attenuated towards zero by sign misclassification; a lower figure for the realised half-spread"
+    }
+  },
+  "clob": {
+    "impact_coefficient_Y": {
+      "value": 0.7,
+      "unit": "dimensionless: peak impact = Y x daily sd x sqrt(quantity / daily volume)",
+      "interval": [
+        0.3,
+        1.5
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "square-root law, Toth et al., Physical Review X 1, 021006 (2011): Y of order one on futures; not fitted to Treasuries here"
+    },
+    "impact_permanent_share": {
+      "value": 0.5,
+      "unit": "share of peak impact that stays in the latent mid",
+      "interval": [
+        0.25,
+        0.75
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption"
+    },
+    "impact_half_life": {
+      "value": 30.0,
+      "unit": "seconds, exponential decay of the transient part and refill of consumed depth",
+      "interval": [
+        5.0,
+        120.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption; exponential resilience as in Obizhaeva and Wang, Journal of Financial Markets 16 (2013) 1-32"
+    },
+    "daily_volume_usd_bn": {
+      "value": 40.0,
+      "unit": "USD billions per day per on-the-run Treasury on the simulated book",
+      "interval": [
+        20.0,
+        80.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption; to be replaced when a Treasury volume source is added"
+    },
+    "futures_daily_volume_contracts": {
+      "value": 1500000.0,
+      "unit": "contracts per day, 10-year note future",
+      "interval": [
+        750000.0,
+        3000000.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption"
+    },
+    "taker_sign_skill": {
+      "value": 0.1,
+      "unit": "probability above one half that another taker's trade is in the direction of the latent mid's move over the next 5 s",
+      "interval": [
+        0.0,
+        0.2
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption; makes resting orders adversely selected"
+    },
+    "touch_depth_usd_mm": {
+      "value": 30.0,
+      "unit": "USD millions resting at the best level of the 10-year note (other instruments in proportion to daily volume); levels 2 to 5 hold 1.5, 2, 2, 2 times this",
+      "interval": [
+        10.0,
+        100.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption"
+    },
+    "taker_trade_size_usd_mm": {
+      "value": 5.0,
+      "unit": "USD millions, median of other takers' trades (lognormal, log sd 1.0)",
+      "interval": [
+        1.0,
+        25.0
+      ],
+      "window": "none",
+      "fitted_from": "assumption",
+      "status": "assumption",
+      "note": "assumption"
+    }
+  },
+  "old_constants_check": {
+    "old_median_half_spread_bp": 0.25,
+    "old_expected_winning_half_spread_bp": 0.1902,
+    "old_winning_half_spread_rms_bp": 0.2088,
+    "data_range_winner_rms_bp": [
+      0.10256,
+      0.22707
+    ],
+    "old_expected_adverse_bp": 0.2,
+    "old_implied_realised_half_spread_bp": -0.0098,
+    "measured_raw_realised_half_spread_bp": [
+      0.0041,
+      0.0457,
+      0.0836
+    ],
+    "old_winner_profit_bp_at_hedge_cost_0p086": -0.0958,
+    "verdict": "the old median half-spread is inside the range the dispersion supports; the old adverse move (0.20 bp per trade) exceeds the winning half-spread, which implies a negative realised half-spread, while the measured one is positive: outside"
+  }
+}

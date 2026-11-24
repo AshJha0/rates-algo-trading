@@ -1,0 +1,24 @@
+# Configuration of SIM3-BASE-001 (DRAFT). Hashed into research/prereg/SIM3-BASE-001.yaml.
+# Transcribed from the draft itself, nothing added: the arm, the seeds, the statistics of its
+# metric and its band rows. The engine build stays open until signing (open_before_signing).
+study: SIM3-BASE-001
+design: docs/research/SIM_V2_DESIGN.md Section 12 (a description; no test)
+simulator: Round 3 MarketModel (docs/research/SIM_V2_DESIGN.md)
+simulator_params: data/calibration/sim_v2_params.json
+simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+client_rule: best_price
+arms:
+  engine: "DeskSettings.defaults() (the production desk)"
+engine_build: "not fixed: the rates-app commit that wires the desk to simulator v2, written here at signing"
+seeds: {base: 30000000, pilot_base: 29000000, pilot_sessions: 200}
+session: {start_ny: "07:00", end_ny: "17:00", step_seconds: 1, day_type: "index mod 21: 0-3 release, 4 FOMC, 5-10 auction, else none"}
+marking: latent mid (SIM_V2_DESIGN.md Section 4)
+statistics: {interval: moving_block_bootstrap, block_sessions: 21, resamples: 2000, bootstrap_seed: 11}
+band:
+  winner_half_spread: "competitors.median_half_spread at 0.1228 and 0.2719 bp, adverse move re-solved for zero competitor profit"
+  all_in_cost: "competitors.all_in_cost at 0.05 and 0.15 bp, adverse move re-solved"
+  informed_fraction: "informed_flow.informed_fraction at 0.2 and 1.0 at fixed average move"
+  drift_tau: "informed_flow.drift_time_constant at 2 s and 60 s"
+  level_vol: "curve factor sds scaled by 0.76 and 1.29"
+  spread_factor: "swap_spread_factor.sd_per_sqrt_minute at 0.0072 and 0.0312"
+  impact: "clob.impact_coefficient_Y at 0.3 and 1.5"

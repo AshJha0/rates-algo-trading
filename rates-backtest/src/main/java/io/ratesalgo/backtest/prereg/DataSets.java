@@ -1,7 +1,9 @@
 package io.ratesalgo.backtest.prereg;
 
+import io.ratesalgo.backtest.sim.PairedSessions;
 import io.ratesalgo.backtest.util.Hashing;
 import io.ratesalgo.backtest.util.Yaml;
+import io.ratesalgo.sim.SessionSeeds;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -58,8 +60,27 @@ public final class DataSets {
     return sessionsKey(lines);
   }
 
+  /**
+   * The key of simulator v2 sessions {@code first .. first + count - 1} of a seed base: the same
+   * lines {@code <label date>|<seed>} as a row with journals, the label date being the one
+   * {@code PairedSessions.labelDate} gives each seed. Equal to {@code PairedSessions.dataSetKey}.
+   */
+  public static String sessionsKey(final long base, final int first, final int count) {
+    final List<String> lines = new ArrayList<>(count);
+    for (int n = first; n < first + count; n++) {
+      final long seed = SessionSeeds.seed(base, n);
+      lines.add(PairedSessions.labelDate(seed) + "|" + seed);
+    }
+    return sessionsKey(lines);
+  }
+
   /** The key of a ledger row, or null when the row names no data. */
   public static String key(final Map<String, Object> entry) {
+    if (entry.get("session_seeds") instanceof Map<?, ?> s) {
+      // a simulator v2 row names its sessions by seed base, first session and count
+      return sessionsKey(
+          ((Number) s.get("base")).longValue(), ((Number) s.get("first")).intValue(), ((Number) s.get("count")).intValue());
+    }
     if (entry.get("journals") instanceof List<?> journals && !journals.isEmpty()) {
       final List<String> lines = new ArrayList<>();
       for (final Object o : journals) {
@@ -75,6 +96,12 @@ public final class DataSets {
   }
 
   private static String describe(final Map<String, Object> entry) {
+    if (entry.get("session_seeds") instanceof Map<?, ?> s) {
+      final long base = ((Number) s.get("base")).longValue();
+      final long first = ((Number) s.get("first")).longValue();
+      final long count = ((Number) s.get("count")).longValue();
+      return count + " simulator v2 sessions, seeds " + (base + first) + ".." + (base + first + count - 1);
+    }
     if (entry.get("journals") instanceof List<?> journals && !journals.isEmpty()) {
       final TreeSet<String> dates = new TreeSet<>();
       final TreeSet<Long> seeds = new TreeSet<>();
@@ -113,9 +140,36 @@ public final class DataSets {
     return out;
   }
 
-  /** Rows of {@code entries} that read {@code key}. */
+  /**
+   * Rows grouped into looks: the rows of one run of a registered family (one {@code family_run},
+   * a row per hypothesis) are one look; every other row is a look of its own. In row order.
+   */
+  public static List<List<Map<String, Object>>> looksOf(final List<Map<String, Object>> rows) {
+    final List<List<Map<String, Object>>> out = new ArrayList<>();
+    final Map<String, List<Map<String, Object>>> runs = new LinkedHashMap<>();
+    for (final Map<String, Object> r : rows) {
+      if (r.get("family_run") instanceof String run && !run.isEmpty()) {
+        final List<Map<String, Object>> look = runs.get(run);
+        if (look == null) {
+          final List<Map<String, Object>> fresh = new ArrayList<>();
+          fresh.add(r);
+          runs.put(run, fresh);
+          out.add(fresh);
+        } else {
+          look.add(r);
+        }
+      } else {
+        final List<Map<String, Object>> single = new ArrayList<>();
+        single.add(r);
+        out.add(single);
+      }
+    }
+    return out;
+  }
+
+  /** Looks at {@code key} among {@code entries}: rows that read it, a family run counted once. */
   public static long count(final List<Map<String, Object>> entries, final String key) {
-    return entries.stream().filter(e -> key.equals(key(e))).count();
+    return looksOf(entries.stream().filter(e -> key.equals(key(e))).toList()).size();
   }
 
   /**
@@ -148,8 +202,8 @@ public final class DataSets {
     if (missing.isEmpty()) {
       return null;
     }
-    return "data set " + key + " has already been read by " + String.join(", ", missing) + " (" + count(entries, key)
-        + " ledger rows); " + prereg.id() + " must declare them: add 'prior_looks: [" + String.join(", ", missing)
+    return "data set " + key + " has already been read by " + String.join(", ", missing) + " ("
+        + entries.stream().filter(e -> key.equals(key(e))).count() + " ledger rows); " + prereg.id() + " must declare them: add 'prior_looks: [" + String.join(", ", missing)
         + "]' to the pre-registration and say there how the earlier results are allowed for";
   }
 
@@ -172,16 +226,25 @@ public final class DataSets {
     int unkeyed = entries.size();
     for (final Looks l : all) {
       unkeyed -= l.rows().size();
-      b.append(l.key()).append("  ").append(l.description()).append(": ").append(l.rows().size())
-          .append(l.rows().size() == 1 ? " look\n" : " looks\n");
+      final List<List<Map<String, Object>>> looks = looksOf(l.rows());
+      b.append(l.key()).append("  ").append(l.description()).append(": ").append(looks.size())
+          .append(looks.size() == 1 ? " look\n" : " looks\n");
       int n = 0;
       final List<String> ids = new ArrayList<>();
-      for (final Map<String, Object> r : l.rows()) {
+      for (final List<Map<String, Object>> look : looks) {
         n++;
+        final Map<String, Object> r = look.get(0);
         ids.add(String.valueOf(r.get("prereg_id")));
-        b.append("  look ").append(n).append("  seq ").append(r.get("seq")).append("  ").append(r.get("prereg_id"))
-            .append("  ").append(r.get("scope")).append("  ").append(r.get("verdict")).append("  (recorded as look ")
-            .append(r.get("look")).append(")\n");
+        if (look.size() == 1) {
+          b.append("  look ").append(n).append("  seq ").append(r.get("seq")).append("  ").append(r.get("prereg_id"))
+              .append("  ").append(r.get("scope")).append("  ").append(r.get("verdict")).append("  (recorded as look ")
+              .append(r.get("look")).append(")\n");
+        } else {
+          b.append("  look ").append(n).append("  seq ").append(r.get("seq")).append("..")
+              .append(look.get(look.size() - 1).get("seq")).append("  ").append(r.get("prereg_id")).append("  ")
+              .append(r.get("scope")).append("  family ").append(r.get("family_id")).append(", ").append(look.size())
+              .append(" rows  (recorded as look ").append(r.get("look")).append(")\n");
+        }
       }
       if (n > 1) {
         repeated++;

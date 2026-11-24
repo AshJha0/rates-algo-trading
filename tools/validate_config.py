@@ -95,6 +95,45 @@ def all_errors(validator: jsonschema.Draft202012Validator, path: Path) -> list[s
     return structural_errors(doc)
 
 
+DESK_KEYS = {
+    "profile": ("default", "v2"),
+    "market": ("standard", "simV2"),
+    "pricing": ("v1", "v2"),
+    "strategy": ("v1", "v2"),
+    "router": ("touch", "ladder"),
+}
+
+
+def desk_profile_failures(validator: jsonschema.Draft202012Validator, root: Path) -> int:
+    """The desk section: the v2 example selects the v2 profile, every listed value of every key is
+    accepted, and an unknown value or key is refused (ProcessConfig.DeskSelection reads the same keys)."""
+    path = root / "deploy" / "config" / "trading-v2.yaml"
+    if not path.exists():
+        print("deploy/config/trading-v2.yaml is missing")
+        return 1
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    failures = 0
+    if section(doc, "desk").get("profile") != "v2":
+        print("WRONG   deploy/config/trading-v2.yaml: desk.profile is not v2")
+        failures += 1
+    for key, values in DESK_KEYS.items():
+        for value in values:
+            trial = dict(doc, desk={"profile": "default", key: value})
+            if list(validator.iter_errors(trial)):
+                print(f"WRONG   desk.{key}: {value} was refused")
+                failures += 1
+        trial = dict(doc, desk={key: "v3"})
+        if not list(validator.iter_errors(trial)):
+            print(f"WRONG   desk.{key}: v3 was accepted")
+            failures += 1
+    if not list(validator.iter_errors(dict(doc, desk={"profile": "v2", "hedger": "v2"}))):
+        print("WRONG   desk: an unknown key was accepted")
+        failures += 1
+    if not failures:
+        print("desk    profile and per-component switches accepted; unknown values and keys refused")
+    return failures
+
+
 def main(root: Path) -> int:
     schema_path = root / "deploy" / "config" / "schema" / "process-config.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -114,6 +153,7 @@ def main(root: Path) -> int:
                 print(f"        {e}")
         else:
             print(f"valid   {path.relative_to(root)}")
+    failures += desk_profile_failures(validator, root)
     fixtures = root / "tools" / "fixtures"
     bad = fixtures / "invalid-config.yaml"
     bad_errors = all_errors(validator, bad)

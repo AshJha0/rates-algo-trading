@@ -4,14 +4,23 @@ import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.RouteDecisionDecoder;
 import io.ratesalgo.messages.sbe.RouteDecisionEncoder;
+import io.ratesalgo.messages.sbe.RouteDecisionLadderDecoder;
+import io.ratesalgo.messages.sbe.RouteDecisionLadderEncoder;
+import io.ratesalgo.messages.sbe.RouteDecisionModelDecoder;
+import io.ratesalgo.messages.sbe.RouteDecisionModelEncoder;
 import io.ratesalgo.messages.sbe.RouteDecisionVenueDecoder;
 import io.ratesalgo.messages.sbe.RouteDecisionVenueEncoder;
+import java.util.Arrays;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 
 /**
  * Writes a {@link CostTable} as one RouteDecision (template 80) followed by one
  * RouteDecisionVenue (template 81) per row, and reads it back. Encoding does not allocate.
+ *
+ * <p>A decision taken with the ladder model also carries, before each RouteDecisionVenue row, one
+ * RouteDecisionModel (template 84) and that row's RouteDecisionLadder levels (template 83). A
+ * touch-model decision has none, so its frames are exactly those of earlier releases.
  *
  * <p>Decoding is incremental so it can sit behind a journal frame handler: feed every frame to
  * {@link #onFrame}; it returns true when a decision's last row has been read and {@link
@@ -23,13 +32,19 @@ public final class DecisionCodec {
   private final MessageHeaderEncoder headerEncoder = new MessageHeaderEncoder();
   private final RouteDecisionEncoder decisionEncoder = new RouteDecisionEncoder();
   private final RouteDecisionVenueEncoder venueEncoder = new RouteDecisionVenueEncoder();
+  private final RouteDecisionModelEncoder modelEncoder = new RouteDecisionModelEncoder();
+  private final RouteDecisionLadderEncoder ladderEncoder = new RouteDecisionLadderEncoder();
 
   private final MessageHeaderDecoder headerDecoder = new MessageHeaderDecoder();
   private final RouteDecisionDecoder decisionDecoder = new RouteDecisionDecoder();
   private final RouteDecisionVenueDecoder venueDecoder = new RouteDecisionVenueDecoder();
+  private final RouteDecisionModelDecoder modelDecoder = new RouteDecisionModelDecoder();
+  private final RouteDecisionLadderDecoder ladderDecoder = new RouteDecisionLadderDecoder();
   private final CostTable decoded = new CostTable();
   private int rowsSeen;
   private boolean inDecision;
+  private boolean modelSeen;
+  private int levelsSeen;
 
   /** Writes the table to the sink. */
   public void write(final CostTable t, final FrameSink sink) {
@@ -60,7 +75,56 @@ public final class DecisionCodec {
         0,
         MessageHeaderEncoder.ENCODED_LENGTH + RouteDecisionEncoder.BLOCK_LENGTH);
     for (int r = 0; r < t.venueCount; r++) {
+      if (t.ladder) {
+        writeModel(t, r, sink);
+      }
       writeRow(t, r, sink);
+    }
+  }
+
+  private void writeModel(final CostTable t, final int r, final FrameSink sink) {
+    final RouteDecisionModelEncoder e = modelEncoder.wrapAndApplyHeader(buffer, 0, headerEncoder);
+    e.decisionId(t.decisionId)
+        .row((short) r)
+        .modelVersion(t.modelVersion)
+        .levelCount((short) t.levelCount[r]);
+    e.limitPrice().mantissa(t.limitPrice[r]);
+    e.ownOpposite().mantissa(t.ownOpposite[r]);
+    e.rejectRate().mantissa(t.rejectRate[r]);
+    e.cancelRejectRate().mantissa(t.cancelRejectRate[r]);
+    e.fillRatio().mantissa(t.fillRatio[r]);
+    e.markout1s().mantissa(t.markout1s[r]);
+    e.markout5s().mantissa(t.markout5s[r]);
+    e.markout30s().mantissa(t.markout30s[r]);
+    e.ackLatencyNanos(t.ackLatencyNanos[r]);
+    e.cancelRate().mantissa(t.cancelRate[r]);
+    e.calibrationObserved().mantissa(t.calObserved[r]);
+    e.calibrationPredicted().mantissa(t.calPredicted[r]);
+    e.queueBucket((short) t.queueBucket[r]);
+    e.penalty().mantissa(t.penalty[r]);
+    e.sweepQuantity(t.sweepQuantity[r]);
+    e.childLimit().mantissa(t.childLimit[r]);
+    e.walkCost().mantissa(t.walkCost[r]);
+    e.riskCost().mantissa(t.riskCost[r]);
+    sink.append(
+        RouteDecisionModelEncoder.TEMPLATE_ID,
+        RouteDecisionModelEncoder.SCHEMA_VERSION,
+        buffer,
+        0,
+        MessageHeaderEncoder.ENCODED_LENGTH + RouteDecisionModelEncoder.BLOCK_LENGTH);
+    for (int k = 0; k < t.levelCount[r]; k++) {
+      final int i = r * CostTable.MAX_LEVELS + k;
+      final RouteDecisionLadderEncoder l =
+          ladderEncoder.wrapAndApplyHeader(buffer, 0, headerEncoder);
+      l.decisionId(t.decisionId).row((short) r).level((short) k);
+      l.price().mantissa(t.levelPrice[i]);
+      l.displayed(t.levelDisplayed[i]).own(t.levelOwn[i]);
+      sink.append(
+          RouteDecisionLadderEncoder.TEMPLATE_ID,
+          RouteDecisionLadderEncoder.SCHEMA_VERSION,
+          buffer,
+          0,
+          MessageHeaderEncoder.ENCODED_LENGTH + RouteDecisionLadderEncoder.BLOCK_LENGTH);
     }
   }
 
@@ -108,7 +172,9 @@ public final class DecisionCodec {
   public boolean onFrame(
       final int templateId, final DirectBuffer src, final int offset, final int length) {
     if (templateId != RouteDecisionDecoder.TEMPLATE_ID
-        && templateId != RouteDecisionVenueDecoder.TEMPLATE_ID) {
+        && templateId != RouteDecisionVenueDecoder.TEMPLATE_ID
+        && templateId != RouteDecisionModelDecoder.TEMPLATE_ID
+        && templateId != RouteDecisionLadderDecoder.TEMPLATE_ID) {
       return false;
     }
     headerDecoder.wrap(src, offset);
@@ -120,18 +186,28 @@ public final class DecisionCodec {
       readHeader(src, offset);
       return decoded.venueCount == 0;
     }
+    if (templateId == RouteDecisionModelDecoder.TEMPLATE_ID) {
+      readModel(src, offset);
+      return false;
+    }
+    if (templateId == RouteDecisionLadderDecoder.TEMPLATE_ID) {
+      readLevel(src, offset);
+      return false;
+    }
     venueDecoder.wrapAndApplyHeader(src, offset, headerDecoder);
     final int r = venueDecoder.row();
     if (!inDecision
         || venueDecoder.decisionId() != decoded.decisionId
         || r != rowsSeen
-        || r >= CostTable.MAX_VENUES) {
+        || r >= CostTable.MAX_VENUES
+        || (decoded.ladder && (!modelSeen || levelsSeen != decoded.levelCount[r]))) {
       throw new IllegalStateException(
           "RouteDecisionVenue row " + r + " of decision " + venueDecoder.decisionId()
               + " out of sequence (expected row " + rowsSeen + " of " + decoded.decisionId + ")");
     }
     readRow(r);
     rowsSeen++;
+    modelSeen = false;
     if (rowsSeen == decoded.venueCount) {
       inDecision = false;
       return true;
@@ -164,6 +240,67 @@ public final class DecisionCodec {
     }
     rowsSeen = 0;
     inDecision = t.venueCount > 0;
+    modelSeen = false;
+    t.ladder = false;
+    t.modelVersion = 0;
+    Arrays.fill(t.levelCount, 0);
+  }
+
+  private void readModel(final DirectBuffer src, final int offset) {
+    final RouteDecisionModelDecoder e = modelDecoder.wrapAndApplyHeader(src, offset, headerDecoder);
+    final int r = e.row();
+    if (!inDecision
+        || e.decisionId() != decoded.decisionId
+        || r != rowsSeen
+        || modelSeen
+        || e.levelCount() > CostTable.MAX_LEVELS
+        || (rowsSeen > 0 && !decoded.ladder)) {
+      throw new IllegalStateException(
+          "RouteDecisionModel row " + r + " of decision " + e.decisionId() + " out of sequence");
+    }
+    final CostTable t = decoded;
+    t.ladder = true;
+    t.modelVersion = e.modelVersion();
+    t.levelCount[r] = e.levelCount();
+    t.limitPrice[r] = e.limitPrice().mantissa();
+    t.ownOpposite[r] = e.ownOpposite().mantissa();
+    t.rejectRate[r] = e.rejectRate().mantissa();
+    t.cancelRejectRate[r] = e.cancelRejectRate().mantissa();
+    t.fillRatio[r] = e.fillRatio().mantissa();
+    t.markout1s[r] = e.markout1s().mantissa();
+    t.markout5s[r] = e.markout5s().mantissa();
+    t.markout30s[r] = e.markout30s().mantissa();
+    t.ackLatencyNanos[r] = e.ackLatencyNanos();
+    t.cancelRate[r] = e.cancelRate().mantissa();
+    t.calObserved[r] = e.calibrationObserved().mantissa();
+    t.calPredicted[r] = e.calibrationPredicted().mantissa();
+    t.queueBucket[r] = e.queueBucket();
+    t.penalty[r] = e.penalty().mantissa();
+    t.sweepQuantity[r] = e.sweepQuantity();
+    t.childLimit[r] = e.childLimit().mantissa();
+    t.walkCost[r] = e.walkCost().mantissa();
+    t.riskCost[r] = e.riskCost().mantissa();
+    modelSeen = true;
+    levelsSeen = 0;
+  }
+
+  private void readLevel(final DirectBuffer src, final int offset) {
+    final RouteDecisionLadderDecoder e =
+        ladderDecoder.wrapAndApplyHeader(src, offset, headerDecoder);
+    final int r = e.row();
+    if (!modelSeen
+        || e.decisionId() != decoded.decisionId
+        || r != rowsSeen
+        || e.level() != levelsSeen
+        || levelsSeen >= decoded.levelCount[r]) {
+      throw new IllegalStateException(
+          "RouteDecisionLadder level " + e.level() + " of row " + r + " out of sequence");
+    }
+    final int i = r * CostTable.MAX_LEVELS + levelsSeen;
+    decoded.levelPrice[i] = e.price().mantissa();
+    decoded.levelDisplayed[i] = e.displayed();
+    decoded.levelOwn[i] = e.own();
+    levelsSeen++;
   }
 
   private void readRow(final int r) {

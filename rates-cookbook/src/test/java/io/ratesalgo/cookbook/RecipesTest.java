@@ -55,7 +55,13 @@ class RecipesTest {
         Arguments.of("recipe29.txt", (Main) Recipe29RouterReplay::main),
         Arguments.of("recipe30.txt", (Main) Recipe30ClobWorkup::main),
         Arguments.of("recipe34.txt", (Main) Recipe34ConfigSchema::main),
-        Arguments.of("recipe36.txt", (Main) Recipe36AllocationCheck::main));
+        Arguments.of("recipe36.txt", (Main) Recipe36AllocationCheck::main),
+        Arguments.of("recipe40.txt", (Main) Recipe40SimV2Session::main),
+        Arguments.of("recipe41.txt", (Main) Recipe41PricingV2::main),
+        Arguments.of("recipe42.txt", (Main) Recipe42BreakEven::main),
+        Arguments.of("recipe43.txt", (Main) Recipe43FactorHedge::main),
+        Arguments.of("recipe44.txt", (Main) Recipe44LadderRouter::main),
+        Arguments.of("recipe45.txt", (Main) Recipe45LateFill::main));
   }
 
   @ParameterizedTest(name = "{0}")

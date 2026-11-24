@@ -1,0 +1,5 @@
+acknowledged     parent active true   position 0 lot(s)  late fills 0  unrouted reports 0  busts 0
+cancel confirmed parent active false  position 0 lot(s)  late fills 0  unrouted reports 0  busts 0
+late fill 503    parent active false  position 1 lot(s)  late fills 1  unrouted reports 1  busts 0
+503 resent       parent active false  position 1 lot(s)  late fills 1  unrouted reports 2  busts 0
+503 busted       parent active false  position 0 lot(s)  late fills 1  unrouted reports 2  busts 1

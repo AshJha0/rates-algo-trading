@@ -2,6 +2,20 @@
 
 Every measured number below comes from a simulator whose competitors, informed flow and win-probability slope are declared assumptions, so it is a simulator consistency check reported across the assumption band, never evidence of edge (DR-008).
 
+## Status in 1.2.0: superseded for new work (note added 2026-11-23)
+
+The figures below are kept as they were recorded. They are not to be used to size or justify new work, because the simulator that made them is not supported by the data:
+
+- **Adverse selection.** The old simulator charged 0.20 bp on average (20 percent of trades followed by a 1 bp jump at 30 s, on the traded instrument only). The calibration (docs/research/SIM_V2_CALIBRATION.md, Section 1, pre-analysis note `research/prereg/SIM3-CAL-001.yaml`) sets it at 0.06 bp, range 0 to 0.20, delivered through the level factor and set by the competitors' zero-profit condition. The old constants imply a realised half-spread at 5 minutes of -0.010 bp; the prints give +0.046 bp [0.004, 0.084] in the calibration period and +0.086 bp [0.050, 0.122] in the validation period, so the old constants are outside what the data supports (calibration Section 9). They made the average winning dealer lose money before any hedge cost, and the sign of the desk's P&L here followed from them and from the spread clamp (docs/reviews/REVIEW_2026-11-23.md Section 2.1).
+- **Rate moves.** The old simulator moved each instrument as an independent random walk. Three common factors (level, slope, curvature) explain 98.9 percent of daily par-yield variance at 2 to 30 years, so a hedge in one tenor removes risk in another; under the old walks it could not.
+- **Volatility.** The old swap mid volatility was 1.5 bp per square-root hour (0.194 bp per square-root minute), independent per instrument; the calibrated value is 0.123 bp per square-root minute pooled outside event windows, with a burst after 08:30 releases.
+
+New experiments run on simulator v2 (`rates-sim`, docs/research/SIM_V2_DESIGN.md) under the family registration below. Every number from simulator v2 is again a statement about a simulator under declared assumptions (DR-008), not an estimate of desk P&L.
+
+At the 1.2.0 release `research/prereg/R5-FAM-001.yaml` is unsigned and has not run. It replaces, before any was signed or run, the eight drafts SIM3-BASE-001 and R5-001 to R5-007; no ledger row reads its seed base.
+
+## Original audit (2026-10-31)
+
 Written 2026-10-31 on branch `claude/r2-pnl-audit-e32be7` from the seat of a desk head who has to make the business pay. The audit read rates-quoting, rates-risk, rates-hedge, rates-router, rates-venues, rates-posttrade and rates-backtest on `main` (4facfef), and the unmerged branches r2-wiring, r2-review, r2-business and r2-edge-research, so that nothing below recommends work already done there.
 
 ## How the numbers were made

@@ -1,0 +1,10 @@
+expected winning half-spread 0.1827 x 0.761 = 0.139 bp
+zero-profit identity: adverse move 0.059 + all-in cost 0.080 = 0.139 bp
+half a tick of the 10-year note = 0.048 bp
+predicted cover median 0.125 bp
+client   adverse  break-even  winning less break-even  quote  P(win)
+average  0.059    0.107       +0.032                   0.159  0.26
+tier A   0.030    0.077       +0.062                   0.135  0.40
+tier B   0.071    0.119       +0.020                   0.169  0.21
+tier C   0.115    0.163       -0.024                   0.209  0.09
+after 3 outcomes: cover median 0.115 bp, quote to the average client 0.138 bp

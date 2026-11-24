@@ -117,7 +117,7 @@ class AttributionReconciliationTest {
   void identityHoldsForRandomTradesAndMarks(
       @ForAll @LongRange(min = 1, max = Long.MAX_VALUE / 4) final long seed,
       @ForAll @IntRange(min = 1, max = 60) final int steps) {
-    final io.ratesalgo.backtest.util.SplitMix64 rng = new io.ratesalgo.backtest.util.SplitMix64(seed);
+    final io.ratesalgo.common.random.SplitMix64 rng = new io.ratesalgo.common.random.SplitMix64(seed);
     final InstrumentSet set = InstrumentSet.usdDefault();
     final PositionBook book = new PositionBook(set, CarryModel.NONE);
     final int[] ids = {InstrumentSet.SOFR_5Y, InstrumentSet.UST_10Y, InstrumentSet.TY_FUTURE};

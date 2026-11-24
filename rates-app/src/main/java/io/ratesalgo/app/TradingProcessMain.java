@@ -2,7 +2,10 @@ package io.ratesalgo.app;
 
 import io.ratesalgo.app.gateway.ReconnectPolicy;
 import io.ratesalgo.app.loop.DeskLoopFactory;
+import io.ratesalgo.app.loop.DeskProfile;
 import io.ratesalgo.app.loop.DeskSettings;
+import io.ratesalgo.app.pricing.PricingBindings;
+import io.ratesalgo.app.sim.V2DeskProcess;
 import io.ratesalgo.app.pricing.UsdUniverse;
 import io.ratesalgo.common.security.TlsConfig;
 import io.ratesalgo.core.LoopRecovery;
@@ -16,6 +19,7 @@ import io.ratesalgo.ops.metrics.MetricsRegistry;
 import io.ratesalgo.router.FrameSink;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
@@ -33,8 +37,8 @@ import java.util.concurrent.CountDownLatch;
  *
  * <p>Run mode validates the rates-ops process configuration (exit 2 if it is refused), starts the
  * trading process with its simulators ({@link TradingProcess}), runs the loops on their own threads
- * with simulated time paced at {@code --time-scale} times real time from 08:30 New York, and serves
- * health, readiness, metrics and the kill switch on the configured port until it is terminated. A
+ * with simulated time paced at {@code --time-scale} times real time from 08:25 New York (simulator v2:
+ * 09:00), and serves health, readiness, metrics and the kill switch on the configured port until it is terminated. A
  * bind address that is not loopback is refused, like any invalid configuration, unless the control
  * token and {@code http.tls} are set, and then the endpoints are served over HTTPS; the loop
  * threads' idle strategy and CPU come from the optional {@code runtime} section. The optional
@@ -46,10 +50,80 @@ import java.util.concurrent.CountDownLatch;
  * process with role {@code venue-sim} serves health and metrics only: the simulators run inside
  * the trading process. Replay mode replays each group's journals in {@code JOURNAL_DIR} through the
  * desk and prints whether the outbound hash matches (exit 0) or not (exit 1).
+ *
+ * <p>The optional {@code desk} section selects the desk profile: the recorded one by default,
+ * {@code profile: v2} for simulator v2's venues with pricing v2, strategy v2 and the ladder router,
+ * or one component at a time. A selection other than the recorded one is written beside the
+ * journals ({@link #SELECTION_FILE}); a restart on journals another selection wrote is refused, and
+ * replay mode builds its desk from the file, because journals replay only through the desk that
+ * wrote them. A simulator v2 market starts at 09:00 New York ({@link #V2_START}), not 08:25.
  */
 public final class TradingProcessMain {
 
+  /** File in the journal directory naming the desk selection that wrote the journals; absent for the recorded desk. */
+  public static final String SELECTION_FILE = "desk.selection";
+
+  /**
+   * Start of a process on the simulator v2 market: 09:00 New York, two hours into the session. At
+   * 08:25, where the recorded desk starts, strategy v2 pulls its quotes around the 08:30 release
+   * and little of the desk is exercised (docs/research/DESK_V2_WIRING.md, Section 5).
+   */
+  public static final long V2_START = V2DeskProcess.SESSION_OPEN_EPOCH_NANOS + 7_200_000_000_000L;
+
   private TradingProcessMain() {}
+
+  /** The desk profile a configuration's {@code desk} section selects. */
+  public static DeskProfile profile(final ProcessConfig.DeskSelection desk) {
+    return new DeskProfile(
+        "v2".equals(desk.strategy()) ? DeskSettings.strategyV2() : DeskSettings.defaults(),
+        "v2".equals(desk.pricing()) ? PricingBindings.Version.V2 : PricingBindings.Version.V1,
+        "ladder".equals(desk.router()) ? DeskProfile.RouterModel.LADDER : DeskProfile.RouterModel.TOUCH,
+        "simV2".equals(desk.market()) ? DeskProfile.Market.SIM_V2 : DeskProfile.Market.STANDARD,
+        null,
+        null);
+  }
+
+  /** The selection that wrote the journals in {@code journalDir}: its file, or the recorded desk. */
+  public static ProcessConfig.DeskSelection recordedSelection(final Path journalDir) throws IOException {
+    final Path file = journalDir.resolve(SELECTION_FILE);
+    return Files.exists(file)
+        ? ProcessConfig.DeskSelection.parse(Files.readString(file, StandardCharsets.UTF_8))
+        : ProcessConfig.DeskSelection.DEFAULT;
+  }
+
+  private static boolean hasJournals(final Path journalDir) throws IOException {
+    try (var dirs = Files.list(journalDir)) {
+      return dirs.anyMatch(dir -> Files.isRegularFile(dir.resolve("in.000001.raj")));
+    }
+  }
+
+  /**
+   * Null when the process may start on {@code journalDir} with {@code desk}; otherwise why not. A
+   * directory with journals takes only the selection that wrote them. On an empty one a selection
+   * other than the recorded desk is written down before anything is journaled.
+   */
+  static String selectionProblem(final Path journalDir, final ProcessConfig.DeskSelection desk) throws IOException {
+    if (hasJournals(journalDir)) {
+      final ProcessConfig.DeskSelection wrote;
+      try {
+        wrote = recordedSelection(journalDir);
+      } catch (final IllegalArgumentException e) {
+        return journalDir.resolve(SELECTION_FILE) + " is not readable: " + e.getMessage();
+      }
+      return wrote.components().equals(desk.components())
+          ? null
+          : "the journals in " + journalDir + " were written by the desk selection [" + wrote.components()
+              + "] and the configuration selects [" + desk.components() + "]; journals replay only through the"
+              + " desk that wrote them";
+    }
+    final Path file = journalDir.resolve(SELECTION_FILE);
+    if (desk.isRecorded()) {
+      Files.deleteIfExists(file);
+    } else {
+      Files.writeString(file, desk.components() + "\n", StandardCharsets.UTF_8);
+    }
+    return null;
+  }
 
   /** A started process with its server; closing stops both. */
   public record Started(TradingProcess process, OpsHttpServer server) implements AutoCloseable {
@@ -87,13 +161,24 @@ public final class TradingProcessMain {
   public static int replay(final Path journalDir, final PrintStream out) throws IOException {
     int failures = 0;
     int groups = 0;
+    final ProcessConfig.DeskSelection desk;
+    try {
+      desk = recordedSelection(journalDir);
+    } catch (final IllegalArgumentException e) {
+      out.println(journalDir.resolve(SELECTION_FILE) + " is not readable: " + e.getMessage());
+      return 1;
+    }
+    if (!desk.isRecorded()) {
+      out.println("desk selection: " + desk.components());
+    }
+    final DeskProfile profile = TradingProcess.journalProfile(journalDir, profile(desk));
     try (var dirs = Files.list(journalDir)) {
       for (final Path dir : dirs.sorted().toList()) {
         if (!Files.isRegularFile(dir.resolve("in.000001.raj"))) {
           continue;
         }
         groups++;
-        final ReplayResult r = replayGroup(dir);
+        final ReplayResult r = desk.isRecorded() ? replayGroup(dir) : replayGroup(dir, profile);
         out.println(String.format(Locale.ROOT,
             "%s: %d inbound frames, %d outbound produced, %d recorded, hash %016x vs %016x: %s",
             dir.getFileName(), r.inboundFrames(), r.outboundProduced(), r.outboundRecorded(), r.replayHash(),
@@ -114,6 +199,14 @@ public final class TradingProcessMain {
   public static ReplayResult replayGroup(final Path groupDir) {
     return LoopReplay.run(groupDir, "in", "out",
         new DeskLoopFactory(UsdUniverse.standard(), DeskSettings.defaults(), FrameSink.NONE));
+  }
+
+  /**
+   * Replays one group's journals through a freshly built desk of {@code profile}, which must be
+   * the profile that wrote them, markout files included ({@link TradingProcess#journalProfile}).
+   */
+  public static ReplayResult replayGroup(final Path groupDir, final DeskProfile profile) {
+    return LoopReplay.run(groupDir, "in", "out", new DeskLoopFactory(profile, profile.newUniverse(), FrameSink.NONE));
   }
 
   /** Validates the configuration and starts the process; null if the configuration is refused. */
@@ -190,19 +283,36 @@ public final class TradingProcessMain {
             cfg.fixResetOnLogon(),
             new ReconnectPolicy(
                 cfg.fixReconnectMaxAttempts(), cfg.fixReconnectInitialBackoffNanos(), cfg.fixReconnectMaxBackoffNanos()));
+    final String selectionProblem = selectionProblem(journalDir, cfg.desk());
+    if (selectionProblem != null) {
+      err.println("restart refused, process not started:");
+      err.println("  " + selectionProblem);
+      return null;
+    }
+    TradingProcess.Options options =
+        new TradingProcess.Options(journalDir, seed, DeskSettings.defaults())
+            .withTuning(tuning(cfg.runtime()))
+            .withFix(fix);
+    if (!cfg.desk().isRecorded()) {
+      // the recorded desk is built exactly as before; anything else goes through its profile
+      final DeskProfile profile = profile(cfg.desk());
+      options =
+          new TradingProcess.Options(
+                  journalDir, seed, profile.settings(),
+                  profile.market() == DeskProfile.Market.SIM_V2 ? V2_START : TradingProcess.DEFAULT_START,
+                  tuning(cfg.runtime()), fix, null, profile);
+      out.println("desk selection: " + cfg.desk().components());
+    }
     final TradingProcess process;
     try {
-      process =
-          TradingProcess.start(
-              new TradingProcess.Options(journalDir, seed, DeskSettings.defaults())
-                  .withTuning(TradingProcess.Tuning.DEFAULT.withLoopThread(cfg.loopIdleStrategy(), cfg.loopCpu()))
-                  .withFix(fix));
+      process = TradingProcess.start(options);
     } catch (final io.ratesalgo.journal.JournalCorruptionException | LoopRecovery.RecoveryException e) {
       // the journals do not allow a restart: say why and stay down
       err.println("restart refused, process not started:");
       err.println("  " + e.getMessage());
       return null;
     }
+    out.println("runtime: " + cfg.runtime());
     // what a restart found: frames replayed, a torn tail cut, how long the process was down
     process.recoveryLog().forEach(line -> out.println("recovery: " + line));
     final OpsHttpServer server;
@@ -243,5 +353,23 @@ public final class TradingProcessMain {
         return process.statusJson();
       }
     }, token, tls);
+  }
+
+  /**
+   * The process tuning for a configuration's {@code runtime} section, its profile already applied
+   * (DECISIONS.md DR-R6-L02). The kill deadline and the supervisor's limits stay at their defaults.
+   */
+  static TradingProcess.Tuning tuning(final ProcessConfig.RuntimeSettings r) {
+    final io.ratesalgo.core.LoopJournals.Settings journals =
+        io.ratesalgo.core.LoopJournals.Settings.DEFAULT
+            .withMode(io.ratesalgo.core.JournalMode.valueOf(r.journalMode().toUpperCase(java.util.Locale.ROOT)))
+            .withHashAlgorithm(io.ratesalgo.journal.ChainHash.byName(r.journalHash()))
+            .withRing(io.ratesalgo.journal.RingJournal.DEFAULT_RING_CAPACITY, r.journalIdleStrategy())
+            .withSegmentOptions(io.ratesalgo.journal.SegmentedJournal.Options.DEFAULT.withLockPages(r.lockJournalPages()));
+    return TradingProcess.Tuning.DEFAULT
+        .withLoopThread(r.loopIdleStrategy(), r.loopCpu())
+        .withGatewayThreads(r.gatewayIdleStrategy(), r.gatewayCpu())
+        .withJournals(journals)
+        .withCurveConflation(r.conflateCurveInputs());
   }
 }

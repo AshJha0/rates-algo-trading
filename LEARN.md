@@ -6,6 +6,8 @@ This is a textbook chapter set about principal electronic trading in interest ra
 
 The sections were first written by the phase that built the code they describe (Phase 0 wrote Sections 1 and 11, Phase 1 Sections 2 to 5, and so on) and were harmonised in round 2 on 2026-10-31: one vocabulary, one sign convention, and the missing sections written. Where code a section describes does not exist yet, the section says so.
 
+Release 1.2.0 added subsections marked "(1.2.0)" rather than new chapters: leave-one-out fair value in Section 2, break-even pricing and the reservation price in Section 7, factor hedging, spread risk and futures in Section 8, the ladder router, its benchmark and per-venue state in Section 9, the calibrated simulator and registered families in Section 10, and the ring journal, the versioned hash and the determinism statement in Section 11. Everything they describe is opt-in: the default desk quotes and hedges as in 1.1.0, and no registered experiment on the new components has been run. Four step-by-step tutorials on the same material are in [docs/tutorials](docs/tutorials/README.md).
+
 Nothing here is investment advice. All market numbers are illustrative, declared in the repository, or come from simulations calibrated to public data.
 
 ### Suggested paths
@@ -146,6 +148,31 @@ Instruments: the overnight fixing from today to the next fixing day, $q = (P(t_0
 [COOKBOOK.md recipe 4](COOKBOOK.md#4-how-do-i-bootstrap-a-usd-sofr-discount-curve-from-ois-quotes) builds a curve from nine instruments: SOFR overnight at 4.30 percent (an estimate, since 15 January's SOFR is published on 16 January), three meeting-dated OIS to 8 May 2025 at 4.30, 4.29 and 4.22 percent, the September 2025 three-month future at 96.05, and par OIS at 2, 5, 10 and 30 years. The builder chooses the sequential solver. The two-year discount factor is 0.9266847083 (zero rate 3.776 percent) and the ten-year 0.6710374866 (3.983 percent); every instrument reprices within the 1e-12 solver tolerance.
 
 The method is checked twice. Against QuantLib 1.44, the Java bootstrap of the four golden curves (USD, EUR and GBP OIS and a EUR 6M projection curve, 81 instruments) matches the QuantLib-priced bootstrap to 8.3e-16 in discount factor (`AnalyticsGoldenTest.javaBootstrapMatchesQuantLibCurvesAndRepricesInstruments`, 2026-10-31). Against itself, changing the 10Y quote by 7 basis points and rebuilding incrementally gives the same discount factors as a full rebuild to 3.9e-16 (linear), 7.5e-14 (monotone convex) and 6.8e-15 (tension spline) (`CurveBuilderTest.incrementalRebuildEqualsFullRebuild`, 2026-10-31).
+
+### A quote that is not its own input: leave-one-out fair value (1.2.0)
+
+Plain idea. A swap that is a curve input reprices to its own quote; the curve has no opinion about it. If the desk then takes the curve's value as fair value, a skewed quote moves fair value one for one. Take the swap out, rebuild from the other inputs and price it: that is what the rest of the market says it is worth. The rest of the market is not the whole story either, because a real curve has shape between pillars that no interpolation knows, so the gap between the quote and that model value is mostly permanent. Carry the gap as a residual that follows the quote slowly: a quote that jumps for one update moves fair value by a small share, and a gap that stays is absorbed over minutes. The same reasoning prices a Treasury off the other Treasuries and not off its own book.
+
+Formal statement (pricing v2: `SofrCurve`, `SofrLeaveOneOut`, `FairValueSmoother`; docs/research/PRICING_V2.md Sections 2 to 6). The SOFR curve is built from the overnight rate, FOMC-dated steps read from one-month futures, three-month futures with in-arrears convexity and swaps at the eight risk tenors. For build swap $k$ let $C_k$ be the curve bootstrapped without $k$; its leave-one-out rate is $L_k$, the par rate of swap $k$ on $C_k$, so $\partial L_k / \partial q_k = 0$ by construction. The fair value is
+
+$$
+\text{fair}_k = L_k + r_k, \qquad r_k \leftarrow r_k + g\,(q_k - L_k - r_k), \qquad g = 1 - 2^{-(t - s)/h},
+$$
+
+on each new quote $q_k$ at time $t$ after the previous one at $s$, with half-life $h = 300$ s. Rebuilding eight reduced curves on every round would cost eight bootstraps, so exact rebuilds are taken at a reference set of quotes and the leave-one-out rates are extrapolated to first order between them, with a new reference when any input has moved 5 bp. That only works if the curve is a smooth function of its quotes, which decided the interpolation (`SofrCurveTest.interpolationEvidence`, DR-R4-02):
+
+| Measure | Linear log DF | Step then monotone convex | Step then tension spline |
+|---|---|---|---|
+| Largest forward jump across a swap pillar | 40.3 bp | 0.12 bp | 0.14 bp |
+| Worst error on swaps that are not inputs | 1.34 bp | 0.78 bp | 0.12 bp |
+| Ladder by AD against a 1 bp bump, share of parallel DV01 | 2.0e-8 | 4.3e-2 | 2.6e-8 |
+| Leave-one-out, first order against exact after a 10 bp move | 0.003 bp | 0.295 bp | 0.005 bp |
+
+Monotone convex fixes the forward jumps but picks one of four formulas per segment from the signs and ratios of forward differences that are a few basis points on a smooth curve, so a 1 bp quote move can switch formula: the value stays continuous and its derivative does not, and a hedge sized from its ladder is wrong by about 4 percent of DV01. The tension spline is linear in its node values, so it is the default. Its cost: it is not local (a 12-year swap shows risk on the 7, 10 and 20-year tenors) and it can overshoot.
+
+Worked example (`PricingV2Test.aSkewedQuoteBarelyMovesItsOwnFairValue`). After ten rounds of an unchanged market the 5-year quote is sent 2 bp high for one round, half a second after the last. Its leave-one-out value does not move. Its fair value moves by $g = 1 - 2^{-0.5/300} = 0.115$ percent of the skew, 0.0023 bp. Version 1, on the same quote, moves its fair value by 2.000 bp. Held for 300 s the skew is half absorbed, 1.00 bp. The limit is stated, not hidden: a quote that is wrong and stays wrong becomes the fair value with a 5 minute half-life, and at 20 and 30 years the leave-one-out rate is nearly an extrapolation (gaps of +6.4 and -8.7 bp on the declared market), so the residual carries most of the level. Pricing v2 is opt-in; version 1 is still what the default desk builds.
+
+Why the gain is a half-life and not a fixed weight. Quotes do not arrive on a clock. With a fixed weight per update, a venue that publishes twice as often would pull fair value twice as fast. With $g = 1 - 2^{-(t-s)/h}$ the share left after several updates is the product $\prod 2^{-\Delta_i/h} = 2^{-\sum \Delta_i/h}$, which depends only on the total time. Check it: one update after 300 s leaves $2^{-1} = 0.5$ of a constant gap; two updates 150 s apart leave $0.70711^2 = 0.5$; three at 60, 90 and 150 s leave $0.87055 \times 0.81225 \times 0.70711 = 0.5$. An update with no elapsed time has gain zero, and the first observation of an instrument sets the whole gap, so the start-of-day fair value equals the quote (`FairValueSmoother.gain`, `update`, `reset`). A consequence for a desk: a bad quote present at the first observation is taken in full, so the protection starts with the second.
 
 ## 3. Swaps: schedules, PV, par rate, DV01
 
@@ -450,6 +477,59 @@ The skew arithmetic can be followed in the printout: with a 2 bp skew both price
 
 `QuotingEngineTest` checks the direction of the skew, its bound, the improve limit, tier spreads, toxicity widening, cover learning, subject quotes and every pass reason. `MillionRfqTest` runs one million RFQs with fills drawn from the model's own win probability and audits every message at the gateway. It asserts zero limit violations, that every RFQ was handled and that no quote is left held; the counts it printed on 2026-10-31 were: it sent 476,215 quotes, won 30,933, passed 509,281 requests for lack of risk capacity and 14,504 for the re-quote throttle, with zero limit violations at the sink (`mvn -B -ntp verify`, JDK 25.0.5, Windows 11).
 
+### Break-even pricing when the competitors earn nothing (1.2.0)
+
+Plain idea. The calibrated simulator (Section 10) sets its competitors so that they earn nothing: what a winning dealer collects in spread is exactly what the informed clients take back, plus the dealer's own costs. A new dealer can then make money only where its costs are lower than theirs, or where it tells informed clients from the rest better than they do. So price from the bottom up: work out the distance from fair at which a trade breaks even, never quote inside it, and quote the distance above it that maximises expected profit given where the best competing quote is likely to be. The default path's fixed clamp of 0.02 to 0.08 bp sits below every client's break-even (review finding Q1).
+
+Formal statement (`CoverModel`, docs/research/STRATEGY_V2.md Sections 1 and 2). For one RFQ won at half-spread $s$, with expected adverse move $a$, hedge cost $h$ and inventory cost $i$, all in bp of the trade's DV01, the expected P&L per unit DV01 is $s - a - h - i$, and the break-even half-spread is $s_{BE} = a + h + i$. The competitors satisfy $m \cdot E[\min] = \bar a + c_{\text{all}}$: median half-spread times the mean best answering quote per unit median equals the client-averaged adverse move plus their all-in cost. The quote distance is
+
+$$
+d^* = \arg\max_{d \ge C}\ P(\text{win} \mid d)\,(d - C), \qquad P(\text{win} \mid d) = f\, R(d)\,\big(\pi_0 + (1 - \pi_0)\, P(B > d)\big),
+$$
+
+with $C$ the break-even distance, $B$ the best competing distance (lognormal per cell of tenor, size, dealer count and asset class, learned from covers: a win with a cover shown says exactly where it was, a win without one that it was further out, a loss that it was nearer), $\pi_0$ the chance that no competitor answers, $R$ the client's reserve and $f$ the tier's fill probability. When $C$ rises the quote widens; nothing passes on cost.
+
+Worked example (10-year swap hedged with the 10-year note; arithmetic from the parameter file, not a result). The expected winning half-spread is $0.1827 \times 0.761 = 0.139$ bp. Half a 1/128 tick on the note is 0.048 bp of yield, the hedge cost. With no inventory:
+
+| Client | Adverse move $a$ | Hedge $h$ | Break-even | Room at 0.139 bp |
+|---|---:|---:|---:|---:|
+| Tier A | 0.030 | 0.048 | 0.078 | +0.061 |
+| Average | 0.059 | 0.048 | 0.107 | +0.032 |
+| Tier B | 0.071 | 0.048 | 0.119 | +0.020 |
+| Tier C | 0.115 | 0.048 | 0.163 | -0.024 |
+
+The 0.032 bp of room on the average client exists only because the desk's hedge (0.048 bp) is assumed cheaper than the competitors' all-in cost (0.080 bp, an assumption with a band of 0.05 to 0.15; at 0.05 the room falls to 0.002 bp). Tier C is quoted wider than the winning level and wins less of that flow, which is the point. At 2 years the note trades in 1/256 on simulator v2, so half a tick is 0.103 bp of yield and the average client's break-even is $0.059 + 0.103 = 0.162$ bp, above the expected winning half-spread (on the version 1 venues' 1/128 tick it is 0.206 and 0.265 bp): a 2-year swap is worth winning only from tier A, or when its risk can be held until client flow offsets it. These are statements about the simulator under declared assumptions; no strategy result exists yet (Section 10, families).
+
+Worked example, continued: where the optimiser quotes, and what it learns. Take four dealers, so three competitors each answering with probability 0.9. The minimum of the answering standard normals has mean $-0.7548$ and variance $0.6314$ (`CoverModel.minOfAnswering`, recomputed on 2026-11-24 with the same quadrature). One competitor's log half-spread is $\ln 0.1827 + 0.5 Z$, so the best competing distance has log mean $\ln 0.1827 - 0.5 \times 0.7548$, a median of 0.1253 bp, and log sd $0.5 \sqrt{0.6314} = 0.397$. With tier fill probability 0.95, reserve median $2.5 \times 0.1827$ and log sd 0.4, and $\pi_0 = 0.1^3$:
+
+| Distance $d$ (bp) | $P(\text{win} \mid d)$ | $P \cdot (d - 0.107)$ (bp) |
+|---:|---:|---:|
+| 0.107 (break-even) | 0.622 | 0 |
+| 0.120 | 0.516 | 0.00671 |
+| 0.139 | 0.377 | 0.01206 |
+| 0.159 (optimum) | 0.262 | 0.01352 |
+| 0.170 | 0.209 | 0.01319 |
+| 0.200 | 0.112 | 0.01043 |
+
+The optimum is 0.159 bp, half again the break-even. The curve is flat near it: 0.150 bp gives 0.01327, within 2 percent. At the tier A break-even of 0.078 the optimum is 0.136 bp, and at tier C's 0.163 it is 0.209 bp with a 9 percent win probability: a toxic client is still quoted, wide. Now one outcome. A quote at 0.150 bp wins and the venue shows no cover, so $B > 0.150$. With $z = (\ln 0.150 - \ln 0.1253)/0.397 = 0.4535$ and hazard $\lambda = \phi(z)/(1 - \Phi(z)) = 1.107$, the conditional log mean moves up by $0.397 \times 1.107$, to a distance of 0.194 bp. The first observation has weight $1/(1+1) = 1/2$, so the cell's median moves to $\sqrt{0.1253 \times 0.1945} = 0.156$ bp. A loss at 0.150 would have moved it to 0.113 bp, and a disclosed cover at 0.160 bp to 0.142 bp. The first observation moves a cell a long way; after 500 the weight stays at 1/500. Two things are not learned: the client's reserve and the chance that nobody answers. A loss caused by either is read as a tighter competitor, so the learned cover can drift inwards (STRATEGY_V2.md Section 2, "Could fail if").
+
+### One reservation price, capped at the cost of hedging (1.2.0)
+
+Plain idea. Inventory has a cost: the risk of holding it until it is hedged. A trade that adds to it should be priced wider by its marginal cost, one that reduces it tighter by the cost it saves. That cost can never exceed what hedging in the market would cost, because the desk would then hedge instead. One term from the whole book, hedges already working included, replaces the default path's separate skew, size penalty and hedger axe, which counted the same inventory twice.
+
+Formal statement (`QuotingEngine` strategy path, STRATEGY_V2.md Section 3). With $p$ the risk ladder plus working hedge parents, $\Delta$ the trade's own ladder, $\Sigma$ the key-rate covariance, $\kappa$ the risk aversion and $H(\Delta)$ the cost of the hedge planner's mix for $\Delta$ alone,
+
+$$
+\Delta\Pi = \kappa\left(\Delta^\top \Sigma p + \tfrac12 \Delta^\top \Sigma \Delta\right), \qquad
+\text{inventory term} = \frac{\mathrm{clamp}\big(\Delta\Pi, -H(\Delta), +H(\Delta)\big)}{\mathrm{DV01}(\Delta)}\ \text{bp}.
+$$
+
+This is the discrete-trade, many-factor form of the Avellaneda-Stoikov reservation price, applied once per RFQ and capped at the hedge cost.
+
+Worked example. With no inventory the term is the same for a buy and a sell, so the quote is symmetric about fair (`StrategyPathTest.withNoInventoryTheQuoteIsSymmetric`). With a large inventory the term reaches $\pm H$ and stops there however large the book grows (`withLargeInventoryTheSkewStopsAtTheCostOfHedging`). The preset's $\kappa = 4 \times 10^{-7}$ comes from setting the penalty on a residual of 20,000 USD daily sd equal to the cost of hedging about 1,500 USD of level DV01 in the 10-year note, about 72 USD. For a 10-year trade the uncapped size term is $\kappa D \sigma_{10}^2 / 2$ with $\sigma_{10}^2 = 28.6$ bp²: 0.06 bp at 10,000 USD of DV01; it meets the hedge cap at about 8,400 USD of DV01, roughly 10 million of the 10-year. The capability is behind a switch, off by default (`DeskSettings.StrategySwitches`, on together in `DeskSettings.strategyV2()`).
+
+Worked example with a book. Put 1,000 USD of 10-year DV01 in the book and price a 5,000 USD RFQ that adds to it. $\kappa \sigma_{10}^2 = 4 \times 10^{-7} \times 28.6 = 1.144 \times 10^{-5}$, so $\Delta\Pi = 1.144 \times 10^{-5} \times (5{,}000 \times 1{,}000 + 5{,}000^2/2) = 200.2$ USD, and the cap is $0.048 \times 5{,}000 = 240$ USD: the cap does not bind and the term is $200.2/5{,}000 = 0.040$ bp. The same RFQ on the other side gives $1.144 \times 10^{-5} \times (-5 \times 10^6 + 12.5 \times 10^6) = 85.8$ USD, 0.017 bp. The two sides differ by 0.023 bp, which is $2\kappa\sigma^2 p$ with $p = 1{,}000$. Both terms are positive: a trade that overshoots the inventory it offsets leaves more risk behind than it took away. With 20,000 USD in the book and a 10,000 USD RFQ the uncapped terms are $+2{,}860$ and $-1{,}716$ USD against a cap of 480, so the quotes are 0.048 bp wider on one side and 0.048 bp tighter on the other, and doubling the book again changes neither. The last point is the difference from an uncapped skew: at 10 times the hedge cost the desk would be paying clients more to take risk than the market charges to take it.
+
 ## 8. Hedging and the DV01 ladder
 
 ### Plain idea
@@ -496,6 +576,46 @@ The back-tested desk in `rates-strategy` has a hedge path of its own: it nets cl
 ### How it is tested
 
 `RiskEngineTest.incrementalLadderEqualsFullRevaluation` replays 300 random sequences of fills and curve moves and requires the incrementally maintained ladder to equal a full revaluation within 1e-6 of gross notional. `BoxQpSolverTest` checks the solver against brute-force enumeration of active sets on 400 random problems. `ChaosTest` repeats the ladder check at the end of each of its 10,000 scenarios.
+
+### Factor hedging, and swap spread as a risk of its own (1.2.0)
+
+Plain idea. Rates move together. On the calibrated curve the level factor alone moves 13.3 bp a day, against 4.5 bp for slope and 1.5 bp for curvature, so a 10-year hedge removes most of a 30-year position's risk. The assumed correlation of the default path, $e^{-0.06|t_i - t_j|}$, said it could not. Hedge level first with one instrument, then slope with a second only when the variance removed is worth the second crossing. And keep two questions apart: what a position makes when swap rates move with Treasury spreads held, and what it makes when Treasury spreads move with swap rates held. A swap answers only the first; a swap hedged with a Treasury answers zero to the first and the whole bond to the second. Version 1 pricing could not see the second number.
+
+Formal statement. `FactorModel` builds the key-rate covariance $\Sigma = L\,\mathrm{diag}(sd_f^2)\,L^\top + W\,\mathrm{diag}(e^2)\,W^\top$ from the fitted loadings and the idiosyncratic terms. `FactorHedgePlanner` evaluates every single-instrument plan that zeroes the level exposure and every pair that zeroes level and slope, and keeps the one with the lowest
+
+$$
+J(x) = \tfrac{\kappa}{2}\Big((r + Hx)^\top \Sigma (r + Hx) + \textstyle\sum_j (x_j\, dv01_j\, sd_{\text{basis}})^2\Big) + \textstyle\sum_j \text{cost}_j(x_j),
+$$
+
+with $r$ the residual ladder, $H$ the per-lot ladders and futures carrying basis variance. The cost of each instrument (`TickHedgeCostModel`) is half its own tick times the tick value of a lot, plus basis and impact, not one flat amount whatever the tenor. Pricing v2 gives every bond a second ladder on the same eight tenors, the spread ladder: $\partial P/\partial s$ of each cash flow placed on the tenors by a hat function, summing exactly to the bond's spread DV01 (`SpreadSensitivityProvider.spreadPv01`, zero for a swap). `SpreadRiskBook` keeps it per position; the desk shows it in its status and nothing limits, quotes or hedges on it, because the hedger has no input for a second ladder (DR-V12-D11).
+
+Worked example. Under the fit the 10s30s correlation is 0.93, against 0.30 under the old assumption. A level-only hedge of 30-year risk with the 10-year note leaves 13 percent of the variance; under the old assumption the best hedge left 91 percent. A 2s10s pair zeroes level and slope and leaves curvature, about 8 percent (`FactorModelTest`, `FactorHedgePlannerTest`; arithmetic from the parameter file, docs/research/STRATEGY_V2.md Section 4). Half a 1/128 tick on 1 million of face is 39.06 USD: 0.206 bp of the 2-year note's DV01 (0.103 at its 1/256 tick on simulator v2) and 0.048 bp of the 10-year's. For spread risk: 1 million of a 10-year payer swap against the amount of the 10-year note that zeroes the swap-rate DV01 has a net swap-rate DV01 of zero and a spread DV01 of -852 USD per basis point, 80 percent of it in the 10-year bucket (`PricingV2Test.laddersFillTheirOwnTenorsAndBondsCarrySpreadRisk`). That is the position's whole risk, and version 1 reported none of it. The calibration bounds the swap-spread factor at about 0.7 bp a day, an upper figure; no Treasury removes it.
+
+The arithmetic behind those two figures, so that it can be checked from `data/calibration/sim_v2_params.json`. The hedge ratio that zeroes level is $L_{30}/L_{10} = 0.3406/0.3945 = 0.863$. What is left of one unit of 30-year risk is slope, $((0.5125 - 0.863 \times 0.1986) \times 4.470)^2 = 2.32$; curvature, $((0.3864 + 0.863 \times 0.1959) \times 1.511)^2 = 0.70$; and the two independent terms, $0.24 + 0.24 = 0.48$ (daily sd 0.568 bp at 10 years and 0.493 at 30, the first scaled by the ratio). The sum is 3.51 of 26.28 bp², 13.4 percent. With 2-year and 10-year weights $-0.482$ and $1.276$ level and slope are zero and the curvature left is $(0.951 \times 1.511)^2 = 2.06$, 7.8 percent of the variance; with the independent terms of the three tenors it is 2.87, 10.9 percent.
+
+When is the second leg worth it? It removes $3.51 - 2.87 = 0.64$ bp² per unit, worth $\tfrac{\kappa}{2} \times 0.643\, D^2 = 1.29 \times 10^{-7} D^2$ USD for a position of $D$ USD per bp at $\kappa = 4 \times 10^{-7}$. With the 2-year in 1/256 it costs $0.482 \times 0.103 + (1.276 - 0.863) \times 0.048 = 0.069$ bp of $D$ in half-ticks. The two are equal at $D = 0.0695 / (1.29 \times 10^{-7})$, about 540,000 USD a bp (926,000 if the 2-year traded in 1/128). Below that the planner hedges level alone, which is what "slope when it pays" means (DR-R5-04). The sum leaves out impact, lot rounding and the 2-year's own adverse selection, all of which push the point higher. A 2-year leg is expensive because even half the 10-year's tick is worth 2.1 times as many basis points there (4.3 times at equal ticks): the tick is a price and the 2-year's price moves least per bp.
+
+### Internalisation: holding risk inside a budget (1.2.0)
+
+Plain idea. Hedging every trade at once pays the spread every time, although the next client may want the other side. Holding the risk for a while gives two chances to avoid the payment: a client trade that offsets it, and a resting order that earns the half-spread instead of paying it. What stops this from becoming a directional position is a limit on size and a limit on time, set before the day starts.
+
+Formal statement (`Hedger.Config.internalise`, `passiveFirst`; STRATEGY_V2.md Section 5). With $s$ the daily sd of the residual, resting orders not counted, and three declared numbers (trigger 20,000 USD, budget 120,000 USD, time stop 45 s in the v2 preset):
+
+| State at the hedge timer | What the hedger does |
+|---|---|
+| $s$ below the trigger | nothing, and any resting hedge is withdrawn, because it would now add risk |
+| trigger $\le s <$ budget, held for less than the time stop | holds; rests the planned hedge at its own side of the touch, one wave at a time |
+| $s \ge$ budget, or held for the time stop | withdraws resting orders and crosses on the default schedule |
+
+Three details decide whether this is safe. A resting order is not a hedge: it counts neither in the residual nor in the reservation price, since it may never fill (`Hedger.addWorking` skips passive parents). The clock of the time stop keeps running while prices are stale, so a desk that recovers past it crosses at once rather than starting a new 45 s. And a withdrawn order stays reserved until the router reports it done, so a fill that crosses the withdrawal is a position and not a surprise (Section 9, order lifecycle races).
+
+Worked example, arithmetic from the parameter file. A book at the budget is about two median 10-year swap RFQs, 22,000 USD of DV01. Of the daily variance 34.4 percent is diffusive variance inside a 600-minute session, so over 45 s the sd is $120{,}000 \sqrt{0.344 \times 0.75/600} = 2{,}488$ USD. Crossing half a tick of the 10-year note costs $22{,}000 \times 0.048 = 1{,}056$ USD. The desk therefore takes an uncertain 2,488 USD, with zero mean if nobody is informed, to have a chance of saving a certain 1,056. If the resting order's fill arrives mostly when the price moves through it, the mean is not zero and the saving is smaller than it looks. Whether it is worth it is hypothesis H5 of the unsigned registration in Section 10; nothing here answers it. `HedgerInternalisationTest` checks the state table: held until one nanosecond before the stop, crossed at it; crossed at once on a budget breach with no resting order sent; resting orders withdrawn once the residual is back under the trigger.
+
+### Why the v2 desk did not hedge in futures (1.2.0)
+
+Plain idea. A futures book is wired into the v2 profile, and the hedge planner is free to use it. On a normal simulated day it never did, and that is what its objective says at the declared costs.
+
+Worked example (docs/research/DESK_V2_WIRING.md Section 5). Half a 1/64 tick on a TY contract is 0.109 bp of its DV01, against 0.048 bp for half a 1/128 tick on the 10-year note, and the future carries basis variance on top. On the smoke day (`SmokeV2Test.aSimulatorV2DayRunsEndToEndOnTheV2Profile`, one seed, structural counts only) every residual was hedged in cash Treasuries: 63 hedge fills, 38 on the first Treasury book, 25 on the second, none in futures. The futures path is exercised by an outage instead (`whenTheTreasuryFeedsGoSilentTheDeskHedgesInTheFuture`): both Treasury feeds go silent, their books pass the 10 s age limit, the planner is left with the future, and the desk hedges there, 87 fills in whole contracts, reconciled and replayed. TY risk is the market model's declared price change per basis point at the 7-year node (-0.0715), not a cheapest-to-deliver calculation; the basis is not a risk factor of the desk. No parameter was changed to make the planner choose the future.
 
 ## 9. Smart order routing in fixed income
 
@@ -555,7 +675,7 @@ The decision table, the journaled RouteDecisionVenue rows and a re-evaluation fr
 
 ### What the back-test shows
 
-This is a regression check of the router against its own simulator and cost model, not a market finding. Over 40 seeded synthetic days of 15 parents each, the router's mean cost was about -0.3 bps of price, against about 2.7 for sending each parent as one aggressive order to the primary venue and 2.5 for an even split across three venues. The mean daily saving was about 2.9 bps (95 percent block-bootstrap interval 2.8 to 3.1) and 2.8 bps (2.6 to 2.9) respectively (printed by `BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` in rates-router, which asserts that the lower bound of each interval is above its margin; re-run 2026-10-31 on JDK 25.0.5, Windows 11, after the venue offset of DR-R2R-04; API_SPEC.md Section 15.6 has both runs). The baselines fire each parent as one order at once into a few lots of touch depth, which is why the saving is large (review Section 5.1). The market is synthetic and its assumptions are listed in [API_SPEC.md Section 15.6](API_SPEC.md#156-back-test): a random-walk price with no informed flow beyond the price moves themselves, Poisson market orders, queue cancellations at a constant rate, and permanent impact proportional to the size taken. The number says the router's logic works as designed in that world, not what it would save on a real desk.
+This is a regression check of the router against its own simulator and cost model, not a market finding. Over 40 seeded synthetic days of 15 parents each, the router's mean cost was about -0.3 bps of price, against about 2.7 for sending each parent as one aggressive order to the primary venue and 2.5 for an even split across three venues. The mean daily saving was about 2.9 bps (95 percent block-bootstrap interval 2.8 to 3.1) and 2.8 bps (2.6 to 2.9) respectively (printed by `BacktestTest.routerBeatsBothBaselinesInTheShippedScenario` in rates-router, which asserts that the lower bound of each interval is above its margin; re-run 2026-10-31 on JDK 25.0.5, Windows 11, after the venue offset of DR-R2R-04; API_SPEC.md Section 15.6 has both runs). The baselines fire each parent as one order at once into a few lots of touch depth, which is why the saving is large (review Section 5.1). The market is synthetic and its assumptions are listed in [API_SPEC.md Section 15.6](API_SPEC.md#156-back-test): a random-walk price with no informed flow beyond the price moves themselves, Poisson market orders, queue cancellations at a constant rate, and permanent impact proportional to the size taken. The number says the router's logic works as designed in that world, not what it would save on a real desk. Since 1.2.0 it is no longer quoted as a result: the benchmark against alternatives a desk would actually use is in the 1.2.0 subsection below.
 
 ### When the venue goes quiet: timeouts, cancel rejects and mass status (1.1.0)
 
@@ -564,6 +684,71 @@ Plain idea. A router that waits for a venue's answer must not wait for ever, and
 Formal statement. `RouterTimeouts` gives an acknowledgement, an IOC report and a cancel answer 2 s each; after three unanswered cancels a child is unresolved, its quantity stays reserved and its parent ends `Failed`; a parent the router cannot place within twenty retries after its deadline ends `Expired`; `ParentListener` hears each end once ([API_SPEC.md Section 15.0](API_SPEC.md#150-interfaces-the-coordinator-binds)). An `OrderCancelReject` (template 45) returns a CancelRequested child to its prior state with one more wait. On reconcile, a live child absent from the venue's mass status frees nothing: it is sent a cancel, and the venue's answer for that one order settles it (DR-RV-R04). A mass status lists live orders; an order that filled while the session was down is not live, so it is absent exactly as an order the venue never received would be.
 
 Worked example. The router has a 10mm child resting on the CLOB when the session drops. While it is down, the venue fills the child in full. After the reconnect the mass status lists the venue's live orders, and the child is not among them. Before 1.1.0 the router read its absence as "cancelled, nothing filled", freed 10mm and routed it again, so the desk bought 20mm against a 10mm hedge. Since 1.1.0 the 10mm stays reserved and the router sends a cancel for that order; the venue answers that the order is filled with 10mm cumulative, the child closes as filled, and nothing is routed twice. If the venue never answers, the parent ends `Failed` with 10mm unresolved, and an operator settles it from the venue's records.
+
+### Order lifecycle races: fills that cross cancels (1.2.0)
+
+Plain idea. A cancel is a request, and the order is alive until the venue answers. Between the moment we send the cancel and the moment we read the answer, the order can fill, and the fill message can arrive after we thought the order was finished. Two rules keep the books right. A fill is a position whoever still remembers the order. And a cancel that arrives after the fill has nothing to cancel, so it must not be answered "cancelled".
+
+Formal statement.
+
+| Race | Before | Rule in 1.2.0 | Decision and test |
+|---|---|---|---|
+| A report with a fill arrives for a child the router has already released | the report was dropped, so risk and the posttrade books would differ | `DeskGroup` books the fill at its own side, price and instrument, once per (venue, execution id), and counts it in `lateFills`; a report without a fill is only counted in `unroutedReports` | [DR-V12-D13](DECISIONS.md#dr-v12-d13-a-fill-of-a-released-child-is-a-position); `DeskGroupTest.aFillOfAChildTheRouterNoLongerHoldsIsStillAPositionBookedOnce` |
+| The back-tester is asked to cancel an order whose last fills are not yet reported | `PartiallyFilled` for the last fill, then `Cancelled` with nothing left | the fills are booked first; if they complete the order it is reported `Filled` and `cancelOrder` returns false | [DR-V12-E09](DECISIONS.md#dr-v12-e09-a-cancel-that-finds-the-order-filled-is-refused); `SimV2OrdersTest.aCancelOfAnOrderTheBookHasFilledIsRefusedAndTheFillReportedOnce` |
+| The venue refuses a cancel and then says nothing | guessed | the child goes back to its prior state with one more wait, then is unresolved and reserved (previous section) | `RouterTimeouts`, DR-RV-R04 |
+
+What is not reopened. The late fill is booked to the risk engine only. The parent's own accounting stays closed and its outstanding quantity was freed when the child ended, so the hedge may be sent again before the late fill is seen. The hedger corrects that in the next residual, by trading the other way if it has to. That costs a spread and keeps the position right; reopening a finished parent would keep the execution report tidy and put the position at risk. A later bust of the same execution reverses the booking.
+
+Worked example one, a resent fill (the test's numbers). The desk has no position from a released child. A `Cancelled` report with no fill arrives: `unroutedReports` is 1, `lateFills` 0, position unchanged. A `Filled` report for one lot arrives: `lateFills` is 1 and the position is one lot longer. The session drops and the venue resends the same report with the same execution id: `unroutedReports` is 3, `lateFills` is still 1 and the position has not moved. Booking by order id instead would have booked the second lot of a position that exists once.
+
+Worked example two, a cancel that is too late. An order for 1 million rests at a price the book has traded through, and the venue has not reported it yet. The cancel books the fill and is refused. The reports are exactly `New` (last 0, cumulative 0, leaves 1 million) and `Filled` (last 1 million, cumulative 1 million, leaves 0): two reports, one final state. Under the old order of events the strategy read `PartiallyFilled` with nothing left, then `Cancelled`; an engine that resends what was "cancelled" would have bought twice. A version 1 simulated order fills whole or not at all, so recorded runs do not change.
+
+### The ladder sweep, and a benchmark against real alternatives (1.2.0)
+
+Plain idea. The touch model of the router looks at the best price on each venue. A desk crossing a size larger than the touch pays the levels behind it too, so the ladder model looks at every displayed level of every venue and takes the cheapest all-in price first. Waiting has a cost as well: an order resting for a minute carries a minute of price risk, so the passive leg is charged for it. And the router should learn how fast queues move from what it sees, not be told by the simulator it is tested on. The earlier result, a 2.9 bp saving (above), compared the router with orders fired whole into thin touch depth; that says the router works, not that it is better than anything a desk would actually do.
+
+Formal statement (`LadderAllocator`, `ExecutionModel`, `RouterPresets.ladder()`, [API_SPEC.md Section 15](API_SPEC.md#section-15-smart-order-router-p4)). Every opposite level down to the row's limit becomes an entry with its displayed size less our own resting size and the all-in price per unit
+
+$$
+c(\text{level}) = s\,(\text{price} - m) + \text{taker fee} + \text{penalty} + k_{\text{lat}}\, \sigma_{\text{sec}} \sqrt{\text{latency}},
+$$
+
+with $s = +1$ for a buy and $-1$ for a sell, $m$ the consolidated mid and the penalty from the venue scorecard (reject, cancel-reject, fill-shortfall and markout rates). Entries are swept cheapest first within each venue's participation cap and lot. A passive child joining the touch fills with a probability from the queue model, using the trade-print rate against our side and the cancellation rate learned from touch decrements, scaled by the router's own fill outcomes (`FillCalibration`). It is charged $\lambda\,\sigma_{\text{sec}}^2\,T_{\text{open}}$ per unit for the time it is expected to stay open. The slice goes passive when that cost is below the sweep's, otherwise it is swept. No rate is ever read from the simulator (DR-R6-R02); a router built without an `ExecutionModel` runs the touch model unchanged, which keeps the ledger's recorded runs reproducible (DR-R6-R01).
+
+Worked example, the sweep by hand (`LadderModelTest.sweepTakesTheBestAllInPriceFirstAndLimitsEachChildAtItsLastLevel` and `expectedCostIsTheLadderWalkPlusPostTradeImpact`, whose inputs are used here). Buy 30 million. Venue 1 charges 0.0005 points and offers 10 million at the touch, then 20 million one tick behind; venue 2 charges 0.0002 and offers 5 million, then 20 million. A tick is 1/64 = 0.015625 points, the bid is one tick below the offer, and the latency charge is $0.00327 \times \sqrt{250\,\mu s} = 0.00005$ points.
+
+| Entry | All-in cost per unit (points) | Taken |
+|---|---:|---:|
+| venue 2, touch | 0.0078125 + 0.0002 + 0.00005 = 0.008064 | 5 |
+| venue 1, touch | 0.0078125 + 0.0005 + 0.00005 = 0.008364 | 10 |
+| venue 2, second level | 0.0234375 + 0.0002 + 0.00005 = 0.023689 | 15 |
+| venue 1, second level | 0.0234375 + 0.0005 + 0.00005 = 0.023989 | 0 |
+
+So venue 1 gets a child of 10 million limited at its touch and venue 2 one of 20 million limited at its second level, not two children at one limit. The walk costs $(5 \times 0.008064 + 10 \times 0.008364 + 15 \times 0.023689)/30 = 0.015977$ points a unit. The post-trade impact adds $0.5 \times 0.6 \times 0.5 \times \sqrt{30/60{,}000} = 0.003354$, so the decision records 0.019331 points, 1.24 ticks, about 5,800 USD on 30 million of face. A router that filled venue 1 first would walk $(10 \times 0.5 + 20 \times 1.5)/30$ ticks of price plus the larger fee, 0.018781 against 0.015977. All of it is arithmetic on displayed size: what the book shows and what the book lets you take are two numbers, and the second is only learned by trading (the scorecard's fill-shortfall rate).
+
+The waiting charge is in the same unit. With risk aversion 1 a 20 million order open for 15 s is charged $\sigma_{\text{sec}}^2 \times 15 \times 20 = (0.5^2/23{,}400) \times 300 = 0.0032$ points, 0.205 of a tick (`ExecutionModel.riskPerUnit`). It grows with the square of volatility and with size, so a large order in a fast market crosses and a small one in a quiet market waits.
+
+Worked example. docs/research/ROUTER_BENCHMARK.md, scenario `ust10y_impact_v1` of the router's own simulator (`ImpactMarket`), fixed before the run and run once: three venues, permanent impact, refilling depth, 300 parents of 10 to 60 lots per strategy. Cost is shortfall against the mid at arrival, fees included, in ticks; the risk-adjusted cost is mean plus half the sd.
+
+| Strategy | Mean | Sd | Risk-adjusted | Mean time open |
+|---|---:|---:|---:|---:|
+| router, ladder model | 0.1 | 1.4 | 0.8 | 69.2 s |
+| (a) sweep on arrival | 0.6 | 0.1 | 0.6 | 0.1 s |
+| (b) schedule on the best venue | 0.7 | 1.0 | 1.2 | 48.1 s |
+| (c) TWAP across venues | 0.7 | 1.0 | 1.2 | 48.1 s |
+| (d) passive with a deadline | 0.0 | 0.6 | 0.4 | 5.0 s |
+
+Paired over parents, the router ties (a) (-0.1 ticks, 95 percent interval -0.3 to 0.1), beats (b) and (c) by 0.5 ticks (0.3 to 0.7), and loses to (d) by 0.4 ticks (0.2 to 0.5). The check declared before the run, no worse than any of (a) to (d) by more than 0.25 ticks, failed against (d) and is recorded as failed. The ladder router is not distinguishable from the touch router here (-0.2, interval -0.3 to 0.1).
+
+Why patient posting won. The simulated price wanders 0.209 ticks per root second, about 1.6 ticks over the minute the router's schedule takes, and the router's sd of 1.4 ticks is that risk. Resting at the touch and re-posting usually filled within 5 s, so the passive baseline carried little of it, and a risk-adjusted score that charges half the sd rewards that. In this model the depth refills, and a resting order's adverse selection comes only from the price's random walk and the declared permanent impact of each lot taken (0.02 ticks); no participant knows where the price is going and picks off resting orders ahead of a move. A market where passive fills come mostly just before adverse moves would favour resting less. This is a result of a simulator whose every number is a declared assumption, not a market finding.
+
+### One market, three books (1.2.0)
+
+Plain idea. The v2 desk profile trades Treasuries on two order books that show shares of one market, and Treasury futures on a third. The books are separate venues: each has its own FIX session, feed sequence, book age and order reconciliation, and each can fail on its own. A desk that kept one state for "the CLOB" would stop trading everywhere when one book gapped, or worse, keep routing to the gapped one.
+
+Formal statement (docs/research/DESK_V2_WIRING.md Section 2). `DeskGroup` keeps one state per order-book venue: venues 102 and 103 for the two Treasury books and 104 for futures. A venue that is down, gapped or silent is excluded (`DeskGroup.venueUsable`), its router stops sending there, and the others keep trading; a kill is confirmed only when every venue reports nothing working. Units differ at the boundary: the desk counts face in minor units everywhere, the futures venue counts contracts on its wire, and the loop converts where a quantity enters or leaves it.
+
+Worked example. `DeskGroupV2Test.aGappedVenueIsExcludedAndTheOthersKeepTrading` gaps one Treasury book and checks the other still trades. `aRefusedCancelAndAnOverfillAreHandledOnTheVenueTheyHappenOn` sends a futures parent of two contracts: it leaves as a NewOrder of quantity 200 (venue units); the venue fills three; the risk position is 30,000,000 of face in minor units and the overfill 10,000,000, one contract.
 
 ### Measuring execution quality
 
@@ -626,6 +811,65 @@ Plain idea. When the baseline and the treatment run on the same sessions with th
 Formal statement. With session results $a_i$ and $b_i$ from the same session $i$, the paired test works on $d_i = a_i - b_i$: $t = \bar d / (s_d / \sqrt n)$ with $n - 1$ degrees of freedom (`Stats.pairedT`), and the paired interval is the block bootstrap of $\bar d$ (`pairedBlockBootstrapCi`). Across many experiments, Benjamini-Hochberg (`benjaminiHochberg`) multiplies the $i$-th smallest of $m$ p-values by $m / i$ and keeps the expected share of false discoveries at or below the chosen level; Holm stays the rule inside one registered family (DR-RV-C03). Looks are counted per data set: `DataSets` keys a ledger row by the dates and seeds it read (or a data hash), and a new run is refused until its pre-registration lists every earlier id that read the same key under `prior_looks` (DR-RV-C02).
 
 Worked example. An illustration with invented numbers: five sessions, baseline $a = (10, -30, 25, -5, 40)$ thousand USD and treatment $b = (8, -31, 22, -7, 38)$, so the treatment is worse by $d = (2, 1, 3, 2, 2)$. The sessions swing with a standard deviation of about 27 thousand; the differences with one of 0.71 thousand. Welch's test gives $t = 0.12$ and $p = 0.91$: no effect. The paired test gives $t = 2 / (0.71 / \sqrt 5) = 6.3$ on 4 degrees of freedom and $p = 0.003$. For the looks: in the ledger as of 2026-11-23 one set of 20 sessions was read 9 times (AUDIT-11 to 14, AUDIT-21 to 25) and another 11 times (AUDIT-01 to 04, R2B-001 to 007), every row recorded as look 1. If those reads were independent 5 percent tests, the chance of at least one false positive among 9 would be $1 - 0.95^9 = 37$ percent. They are not independent, so the true figure is lower, but it is not 5 percent. `python -m ratesresearch.prereg data/ledger/ledger.jsonl` prints these counts.
+
+### A calibrated simulator, and why the constants were replaced (1.2.0)
+
+Plain idea. The review of 2026-11-23 found that the sign of every simulated P&L followed from constants someone had typed in: the competitors' spread, the size and timing of informed moves, and a market in which every instrument moved on its own. Simulator v2 (module `rates-sim`, `MarketModel`) replaces each constant with an estimate from public data where the data can give one, and with a stated assumption and a band where it cannot. Three status words say which: fitted (estimated, with a 95 percent interval from resampling whole days), bounded (the data give a range and the value is a stated choice inside it) and assumption (nothing in the repository identifies it). Version 1 stays the default; simulator v2 is used by the opt-in v2 desk profile and the experiment harness.
+
+Formal statement (docs/research/SIM_V2_DESIGN.md Sections 2 to 7, parameters `data/calibration/sim_v2_params.json`). The latent state moves on a fixed 1 s grid and is never rounded: three curve factors (level, slope, curvature), a swap-spread factor $S$, a futures basis per contract and a small idiosyncratic term per tenor node. The yield change at node $T$ is
+
+$$
+dy_T = L_{T,1}(F_1 + X_1) + L_{T,2} F_2 + L_{T,3} F_3 + e_T ,
+$$
+
+with $X_1$ the level offset caused by the desk's own impact. A swap's rate is $r_0 + dy_T + S$; a Treasury's price is $P_0 + \text{pcpb} \cdot dy_T$, with pcpb its price change per basis point. Two readings of the mid are kept apart. `MarketModel.latentMid` is the unrounded value: competitors quote from it, books are built around it, research P&L is marked at it. `MarketModel.referencePrice` is the latent mid rounded to the tick, half away from zero: what a venue publishes. It is derived on each read and never written back, so tick rounding cannot leak into the dynamics or into the marks. Information is a drift, not a jump: when an informed RFQ arrives, a pending drift of $d \cdot A / L_{T_r,1}$ is added to the level factor and released at the rate $1 - e^{-1\,\text{s}/\tau}$ a step, with $A$ the move at the traded tenor and $\tau = 10$ s. It happens whether or not the RFQ trades and whoever wins, because the information is about the market; a dealer who passes avoids it, and one who hedges the level within seconds avoids most of it. The competitors are tied by a zero-profit identity: median half-spread times the expected best quote per unit median equals the average adverse move plus their all-in cost (Section 7).
+
+Worked example. What the calibration (docs/research/SIM_V2_CALIBRATION.md Section 1) changed:
+
+| Quantity | Version 1 constant | Simulator v2 | Status |
+|---|---|---|---|
+| Common rate factors | none: independent walks | three factors explain 98.9 % of daily par-yield variance at 2 to 30 years; level 13.28 bp a day | fitted |
+| Intraday swap volatility | 0.194 bp per root minute | 0.123 [0.117, 0.131] bp per root minute, plus a burst of 181 times normal variance for five minutes after an 08:30 release | fitted |
+| Competitor median half-spread | 0.25 bp | 0.183 bp (0.123 to 0.272) | bounded |
+| Adverse move per trade, average | 0.20 bp, a jump on the traded instrument 30 s later, only if it traded | 0.059 bp (0 to 0.20) on the level factor, set by the zero-profit identity | bounded |
+
+The old adverse-selection constants lie outside what the data support. Why a hedge now works: under version 1 a 10-year swap hedged with the 10-year note carried both walks, so the hedge added variance. Under simulator v2 the two share the curve factors and the idiosyncratic term and differ only by $S$: the hedged pair keeps $0.7^2 = 0.49$ bp² a day against about 28.6 bp² for the 10-year yield, under 2 percent (arithmetic from the parameter file; the 0.7 bp is bounded, an upper figure near 1 bp). And the information drift: half the RFQs are informed (tier probabilities 0.25, 0.60 and 0.975, an assumption) with a move of 0.118 bp, so the average adverse move is 0.059 bp, 95 percent complete after $3\tau = 30$ s; at the central values the informed arrivals supply 11.38 bp² of the level factor's 60.6 bp² per session, 19 percent, and the diffusive part is reduced so that the total stays at the calibrated value.
+
+What the data could not identify, stated in the parameter file as assumptions with bands: the time profile of the drift, the split between the informed fraction and the size of the move, size and tenor dependence of spreads, the swap-spread factor beyond an upper figure, the futures basis, and order-book impact and resilience. The trade side of a public print is inferred, with an estimated error of 37 percent, which biases measured markouts toward zero but cannot change their sign. Two upper band points are refused at start-up by the simulator's own consistency checks, so the sensitivity rows that can run lie on the side that makes market making harder. Every result on this simulator is a statement about the model under these assumptions, never a market finding (DR-008).
+
+Worked example, the zero-profit identity as a constraint. $m \times 0.761 = \bar a + c_{\text{all}}$ has three quantities and one equation, so a change in one assumption has to be paid for by another, and the simulator re-solves the adverse move:
+
+| Row | $m$ (bp) | $c_{\text{all}}$ (bp) | Winning half-spread $0.761\,m$ | Adverse move $\bar a$ | Outcome |
+|---|---:|---:|---:|---:|---|
+| central | 0.1827 | 0.08 | 0.139 | 0.059 | runs |
+| `all_in_cost:low` | 0.1827 | 0.05 | 0.139 | 0.089 | runs: more toxic flow |
+| `all_in_cost:high` | 0.1827 | 0.15 | 0.139 | $-0.011$ | refused: a negative adverse move |
+| `winner_half_spread:low` | 0.1228 | 0.08 | 0.093 | 0.013 | runs: less room for anyone |
+| `winner_half_spread:high` | 0.2719 | 0.08 | 0.207 | 0.127 | refused: informed variance above 60 percent of the level factor's |
+
+Read it with a desk's eye: cheap competitors mean flow that is more informed than it looks, because a competitor who can quote that tight and still earn nothing must be losing it to someone. A competitor with a higher cost and the same quoted spread would have to earn the difference from clients, which the identity forbids. The identity says the competitors earn nothing on average; it does not say the desk earns nothing, and it does not say any dealer in a real market earns nothing (DR-008). It is a way to pick one number, the adverse move, that the public data cannot give.
+
+### Families, pilots and false discoveries (1.2.0)
+
+Plain idea. Eight separate experiments, each with its own seeds and its own look at the data, give eight chances of a false positive and weeks of computing. One registered family does better: every arm runs on the same sessions, every comparison is paired, the whole family is read once, and the false-discovery rate is controlled across it. A pilot is allowed before the family, but only to size it and time it; it is run on other seeds and its result is thrown away.
+
+Formal statement. Within a row of the data set every arm replays one journal written once per session from the seed, against its own fresh model of the same seed (`SessionExecutor`), so the exogenous path, the RFQs, the competitors' quotes and the clients' reserves are bit for bit the same; only what the arm does, and what its own orders cause, differs. For comparison $h$ and session $n$, $d_n = \text{P\&L}(\text{treatment}, n) - \text{P\&L}(\text{baseline}, n)$, tested with the paired t (`Stats.pairedT`) and reported with a moving-block bootstrap interval in blocks of 21 sessions (one cycle of day types). The number of sessions is
+
+$$
+N = \max\!\left(2000,\ \left\lceil 16.7\, \frac{s_d^2}{\delta^2} \right\rceil\right), \qquad 16.7 = (z_{0.9975} + z_{0.90})^2,
+$$
+
+with $\delta$ the smallest difference worth finding and $s_d$ the sd of the paired difference, $s_d = s \sqrt{2(1 - \rho)}$ for session sd $s$ and paired correlation $\rho$. Across the family's hypotheses Benjamini-Hochberg sorts the $m$ p-values, multiplies the $i$-th smallest by $m/i$ and takes the running minimum from the top; rejecting where the adjusted value is below $q$ keeps the expected share of false discoveries among the rejections at or below $q$ (`Stats.benjaminiHochberg`; `LedgerCli --bh family:ID` and `python -m ratesresearch.prereg bh`). The runner (`ExperimentRunner`) checkpoints each session and arm, resumes a killed run at the next arm, writes the summary once after the last session, appends one ledger row per hypothesis with the family id, and counts one look per family run. Its timing-only pilot (`--timing-only`) writes no P&L and reads none.
+
+Worked example. For the Round 5 family the smallest difference was fixed before any pilot at $\delta = 24{,}000$ USD a session. A pilot of eight full-day sessions of the default desk on the pilot seed base 29,000,000 gave a session sd of about 214,000 USD; its mean P&L was not looked at. At $\rho = 0.5$, $s_d = 214{,}000$ and $16.7 \times (214{,}000 / 24{,}000)^2 = 1{,}328$; at $\rho = 0.25$ about 1,990. The floor of 2,000 binds for any paired correlation of 0.25 or more. Eight sessions estimate an sd only roughly, which is one reason the floor is there; the other is that the pilot's sessions have been read, so they cannot also be evidence, and the pilot base supports no claim. For the error control, take eight invented p-values 0.001, 0.008, 0.012, 0.03, 0.04, 0.20, 0.5 and 0.9. Benjamini-Hochberg adjusts them to 0.008, 0.032, 0.032, 0.06, 0.064, 0.267, 0.571 and 0.9: three below 0.05. Holm, which controls the chance of even one false positive, compares the $i$-th smallest with $0.05/(9 - i)$ and stops at the second: one.
+
+What common random numbers buy, in sessions. If the two arms have session sd $s$ and correlation $\rho$, the variance of the difference is $2 s^2 (1 - \rho)$, so the sample size falls in proportion to $1 - \rho$. At $s = 214{,}000$ and $\delta = 24{,}000$, independent arms ($\rho = 0$) would need $16.7 \times 2 \times (214/24)^2 = 2{,}656$ sessions per arm; at $\rho = 0.5$, 1,328. The benefit is not free of conditions: the correlation is high only when the arms face the same RFQs, competitors and prices, so every arm replays one journal and the run records the input chain of each arm, which must all be equal (`SessionExecutor`, `DeskSimV2Test`). What may differ is what an arm does, and through its own orders what the market does next.
+
+What 2,000 sessions can see. The registration reports the difference that the test would detect with 80 percent power, $\delta_{80} = (1.960 + 0.842)\, s_d/\sqrt{2000} = 0.0627\, s_d$. At $s_d = 214{,}000$ that is 13,400 USD a session. An effect below it can be real and still not be found, so "inconclusive" is not "no effect". The smallest difference was chosen before the pilot; the power figure is computed afterwards from the measured sd. They answer different questions.
+
+Why a p-value is not enough for a verdict. A hypothesis is supported only if its adjusted p is below 0.05, its bootstrap interval lies wholly above zero, and every guard holds. The guards stop an arm from winning by not trading: quoted share, hit rate and client DV01 traded must stay above stated fractions of the baseline's. The registration also says in advance which guards cannot bind (the baseline quotes about a tenth of the RFQs, so quoted share cannot fall below 0.8 of it for H1), because a guard that cannot fail is not evidence. One limit of the error control itself: Benjamini-Hochberg keeps the expected share of false discoveries at or below $q$ when the tests are independent or positively dependent, and the eight hypotheses share arms and one set of sessions, so that condition is assumed and not proved.
+
+The registration that uses this, research/prereg/R5-FAM-001.yaml, is unsigned at 1.2.0 and has not been run. It names ten arms. Nine stand on one footing, the simulator v2 market and universe with pricing v2 and the ladder router, and differ only in their strategy switches: `baseline` (all off), `v2` (all on), six v2-minus-one-capability arms and `cover_only`. The tenth, `legacy`, is the desk as built in 1.1.0 and is described, not tested. There are eight hypotheses, 2,000 sessions on seed base 31,000,000, which no draft, pilot or test has generated, and two descriptive sensitivity rows. It replaced eight earlier drafts (SIM3-BASE-001 and R5-001 to R5-007) before any of them was signed or run; they are kept and marked superseded. `python -m ratesresearch.prereg validate research/prereg/R5-FAM-001.yaml` prints `valid`; the runner refuses the file while its status starts with "draft".
 
 ### Glossary
 
@@ -694,7 +938,7 @@ Messages are encoded with Simple Binary Encoding. The generated codecs (see `rat
 
 The hot path is the set of packages that run inside the event loop. The rule is that after warm-up they allocate nothing. This is not a style preference: a young-generation collection takes the loop off the CPU for a time that is unrelated to the current event and shows up as a tail-latency spike.
 
-The rule is checked, not asserted, in two ways. `LoopAllocationTest` (`rates-core`) reads `ThreadMXBean.getThreadAllocatedBytes` for the loop thread, by thread id from the test thread, around windows of messages. After one million warm-up messages it measures three consecutive windows of one million each: the last must allocate exactly zero bytes, the second and third at most 1,024 bytes each, and the first is reported but not bounded ([DECISIONS.md DR-INT-02](DECISIONS.md#dr-int-02-windowed-loop-allocation-check); the story of why it has windows is in [Section 13](#13-pitfalls-and-numerical-issues)). `QuotingAllocationTest` does the same for the per-RFQ quoting path with five windows of 20,000 RFQs (DR-P3-08). And `HotPathRulesTest` checks the compiled bytecode of every class in a package marked `@HotPath` with ArchUnit: no synchronized methods, no locks, no `java.util` collections, no autoboxing and no string building in message-path methods; a source scan rejects `synchronized` blocks, and each rule is shown to fail on a fixture package that breaks it ([DECISIONS.md DR-P2C-06](DECISIONS.md#dr-p2c-06-hot-path-rules-are-checked-with-archunit-over-bytecode-with-string-concatenation-compiled-inline)). The P0 building blocks follow the same discipline: the `TimerWheel` and the journal writer allocate at construction, not on `poll` or `append`.
+The rule is checked, not asserted, in two ways. `LoopAllocationTest` (`rates-core`) reads `ThreadMXBean.getThreadAllocatedBytes` for the loop thread, by thread id from the test thread, around windows of messages. After one million warm-up messages it measures four consecutive windows of one million each: no window after the first may allocate more than 1,024 bytes, at least one of them must allocate exactly zero, and the first is reported but not bounded ([DECISIONS.md DR-INT-02](DECISIONS.md#dr-int-02-windowed-loop-allocation-check) and DR-V12-T01; the story of why it has windows is in [Section 13](#13-pitfalls-and-numerical-issues)). `QuotingAllocationTest` does the same for the per-RFQ quoting path with five windows of 20,000 RFQs (DR-P3-08). And `HotPathRulesTest` checks the compiled bytecode of every class in a package marked `@HotPath` with ArchUnit: no synchronized methods, no locks, no `java.util` collections, no autoboxing and no string building in message-path methods; a source scan rejects `synchronized` blocks, and each rule is shown to fail on a fixture package that breaks it ([DECISIONS.md DR-P2C-06](DECISIONS.md#dr-p2c-06-hot-path-rules-are-checked-with-archunit-over-bytecode-with-string-concatenation-compiled-inline)). The P0 building blocks follow the same discipline: the `TimerWheel` and the journal writer allocate at construction, not on `poll` or `append`.
 
 ### The journal and deterministic replay
 
@@ -710,9 +954,19 @@ Latency is not measured with JMH, because a microbenchmark of one method does no
 
 A load generator sends events at a fixed rate, independent of how fast the system responds. If the system stalls, the generator keeps its schedule and the late responses are measured against the time the event should have been sent. This is the coordinated-omission correction described by Gil Tene; without it, a system that pauses for 100 milliseconds once a second looks better than it is, because fewer samples are taken during the pause. Samples are recorded in an `HdrHistogram` and reported at p50, p99, p99.9, p99.99 and max, with the machine, kernel and JVM flags recorded alongside.
 
-Two boundaries are defined. Core decode-to-encode is the loop's own work, from an input being available to the output being published on the outbound ring. Tick-to-wire adds the gateway on both ends. The in-process harness stamps handler entry (T2 in [docs/BENCHMARKS.md](docs/BENCHMARKS.md)) rather than the moment the input became readable (T1), so the first measurements report decode-to-encode as T3 minus T2, plus scheduled-to-encode, T3 minus the generator's scheduled send time T0, which includes queueing ([DECISIONS.md DR-P2C-08](DECISIONS.md#dr-p2c-08-the-harness-reports-decode-to-encode-t3-minus-t2-and-scheduled-to-encode-t3-minus-t0)). Tick-to-wire is not measured yet. Hosted CI runners produce informational numbers only, because their neighbours are unknown; gating thresholds apply only on a pinned, self-hosted machine ([DECISIONS.md DR-005](DECISIONS.md#dr-005-where-latency-is-measured)).
+Two boundaries are defined. Core decode-to-encode is the loop's own work, from an input being available to the output being published on the outbound ring. Tick-to-wire adds the gateway on both ends. The in-process harness stamps handler entry (T2 in [docs/BENCHMARKS.md](docs/BENCHMARKS.md)) rather than the moment the input became readable (T1), so the first measurements report decode-to-encode as T3 minus T2, plus scheduled-to-encode, T3 minus the generator's scheduled send time T0, which includes queueing ([DECISIONS.md DR-P2C-08](DECISIONS.md#dr-p2c-08-the-harness-reports-decode-to-encode-t3-minus-t2-and-scheduled-to-encode-t3-minus-t0)). Tick-to-wire from a network card is not measured; since 1.2.0 the wired benchmark below measures scheduled send to quote bytes written over loopback FIX. Hosted CI runners produce informational numbers only, because their neighbours are unknown; gating thresholds apply only on a pinned, self-hosted machine ([DECISIONS.md DR-005](DECISIONS.md#dr-005-where-latency-is-measured)).
 
 The first report is dated 2026-10-31, from a Windows laptop with nothing pinned, at 50,000 QuoteRequests a second for 300 seconds after a 60-second warm-up ([docs/BENCHMARKS.md](docs/BENCHMARKS.md), `docs/benchmarks/latency-20261031-073526.json`). With journaling off, core decode-to-encode was 0.2 us at p50 and 6.9 us at p99.9 over 15 million samples, with zero bytes allocated on the loop thread: inside the P2 targets of 20 us and 100 us. With journaling on, p50 was 0.5 us but p99.9 was 271 ms, and the cause was not the loop's own work; [Section 13](#13-pitfalls-and-numerical-issues) tells that story.
+
+### The wired measurement, and how not to fool yourself with it (1.2.0)
+
+Plain idea. Two mistakes make latency figures look good. One is to wait for each answer before asking the next question: a stall of 100 ms then costs one slow sample instead of the hundred requests that would have queued behind it. The other is to drop the runs that look bad. The benchmark of 1.2.0 does neither: requests leave on a fixed schedule, every interval starts at the scheduled time, and every run is in the table, its generator lateness beside it.
+
+Formal statement (`WiredDeskBenchmark`, [docs/BENCHMARKS.md](docs/BENCHMARKS.md)). The load generator is a FIX acceptor on loopback in the same JVM as the real trading process, so all stamps read one `System.nanoTime` clock. With $S_k = S_0 + k/r$ the scheduled send of request $k$ at rate $r$ and $W_k$ the time the Quote's bytes are written, the headline latency is $W_k - S_k$ and not $W_k - (\text{actual send})_k$. Stage stamps (published, read, journaled, handled, dequeued, encoded, written) split it. Unanswered requests are listed, not hidden: they were not quoted, and they are not latencies.
+
+Worked example. At 1,000 requests a second for 60 s there are 60,000 samples, and p99.9 is set by the slowest 60. Suppose the process stops for 100 ms once and answers in 0.07 ms otherwise. The 100 requests scheduled during the stall wait 100, 99, ..., 1 ms. The 60 slowest are worth 41 ms and above, so p99.9 is about 40 ms (p99 is the 600th slowest and stays at 0.07 ms). A generator that waits for each answer sends one request into the stall: one sample of 100 ms in 60,000, and p99.9 stays at 0.07 ms. Same machine, same stall, a factor of nearly 600. The correction of Section 13 (`recordValueWithExpectedInterval`) adds those samples afterwards for a closed loop; starting each interval at its scheduled time needs no correction.
+
+What the tables say. The quiet-laptop run of 2026-11-24 has `lowLatency` direct journal over plain TCP at p50 64.0 us, p99 163.7, p99.9 346.6 and max 6,492.2; the default profile's p50 is 15.4 ms because its threads park and Windows rounds a park up to a timer period, while its handler median is the same 7 to 8 us. Caveats that travel with those numbers: one laptop, one run of each configuration, no pinned core, no network card, the generator in the same process, p99.99 from 60,000 samples resting on six of them, and the recorded desk profile only (the v2 profile has no figure, because the outside D2C endpoint is refused on simulator v2). In the same run the ring journal had the longer tail, and also the later generator, so the run cannot say which caused which. The earlier loaded runs of the same code gave medians from 49 us to 4.7 ms: a median that moves by a factor of a hundred with the machine's load is a reading of the machine. [Tutorial 04](docs/tutorials/04-wired-latency.md) reads a committed report line by line.
 
 ### The ring-buffer contract and the replay comparison (P2)
 
@@ -760,6 +1014,42 @@ Why are our own messages gap-filled and not resent? A resent quote or order arri
 Why accept allocation under TLS? The rule that the hot path allocates nothing is about the loop thread's latency. TLS runs on the gateway thread, inside the JDK's `SSLEngine`, which allocates a result object and per-record cipher state in `wrap` and `unwrap`. Our code around it reuses its buffers. `TlsAllocationTest` measures about 1.3 KB per message sent and 1.4 KB received and fails the build above 2 KB, so a regression shows. The alternatives are worse for this project: a TLS library of our own, or no encryption. A link that must allocate nothing end to end ends TLS outside the JVM, on loopback (DR-RV-X06).
 
 Worked example. A process dies while appending inbound frame 1,201. The last segment holds frames 1 to 1,200, then 20 bytes of frame 1,201, then zeros. On restart `repair` finds frame 1,201 failing its checks with only zeros after it. It clears the 20 bytes and prints `TORN TAIL cut in segment 1 at sequence 1201 (20 bytes cleared)`; `journalTornTails` is 1. Replay feeds frames 1 to 1,200 to the live loop, and its outbound messages match the recorded ones. Suppose frame 1,200 was a client fill and the process died before the hedge order it caused was journaled. Replay produces that hedge order past the end of the outbound journal: it is journaled and counted in `outboundCompleted`, but not sent, because the session it was meant for is gone. The loop is then told both sessions are down, so it pulls its quotes. The FIX session resumes at the journaled watermark and the venue resends from there; if the resend includes the fill already in frame 1,200, that copy is dropped by its ExecID. The CLOB session reconciles, the book feed delivers a snapshot, and only then does `/health/ready` answer 200. If instead the 20 bytes had been followed by a later, valid frame, the restart would have been refused, and the operator follows docs/runbooks/restart.md.
+
+### The ring journal and a versioned chain hash (1.2.0)
+
+Plain idea. Two changes on the journal path. First, a loop can hand its frames to a journal thread through a ring instead of writing the mapped file itself. That takes the write off the loop, but a crash now loses whatever is still in the ring, and the outbound journal must never get ahead of the inbound frame that caused it. Second, FNV-1a takes one byte per step and is slow on long frames. A faster hash is only safe if the file says which hash it uses; otherwise an old reader computes the wrong one and calls a good journal damaged.
+
+Formal statement. `RingJournal.append` copies the payload, template, schema version and the producer's stamp into an off-heap single-producer ring; a journal thread drains it into the segmented journal through the same `JournalWriter` code, so the files are the same as the direct mode's, frame for frame. The ring is bounded. When it is full the producer waits and counts the wait (`producerWaits()`); it never drops a frame, because a journal with a hole cannot be replayed. The wait is bounded too: after `stallNanos()` with no progress, or as soon as the journal thread has died, `append` throws, which is a loop failure and leads to a withdrawal by the supervisor. A crash loses at most the ring's backlog; the direct mode loses nothing that reached the mapping. Between two journals, each outbound record carries the inbound sequence appended before it, and the outbound journal thread writes it only once the inbound thread has written that far. A crash therefore loses a tail of each journal, never the cause of a frame that survived, and restart recovery works on a ring-mode crash image (`RestartRecoveryTest`). The direct mode stays the default (DR-R6-L04).
+
+The chain hash is versioned in the segment header ([API_SPEC.md Section 1](API_SPEC.md#section-1-journal-file-and-frame-format), `JournalFormat`). Version 1 means FNV-1a, as every journal before 1.2.0. Version 2 names its algorithm at header offset 20 (`hashAlgorithm`; 2 is `ChainHash.WORD64`, eight payload bytes per step). A journal created without naming an algorithm gets FNV-1a and is written as version 1, byte for byte as before, so recorded replay hashes and ledger reproductions still match; a version 2 file that names FNV-1a is refused. CRC32C was rejected because it keeps 32 bits and the chain keeps 64 (DR-R6-L03). Neither hash is cryptographic: they detect truncation, reordering and bit rot, not forgery. Python reads both versions with the same checks as Java's `JournalReader` (`ratesresearch.fnv.word64`, `chain_hash`, `journal_hash_algorithm`; `tools/journal_query.py`), tested bit for bit against fixtures written by Java (`research/tests/test_journal_formats.py`).
+
+Worked example. One step of the chain, measured by `ChainHashBenchmark` on a loaded laptop (docs/BENCHMARKS.md; read the ratios, the error bars are wide):
+
+| Payload | FNV-1a, version 1 | WORD64, version 2 | CRC32C, not used |
+|---|---:|---:|---:|
+| 57 bytes | 363.6 ns | 75.6 ns | 47.0 ns |
+| 120 bytes | 705.3 ns | 145.1 ns | 57.4 ns |
+| 512 bytes | 3,424.8 ns | 437.6 ns | 141.1 ns |
+
+WORD64 is 4.8 to 7.8 times faster than FNV-1a here. CRC32C is faster still, but two different streams agree on a 32-bit value with odds of about one in four billion, against one in $2^{64}$ for the chain. [COOKBOOK.md recipe 38](COOKBOOK.md#38-how-do-i-read-a-version-2-journal-word64-chain-hash-from-python) reads the committed version 2 fixture and prints `chain (word64) verified to sequence 8`.
+
+### What determinism is promised, and what is not (1.2.0)
+
+Plain idea. "Deterministic" can mean three things here, and the project promises two of them. Replay: given the journals, a rebuilt desk says exactly what the live one said. A stepped day: given the seed, the whole day is the same, frame for frame. A threaded live day, in which the operating system schedules the gateway threads, does not repeat from run to run, and nothing claims that it does.
+
+Formal statement (docs/research/DESK_V2_WIRING.md Section 12.2).
+
+| Path | Promise | Evidence |
+|---|---|---|
+| Replay of any journal, stepped or threaded | exact: the rebuilt desk sends the recorded outbound bytes | every v2 test replays; `SupervisorV2Test` replays two threaded days |
+| A stepped day (`V2DeskProcess`, `TradingProcess.step`) | exact: the same seed gives the same journals, timestamps included | `V2SteppedDeterminismTest.threeRunsOfOneSeedWriteTheSameJournals`, `TradingProcessV2Test` |
+| A threaded day | not repeatable, and not claimed | `SupervisorV2Test.aThreadedDayReconcilesAndReplaysRunAfterRunAndIsNotClaimedToRepeat` |
+
+The four simulator v2 venues of a session share one `MarketModel`, and the two Treasury venues show shares of one `BookModel`. Each venue used to handle the desk's messages on its own FIX thread under its own lock, so two threads could be inside one `BookModel` at once. Now a FIX thread only puts a message in its venue's inbox (`SimSequencer`). One thread, the one that already moves the venues' clock, drains the inboxes in a fixed order (D2C, CLOB 1, CLOB 2, futures, each first in first out) and refuses a second draining thread. In a stepped process `SteppedDelivery` also settles each session, written, received and read, before it looks at the next. What a venue does is then a function of the sequence of (time, venue, message) its owner handed it. In a threaded process that sequence still depends on the wall clock and on eight gateway threads publishing into one ring.
+
+Worked example. Two threaded runs of one seed in `SupervisorV2Test` journaled 43,462 and 43,104 inbound frames. Each reconciled with every venue's register with 0 breaks and replayed to its own hash. Before the sequencer, two stepped runs of `SmokeV2Test` gave book frames 10,665 / 10,035 and 10,667 / 10,033 with every other count equal, which is why that test records its counts and does not assert them.
+
+The markout store has to obey the same rule. A desk reads its client markouts when it is built, and a replay builds the desk again. If a session saved over the file it had loaded, its replay would start from another store and quote differently. So a profile names two files: `markouts.start`, read at build and never written during the session, and `markouts.end`, written at the end. A fresh start promotes end to start; a restart does not, because the desk it rebuilds must read what the stopped process read (DR-V12-D07, `DeskGroupV2Test.theMarkoutStoreIsSavedAtSessionEndAndLoadedByTheNextDesk`).
 
 ### Glossary
 
@@ -963,7 +1253,7 @@ A load generator that waits for each response before sending the next request ta
 
 The first in-process measurements on 2026-10-31 showed what the correction hides when it is absent. With journaling on, the core decode-to-encode p99.9 was 271 milliseconds, against 6.9 microseconds with journaling off ([docs/BENCHMARKS.md](docs/BENCHMARKS.md), report `latency-20261031-072915.json`). Two earlier runs that morning were worse, 1.1 s and 0.79 s, while 512 MiB journal segments were created and forced to disk on the loop thread; moving that work to a background thread ([DECISIONS.md DR-P2C-03](DECISIONS.md#dr-p2c-03-segment-rolling-continues-the-chain-across-segments-the-single-file-classes-gain-package-private-seams-only)) brought it to 271 ms. Every one of those runs would be discarded by our own rule, because the generator itself fell behind its schedule; they are recorded as the first evidence, with the lateness in each report. Round 2 work on the journal write path continues on its own branch, and this document will cite its numbers once they are merged.
 
-A related measurement trap is allocation. On 2026-10-31 `LoopAllocationTest` failed on the Linux CI runner with 296 bytes allocated on the loop thread over a million messages, and passed on Windows. A single before-and-after delta could not tell a one-off cost from a per-message leak. The investigation found that on a two-CPU runner the drainer falls behind, the loop takes its backpressure path for the first time after warm-up, and the first backpressure event loaded a class on the loop thread. The fix, in PR #2 ([DECISIONS.md DR-INT-02](DECISIONS.md#dr-int-02-windowed-loop-allocation-check)), loads that path at construction and measures three windows of one million messages: the last must be exactly zero and the second and third at most 1,024 bytes, so a leak of even one byte per message, a megabyte per window, still fails.
+A related measurement trap is allocation. On 2026-10-31 `LoopAllocationTest` failed on the Linux CI runner with 296 bytes allocated on the loop thread over a million messages, and passed on Windows. A single before-and-after delta could not tell a one-off cost from a per-message leak. The investigation found that on a two-CPU runner the drainer falls behind, the loop takes its backpressure path for the first time after warm-up, and the first backpressure event loaded a class on the loop thread. The fix, in PR #2 ([DECISIONS.md DR-INT-02](DECISIONS.md#dr-int-02-windowed-loop-allocation-check)), loads that path at construction and measures three windows of one million messages: the last must be exactly zero and the second and third at most 1,024 bytes, so a leak of even one byte per message, a megabyte per window, still fails. In 1.2.0 the same test, run without escape analysis or on two CPUs, showed single allocations of 96 to 184 bytes that fell in the last window; they did not grow with the events they fell beside, so the gate now asks that one window after the first be zero, whichever it is (DR-V12-T01).
 
 ### Look-ahead and holdout leakage in back-tests
 
@@ -1166,10 +1456,10 @@ Questions on every section, graded easy (a definition or one line of arithmetic)
 *Answer.* The winner is the dealer whose independent error most favours the client; the expected maximum of $n$ standard normal errors grows like $\sqrt{2 \ln n}$. With coefficient 0.1 bp, $0.1 \sqrt{2 \ln 4} = 0.167$ bp. *See* Section 7.
 
 **Q37.** A rate of 1.005 percent is converted to a mantissa by `(long)(x * 1e9)`. What is stored, and what rule does the analytics boundary use instead?
-*Answer.* 1004999999, because $1.005 \times 10^9$ evaluates to 1004999999.9999999. `Decimal9.round` rounds to nearest with `Math.round` (ties upward; the documented rule is half away from zero, which differs only for negative ties), and quotes use `Decimal9.floor` for bids and `Decimal9.ceil` for asks ([DECISIONS.md DR-P3-10](DECISIONS.md#dr-p3-10-subject-quotes-reference-stamps-and-quote-rounding)). *See* Section 13.
+*Answer.* 1004999999, because $1.005 \times 10^9$ evaluates to 1004999999.9999999. `Decimal9.round` rounds to the nearest mantissa, ties half away from zero, and quotes use `Decimal9.floor` for bids and `Decimal9.ceil` for asks ([DECISIONS.md DR-P3-10](DECISIONS.md#dr-p3-10-subject-quotes-reference-stamps-and-quote-rounding)). Until 1.2.0 `round` used `Math.round`, which takes ties toward positive infinity, so -0.5 units gave 0 instead of -1; since 1.2.0 negative values round on their magnitude, and from $2^{52}$ units upward the product's rounding error is recovered with `Math.fma`, so `floor` and `ceil` never land on the wrong side (`Decimal9PropertiesTest`, against `BigDecimal`). *See* Section 13.
 
-**Q38.** Why does `LoopAllocationTest` measure three windows instead of one delta, and what failed on Linux on 2026-10-31?
-*Answer.* A single delta cannot tell a one-off cost from a per-message leak. On the two-CPU Linux runner the loop took its backpressure path for the first time after warm-up and loaded a class on the loop thread (296 bytes measured). The fix (PR #2, DR-INT-02) loads that path at construction and bounds the windows; one byte per message would still be a megabyte per window. *See* Sections 11 and 13.
+**Q38.** Why does `LoopAllocationTest` measure several windows instead of one delta, and what failed on Linux on 2026-10-31?
+*Answer.* A single delta cannot tell a one-off cost from a per-message leak. On the two-CPU Linux runner the loop took its backpressure path for the first time after warm-up and loaded a class on the loop thread (296 bytes measured). The fix (PR #2, DR-INT-02) loads that path at construction and bounds the windows; one byte per message would still be a megabyte per window. Since 1.2.0 there are four, and one after the first must be zero (DR-V12-T01). *See* Sections 11 and 13.
 
 **Q39.** How does a replay name the first outbound message that differs from the recording?
 *Answer.* Each produced message is chained with FNV-1a over the previous hash and its payload and compared with the recorded frame of the same sequence; the chain covers every byte in order, so the first unequal hash is the first differing message. Recipe 12's wider-spread replay reports `firstMismatch=1`. *See* Section 11; [COOKBOOK.md recipe 12](COOKBOOK.md#12-how-do-i-run-the-event-loop-against-a-journal-and-check-determinism); [DECISIONS.md DR-P2C-01](DECISIONS.md#dr-p2c-01-two-journals-per-loop-and-replay-compares-the-outbound-stream-by-chain-hash).
@@ -1194,6 +1484,69 @@ Questions on every section, graded easy (a definition or one line of arithmetic)
 
 **Q46.** The back-tester's attribution splits P&L into spread capture, inventory, hedge cost, carry, funding and fees. Why check the residual below one cent on every run, and where is it shown?
 *Answer.* Because a P&L split that does not add up hides a booking or valuation error in whichever line absorbs it. Recipe 18 prints "residual below a cent: true" at each band point, and recipe 20 reconciles attribution to position P&L in Python. *See* Section 10; [COOKBOOK.md recipes 18](COOKBOOK.md#18-how-do-i-run-the-back-tester-on-one-synthetic-day) and 20.
+
+**Q47.** The version 1 simulator moved every instrument as its own random walk. Why could no hedge reduce risk there, and how much of a 10-year swap's daily variance does a matched 10-year Treasury leave in simulator v2?
+*Answer.* With independent walks the hedge's variance adds to the position's instead of cancelling it. In simulator v2 a swap and a Treasury of one tenor share the curve factors and the idiosyncratic term and differ only by the swap-spread factor, so the hedge leaves that factor alone: $0.7^2 = 0.49$ bp² a day against about 28.6 bp² for the 10-year yield, under 2 percent. The 0.7 bp is a bounded value (the data give only an upper figure near 1 bp). *See* Sections 8 and 10; docs/research/SIM_V2_CALIBRATION.md Section 5.
+
+**Q48.** Under a calibration in which the competitors earn exactly nothing, where can a new dealer's profit come from?
+*Answer.* Only from costs lower than the competitors' (cheaper hedging) or from telling informed clients apart better than they do. The winning half-spread pays the average adverse move plus the competitors' all-in cost; at the 10-year it is 0.139 bp, the average client's break-even with a half-tick note hedge is 0.107 bp, so the room is 0.032 bp, and it is negative for tier C. A simulator figure under declared assumptions, not a market finding. *See* Section 7; docs/research/STRATEGY_V2.md Section 1.
+
+**Q49.** Why does pricing v2 value a quoted swap off a curve built without it?
+*Answer.* A curve input reprices to its own quote, so its fair value would be the quote and a skewed quote would move it one for one (2.000 bp for a 2 bp skew in version 1). Left out, the swap is valued by the rest of the market plus a residual that follows its own quote with a 300 s half-life: the same skew held half a second moves it 0.0023 bp. *See* Section 2; `PricingV2Test.aSkewedQuoteBarelyMovesItsOwnFairValue`.
+
+**Q50.** In the router benchmark of 1.2.0, why did resting at the touch with a deadline beat the ladder router on risk-adjusted cost?
+*Answer.* The router spreads a parent over about a minute; the simulated price wanders 0.209 ticks per root second, about 1.6 ticks over 60 s, and the router's cost sd was 1.4 ticks. The passive baseline usually filled within 5 s, so its sd was 0.6. The score adds half the sd to the mean, so it lost by 0.4 ticks [0.2, 0.5] and the check declared before the run failed. A result of the router's own simulator, in ticks, not a market finding. *See* Section 9; docs/research/ROUTER_BENCHMARK.md.
+
+**Q51.** A pilot of eight sessions gives a session sd of about 214,000 USD. What is it for, and why is it not evidence?
+*Answer.* It sizes the run: with a 24,000 USD effect and a paired correlation of 0.5 the rule $N = \max(2000, \lceil 16.7\, s_d^2/\delta^2 \rceil)$ gives 1,328, so the floor of 2,000 binds. It ran on a separate seed base, its mean P&L was not read, and eight sessions estimate an sd only roughly; inference uses only the registered sessions, read once. *See* Section 10; research/prereg/R5-FAM-001.yaml.
+
+**Q52.** Eight hypotheses have p-values 0.001, 0.008, 0.012, 0.03, 0.04, 0.20, 0.5 and 0.9. How many does Benjamini-Hochberg at 0.05 keep, and how many Holm?
+*Answer.* Benjamini-Hochberg multiplies the $i$-th smallest by $8/i$ and takes the running minimum from the top: 0.008, 0.032, 0.032, 0.06, 0.064, 0.267, 0.571, 0.9, so three. Holm compares the $i$-th smallest with $0.05/(8 - i + 1)$: 0.001 passes 0.00625, 0.008 fails 0.00714, so one. Invented numbers. *See* Section 10.
+
+**Q53.** Why does a journal with the WORD64 chain hash carry format version 2, while a default journal is still written as version 1?
+*Answer.* A reader that assumed FNV-1a would compute the wrong hash for a WORD64 file and report good frames as damaged, so the file names its algorithm at header offset 20, which only version 2 has. Default journals keep FNV-1a and the version 1 header byte for byte, so every recorded replay hash and ledger reproduction still matches. *See* Section 11; `HashFormatTest`; [COOKBOOK.md recipe 38](COOKBOOK.md#38-how-do-i-read-a-version-2-journal-word64-chain-hash-from-python).
+
+**Q54.** Two threaded runs of one seed on the v2 profile journal 43,462 and 43,104 inbound frames. Is that a defect?
+*Answer.* No, and it is not hidden. Simulated time is paced by the wall clock and eight gateway threads publish into one ring, so the order and stamps of inputs differ between runs. What is promised is that each run reconciles with every venue (0 breaks) and replays exactly, and that a stepped day repeats frame for frame. *See* Section 11; `SupervisorV2Test.aThreadedDayReconcilesAndReplaysRunAfterRunAndIsNotClaimedToRepeat`, `V2SteppedDeterminismTest`.
+
+**Q55.** Three updates of one quote, 60, 90 and 150 s apart, all show the same gap to the leave-one-out value. How much of the gap is absorbed, and how does that compare with one update after 300 s?
+*Answer.* Half in both cases: the shares left multiply, $2^{-60/300} \times 2^{-90/300} \times 2^{-150/300} = 2^{-1}$. Absorption depends on elapsed time and not on how often the venue publishes. *See* Section 2; `FairValueSmoother.gain`.
+
+**Q56.** With a break-even of 0.107 bp and the four-dealer prior, the win probability at break-even is 0.62 and at 0.159 bp it is 0.26. Why quote 0.159?
+*Answer.* At break-even a win earns nothing, so a 0.62 chance of it is worth nothing. Expected profit $P(d)(d - C)$ is 0.0135 bp at 0.159 and zero at 0.107. *See* Section 7; `CoverModel.optimal`.
+
+**Q57.** A quote at 0.15 bp loses to another dealer and the venue shows no price. Why does the cover model move its median down, and in which case is that wrong?
+*Answer.* The loss is read as $B < 0.15$, so the cell's moments are those of the normal truncated above there (from 0.125 to 0.113 bp on the first observation). It is wrong when the client's reserve or a done-away decision caused the loss, because neither is learned. *See* Section 7.
+
+**Q58.** A large book makes an uncapped inventory term 2,860 USD on an RFQ whose hedge costs 480 USD. What does the desk charge, and why is charging more irrational?
+*Answer.* 480 USD, the cap. Above it the desk would do better to hedge the trade in the market, so no client should be asked, or paid, more than that. *See* Section 7; `StrategyPathTest.withLargeInventoryTheSkewStopsAtTheCostOfHedging`.
+
+**Q59.** Why does the factor planner hedge 30-year risk with the 10-year note alone rather than with the 2-year and the 10-year?
+*Answer.* The pair saves 0.64 bp² per unit but costs about 0.069 bp in half-ticks, so it pays only above roughly 540,000 USD of 30-year DV01 at $\kappa = 4 \times 10^{-7}$, before impact. *See* Section 8; `FactorHedgePlannerTest`.
+
+**Q60.** Why does a hedge order resting at the touch not reduce the residual that the hedger measures?
+*Answer.* It may never fill. Counting it would let a desk with three resting orders report no risk and then, at the time stop, find all of it still there. *See* Section 8; `HedgerInternalisationTest.whileHoldingTheHedgeRestsAtOurSideOfTheTouchAndDoesNotCount`.
+
+**Q61.** A child order was cancelled, the router released it, and a fill of it arrives. Name the three things the desk does and the one it does not.
+*Answer.* It books the fill to risk at the execution's side, price and instrument; it remembers the venue and execution id so a resend is ignored; it counts it in `lateFills`. It does not reopen the parent: the hedger sees the position in the next residual. *See* Section 9; [DECISIONS.md DR-V12-D13](DECISIONS.md#dr-v12-d13-a-fill-of-a-released-child-is-a-position).
+
+**Q62.** What goes wrong if a venue, or a simulator, answers a cancel with `Cancelled` after the order has filled in full?
+*Answer.* The strategy believes the quantity is free and may send it again; a report arrives for an order nobody holds. The right answer is a refusal and one `Filled`. *See* Section 9; [DECISIONS.md DR-V12-E09](DECISIONS.md#dr-v12-e09-a-cancel-that-finds-the-order-filled-is-refused).
+
+**Q63.** In the ladder example, why does venue 2 receive a limit one tick behind its touch, while venue 1's child stops at its touch?
+*Answer.* Each child is limited at the last level the sweep needs from that venue. The walk takes 15 million from venue 2's second level, at 0.023689 points all-in, before venue 1's second level at 0.023989. *See* Section 9; `LadderModelTest`.
+
+**Q64.** The competitors' all-in cost assumption is lowered from 0.08 to 0.05 bp with the quoted spreads held. Why does the average adverse move rise?
+*Answer.* The zero-profit identity: 0.139 is fixed, so $\bar a = 0.139 - 0.05 = 0.089$. Competitors who are cheaper and still earn nothing must be losing more to informed clients. *See* Section 10.
+
+**Q65.** Two arms have session sd 214,000 USD and correlation 0.5. How many sessions does a 24,000 USD difference need, and how many without common random numbers?
+*Answer.* $16.7 \times 2 (1 - \rho) (214/24)^2$: 1,328 and 2,656. The registration still uses 2,000, its floor. *See* Section 10.
+
+**Q66.** A generator that waits for each answer sees a single 100 ms stall in 60 s at 1,000 requests a second. What does it report for p99.9, and what does a fixed schedule report?
+*Answer.* About the normal latency, because there is one slow sample in 60,000; about 40 ms, because the 100 requests scheduled in the stall are all late and p99.9 is the 60th slowest. *See* Section 11.
+
+**Q67.** An experiment file validates and prints `valid`. Give two reasons the runner may still refuse it.
+*Answer.* Its status starts with "draft"; or an earlier registration has read the same data set and is not listed under `prior_looks`. Others are in [tutorial 03](docs/tutorials/03-registered-experiment.md). *See* Section 10.
 
 ## 16. Further reading
 
@@ -1225,17 +1578,17 @@ Primary sources only: the documents that define a convention, the rule texts, th
 - M. Fleming, B. Mizrach and G. Nguyen, "The microstructure of a U.S. Treasury ECN: The BrokerTec platform", *Journal of Financial Markets* 40, 2018. Measured facts about workup and depth that the CLOB simulator's rules come from.
 - T. Hendershott and A. Madhavan, "Click or call? Auction versus search in the over-the-counter market", *Journal of Finance* 70(1), 2015. Evidence on when clients choose RFQ over voice, and the information leaked by asking.
 - M. Avellaneda and S. Stoikov, "High-frequency trading in a limit order book", *Quantitative Finance* 8(3), 2008. The reservation price and inventory skew that Section 7 adapts to a DV01 ladder.
-- O. Guéant, *The Financial Mathematics of Market Liquidity*, Chapman and Hall/CRC, 2016, and O. Guéant, C.-A. Lehalle and J. Fernandez-Tapia, "Dealing with the inventory risk", *Mathematics and Financial Economics* 7(4), 2013. The closed-form quotes of a dealer with inventory limits, and the bridge from Avellaneda-Stoikov to RFQ markets.
+- O. GuÃ©ant, *The Financial Mathematics of Market Liquidity*, Chapman and Hall/CRC, 2016, and O. GuÃ©ant, C.-A. Lehalle and J. Fernandez-Tapia, "Dealing with the inventory risk", *Mathematics and Financial Economics* 7(4), 2013. The closed-form quotes of a dealer with inventory limits, and the bridge from Avellaneda-Stoikov to RFQ markets.
 - R. Almgren and N. Chriss, "Optimal execution of portfolio transactions", *Journal of Risk* 3(2), 2001. The trade-off between impact cost and risk that the staged hedger (Section 8) and the router's urgency parameter (Section 9) both make.
 - R. Cont, S. Stoikov and R. Talreja, "A stochastic model for order book dynamics", *Operations Research* 58(3), 2010. The queue model behind `QueueFillModel`.
 - FIX Trading Community, FIX 4.4 specification, <https://www.fixtrading.org/standards/fix-4-4/>, and the Simple Binary Encoding standard, <https://www.fixtrading.org/standards/sbe/>. The wire formats the venue layer speaks.
 
 ### Back-testing and statistics (Section 10)
 
-- D. Bailey, J. Borwein, M. López de Prado and Q. Zhu, "Pseudo-mathematics and financial charlatanism: the effects of backtest overfitting on out-of-sample performance", *Notices of the AMS* 61(5), 2014. Why the ledger counts looks and the holdout opens once.
+- D. Bailey, J. Borwein, M. LÃ³pez de Prado and Q. Zhu, "Pseudo-mathematics and financial charlatanism: the effects of backtest overfitting on out-of-sample performance", *Notices of the AMS* 61(5), 2014. Why the ledger counts looks and the holdout opens once.
 - C. Harvey, Y. Liu and H. Zhu, "... and the cross-section of expected returns", *Review of Financial Studies* 29(1), 2016. Multiple testing in finance, and the case for adjusted p-values.
 - S. Holm, "A simple sequentially rejective multiple test procedure", *Scandinavian Journal of Statistics* 6(2), 1979. The step-down adjustment used in P5-001.
-- H. Künsch, "The jackknife and the bootstrap for general stationary observations", *Annals of Statistics* 17(3), 1989. The moving-block bootstrap behind every interval in Section 10.
+- H. KÃ¼nsch, "The jackknife and the bootstrap for general stationary observations", *Annals of Statistics* 17(3), 1989. The moving-block bootstrap behind every interval in Section 10.
 
 ### Low-latency engineering (Section 11)
 
@@ -1264,6 +1617,7 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Algorithm inventory**: the register of every trading algorithm with its owner, approver and risk tier, as PRA SS5/18 expects; its id is written into each order record. ([Section 12](#12-regulation-uk-rts-6-fca-mar-7a-pra-ss518-mifir-transparency-dodd-frank-sef-rules))
 - **Algorithmic differentiation (AD)**: computing exact derivatives by applying the chain rule backwards through the code's operations, from the price to the curve inputs. ([Section 3](#3-swaps-schedules-pv-par-rate-dv01))
 - **Algorithmic trading**: trading in which software decides the timing, price or quantity of orders with little or no human intervention (MiFID II Article 4(1)(39)). ([Section 12](#12-regulation-uk-rts-6-fca-mar-7a-pra-ss518-mifir-transparency-dodd-frank-sef-rules))
+- **All-in cost (of a level)**: a level's price relative to the mid plus fee, venue penalty and latency charge; the order in which the ladder sweep takes levels. ([Section 9](#9-smart-order-routing-in-fixed-income))
 - **Annuity**: $\sum_i \alpha_i P(\text{pay}_i)$, the value of receiving one unit of fixed rate on every fixed payment date; notional times annuity times $10^{-4}$ is a swap's DV01 to first order. ([Section 1](#1-rates-products-in-five-minutes))
 - **Anti-gaming**: randomising child order sizes and timing within a band so that other participants cannot predict the next child. ([Section 9](#9-smart-order-routing-in-fixed-income))
 - **APA**: approved publication arrangement, through which an investment firm publishes its OTC trades under MiFIR. ([Section 12](#12-regulation-uk-rts-6-fca-mar-7a-pra-ss518-mifir-transparency-dodd-frank-sef-rules))
@@ -1274,15 +1628,18 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Band point**: one of the low, central and high values of a declared assumption; every back-test result is reported at all three. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Basis (futures)**: gross basis is the bond's clean price minus the futures price times its conversion factor; net basis subtracts carry to delivery. ([Section 5](#5-futures-ctd-basis-convexity))
 - **Basis point (bp)**: one hundredth of a percent, 0.0001 in rate; in a futures price quoted as 100 minus rate, 0.01. ([Conventions](#conventions-used-throughout))
+- **Benjamini-Hochberg adjustment**: multiplying the $i$-th smallest of $m$ p-values by $m/i$ and taking the running minimum from the top, so that rejecting below $q$ keeps the expected share of false discoveries at or below $q$. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Bid and ask (offer)**: the prices at which the quoting party buys and sells; in an RFQ the dealer's bid is where the client can sell. ([Conventions](#conventions-used-throughout))
 - **Block trade**: a swap at or above the appropriate minimum block size; exempt from the Required Transaction execution methods and reported publicly with a delay. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
 - **Bootstrap**: solving for a curve's pillar values so that every input instrument reprices to its quote, here to $10^{-12}$. ([Section 2](#2-discount-curves-and-the-multi-curve-world))
 - **Box-constrained QP**: the hedger's quadratic programme with bounds on each instrument's lots, solved by accelerated projected gradient. ([Section 8](#8-hedging-and-the-dv01-ladder))
 - **Break**: a record present on one side of a reconciliation and missing or different on the other; explained from the journal or sent to operations. ([Section 14](#14-how-a-desk-would-use-this-and-how-real-desks-differ))
+- **Break-even half-spread**: the half-spread at which a won trade earns nothing on average: adverse move plus hedge cost plus inventory cost. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
 - **Business-day convention**: the rule for moving a date that falls on a holiday; modified following moves forward unless that crosses a month end, then back. ([Section 1](#1-rates-products-in-five-minutes))
 - **Bust**: the cancellation of a trade after execution, by the venue or because clearing rejected it; journaled as `PostTradeBust`. ([Section 14](#14-how-a-desk-would-use-this-and-how-real-desks-differ))
 - **Cancellation (numerical)**: loss of relative precision when nearly equal floating-point numbers are subtracted, as in a par swap's two legs. ([Section 13](#13-pitfalls-and-numerical-issues))
 - **Carry**: coupon income minus financing cost to a horizon, here in price terms; negative when repo costs more than the coupon earns. ([Section 4](#4-government-bonds-price-yield-carry-repo))
+- **Censored observation**: an outcome that bounds a quantity without showing it, such as a loss that says only that the best competing quote was nearer than ours. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
 - **Chain hash**: FNV-1a 64 over the previous frame's hash and this frame's payload; any change to an earlier frame changes every later hash. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Cheapest to deliver (CTD)**: the deliverable bond with the highest implied repo, equivalently the lowest net basis; a bond future's price and risk follow it. ([Section 5](#5-futures-ctd-basis-convexity))
 - **Clean and dirty price**: a bond's quoted price without accrued interest, and the amount actually paid, with it. ([Section 4](#4-government-bonds-price-yield-carry-repo))
@@ -1290,6 +1647,7 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Client side and dealer side**: the two views of one RFQ; message sides are the client's, our P&L, risk and markouts are the dealer's. ([Conventions](#conventions-used-throughout))
 - **CLOB**: central limit order book; anonymous bids and offers matched by price-time priority. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
 - **Clock tick**: a journaled Heartbeat with source id 0 recording that timers fired at the duty cycle's time, so replay fires them at the same place. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
+- **Closed-loop generator**: a load generator that waits for each answer before sending the next request, and so hides stalls; the opposite of a fixed schedule. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Common random numbers**: giving two compared strategies the same random draws, here keyed by RFQ id, so that noise cancels in their difference. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Compounded in arrears**: a floating amount equal to the daily overnight rate compounded over the period, known only at its end. ([Section 3](#3-swaps-schedules-pv-par-rate-dv01))
 - **Conversion factor**: a deliverable bond's price per unit face at the contract's notional coupon yield, rounded to four decimals for CBOT contracts. ([Section 5](#5-futures-ctd-basis-convexity))
@@ -1297,6 +1655,7 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Convexity adjustment (futures)**: the excess of a daily-settled futures rate over the forward rate; 0.38 bp for the December 2025 three-month SOFR future here. ([Section 5](#5-futures-ctd-basis-convexity))
 - **Coordinated omission**: the bias of a latency measurement that takes fewer samples while the system stalls; corrected by measuring from scheduled send times. ([Section 13](#13-pitfalls-and-numerical-issues))
 - **Covariance matrix ($\Sigma$)**: daily covariance of key-rate changes in bp squared; $r^\top \Sigma r$ is a book's one-day P&L variance. ([Section 8](#8-hedging-and-the-dv01-ladder))
+- **Cover model**: the learned distribution, per cell of tenor, size, dealer count and product, of the best competing distance from fair. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
 - **Cover price**: the second-best quote on the client's side of an RFQ, shown to the winner by some platforms. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
 - **CTD switch**: a change of the cheapest-to-deliver bond as yields move, which changes the future's DV01 abruptly. ([Section 13](#13-pitfalls-and-numerical-issues))
 - **Cut**: the time after which the day's books are closed; later messages belong to the next reconciliation. ([Section 14](#14-how-a-desk-would-use-this-and-how-real-desks-differ))
@@ -1306,6 +1665,7 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Deterministic replay**: re-running a journal through the same handlers and getting the same outputs byte for byte. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Discount factor**: $P(0, T)$, the value today of one unit paid at $T$. ([Section 2](#2-discount-curves-and-the-multi-curve-world))
 - **Done away**: an RFQ outcome in which the client reports trading elsewhere. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
+- **Draft (pre-registration)**: a registration whose status starts with "draft": it can be validated and is never run. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Drop copy**: a venue's or clearing house's independent copy of our executions, used for reconciliation. ([Section 14](#14-how-a-desk-would-use-this-and-how-real-desks-differ))
 - **Duty cycle**: one pass of the event loop over its rings, timers and agents, during which the clock is read once. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **DV01**: the change in value for a one basis point rise in rates, $PV(+1\,\text{bp}) - PV$, in currency per basis point; positive when the position gains as rates rise (a payer swap, a short bond). ([Conventions](#conventions-used-throughout))
@@ -1315,13 +1675,17 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **EUR STR**: the euro short-term rate, the ECB's overnight unsecured rate, published at 08:00 CET for the previous business day. ([Section 1](#1-rates-products-in-five-minutes))
 - **Event loop**: the single thread that drains input rings, runs handlers and timers and publishes outputs for one instrument group. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Ex-dividend period**: for gilts, the seven London business days before a coupon date, in which a buyer does not receive the coupon. ([Section 4](#4-government-bonds-price-yield-carry-repo))
+- **Factor hedge**: a hedge chosen to zero the level exposure, and the slope exposure when that pays for itself, under the fitted covariance. ([Section 8](#8-hedging-and-the-dv01-ladder))
+- **Family (of hypotheses)**: hypotheses registered together on one data set, read once, with the false-discovery rate controlled across them. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **FCM**: futures commission merchant, the clearing member that guarantees a customer's cleared trades and screens them against limits. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
 - **Fill probability**: the probability that a passive child fills completely within its time limit, from the queue model. ([Section 9](#9-smart-order-routing-in-fixed-income))
 - **Firm quote**: a price the client can trade on until it expires, with no last look; a subject quote is indicative. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
 - **Fixing calendar**: the days on which an index is published; kept apart from the payment calendar. ([Section 3](#3-swaps-schedules-pv-par-rate-dv01))
 - **Flyweight**: an object that gives a typed view of a region of a byte buffer without copying, re-pointed at each message. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Four-eyes control**: a change that needs a second person's approval, such as resetting the kill switch. ([Section 14](#14-how-a-desk-would-use-this-and-how-real-desks-differ))
+- **Generator lateness**: how late the load generator itself was against its schedule; reported beside a run, never used to drop it. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Gross DV01**: the sum of the absolute values of a ladder, a measure of how much offsetting risk a book holds. ([Section 8](#8-hedging-and-the-dv01-ladder))
+- **Guard metric**: a ratio of treatment to baseline, such as client DV01 traded, that must stay above a stated mark so that an arm cannot win by not trading. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Half-spread**: the distance of each side of a two-way quote from the reservation price before skew and size terms. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
 - **HdrHistogram**: a histogram with fixed relative precision over a wide range, used for every latency figure here. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Hedge ratio**: lots of a hedge instrument per unit of the position, here the ratio of DV01s. ([Section 8](#8-hedging-and-the-dv01-ladder))
@@ -1335,10 +1699,13 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **IMM swap**: a swap starting on an IMM date and ending on another. ([Section 3](#3-swaps-schedules-pv-par-rate-dv01))
 - **Implied repo**: the financing rate at which buying a bond and delivering it into the future breaks even. ([Section 5](#5-futures-ctd-basis-convexity))
 - **Improve limit**: the furthest a skewed quote may sit through fair value on the client's side, 0.25 bp by default. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
+- **Internalisation**: holding client risk inside a size and time budget so that later client flow or a resting order may offset it before the desk crosses. ([Section 8](#8-hedging-and-the-dv01-ladder))
 - **Journal**: the append-only, memory-mapped record of every input and output of the event loop, with sequence numbers and a chain hash. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Key-rate DV01**: the DV01 for a one basis point move in a single curve input or pillar, others held fixed; the ladder's entries. ([Section 3](#3-swaps-schedules-pv-par-rate-dv01))
 - **Kill function**: the ability to cancel every unexecuted order and quote at once, for all or part of the business (RTS 6 Article 12). ([Section 12](#12-regulation-uk-rts-6-fca-mar-7a-pra-ss518-mifir-transparency-dodd-frank-sef-rules))
 - **Large in scale**: a trade size above which pre-trade waivers and post-trade deferrals apply. ([Section 12](#12-regulation-uk-rts-6-fca-mar-7a-pra-ss518-mifir-transparency-dodd-frank-sef-rules))
+- **Late fill**: a fill reported after the order was believed finished; still a position, booked once by venue and execution id. ([Section 9](#9-smart-order-routing-in-fixed-income))
+- **Leave-one-out fair value**: the par rate of a quoted swap on a curve built without it, plus a slowly moving residual. ([Section 2](#2-discount-curves-and-the-multi-curve-world))
 - **Look**: one run of an experiment on a set of dates; the ledger counts them. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Look-ahead bias**: using, in a back-test, information that was not available at the simulated time. ([Section 13](#13-pitfalls-and-numerical-issues))
 - **Lookback, lockout, observation shift**: variants of an overnight leg's observation window that give the payer time to know the amount before paying. ([Section 3](#3-swaps-schedules-pv-par-rate-dv01))
@@ -1353,6 +1720,7 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Net DV01**: the sum of a ladder; zero net DV01 can leave large curve risk. ([Section 8](#8-hedging-and-the-dv01-ladder))
 - **OIS**: overnight index swap, whose floating leg pays the overnight rate compounded over each period. ([Section 1](#1-rates-products-in-five-minutes))
 - **OIS discounting**: discounting collateralised cash flows on the curve of the overnight rate paid on collateral. ([Section 2](#2-discount-curves-and-the-multi-curve-world))
+- **Open loop (fixed schedule)**: a load generator that sends at set times whatever the system does, so a stall delays every request scheduled in it. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
 - **Par rate**: the fixed rate at which a swap has zero present value. ([Section 3](#3-swaps-schedules-pv-par-rate-dv01))
 - **Parent and child orders**: the parent is the quantity to be worked; children are the orders sent to venues, never summing to more than the parent. ([Section 9](#9-smart-order-routing-in-fixed-income))
 - **Participation cap**: the largest fraction of a venue's visible and expected liquidity one routing decision may take. ([Section 9](#9-smart-order-routing-in-fixed-income))
@@ -1375,6 +1743,7 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **RTS 6**: Commission Delegated Regulation (EU) 2017/589 on organisational requirements for algorithmic trading, retained in UK law and applied by FCA MAR 7A. ([Section 12](#12-regulation-uk-rts-6-fca-mar-7a-pra-ss518-mifir-transparency-dodd-frank-sef-rules))
 - **Sawtooth forwards**: the step or zig-zag shape of instantaneous forwards produced by linear interpolation. ([Section 13](#13-pitfalls-and-numerical-issues))
 - **SBE**: Simple Binary Encoding, a fixed-layout binary message format whose fields sit at known offsets. ([Section 11](#11-low-latency-java-single-writer-off-heap-replay))
+- **Scorecard (venue)**: running averages of a venue's reject, cancel-reject, fill-shortfall and markout behaviour, charged as a penalty in the all-in price. ([Section 9](#9-smart-order-routing-in-fixed-income))
 - **SEF**: swap execution facility, a CFTC-registered venue for swaps offering an order book and RFQ. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
 - **Self-match prevention**: a venue rule that stops a participant's orders trading with each other; here the resting order is cancelled. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
 - **Settlement lag**: business days from trade to settlement: T+1 for Treasuries and gilts, T+2 for Bunds. ([Section 1](#1-rates-products-in-five-minutes))
@@ -1384,6 +1753,7 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **SOFR**: Secured Overnight Financing Rate, the USD overnight rate based on Treasury repo, published by the New York Fed at about 08:00 New York time for the previous business day. ([Section 1](#1-rates-products-in-five-minutes))
 - **SOFR future**: a CME contract settled on compounded (three-month) or averaged (one-month) SOFR over a reference period, quoted as 100 minus the rate. ([Section 5](#5-futures-ctd-basis-convexity))
 - **SONIA**: Sterling Overnight Index Average, the GBP overnight unsecured rate administered by the Bank of England, published at 09:00 London time for the previous business day. ([Section 1](#1-rates-products-in-five-minutes))
+- **Spent data**: seeds or sessions already generated or read under an earlier rule, refused for new registrations. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Spread-to-cover**: our quote's distance from mid minus the best competitor's, in bp; the variable of the back-tester's win probability. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Square-root impact law**: price impact proportional to daily volatility times the square root of size over average daily volume. ([Section 9](#9-smart-order-routing-in-fixed-income))
 - **Staged hedging**: sending part of a hedge plan now and the rest over time, trading impact cost against the risk carried meanwhile. ([Section 8](#8-hedging-and-the-dv01-ladder))
@@ -1392,6 +1762,8 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Survivorship bias**: drawing conclusions from records that survived a filter, such as trades, while the filtered-out ones, such as lost quotes and untraded RFQs, are invisible. ([Section 13](#13-pitfalls-and-numerical-issues))
 - **Swap data repository**: the registered entity that receives swap reports and disseminates the public part under CFTC Part 43. ([Section 12](#12-regulation-uk-rts-6-fca-mar-7a-pra-ss518-mifir-transparency-dodd-frank-sef-rules))
 - **Tension spline**: a spline between a cubic spline (zero tension) and linear interpolation (infinite tension). ([Section 2](#2-discount-curves-and-the-multi-curve-world))
+- **Tick hedge cost**: half an instrument's own tick times the tick value of a lot, plus basis and impact; large in basis points where DV01 is small. ([Section 8](#8-hedging-and-the-dv01-ladder))
+- **Time stop**: the longest time a residual may be held before the hedger crosses. ([Section 8](#8-hedging-and-the-dv01-ladder))
 - **Trade-through rule**: the US equity rule against executing at a worse price than one displayed elsewhere; Treasuries and swaps have no counterpart. ([Section 9](#9-smart-order-routing-in-fixed-income))
 - **Traded away**: an RFQ outcome in which the client traded with another dealer on the same request. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
 - **Truncation error**: the error of a finite-difference derivative from the Taylor terms it ignores; for a central bump, of order bump squared. ([Section 13](#13-pitfalls-and-numerical-issues))
@@ -1404,4 +1776,5 @@ One or two sentences per term, alphabetical, each pointing to the section that u
 - **Win probability (hit rate)**: the probability that a quote at a given distance from fair value wins the RFQ; a declared logistic band here. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
 - **Winner's curse**: the bias in a winning quote from winning only when one's own error favours the client; grows like $\sqrt{2 \ln n}$ with $n$ dealers. ([Section 7](#7-dealer-market-making-inventory-skew-cover-prices-winners-curse))
 - **Workup**: a period after a CLOB trade in which more size can trade at the same price, first only for the trade's participants. ([Section 6](#6-how-rates-trade-electronically-rfq-versus-clob-sefs-workup))
+- **Zero-profit competitors**: simulated competitors whose winning half-spread equals the average adverse move plus their costs, so that they earn nothing on average. ([Section 10](#10-back-testing-honestly-pre-registration-holdouts-attribution))
 - **Z-spread**: the constant continuously compounded spread over the OIS zero curve that reprices a bond. ([Section 4](#4-government-bonds-price-yield-carry-repo))

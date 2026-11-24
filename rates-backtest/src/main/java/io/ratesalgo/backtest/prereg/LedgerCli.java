@@ -11,8 +11,12 @@ import java.util.Map;
  * Verifies an experiment ledger and prints its looks per data set.
  *
  * <pre>
- *   LedgerCli [--ledger data/ledger/ledger.jsonl]
+ *   LedgerCli [--ledger data/ledger/ledger.jsonl] [--bh FAMILY_FILE | --bh family:ID | --bh data_set:KEY]
  * </pre>
+ *
+ * <p>{@code --bh} prints the Benjamini-Hochberg adjusted p and the verdict of every primary test
+ * of a registered family ({@link FamilyAdjustment}); the adjustment is computed here, on request,
+ * and never stored in a row.
  *
  * <p>Exit status 0 when the hash chain holds, 1 when it is broken or the file is missing. The
  * looks report ({@link DataSets#report}) is information: repeated looks at one data set are
@@ -47,6 +51,16 @@ public final class LedgerCli {
     }
     out.println("ledger chain verified: " + entries.size() + " lines");
     out.print(DataSets.report(entries));
+    if (opts.containsKey("bh")) {
+      final FamilyAdjustment.Family family;
+      try {
+        family = FamilyAdjustment.Family.of(opts.get("bh"));
+      } catch (final IllegalArgumentException e) {
+        out.println(e.getMessage());
+        return 1;
+      }
+      out.print(FamilyAdjustment.report(entries, family));
+    }
     return 0;
   }
 }

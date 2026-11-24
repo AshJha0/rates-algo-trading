@@ -8,6 +8,7 @@ import io.ratesalgo.common.time.ManualClock;
 import io.ratesalgo.messages.sbe.Side;
 import io.ratesalgo.router.sim.SimConfig;
 import io.ratesalgo.router.sim.SimMarket;
+import io.ratesalgo.router.sim.SimulatedMarket;
 import java.lang.management.ManagementFactory;
 import org.junit.jupiter.api.Test;
 
@@ -30,14 +31,14 @@ class RouterAllocationTest {
   }
 
   private static void runParents(
-      final SmartOrderRouter router, final SimMarket market, final ManualClock clock,
-      final SimConfig config, final long firstId, final int count) {
+      final SmartOrderRouter router, final SimulatedMarket market, final ManualClock clock,
+      final long stepNanos, final long firstId, final int count) {
     for (long id = firstId; id < firstId + count; id++) {
       final Side side = (id & 1) == 0 ? Side.Buy : Side.Sell;
       final double urgency = (id % 3) * 0.5;
       router.submit(id, 10, side, (10 + id % 30) * MM, urgency, 0L);
       for (int i = 0; i < 20_000 && router.isActive(id); i++) {
-        clock.advance(config.stepNanos());
+        clock.advance(stepNanos);
         market.step();
         market.drain(router);
         router.poll();
@@ -88,7 +89,7 @@ class RouterAllocationTest {
         fail("the router did not reach an allocation-free steady state in 3000 parents");
       }
       final long start = allocatedBytes();
-      runParents(router, market, clock, config, id, 20);
+      runParents(router, market, clock, config.stepNanos(), id, 20);
       id += 20;
       lastBytes = allocatedBytes() - start;
       quiet = lastBytes == 0 ? quiet + 1 : 0;
@@ -105,5 +106,58 @@ class RouterAllocationTest {
             + " windows of 20 parents allocated nothing, after "
             + windows
             + " windows");
+  }
+
+  /**
+   * The ladder model's path too: the consolidated sweep, the scorecard, trade prints, queue
+   * tracking, markouts and the learned rates, on the benchmark market, which rejects some orders
+   * and is itself allocation-free. Measured the same way as the touch model above.
+   */
+  @Test
+  void ladderModelPathIsAllocationFreeAfterWarmUp() {
+    final ManualClock clock = new ManualClock();
+    final io.ratesalgo.router.sim.ImpactConfig cfg =
+        io.ratesalgo.router.backtest.RouterBenchmarkScenario.ust10yImpactV1().market();
+    final io.ratesalgo.router.sim.ImpactMarket market =
+        new io.ratesalgo.router.sim.ImpactMarket(cfg, 99L, clock);
+    final long[] frames = new long[1];
+    final FrameSink counting = (templateId, version, buffer, offset, length) -> frames[0]++;
+    final SmartOrderRouter router =
+        new SmartOrderRouter(
+            RouterPresets.ladder(),
+            cfg.declaredVenues(0.25, 5),
+            market,
+            market,
+            counting,
+            clock,
+            RandomSource.seeded(17L),
+            8,
+            256,
+            1L,
+            RouterTimeouts.DEFAULT,
+            ExecutionModel.defaults());
+    final int measured = 3;
+    long id = 1;
+    int quiet = 0;
+    int windows = 0;
+    long lastBytes = 0;
+    while (quiet < 5 + measured || windows < 50) {
+      if (++windows > 150) {
+        fail("the ladder model did not reach an allocation-free steady state in 3000 parents");
+      }
+      // the benchmark market fills lot by lot; the child book holds execution ids only while
+      // their child is in the book, so 3000 parents in one day need no reset between windows
+      final long start = allocatedBytes();
+      runParents(router, market, clock, cfg.stepNanos(), id, 20);
+      id += 20;
+      lastBytes = allocatedBytes() - start;
+      quiet = lastBytes == 0 ? quiet + 1 : 0;
+    }
+    assertEquals(0L, lastBytes, "bytes allocated on the ladder path after warm-up");
+    assertTrue(market.rejects() > 0);
+    System.out.println(
+        "RouterAllocationTest (ladder): " + router.decisions() + " decisions, " + frames[0]
+            + " frames, the last " + quiet + " windows of 20 parents allocated nothing, after "
+            + windows + " windows");
   }
 }

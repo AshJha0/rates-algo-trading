@@ -119,9 +119,9 @@ class SupervisorTest {
       await(() -> p.failure() != null, "the gateway thread failing");
       await(p::withdrawn, "the withdrawal");
       await(() -> goneFromTheVenues(p), "the venues seeing the logout");
-      assertTrue(p.haltReason().startsWith("gateway thread stopped"), p.haltReason());
+      assertTrue(p.haltReason().startsWith("gateway thread rates-d2c stopped"), p.haltReason());
       assertTrue(p.failure() instanceof IllegalStateException);
-      assertTrue(p.notReadyReason().startsWith("halted: gateway thread stopped"), p.notReadyReason());
+      assertTrue(p.notReadyReason().startsWith("halted: gateway thread rates-d2c stopped"), p.notReadyReason());
     } finally {
       p.close();
     }
@@ -189,11 +189,106 @@ class SupervisorTest {
       });
       entered.await();
       await(() -> p.haltReason() != null, "the supervisor seeing the stall");
-      assertTrue(p.haltReason().startsWith("gateway thread made no duty cycle"), p.haltReason());
+      assertTrue(p.haltReason().startsWith("gateway thread rates-d2c made no duty cycle"), p.haltReason());
       await(p::socketsClosed, "the sockets being closed");
       await(() -> goneFromTheVenues(p), "the venues seeing the disconnect");
     } finally {
       release.countDown();
+      p.close();
+    }
+  }
+
+  /** Round 6 thread layout (DR-R6-L02): one thread per session, one for the feed, one for the venues. */
+  @Test
+  void eachSessionAndTheFeedHaveAThreadOfTheirOwnWithTheirTuning() {
+    final TradingProcess p =
+        TradingProcess.start(
+            new TradingProcess.Options(dir, 7L, DeskSettings.defaults())
+                .withTuning(TradingProcess.Tuning.DEFAULT.withGatewayThreads("yield", -1)));
+    try {
+      p.step(60 * SECOND, STEP);
+      assertNull(p.gatewayThread(TradingProcess.GatewayThread.D2C), "no threads while stepped");
+      p.startThreads(1.0);
+      assertEquals(
+          java.util.List.of(TradingProcess.GatewayThread.D2C, TradingProcess.GatewayThread.CLOB,
+              TradingProcess.GatewayThread.FEED, TradingProcess.GatewayThread.VENUES),
+          p.gatewayThreads(), "the recorded market's threads, and no others");
+      assertNull(p.gatewayThread(TradingProcess.GatewayThread.CLOB2), "no thread for a venue this market lacks");
+      for (final TradingProcess.GatewayThread t : p.gatewayThreads()) {
+        final io.ratesalgo.core.DutyCycleRunner r = p.gatewayThread(t);
+        assertEquals(t.threadName(), r.name());
+        await(() -> r.beats() > 10, t + " cycling");
+        assertFalse(r.isPinned(), "no CPU given, nothing pinned");
+      }
+      assertEquals(1, p.loopRunners().size());
+      assertThrows(IllegalStateException.class, () -> p.step(STEP, STEP), "a threaded process is not stepped");
+      assertThrows(IllegalStateException.class, p::driveGateways);
+      assertNull(p.haltReason());
+    } finally {
+      p.close();
+    }
+    assertEquals("park", TradingProcess.Tuning.DEFAULT.gatewayIdleStrategy(), "the old 200 us pause by default");
+    assertEquals("busy-spin", TradingProcess.Tuning.LOW_LATENCY.gatewayIdleStrategy());
+    assertTrue(TradingProcess.Tuning.LOW_LATENCY.conflateCurveInputs());
+    assertFalse(TradingProcess.Tuning.DEFAULT.conflateCurveInputs());
+    assertEquals(io.ratesalgo.core.JournalMode.DIRECT, TradingProcess.Tuning.DEFAULT.journals().mode());
+    assertEquals(io.ratesalgo.core.JournalMode.RING, TradingProcess.Tuning.LOW_LATENCY.journals().mode());
+    assertThrows(IllegalArgumentException.class, () -> TradingProcess.Tuning.DEFAULT.withGatewayThreads("sleep", -1));
+    assertThrows(IllegalArgumentException.class, () -> TradingProcess.Tuning.DEFAULT.withJournals(null));
+  }
+
+  /**
+   * A stuck CLOB thread: the supervisor closes the CLOB socket only, the one thing it may do to a
+   * session it does not own, and the D2C thread withdraws its own session in order (DR-RV-S01).
+   */
+  @Test
+  void aStuckClobThreadHasItsSocketClosedWhileTheD2cThreadWithdrawsItsOwnSession() throws Exception {
+    final TradingProcess p = start(2 * SECOND, SECOND / 2);
+    final CountDownLatch entered = new CountDownLatch(1);
+    final CountDownLatch release = new CountDownLatch(1);
+    try {
+      p.step(6 * 60 * SECOND, STEP);
+      p.startThreads(1.0);
+      p.injectGatewayFault(TradingProcess.GatewayThread.CLOB, () -> {
+        entered.countDown();
+        try {
+          release.await();
+        } catch (final InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      });
+      entered.await();
+      await(() -> p.haltReason() != null, "the supervisor seeing the stall");
+      assertTrue(p.haltReason().startsWith("gateway thread rates-clob made no duty cycle"), p.haltReason());
+      await(p::socketsClosed, "the CLOB socket being closed");
+      await(() -> p.d2cSession().haltState() == VenueSession.WITHDRAWN, "the D2C thread withdrawing");
+      await(() -> goneFromTheVenues(p), "the venues seeing the logout and the disconnect");
+      assertFalse(p.d2cSession().isActive(), "the D2C session logged out on its own thread");
+      assertTrue(p.gatewayThread(TradingProcess.GatewayThread.D2C).isRunning(), "the D2C thread was not touched");
+    } finally {
+      release.countDown();
+      p.close();
+    }
+  }
+
+  /** A feed thread that dies halts the process; each session's own thread withdraws it. */
+  @Test
+  void aFeedThreadThatDiesHaltsAndEachSessionThreadWithdrawsItsSession() {
+    final TradingProcess p = start(2 * SECOND, 60 * SECOND);
+    try {
+      p.step(6 * 60 * SECOND, STEP);
+      p.startThreads(1.0);
+      p.injectGatewayFault(TradingProcess.GatewayThread.FEED, () -> {
+        throw new IllegalStateException("feed fault");
+      });
+      await(() -> p.haltReason() != null, "the halt");
+      assertTrue(p.haltReason().startsWith("gateway thread rates-feed stopped"), p.haltReason());
+      await(p::withdrawn, "both sessions withdrawing");
+      await(() -> goneFromTheVenues(p), "the venues seeing the logouts");
+      assertFalse(p.socketsClosed(), "orderly logouts, no socket closed from outside");
+      assertTrue(p.failure() instanceof IllegalStateException);
+      assertFalse(p.gatewayThread(TradingProcess.GatewayThread.FEED).isAlive());
+    } finally {
       p.close();
     }
   }

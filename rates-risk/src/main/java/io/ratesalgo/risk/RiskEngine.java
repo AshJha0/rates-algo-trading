@@ -225,12 +225,12 @@ public final class RiskEngine {
     final Instrument inst = directory.byIndex(i);
     final int c = inst.currency().index();
     final double px = Decimal9.toDouble(fairMid);
+    // an unmarked instrument has no position: onFill, the only writer of position, marks first
+    // and marked is never cleared, so the first mark adds nothing to the mark value
     if (marked[i]) {
       markValue[c] += inst.major(position[i]) * (px - mark[i]) * inst.quoteValue();
-    } else {
-      markValue[c] += inst.major(position[i]) * px * inst.quoteValue();
-      marked[i] = true;
     }
+    marked[i] = true;
     mark[i] = px;
     postTrade(c, -1);
   }
@@ -520,13 +520,17 @@ public final class RiskEngine {
     if (room <= 0) {
       return 0L;
     }
-    // bisection on the envelope, which is monotone in the added quantity
+    // bisection on the envelope, which is monotone in the added quantity. Invariant: lo is zero or
+    // passes, hi fails. Run to hi - lo == 1 so lo is the exact edge: the old 48-step cap left up
+    // to 2^15 units on the table when room was near Long.MAX_VALUE (no position or size limit).
+    // At most 63 halvings, since 0 <= lo < hi <= Long.MAX_VALUE, and lo + (hi - lo) / 2 cannot
+    // overflow.
     if (envelopeQuiet(i, buy ? room : 0L, buy ? 0L : room)) {
       return room;
     }
     long lo = 0L;
     long hi = room;
-    for (int iter = 0; iter < 48 && hi - lo > 1; iter++) {
+    while (hi - lo > 1) {
       final long mid = lo + (hi - lo) / 2;
       if (envelopeQuiet(i, buy ? mid : 0L, buy ? 0L : mid)) {
         lo = mid;
@@ -905,10 +909,15 @@ public final class RiskEngine {
     for (int k = 0; k < K; k++) {
       final double base = ladder[c][k];
       net += base;
-      final double hi = base + resHiAgg[c][k] - resHi[i][k] + newHi[k];
-      final double lo = base + resLoAgg[c][k] - resLo[i][k] + newLo[k];
-      final double oldHi = base + resHiAgg[c][k];
-      final double oldLo = base + resLoAgg[c][k];
+      // before and after share every term but this instrument's own reservation, so with nothing
+      // added they are equal to the last bit and any addition can only raise the figure: the
+      // comparison needs no rounding allowance
+      final double othersHi = base + resHiAgg[c][k] - resHi[i][k];
+      final double othersLo = base + resLoAgg[c][k] - resLo[i][k];
+      final double hi = othersHi + newHi[k];
+      final double lo = othersLo + newLo[k];
+      final double oldHi = othersHi + resHi[i][k];
+      final double oldLo = othersLo + resLo[i][k];
       final double lim = limits.bucketPv01(k);
       final boolean hiOver = hi > allowed(lim, oldHi);
       if (hiOver || -lo > allowed(lim, -oldLo)) {
@@ -919,11 +928,13 @@ public final class RiskEngine {
     }
     final double up = unitParallel[i] * inst.major(pendingBuy[i] + buy);
     final double down = -unitParallel[i] * inst.major(pendingSell[i] + sell);
-    final double netHi = net + resNetHiAgg[c] - resNetHi[i] + Math.max(0.0, Math.max(up, down));
-    final double netLo = net + resNetLoAgg[c] - resNetLo[i] + Math.min(0.0, Math.min(up, down));
+    final double othersNetHi = net + resNetHiAgg[c] - resNetHi[i];
+    final double othersNetLo = net + resNetLoAgg[c] - resNetLo[i];
+    final double netHi = othersNetHi + Math.max(0.0, Math.max(up, down));
+    final double netLo = othersNetLo + Math.min(0.0, Math.min(up, down));
     final double netLim = limits.netPv01();
-    final boolean netHiOver = netHi > allowed(netLim, net + resNetHiAgg[c]);
-    if (netHiOver || -netLo > allowed(netLim, -(net + resNetLoAgg[c]))) {
+    final boolean netHiOver = netHi > allowed(netLim, othersNetHi + resNetHi[i]);
+    if (netHiOver || -netLo > allowed(netLim, -(othersNetLo + resNetLo[i]))) {
       return report
           ? record(LimitKind.NetDv01, c, netLim, netHiOver ? netHi : netLo)
           : LimitKind.NetDv01.value();
@@ -982,10 +993,12 @@ public final class RiskEngine {
 
   /**
    * The level a worst-case figure may reach: the limit, or where it already is when that is past
-   * the limit, with a relative tolerance for the rounding of the incremental sums.
+   * the limit. No rounding allowance: the callers compute {@code current} with the same partial
+   * sums as the figure after the order, so an order that adds nothing leaves it exactly equal. An
+   * allowance of 1e-9 relative let up to 10 minor units through on a pillar already past its limit.
    */
   private static double allowed(final double limit, final double current) {
-    return current > limit ? current + 1e-9 * (1.0 + current) : limit;
+    return Math.max(limit, current);
   }
 
   private boolean riskReducing(final int i, final long signedQuantity) {

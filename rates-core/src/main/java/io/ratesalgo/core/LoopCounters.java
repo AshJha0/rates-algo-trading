@@ -45,8 +45,11 @@ public final class LoopCounters {
   /** Must-deliver messages lost because the retry buffer was full as well. */
   public static final int OUTBOUND_RETRY_LOST = 10;
 
+  /** Conflatable inputs replaced by a newer one with the same key before dispatch (never journaled). */
+  public static final int CONFLATED = 11;
+
   /** Number of counters. */
-  public static final int COUNT = 11;
+  public static final int COUNT = 12;
 
   private static final int STRIDE = 64;
 
@@ -76,6 +79,7 @@ public final class LoopCounters {
       case OUTBOUND_RETRY_QUEUED -> "outboundRetryQueued";
       case OUTBOUND_RETRIED -> "outboundRetried";
       case OUTBOUND_RETRY_LOST -> "outboundRetryLost";
+      case CONFLATED -> "conflated";
       default -> throw new IllegalArgumentException("no counter " + id);
     };
   }

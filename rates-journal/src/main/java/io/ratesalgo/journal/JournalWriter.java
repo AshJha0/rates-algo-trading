@@ -4,11 +4,11 @@ import static io.ratesalgo.journal.JournalFormat.CAPACITY_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.CHAIN_HASH_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.CREATED_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.FILE_HEADER_LENGTH;
-import static io.ratesalgo.journal.JournalFormat.FORMAT_VERSION;
 import static io.ratesalgo.journal.JournalFormat.FORMAT_VERSION_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.FRAME_HEADER_LENGTH;
 import static io.ratesalgo.journal.JournalFormat.FRAME_LENGTH_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.GENESIS_HASH;
+import static io.ratesalgo.journal.JournalFormat.HASH_ALGORITHM_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.HEADER_LENGTH_OFFSET;
 import static io.ratesalgo.journal.JournalFormat.MAGIC;
 import static io.ratesalgo.journal.JournalFormat.MAGIC_OFFSET;
@@ -57,6 +57,7 @@ public final class JournalWriter implements AutoCloseable {
   private final UnsafeBuffer buffer;
   private final Clock clock;
   private final int capacity;
+  private final int hashAlgorithm;
 
   private int position;
   private long nextSequence;
@@ -68,11 +69,13 @@ public final class JournalWriter implements AutoCloseable {
       final Clock clock,
       final int position,
       final long nextSequence,
-      final long chainHash) {
+      final long chainHash,
+      final int hashAlgorithm) {
     this.mapped = mapped;
     this.buffer = new UnsafeBuffer(mapped);
     this.clock = clock;
     this.capacity = mapped.capacity();
+    this.hashAlgorithm = hashAlgorithm;
     this.position = position;
     this.nextSequence = nextSequence;
     this.chainHash = chainHash;
@@ -84,7 +87,31 @@ public final class JournalWriter implements AutoCloseable {
    * @throws IllegalArgumentException if the file exists or the capacity cannot hold a header
    */
   public static JournalWriter create(final Path path, final int capacityBytes, final Clock clock) {
-    return create(path, capacityBytes, clock, 1L, GENESIS_HASH);
+    return create(path, capacityBytes, clock, ChainHash.DEFAULT);
+  }
+
+  /**
+   * Creates a new journal file chained with {@code hashAlgorithm} ({@link ChainHash#FNV1A} writes
+   * format version 1, anything else version 2 with the algorithm in the header).
+   *
+   * @throws IllegalArgumentException if the file exists, the capacity cannot hold a header or the
+   *     algorithm is unknown
+   */
+  public static JournalWriter create(
+      final Path path, final int capacityBytes, final Clock clock, final int hashAlgorithm) {
+    return create(path, capacityBytes, clock, 1L, GENESIS_HASH, hashAlgorithm);
+  }
+
+  /** Creates an FNV-1a segment whose first frame continues the chain at {@code firstSequence}. */
+  static JournalWriter create(
+      final Path path, final int capacityBytes, final Clock clock, final long firstSequence, final long previousHash) {
+    return create(path, capacityBytes, clock, firstSequence, previousHash, ChainHash.FNV1A);
+  }
+
+  /** {@link #create(Path, int, Clock, int, java.util.function.IntPredicate)} for an FNV-1a journal. */
+  static JournalWriter create(
+      final Path path, final int capacityBytes, final Clock clock, final java.util.function.IntPredicate keepGoing) {
+    return create(path, capacityBytes, clock, ChainHash.FNV1A, keepGoing);
   }
 
   /** Creates a segment whose first frame continues the chain at {@code firstSequence}. */
@@ -93,8 +120,9 @@ public final class JournalWriter implements AutoCloseable {
       final int capacityBytes,
       final Clock clock,
       final long firstSequence,
-      final long previousHash) {
-    return create(path, capacityBytes, clock, firstSequence, previousHash, chunks -> true);
+      final long previousHash,
+      final int hashAlgorithm) {
+    return create(path, capacityBytes, clock, firstSequence, previousHash, hashAlgorithm, chunks -> true);
   }
 
   /**
@@ -107,8 +135,9 @@ public final class JournalWriter implements AutoCloseable {
       final Path path,
       final int capacityBytes,
       final Clock clock,
+      final int hashAlgorithm,
       final java.util.function.IntPredicate keepGoing) {
-    return create(path, capacityBytes, clock, 1L, GENESIS_HASH, keepGoing);
+    return create(path, capacityBytes, clock, 1L, GENESIS_HASH, hashAlgorithm, keepGoing);
   }
 
   private static JournalWriter create(
@@ -117,9 +146,13 @@ public final class JournalWriter implements AutoCloseable {
       final Clock clock,
       final long firstSequence,
       final long previousHash,
+      final int hashAlgorithm,
       final java.util.function.IntPredicate keepGoing) {
     if (capacityBytes < FILE_HEADER_LENGTH + FRAME_HEADER_LENGTH) {
       throw new IllegalArgumentException("capacity too small: " + capacityBytes);
+    }
+    if (!ChainHash.isKnown(hashAlgorithm)) {
+      throw new IllegalArgumentException("unknown chain hash algorithm " + hashAlgorithm);
     }
     final File file = path.toFile();
     if (file.exists()) {
@@ -134,11 +167,15 @@ public final class JournalWriter implements AutoCloseable {
       mapped.order(JournalFormat.BYTE_ORDER);
       final UnsafeBuffer header = new UnsafeBuffer(mapped);
       header.putInt(MAGIC_OFFSET, MAGIC);
-      header.putShort(FORMAT_VERSION_OFFSET, (short) FORMAT_VERSION);
+      header.putShort(FORMAT_VERSION_OFFSET, (short) JournalFormat.formatVersionFor(hashAlgorithm));
       header.putShort(HEADER_LENGTH_OFFSET, (short) FILE_HEADER_LENGTH);
       header.putInt(CAPACITY_OFFSET, capacityBytes);
       header.putLong(CREATED_OFFSET, clock.epochNanos());
-      final JournalWriter writer = new JournalWriter(mapped, clock, FILE_HEADER_LENGTH, firstSequence, previousHash);
+      if (hashAlgorithm != ChainHash.FNV1A) {
+        header.putShort(HASH_ALGORITHM_OFFSET, (short) hashAlgorithm);
+      }
+      final JournalWriter writer =
+          new JournalWriter(mapped, clock, FILE_HEADER_LENGTH, firstSequence, previousHash, hashAlgorithm);
       created = true;
       return writer;
     } finally {
@@ -207,8 +244,10 @@ public final class JournalWriter implements AutoCloseable {
     final UnsafeBuffer buffer = new UnsafeBuffer(mapped);
     boolean opened = false;
     try {
-      final long[] tail = new JournalReader(buffer, null, firstSequence, previousHash).scanToEnd();
-      final JournalWriter writer = new JournalWriter(mapped, clock, (int) tail[0], tail[1] + 1, tail[2]);
+      final JournalReader reader = new JournalReader(buffer, null, firstSequence, previousHash);
+      final long[] tail = reader.scanToEnd();
+      final JournalWriter writer =
+          new JournalWriter(mapped, clock, (int) tail[0], tail[1] + 1, tail[2], reader.hashAlgorithm());
       opened = true;
       return writer;
     } finally {
@@ -263,7 +302,10 @@ public final class JournalWriter implements AutoCloseable {
 
     final int frame = position;
     final long sequence = nextSequence;
-    final long hash = ChainHash.next(chainHash, payload, offset, length);
+    final long hash =
+        hashAlgorithm == ChainHash.WORD64
+            ? ChainHash.word64(chainHash, payload, offset, length)
+            : ChainHash.next(chainHash, payload, offset, length);
 
     buffer.putBytes(frame + FRAME_HEADER_LENGTH, payload, offset, length);
     final int padding = frameLength - FRAME_HEADER_LENGTH - length;
@@ -342,6 +384,50 @@ public final class JournalWriter implements AutoCloseable {
   }
 
   /**
+   * Dirties again the pages from the one holding the write position to {@code windowBytes} beyond
+   * it, so that the appending thread's next stores find them writable (review finding L9). On a
+   * shared file mapping the operating system write-protects a page when it writes it back, to see
+   * the next change; the first store after that takes a fault, 0.5 to 2 microseconds and sometimes
+   * far more. Pages touched when the segment was prepared are written back within about half a
+   * minute, long before a quiet loop reaches them, so touching them once is not enough. The
+   * segment preparer calls this every {@link SegmentedJournal.Options#refaultPeriodNanos}.
+   *
+   * <p>Runs on another thread than the appender, so it must not change a byte the appender may
+   * have written: each touch is a compare-and-set of zero to zero on the last eight bytes of a
+   * page. It stores only where the bytes are zero, and storing zero over zero changes nothing,
+   * whatever the appender does before or after; a locked compare-and-set needs the page writable
+   * whether or not it succeeds, which is what takes the fault here instead of on the appender. The
+   * position is read without synchronisation; a stale value only moves the window back. Yields
+   * every {@link #PRETOUCH_PAGES_PER_CHECK} pages, for the reason {@link #pretouch()} gives.
+   *
+   * @return the pages touched
+   */
+  // The yield is for its safepoint check on the return from native code, not for scheduling.
+  @SuppressWarnings("ThreadPriorityCheck")
+  int refault(final int windowBytes) {
+    final int from = position & -PAGE_SIZE;
+    final int to = (int) Math.min(capacity, (long) from + windowBytes);
+    int pages = 0;
+    for (int page = from; page + PAGE_SIZE <= to; page += PAGE_SIZE) {
+      buffer.compareAndSetLong(page + PAGE_SIZE - Long.BYTES, 0L, 0L);
+      if (++pages % PRETOUCH_PAGES_PER_CHECK == 0) {
+        Thread.yield();
+      }
+    }
+    return pages;
+  }
+
+  /** The mapping, for tests of {@link PageLock}. */
+  MappedByteBuffer mapped() {
+    return mapped;
+  }
+
+  /** Locks this file's pages in memory where the platform allows; see {@link PageLock}. */
+  boolean lockPages() {
+    return !closed && PageLock.lock(mapped);
+  }
+
+  /**
    * Unmaps without forcing, for a segment that is deleted next (an unused prepared segment): its
    * only stores are pretouch zeros, so writing them back to disk is wasted (DR-INT-10).
    */
@@ -350,6 +436,11 @@ public final class JournalWriter implements AutoCloseable {
       closed = true;
       IoUtil.unmap(mapped);
     }
+  }
+
+  /** The {@link ChainHash} algorithm this file is chained with. */
+  public int hashAlgorithm() {
+    return hashAlgorithm;
   }
 
   /** The sequence the next appended frame will get. */

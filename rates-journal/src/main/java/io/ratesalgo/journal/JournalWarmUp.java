@@ -23,7 +23,8 @@ import org.agrona.concurrent.UnsafeBuffer;
  *
  * <p>The scratch journals use 64 KiB segments and a 64 KiB ring and are appended to in a tight loop
  * until each path has waited {@link #WAITS} times (or a bound on appends is reached), then closed
- * and deleted. It takes well under a second and allocates; call it before the loop's own warm-up.
+ * and deleted. A third scratch journal is chained with {@link ChainHash#WORD64}, so the append's
+ * hash branch has seen both algorithms. It takes well under a second and allocates; call it before the loop's own warm-up.
  */
 public final class JournalWarmUp {
 
@@ -34,6 +35,7 @@ public final class JournalWarmUp {
   private static final int RING = 64 << 10;
   private static final int MAX_APPENDS = 4_000_000;
   private static final int PAYLOAD = 57;
+  private static final int HASH_APPENDS = 20_000;
 
   /** Waits seen on each path. */
   public record Result(long rollWaits, long producerWaits) {}
@@ -55,6 +57,14 @@ public final class JournalWarmUp {
           direct.append(1, 0, payload, 0, PAYLOAD);
         }
         rollWaits = direct.rollWaits();
+      }
+      // both chain hashes, so neither branch of the append is compiled as never taken: a loop on
+      // WORD64 journals would otherwise deoptimise on its first frame (DR-R6-L03)
+      try (SegmentedJournal word = SegmentedJournal.create(scratchDir, "warmup-word64", SEGMENT, clock, true,
+          ChainHash.WORD64)) {
+        for (int i = 0; i < HASH_APPENDS; i++) {
+          word.append(1, 0, payload, 0, PAYLOAD);
+        }
       }
       try (RingJournal ring =
           RingJournal.start(

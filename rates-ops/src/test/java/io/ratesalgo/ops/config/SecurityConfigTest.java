@@ -318,6 +318,6 @@ class SecurityConfigTest {
   private static ProcessConfig withFix(final ProcessConfig c, final ProcessConfig.FixSettings fix) {
     return new ProcessConfig(c.name(), c.role(), c.colour(), c.bindAddress(), c.port(), c.controlTokenEnv(),
         c.journalDirectory(), c.journalCapacityBytes(), c.quotingEnabledAtStart(), c.instruments(),
-        c.maxMessagesPerSecond(), c.retentionYears(), c.loopIdleStrategy(), c.loopCpu(), null, fix);
+        c.maxMessagesPerSecond(), c.retentionYears(), c.loopIdleStrategy(), c.loopCpu(), null, fix, c.runtime());
   }
 }

@@ -9,7 +9,7 @@ A limit breach is a pre-trade check refusing a message (`RiskLimitBreach` with `
 
 ## Immediate action
 
-1. If `QuotesLiveAfterKill` fires, engage the kill switch by hand: `POST /control/kill` with `X-Control-Token` and your party id in `X-Requested-By`. A 200 means both venues confirmed the withdrawal; a 503 carries the reason, and the process may have closed its sockets so that the venues cancel on disconnect. On a 503, call each venue to cancel and confirm. Check the result with `GET /control/status` and the same token header (`halted`, `withdrawn`, `liveQuotes`). This is the most urgent alert the platform raises.
+1. If `QuotesLiveAfterKill` fires, engage the kill switch by hand: `POST /control/kill` with `X-Control-Token` and your party id in `X-Requested-By`. A 200 means every venue confirmed the withdrawal (two on the recorded desk, four on the v2 profile); a 503 carries the reason, and the process may have closed its sockets so that the venues cancel on disconnect. On a 503, call each venue to cancel and confirm. Check the result with `GET /control/status` and the same token header (`halted`, `withdrawn`, `liveQuotes`). This is the most urgent alert the platform raises.
 2. Establish which limit, the observed value and the limit value from the breach message.
 3. Decide with the risk manager whether the position is to be reduced (hedge) or the limit was wrong. A limit is changed only by a reviewed configuration change (RTS 6 Article 11, docs/AI_USE_POLICY.md); nobody raises a limit to clear an alert.
 4. Quoting is re-enabled by the head of desk with the risk manager's agreement, recorded in the incident log. After a manual kill the process is halted for good (API_SPEC.md Section 18.9) and quoting needs a restart.

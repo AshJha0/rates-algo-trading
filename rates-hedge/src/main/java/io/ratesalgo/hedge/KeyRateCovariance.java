@@ -39,6 +39,42 @@ public final class KeyRateCovariance {
     return cov;
   }
 
+  /**
+   * From a full matrix in bp squared per day (copied), for a fitted model such as {@link
+   * FactorModel} (review Q2). The matrix must be symmetric with a non-negative diagonal.
+   */
+  public static KeyRateCovariance ofMatrix(final double[][] bp2) {
+    if (bp2.length != K) {
+      throw new IllegalArgumentException("need a " + K + " x " + K + " matrix");
+    }
+    for (int i = 0; i < K; i++) {
+      if (bp2[i].length != K || !(bp2[i][i] >= 0.0)) {
+        throw new IllegalArgumentException("row " + i);
+      }
+    }
+    final KeyRateCovariance cov = new KeyRateCovariance();
+    for (int i = 0; i < K; i++) {
+      for (int j = 0; j < K; j++) {
+        if (!Double.isFinite(bp2[i][j]) || Math.abs(bp2[i][j] - bp2[j][i]) > 1e-9 * (1.0 + Math.abs(bp2[i][j]))) {
+          throw new IllegalArgumentException("not symmetric at (" + i + ", " + j + ")");
+        }
+        cov.sigma[i][j] = bp2[i][j];
+      }
+    }
+    return cov;
+  }
+
+  /** Daily volatility of pillar {@code i}, bp. */
+  public double volBp(final int i) {
+    return Math.sqrt(sigma[i][i]);
+  }
+
+  /** Correlation of pillars {@code i} and {@code j}; 0 when either has no variance. */
+  public double correlation(final int i, final int j) {
+    final double d = Math.sqrt(sigma[i][i] * sigma[j][j]);
+    return d == 0.0 ? 0.0 : sigma[i][j] / d;
+  }
+
   /** Entry (i, j) in bp squared. */
   public double get(final int i, final int j) {
     return sigma[i][j];

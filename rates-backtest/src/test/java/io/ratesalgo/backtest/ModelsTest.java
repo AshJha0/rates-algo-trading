@@ -16,7 +16,7 @@ import io.ratesalgo.backtest.model.Presets;
 import io.ratesalgo.backtest.model.RfqOutcomeModel;
 import io.ratesalgo.backtest.strategy.ModelSpreadStrategy;
 import io.ratesalgo.backtest.util.Prices;
-import io.ratesalgo.backtest.util.SplitMix64;
+import io.ratesalgo.common.random.SplitMix64;
 import io.ratesalgo.backtest.util.Yaml;
 import java.time.LocalDate;
 import java.util.List;

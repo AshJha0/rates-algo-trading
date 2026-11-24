@@ -1,0 +1,40 @@
+%% Title: Threads of one trading process (1.2.0). Dashed: only on the v2 desk profile
+flowchart TB
+  sup["rates-supervisor<br/>watches loop, session, feed and venue threads;<br/>halt, logout, close sockets"]
+  loopT["rates-loop-usd<br/>EventLoop, DeskGroup, status agent<br/>runtime.loopIdleStrategy, loopCpu"]
+  subgraph sessions["One thread per FIX session (runtime.gatewayIdleStrategy; gatewayCpu counts on from the first)"]
+    d2c["rates-d2c"]
+    clob["rates-clob"]
+    clob2["rates-clob2"]
+    futT["rates-fut"]
+  end
+  subgraph feeds["One thread per book feed (same idle strategy; CPUs after the sessions)"]
+    feed["rates-feed"]
+    feed2["rates-feed2"]
+    feedf["rates-feed-fut"]
+  end
+  venuesT["rates-venues<br/>simulated venues, curve feed, simulated time, control ring;<br/>recorded profile: CLOB liquidity;<br/>v2: the only thread in the MarketModel (SimSequencer);<br/>always parks, never pinned"]
+  jt["Per journal: journal-prepare thread (prepare and retire segments)<br/>ring mode adds journal-drain (writes frames, chain hash)<br/>runtime.journalMode, journalIdleStrategy"]
+  http["ops-http<br/>/control/kill: halt flag on every session"]
+
+  d2c -->|inbound ring| loopT
+  clob -->|inbound ring| loopT
+  clob2 -.->|inbound ring| loopT
+  futT -.->|inbound ring| loopT
+  feed -->|inbound ring| loopT
+  feed2 -.->|inbound ring| loopT
+  feedf -.->|inbound ring| loopT
+  venuesT -->|"curve inputs, inbound ring"| loopT
+  loopT -->|outbound ring 0| d2c
+  loopT -->|outbound ring 1| clob
+  loopT -->|control ring 2| venuesT
+  loopT -.->|outbound ring 4| clob2
+  loopT -.->|outbound ring 5| futT
+  loopT --> jt
+  http -->|halt flag| sessions
+  sup --> loopT
+  sup --> sessions
+  sup --> feeds
+  sup --> venuesT
+  venuesT <-->|"FIX over loopback, through QuickFIX/J's own threads"| sessions
+  venuesT -->|in-process book channel| feeds

@@ -1,0 +1,22 @@
+# Configuration of R5-003 (DRAFT). Hashed into research/prereg/R5-003.yaml.
+study: R5-003
+design: docs/research/STRATEGY_V2.md Section 4
+simulator: Round 3 MarketModel (docs/research/SIM_V2_DESIGN.md)
+simulator_params: data/calibration/sim_v2_params.json
+simulator_params_sha256: 3e2159814ee4e9892ae0dba33f5f35fe0bdd33739df625ea4ae46162c1154fd4
+client_rule: best_price (headline); the logistic hit-rate rule only as a sensitivity
+arms:
+  v2: "DeskSettings.strategyV2()"
+  v2_without_factor: "DeskSettings.strategyV2() with factorCovariance(false), factorHedging(false), tickHedgeCost(false)"
+seeds: {confirmation_base: 34000000, pilot_base: 29000000, pilot_sessions: 200, minimum_sessions: 2000}
+smallest_effect: {usd_per_session: 12000, bp_of_client_dv01: 0.01}
+session: {start_ny: "07:00", end_ny: "17:00", step_seconds: 1, day_type: "index mod 21: 0-3 release, 4 FOMC, 5-10 auction, else none"}
+marking: latent mid (SIM_V2_DESIGN.md Section 4)
+statistics: {test: paired_t, interval: moving_block_bootstrap, block_sessions: 21, resamples: 2000, bootstrap_seed: 5, family: benjamini_hochberg_q_0.05}
+band:
+  spread_factor: "swap_spread_factor.daily_sd at 0.3 and 1.3 bp (central 0.7)"
+  level_vol: "curve factor sds scaled by 0.76 and 1.29 (the 2015-2018 and 2022-2025 values)"
+  impact: "clob.impact_coefficient_Y at 0.3 and 1.5 (central 0.7)"
+  basis: "futures_basis.stationary_sd at 0.05 and 0.4 bp (central 0.15), when a futures book is wired"
+# guard_metrics of the pre-registration, treatment over baseline, summed over the set
+guards: {quoted_share: 0.8, hit_rate: 0.5, client_dv01: 0.6}

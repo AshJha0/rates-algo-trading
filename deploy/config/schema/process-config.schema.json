@@ -159,8 +159,27 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "loopIdleStrategy": {"type": "string", "enum": ["busy-spin", "yield", "backoff"]},
-        "loopCpu": {"type": "integer", "minimum": -1, "maximum": 4095}
+        "profile": {"type": "string", "enum": ["default", "lowLatency"]},
+        "loopIdleStrategy": {"type": "string", "enum": ["busy-spin", "yield", "backoff", "park"]},
+        "loopCpu": {"type": "integer", "minimum": -1, "maximum": 4095},
+        "gatewayIdleStrategy": {"type": "string", "enum": ["busy-spin", "yield", "backoff", "park"]},
+        "gatewayCpu": {"type": "integer", "minimum": -1, "maximum": 4093},
+        "journalMode": {"type": "string", "enum": ["direct", "ring"]},
+        "journalHash": {"type": "string", "enum": ["fnv1a", "word64"]},
+        "journalIdleStrategy": {"type": "string", "enum": ["busy-spin", "yield", "backoff", "park"]},
+        "lockJournalPages": {"type": "boolean"},
+        "conflateCurveInputs": {"type": "boolean"}
+      }
+    },
+    "desk": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {"type": "string", "enum": ["default", "v2"]},
+        "market": {"type": "string", "enum": ["standard", "simV2"]},
+        "pricing": {"type": "string", "enum": ["v1", "v2"]},
+        "strategy": {"type": "string", "enum": ["v1", "v2"]},
+        "router": {"type": "string", "enum": ["touch", "ladder"]}
       }
     }
   }

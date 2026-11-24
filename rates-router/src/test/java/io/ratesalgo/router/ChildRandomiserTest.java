@@ -123,4 +123,49 @@ class ChildRandomiserTest {
     assertThrows(IllegalArgumentException.class, () -> new ChildRandomiser(() -> 0.5, 0.6, 0.1));
     assertThrows(IllegalArgumentException.class, () -> new ChildRandomiser(() -> 0.5, 0.1, -0.1));
   }
+
+  /**
+   * The ladder model's slice gaps (DR-R6-R04): mean preserved, coefficient of variation near
+   * 1/sqrt(2), most gaps outside the plus or minus 25% band a uniform jitter would keep them in,
+   * every gap inside the clamp, no serial correlation, and the same seed gives the same gaps.
+   */
+  @Test
+  void gammaGapsHaveNoDetectablePeriod() {
+    final ChildRandomiser r = new ChildRandomiser(RandomSource.seeded(11L), 0.25, 0.3);
+    final int n = 20_000;
+    final long mean = 12_000_000_000L;
+    final double[] g = new double[n];
+    int inBand = 0;
+    for (int i = 0; i < n; i++) {
+      g[i] = r.gammaGap(mean, 2.0) / (double) mean;
+      assertTrue(g[i] >= ChildRandomiser.GAP_MIN - 1e-9 && g[i] <= ChildRandomiser.GAP_MAX + 1e-9);
+      if (Math.abs(g[i] - 1.0) <= 0.25) {
+        inBand++;
+      }
+    }
+    final double m = Arrays.stream(g).average().orElse(0);
+    double ss = 0;
+    double lag = 0;
+    for (int i = 0; i < n; i++) {
+      ss += (g[i] - m) * (g[i] - m);
+      if (i > 0) {
+        lag += (g[i] - m) * (g[i - 1] - m);
+      }
+    }
+    final double cv = Math.sqrt(ss / (n - 1)) / m;
+    assertEquals(1.0, m, 0.03, "mean preserved up to the clamp");
+    assertEquals(1.0 / Math.sqrt(2.0), cv, 0.05);
+    assertTrue(inBand < 0.4 * n, "gaps within 25% of the mean: " + inBand);
+    assertEquals(0.0, lag / ss, 0.03, "lag-one autocorrelation");
+    final ChildRandomiser again = new ChildRandomiser(RandomSource.seeded(11L), 0.25, 0.3);
+    assertTrue(Math.abs(Math.round(g[0] * mean) - again.gammaGap(mean, 2.0)) <= 1);
+    // a shape below one uses the boost; a large one is nearly regular
+    final ChildRandomiser low = new ChildRandomiser(RandomSource.seeded(5L), 0.25, 0.3);
+    double sumLow = 0;
+    for (int i = 0; i < 5_000; i++) {
+      sumLow += low.gamma(0.7);
+    }
+    assertEquals(0.7, sumLow / 5_000, 0.05);
+    assertTrue(r.gammaGap(1L, 100.0) >= 1L);
+  }
 }

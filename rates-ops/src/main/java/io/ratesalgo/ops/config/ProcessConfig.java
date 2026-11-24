@@ -44,11 +44,15 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * @param instruments instruments quoted, each an instrument id and a venue id
  * @param maxMessagesPerSecond message-rate limit
  * @param retentionYears record retention
- * @param loopIdleStrategy idle strategy of the loop threads: {@code busy-spin}, {@code yield} or
- *     {@code backoff} (the default when the {@code runtime} section is absent)
+ * @param loopIdleStrategy idle strategy of the loop threads: {@code busy-spin}, {@code yield},
+ *     {@code backoff} or {@code park}; the profile's when the key is absent ({@code backoff} by default)
  * @param loopCpu CPU the loop thread is pinned to on Linux, or -1 for none (the default)
  * @param httpKeyStore key store of the HTTPS endpoints ({@code http.tls}), or null for plain HTTP
  * @param fix the {@code fix} section; {@link FixSettings#SIMULATOR} when it is absent
+ * @param runtime the whole {@code runtime} section with its profile applied; {@link
+ *     RuntimeSettings#DEFAULT} when it is absent
+ * @param desk the {@code desk} section with its profile applied; {@link DeskSelection#DEFAULT},
+ *     the recorded desk, when it is absent
  */
 public record ProcessConfig(
     String name,
@@ -66,10 +70,185 @@ public record ProcessConfig(
     String loopIdleStrategy,
     int loopCpu,
     StoreRef httpKeyStore,
-    FixSettings fix) {
+    FixSettings fix,
+    RuntimeSettings runtime,
+    DeskSelection desk) {
 
   /** Idle strategy when the configuration names none: what the process always used. */
   public static final String DEFAULT_LOOP_IDLE_STRATEGY = "backoff";
+
+  /** A configuration without the {@code desk} section: the recorded desk. */
+  public ProcessConfig(
+      final String name, final String role, final String colour, final String bindAddress, final int port,
+      final String controlTokenEnv, final String journalDirectory, final int journalCapacityBytes,
+      final boolean quotingEnabledAtStart, final List<int[]> instruments, final int maxMessagesPerSecond,
+      final int retentionYears, final String loopIdleStrategy, final int loopCpu, final StoreRef httpKeyStore,
+      final FixSettings fix, final RuntimeSettings runtime) {
+    this(name, role, colour, bindAddress, port, controlTokenEnv, journalDirectory, journalCapacityBytes,
+        quotingEnabledAtStart, instruments, maxMessagesPerSecond, retentionYears, loopIdleStrategy, loopCpu,
+        httpKeyStore, fix, runtime, DeskSelection.DEFAULT);
+  }
+
+  /**
+   * The {@code desk} section: which version of each component the desks run. {@code profile}
+   * names all four at once, {@code default} (the recorded desk, on which every recorded figure
+   * was made) or {@code v2}; each other key switches one component on top of it. A journal
+   * directory can only be restarted on, or replayed, with the selection that wrote it.
+   *
+   * @param profile {@code default} or {@code v2}
+   * @param market {@code standard} (one D2C venue, one Treasury CLOB) or {@code simV2} (D2C, two
+   *     Treasury CLOBs and a futures book on one market model)
+   * @param pricing {@code v1} or {@code v2}
+   * @param strategy {@code v1} or {@code v2}
+   * @param router {@code touch} or {@code ladder}
+   */
+  public record DeskSelection(String profile, String market, String pricing, String strategy, String router) {
+
+    /** The recorded desk. */
+    public static final DeskSelection DEFAULT = new DeskSelection("default", "standard", "v1", "v1", "touch");
+
+    /** The second version of every component. */
+    public static final DeskSelection V2 = new DeskSelection("v2", "simV2", "v2", "v2", "ladder");
+
+    /** The components a profile name stands for. */
+    public static DeskSelection profile(final String name) {
+      return switch (name) {
+        case "default" -> DEFAULT;
+        case "v2" -> V2;
+        default -> throw new IllegalArgumentException("unknown desk profile '" + name + "'; use default or v2");
+      };
+    }
+
+    /** The section as written: the profile's components, each replaced by its own key if present. */
+    static DeskSelection of(final Map<?, ?> section) {
+      final DeskSelection p = profile(section.get("profile") instanceof String s ? s : "default");
+      return new DeskSelection(
+          p.profile(),
+          section.get("market") instanceof String s ? s : p.market(),
+          section.get("pricing") instanceof String s ? s : p.pricing(),
+          section.get("strategy") instanceof String s ? s : p.strategy(),
+          section.get("router") instanceof String s ? s : p.router());
+    }
+
+    /** True when every component is the recorded one, whatever the profile key says. */
+    public boolean isRecorded() {
+      return "standard".equals(market) && "v1".equals(pricing) && "v1".equals(strategy) && "touch".equals(router);
+    }
+
+    /** The four components on one line, as the process records them beside its journals. */
+    public String components() {
+      return "market=" + market + " pricing=" + pricing + " strategy=" + strategy + " router=" + router;
+    }
+
+    /** The selection a {@link #components} line stands for; refuses anything else. */
+    public static DeskSelection parse(final String line) {
+      final java.util.regex.Matcher m = COMPONENTS.matcher(line.strip());
+      if (!m.matches()) {
+        throw new IllegalArgumentException("not a desk selection: " + line);
+      }
+      return new DeskSelection("recorded", m.group(1), m.group(2), m.group(3), m.group(4));
+    }
+
+    private static final java.util.regex.Pattern COMPONENTS =
+        java.util.regex.Pattern.compile("market=(standard|simV2) pricing=(v1|v2) strategy=(v1|v2) router=(touch|ladder)");
+  }
+
+  /** A configuration without the {@code runtime} section's later keys: their defaults. */
+  public ProcessConfig(
+      final String name, final String role, final String colour, final String bindAddress, final int port,
+      final String controlTokenEnv, final String journalDirectory, final int journalCapacityBytes,
+      final boolean quotingEnabledAtStart, final List<int[]> instruments, final int maxMessagesPerSecond,
+      final int retentionYears, final String loopIdleStrategy, final int loopCpu, final StoreRef httpKeyStore,
+      final FixSettings fix) {
+    this(name, role, colour, bindAddress, port, controlTokenEnv, journalDirectory, journalCapacityBytes,
+        quotingEnabledAtStart, instruments, maxMessagesPerSecond, retentionYears, loopIdleStrategy, loopCpu,
+        httpKeyStore, fix, RuntimeSettings.DEFAULT.withLoopThread(loopIdleStrategy, loopCpu));
+  }
+
+  /**
+   * The {@code runtime} section: the trading process's threads and journals (API_SPEC.md Section
+   * 17.11, DECISIONS.md DR-R6-L02). A profile sets every key at once; a key given beside it
+   * overrides the profile's value.
+   *
+   * <ul>
+   *   <li>{@code default}: what the process always ran. Loop on backoff, session and feed threads
+   *       parking 200 us when idle, nothing pinned, direct journals with FNV-1a, no conflation.
+   *   <li>{@code lowLatency}: loop, session, feed and journal threads busy-spin, ring journals with
+   *       the WORD64 hash and locked segments, curve inputs conflated. CPUs are still the host's to
+   *       give ({@code loopCpu}, {@code gatewayCpu}); a spinning thread belongs on a reserved core.
+   * </ul>
+   *
+   * @param profile {@code default} or {@code lowLatency}
+   * @param loopIdleStrategy the loop threads' idle strategy
+   * @param loopCpu the first loop's CPU, or -1
+   * @param gatewayIdleStrategy the D2C, CLOB and feed threads' idle strategy
+   * @param gatewayCpu the D2C thread's CPU (CLOB +1, feed +2), or -1
+   * @param journalMode {@code direct} or {@code ring}
+   * @param journalHash chain hash of new journals: {@code fnv1a} or {@code word64}
+   * @param journalIdleStrategy the journal threads' idle strategy in ring mode
+   * @param lockJournalPages mlock the journal segments (Linux, within RLIMIT_MEMLOCK)
+   * @param conflateCurveInputs conflate curve inputs on the loop
+   */
+  public record RuntimeSettings(
+      String profile,
+      String loopIdleStrategy,
+      int loopCpu,
+      String gatewayIdleStrategy,
+      int gatewayCpu,
+      String journalMode,
+      String journalHash,
+      String journalIdleStrategy,
+      boolean lockJournalPages,
+      boolean conflateCurveInputs) {
+
+    /** The {@code default} profile. */
+    public static final RuntimeSettings DEFAULT =
+        new RuntimeSettings("default", DEFAULT_LOOP_IDLE_STRATEGY, -1, "park", -1, "direct", "fnv1a", "backoff", false,
+            false);
+
+    /** The {@code lowLatency} profile. */
+    public static final RuntimeSettings LOW_LATENCY =
+        new RuntimeSettings("lowLatency", "busy-spin", -1, "busy-spin", -1, "ring", "word64", "busy-spin", true, true);
+
+    /** The profile called {@code name}. */
+    public static RuntimeSettings profile(final String name) {
+      return switch (name) {
+        case "default" -> DEFAULT;
+        case "lowLatency" -> LOW_LATENCY;
+        default -> throw new IllegalArgumentException("unknown runtime profile '" + name + "'; use default or lowLatency");
+      };
+    }
+
+    /** These settings with another loop idle strategy and CPU. */
+    public RuntimeSettings withLoopThread(final String idle, final int cpu) {
+      return new RuntimeSettings(profile, idle, cpu, gatewayIdleStrategy, gatewayCpu, journalMode, journalHash,
+          journalIdleStrategy, lockJournalPages, conflateCurveInputs);
+    }
+
+    /** The section's profile with each key the section gives applied over it. */
+    static RuntimeSettings of(final Map<?, ?> section) {
+      final RuntimeSettings p = profile(section.get("profile") instanceof String s ? s : "default");
+      return new RuntimeSettings(
+          p.profile(),
+          text(section, "loopIdleStrategy", p.loopIdleStrategy()),
+          number(section, "loopCpu", p.loopCpu()),
+          text(section, "gatewayIdleStrategy", p.gatewayIdleStrategy()),
+          number(section, "gatewayCpu", p.gatewayCpu()),
+          text(section, "journalMode", p.journalMode()),
+          text(section, "journalHash", p.journalHash()),
+          text(section, "journalIdleStrategy", p.journalIdleStrategy()),
+          section.get("lockJournalPages") instanceof Boolean b ? b : p.lockJournalPages(),
+          section.get("conflateCurveInputs") instanceof Boolean b ? b : p.conflateCurveInputs());
+    }
+
+    private static String text(final Map<?, ?> section, final String key, final String fallback) {
+      return section.get(key) instanceof String s ? s : fallback;
+    }
+
+    private static int number(final Map<?, ?> section, final String key, final int fallback) {
+      return section.get(key) instanceof Number n ? n.intValue() : fallback;
+    }
+  }
 
   /**
    * Where a password comes from: an environment variable or a file, exactly one of the two.
@@ -491,7 +670,7 @@ public record ProcessConfig(
     final Map<?, ?> quoting = (Map<?, ?>) root.get("quoting");
     final Map<?, ?> limits = (Map<?, ?>) root.get("limits");
     final Map<?, ?> retention = (Map<?, ?>) root.get("retention");
-    final Map<?, ?> runtime = root.get("runtime") instanceof Map<?, ?> r ? r : Map.of();
+    final RuntimeSettings runtime = RuntimeSettings.of(root.get("runtime") instanceof Map<?, ?> r ? r : Map.of());
     final List<int[]> instruments = new ArrayList<>();
     for (final Object o : (List<?>) quoting.get("instruments")) {
       final Map<?, ?> i = (Map<?, ?>) o;
@@ -510,10 +689,12 @@ public record ProcessConfig(
         instruments,
         ((Number) limits.get("maxMessagesPerSecond")).intValue(),
         ((Number) retention.get("years")).intValue(),
-        runtime.get("loopIdleStrategy") instanceof String s ? s : DEFAULT_LOOP_IDLE_STRATEGY,
-        runtime.get("loopCpu") instanceof Number n ? n.intValue() : -1,
+        runtime.loopIdleStrategy(),
+        runtime.loopCpu(),
         store(section(http, "tls"), "keyStore"),
-        fixSettings(section(root, "fix")));
+        fixSettings(section(root, "fix")),
+        runtime,
+        DeskSelection.of(root.get("desk") instanceof Map<?, ?> d ? d : Map.of()));
   }
 
   @SuppressWarnings("unchecked")

@@ -1,5 +1,6 @@
 package io.ratesalgo.app.gateway;
 
+import io.ratesalgo.app.pricing.V2InputIds;
 import io.ratesalgo.core.ControlMessages;
 import io.ratesalgo.core.HotPath;
 import io.ratesalgo.core.InboundPublisher;
@@ -15,6 +16,7 @@ import io.ratesalgo.messages.sbe.QuoteRequestDecoder;
 import io.ratesalgo.messages.sbe.QuoteResponseDecoder;
 import io.ratesalgo.messages.sbe.QuoteStatus;
 import io.ratesalgo.messages.sbe.TradeBustDecoder;
+import io.ratesalgo.messages.sbe.TradePrintDecoder;
 import java.nio.ByteOrder;
 import org.agrona.DirectBuffer;
 import org.agrona.collections.Int2IntHashMap;
@@ -33,7 +35,8 @@ import org.agrona.concurrent.ringbuffer.RingBuffer;
  *   <li>A full ring, by what losing the message would cost:
  *       <ul>
  *         <li>CurveInput and Heartbeat are level messages: the next one supersedes a lost one, so
- *             they are dropped and counted ({@link #dropped()}).
+ *             they are dropped and counted ({@link #dropped()}). A TradePrint is dropped the same
+ *             way: it changes no book level, and the rates estimated from prints tolerate a miss.
  *         <li>BookUpdate is a delta: a lost one leaves a wrong book that no later delta repairs.
  *             It is not retried here (the book feed is faster than a stalled loop), but the
  *             refusal is reported to the caller ({@link #route} returns {@link #FULL}), and the
@@ -152,7 +155,8 @@ public final class InboundRouter implements MessageSink {
     final boolean marketData =
         templateId == BookUpdateDecoder.TEMPLATE_ID
             || templateId == CurveInputDecoder.TEMPLATE_ID
-            || templateId == HeartbeatDecoder.TEMPLATE_ID;
+            || templateId == HeartbeatDecoder.TEMPLATE_ID
+            || templateId == TradePrintDecoder.TEMPLATE_ID;
     if (templateId == QuoteResponseDecoder.TEMPLATE_ID) {
       quoteResponse.wrapAndApplyHeader(buffer, offset, header);
       final long key = rfqKey(quoteResponse.venueId(), quoteResponse.rfqId());
@@ -163,7 +167,9 @@ public final class InboundRouter implements MessageSink {
       }
       return publish((int) g, buffer, offset, length, false);
     }
-    if (instrumentId == 0) {
+    if (instrumentId == 0
+        || (templateId == CurveInputDecoder.TEMPLATE_ID && V2InputIds.isCurveOnly(instrumentId))) {
+      // a fixing or a futures quote of the curve is no group's instrument: every group prices off it
       return toAll(buffer, offset, length, marketData);
     }
     final int g = groupOf.get(instrumentId);
@@ -214,6 +220,7 @@ public final class InboundRouter implements MessageSink {
     final int body = offset + HEADER;
     return switch (templateId) {
       case BookUpdateDecoder.TEMPLATE_ID -> buffer.getInt(body + BookUpdateDecoder.instrumentIdEncodingOffset(), ByteOrder.LITTLE_ENDIAN);
+      case TradePrintDecoder.TEMPLATE_ID -> buffer.getInt(body + TradePrintDecoder.instrumentIdEncodingOffset(), ByteOrder.LITTLE_ENDIAN);
       case CurveInputDecoder.TEMPLATE_ID -> buffer.getInt(body + CurveInputDecoder.instrumentIdEncodingOffset(), ByteOrder.LITTLE_ENDIAN);
       case QuoteRequestDecoder.TEMPLATE_ID -> buffer.getInt(body + QuoteRequestDecoder.instrumentIdEncodingOffset(), ByteOrder.LITTLE_ENDIAN);
       case ExecutionReportDecoder.TEMPLATE_ID -> buffer.getInt(body + ExecutionReportDecoder.instrumentIdEncodingOffset(), ByteOrder.LITTLE_ENDIAN);

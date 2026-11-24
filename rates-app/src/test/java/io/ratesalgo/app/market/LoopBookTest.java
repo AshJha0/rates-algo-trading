@@ -15,6 +15,8 @@ import io.ratesalgo.messages.sbe.BookUpdateEncoder;
 import io.ratesalgo.messages.sbe.MessageHeaderDecoder;
 import io.ratesalgo.messages.sbe.MessageHeaderEncoder;
 import io.ratesalgo.messages.sbe.Side;
+import io.ratesalgo.messages.sbe.TradePrintDecoder;
+import io.ratesalgo.messages.sbe.TradePrintEncoder;
 import io.ratesalgo.router.BookView;
 import org.agrona.concurrent.UnsafeBuffer;
 import org.junit.jupiter.api.Test;
@@ -92,5 +94,50 @@ class LoopBookTest {
     assertEquals(0.0, view.tradeRatePerSecond(104));
     assertThrows(IllegalArgumentException.class, () -> book.view(55, 1.0));
     assertTrue(view.depth(103, Side.Buy, 0) == 0L);
+  }
+
+  @Test
+  void theRouterViewGivesEveryLevelPriceForTheLadderModel() {
+    apply(102, Side.Sell, BookAction.Add, PX + TICK, 30);
+    apply(102, Side.Sell, BookAction.Add, PX + 3 * TICK, 50);
+    apply(102, Side.Buy, BookAction.Add, PX, 20);
+    final BookView view = book.view(1008, 1e9);
+    assertEquals(PX + TICK, view.levelPrice(102, Side.Sell, 0));
+    assertEquals(PX + 3 * TICK, view.levelPrice(102, Side.Sell, 1), "a gap in the ladder is skipped");
+    assertEquals(50L, view.depth(102, Side.Sell, 1));
+    assertEquals(0L, view.levelPrice(102, Side.Sell, 2));
+    assertEquals(PX, view.levelPrice(102, Side.Buy, 0));
+    assertEquals(0L, view.levelPrice(102, Side.Buy, -1));
+    assertEquals(0L, view.levelPrice(104, Side.Buy, 0));
+  }
+
+  private boolean trade(final int venue, final long qty, final long nanos) {
+    final TradePrintEncoder t = new TradePrintEncoder();
+    t.wrapAndApplyHeader(buffer, 0, new MessageHeaderEncoder()).venueId(venue).instrumentId(1008)
+        .venueSeqNo(1).aggressorSide(Side.Buy).quantity(qty).timestampNanos(nanos);
+    t.price().mantissa(PX);
+    final TradePrintDecoder td = new TradePrintDecoder();
+    td.wrapAndApplyHeader(buffer, 0, new MessageHeaderDecoder());
+    return book.applyTrade(td);
+  }
+
+  @Test
+  void tradePrintsReplaceTheConfiguredRateOnceTheyArrive() {
+    final BookView view = book.view(1008, 5.0);
+    assertEquals(5.0, view.tradeRatePerSecond(102), "configured before the first print");
+    assertEquals(-1.0, book.tradeRate(1008, 102, 0L));
+    // 10 units every second for 10 minutes: about 10 a second
+    for (int s = 0; s <= 600; s++) {
+      assertTrue(trade(102, 10, s * 1_000_000_000L));
+    }
+    assertEquals(10.0, book.tradeRate(1008, 102, 600_000_000_000L), 0.2);
+    assertEquals(10.0, view.tradeRatePerSecond(102), 0.2);
+    assertEquals(5.0, view.tradeRatePerSecond(103), "a venue with no print keeps the configured rate");
+    // ten quiet minutes: the rate decays
+    assertTrue(book.tradeRate(1008, 102, 1_200_000_000_000L) < 1.0);
+    assertFalse(trade(999, 10, 1L), "unknown venue");
+    assertFalse(trade(102, 0, 1L), "no quantity");
+    assertEquals(-1.0, book.tradeRate(55, 102, 0L));
+    assertEquals(-1.0, book.tradeRate(1008, 999, 0L));
   }
 }
