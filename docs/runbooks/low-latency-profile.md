@@ -21,7 +21,7 @@ Each key can be set on top of the profile.
 1. **Reserve cores.** With every thread spinning, the profile keeps about seven cores busy on the recorded desk (the configuration file's own estimate) and more on the v2 desk, which has four sessions and three feeds. Give the process cores the scheduler leaves alone (`isolcpus`/`nohz_full` on the host, or a cpuset such as `docker run --cpuset-cpus=...`). Without that, spinning threads compete with everything else and do worse than the default profile.
 2. **Set the CPUs.** Both stay -1 until you set them. `loopCpu` is the loop's core (one more per further loop). `gatewayCpu` is the D2C session's core; the other sessions and the feeds take the next cores in order. Pinning works on Linux only (`CoreAffinity`, `sched_setaffinity` through the JDK's foreign function API, DR-R6-L01); elsewhere the thread runs unpinned and the process starts anyway. The trading image passes `--enable-native-access=ALL-UNNAMED`; without it the JDK prints one warning. The simulated venues' thread is never pinned and never spins.
 3. **Page locking.** `lockJournalPages` offers each journal segment to `mlock` within `RLIMIT_MEMLOCK`. Off Linux, or above the limit, every offer is refused and counted; the process runs.
-4. **Validate**: `python tools/validate_config.py` checks every `deploy/config/*.yaml` against the schema; the process applies the same check at start.
+4. **Validate**: `python tools/validate_config.py` (needs `python -m pip install "jsonschema==4.26.0" "pyyaml==6.0.3"`, the versions of ops.yml) checks every `deploy/config/*.yaml` against the schema; the process applies the same check at start.
 
 ## Journals written under it
 

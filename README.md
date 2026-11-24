@@ -69,7 +69,7 @@ python -m pip install -r docs/site/requirements.txt
 mkdocs build --strict
 ```
 
-Other checks CI runs: `ruff check research`, `ruff format --check research`, `mypy` (in `research/`), `python -m ratesresearch.prereg data/ledger/ledger.jsonl` (ledger chain and looks per data set), `python tools/check_cookbook.py`, `python tools/run_notebooks.py`, `python tools/check_site_current.py`, `python tools/validate_config.py` and `python tools/lint_dashboards.py`.
+Other checks CI runs: `ruff check research`, `ruff format --check research`, `mypy` (in `research/`), `python -m ratesresearch.prereg data/ledger/ledger.jsonl` (ledger chain and looks per data set), `python tools/check_cookbook.py`, `python tools/run_notebooks.py`, `python tools/check_site_current.py`, `python tools/validate_config.py` (needs `jsonschema` and `pyyaml`, versions in `.github/workflows/ops.yml`) and `python tools/lint_dashboards.py`.
 
 ## Default and opt-in
 
