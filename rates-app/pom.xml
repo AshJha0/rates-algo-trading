@@ -14,7 +14,7 @@
   <description>The trading process: pricing, venue, strategy, post-trade and back-test bindings that wire the phase modules into one running process with one event loop per instrument group (API_SPEC.md Section 18).</description>
 
   <properties>
-    <maven-dependency-plugin.version>3.8.1</maven-dependency-plugin.version>
+    <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
     <archunit.version>1.5.1</archunit.version>
   </properties>
 
