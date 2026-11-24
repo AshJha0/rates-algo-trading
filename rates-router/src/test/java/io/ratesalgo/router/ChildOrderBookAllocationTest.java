@@ -27,7 +27,7 @@ class ChildOrderBookAllocationTest {
   private static final int BATCH = 32;
 
   /** Most bytes a measured window may allocate and be repeated: a JIT one-off, far below any growth. */
-  private static final long ONE_OFF_BOUND = 256L;
+  private static final long ONE_OFF_BOUND = 1024L;
 
   /** Most measured windows; the last must allocate nothing. */
   private static final int MEASURED_WINDOWS = 3;
@@ -120,8 +120,8 @@ class ChildOrderBookAllocationTest {
     // while it compiles, as RouterAllocationTest records), then measure long windows in the same
     // loop and call site, so that it is not compiled afresh (DR-INT-08). Each measured window books
     // more than twice every fill before it, so a set that grows with the day's fills has to grow in
-    // it, by an array of many kilobytes. A deoptimisation inside a long window can still cost the
-    // thread a few objects once (128 bytes, seen on Linux): a window that allocates is repeated, at
+    // it, by an array of many kilobytes. C2 can still cost the thread a few objects once, in the
+    // first long window (48 to 528 bytes on Linux; never with C1 or the interpreter, and never later): a window that allocates is repeated, at
     // most twice, and only if it allocated no more than that; the last one must allocate nothing.
     int quiet = 0;
     int windows = 0;

@@ -8,6 +8,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 - `deploy/rehearsal.py` refuses a target directory holding jars of several versions; it started the oldest one.
 - Test: `RestartRecoveryTest` waits for the prepared next segment before it takes the crash image (a race seen once on the Linux runner). `VenueBindingTest` allows the simulator's own RFQs while the sessions log on again. `VenueSecurityTest` gives each refused logon its own acceptor and retries the accepted one, because QuickFIX/J can apply the end of one connection to the next.
 - `RingJournal.backlogHighWater` also counts what queued behind a batch that waited; sampled only before a batch, it could miss the stall it is there to record.
+- `ChildOrderBookAllocationTest` repeats a window after at most 1,024 bytes, the bound of the other allocation gates; the last window must still allocate nothing (DR-V12-T01).
 
 ## [1.2.0] - 2026-11-24
 
