@@ -43,6 +43,8 @@ Each recipe below is a program in `rates-cookbook/src/main/java/io/ratesalgo/coo
 35. How do I verify a Java journal's hash chain from Python? (written below; a Python recipe; was 23)
 36. How do I check that a hot-path package allocates nothing? (written below; was 22)
 37. How do I check a forward-log ledger from Python? (written below; a Python recipe)
+38. How do I read a version 2 journal (WORD64 chain hash) from Python? (1.2.0, written below; a command, not a program)
+39. How do I validate the Round 5 family registration? (1.2.0, written below; a command, not a program)
 
 The recipes were renumbered when the phase branches were combined, so that they run contiguously by phase (DECISIONS.md DR-P4-05 and DR-P2C-10, amended).
 
@@ -3285,4 +3287,54 @@ tampered: seq 2 103: committed mid differs from the decision
 ```
 
 A 10-year swap's value per unit is its annuity times 1e-4 (`InstrumentSet.usdDefault`, annuity 8.11), so 10 million of notional is worth 8,110 USD per bp and a 2 bp move is 16,220 USD, the first line. The edit to line 1 is caught twice: line 2's `prev_sha256` no longer matches, and the outcome's committed mid no longer agrees with the decision it claims to close. The scheduled job runs the same check on the real ledger after every cycle (`.github/workflows/forward.yml`).
+
+## 38. How do I read a version 2 journal (WORD64 chain hash) from Python?
+
+Since 1.2.0 a journal can use a faster chain hash, WORD64, which takes eight payload bytes per step (DECISIONS.md DR-R6-L03). Such a journal is written as format version 2 and names its algorithm in the segment header at offset 20; a journal with the default FNV-1a hash is still written as version 1, byte for byte as before (API_SPEC.md Section 1, LEARN.md Section 11). `tools/journal_query.py` reads both with the checks Java's `JournalReader` makes and says which hash it verified. It needs nothing installed. The two fixtures were written by Java's `JournalWriter` with the same eight frames, one per algorithm (`research/tests/fixtures/journal/`, made by `MakeJournals.java` beside them); `research/tests/test_journal_formats.py` checks both readers against them bit for bit.
+
+```
+python tools/journal_query.py research/tests/fixtures/journal/word64_v2.raj
+python tools/journal_query.py research/tests/fixtures/journal/word64_v2.raj --template CurveInput
+python tools/journal_query.py research/tests/fixtures/journal/fnv1a_v1.raj --count
+```
+
+Expected output:
+
+```
+chain (word64) verified to sequence 8
+         1 1970-01-01T00:00:00.000001000Z Heartbeat        0 bytes
+         2 1970-01-01T00:00:00.000002000Z BookUpdate       1 bytes
+         3 1970-01-01T00:00:00.000003000Z CurveInput       7 bytes
+         4 1970-01-01T00:00:00.000004000Z 4                8 bytes
+         5 1970-01-01T00:00:00.000005000Z 5                9 bytes
+         6 1970-01-01T00:00:00.000006000Z 6                15 bytes
+         7 1970-01-01T00:00:00.000007000Z 7                16 bytes
+         8 1970-01-01T00:00:00.000008000Z 8                17 bytes
+chain (word64) verified to sequence 8
+         3 1970-01-01T00:00:00.000003000Z CurveInput       7 bytes
+chain (fnv1a) verified to sequence 8
+8
+```
+
+The fixture's template ids are test values: ids 4 to 8 have no name in the tool's table, so their numbers are printed. The header of `word64_v2.raj` holds format version 2 at offset 4 and algorithm 2 (WORD64) at offset 20; `fnv1a_v1.raj` holds version 1 and zero there. From a research script, `ratesresearch.fnv.journal_hash_algorithm(data)` returns the algorithm id of a whole journal file's bytes (it checks that the declared capacity equals the file size, so pass the file, not the header alone), and `ratesresearch.fnv.chain_hash(algorithm, payload, previous)` continues a chain in either algorithm; recipe 35 shows the FNV-1a walk.
+
+This recipe is a command, not a program: `tools/check_cookbook.py` does not run it. The output was reproduced on 2026-11-23 with Python 3 on Windows 11.
+
+## 39. How do I validate the Round 5 family registration?
+
+A pre-registration is checked before it is signed, and again by the runner before it reads any session. `python -m ratesresearch.prereg validate FILE...` applies the same rules as Java's `ExperimentRunner validate` and `LedgerCli` (API_SPEC.md Section 16.8) and prints each file's problems; it returns 2 when any file has one. The Round 5 family, research/prereg/R5-FAM-001.yaml, is unsigned and has not been run: it validates, and the runner still refuses it while its status starts with "draft".
+
+```
+PYTHONPATH=research python -m ratesresearch.prereg validate research/prereg/R5-FAM-001.yaml
+```
+
+Expected output:
+
+```
+research/prereg/R5-FAM-001.yaml: valid
+```
+
+"Valid" means the file passes the registration rules, not that it has been approved: signing is the owner's step (tools/sim-v2/README.md). Once the family has run, `python -m ratesresearch.prereg bh data/ledger/ledger.jsonl family:R5-FAM-001` and `LedgerCli --bh family:R5-FAM-001` print its Benjamini-Hochberg table; before that the ledger holds no row for it.
+
+This recipe is a command, not a program: `tools/check_cookbook.py` does not run it. The output was reproduced on 2026-11-23 with Python 3 on Windows 11.
 
