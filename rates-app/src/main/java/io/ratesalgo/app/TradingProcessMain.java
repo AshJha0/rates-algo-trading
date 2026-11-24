@@ -37,8 +37,8 @@ import java.util.concurrent.CountDownLatch;
  *
  * <p>Run mode validates the rates-ops process configuration (exit 2 if it is refused), starts the
  * trading process with its simulators ({@link TradingProcess}), runs the loops on their own threads
- * with simulated time paced at {@code --time-scale} times real time from 08:30 New York, and serves
- * health, readiness, metrics and the kill switch on the configured port until it is terminated. A
+ * with simulated time paced at {@code --time-scale} times real time from 08:25 New York (simulator v2:
+ * 09:00), and serves health, readiness, metrics and the kill switch on the configured port until it is terminated. A
  * bind address that is not loopback is refused, like any invalid configuration, unless the control
  * token and {@code http.tls} are set, and then the endpoints are served over HTTPS; the loop
  * threads' idle strategy and CPU come from the optional {@code runtime} section. The optional
