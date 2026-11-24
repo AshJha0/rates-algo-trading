@@ -26,6 +26,12 @@ class ChildOrderBookAllocationTest {
   private static final long PX = 99_000_000_000L;
   private static final int BATCH = 32;
 
+  /** Most bytes a measured window may allocate and be repeated: a JIT one-off, far below any growth. */
+  private static final long ONE_OFF_BOUND = 256L;
+
+  /** Most measured windows; the last must allocate nothing. */
+  private static final int MEASURED_WINDOWS = 3;
+
   /** Bytes this thread has allocated; the no-argument form does not itself allocate. */
   private static long allocatedBytes() {
     return BEAN.getCurrentThreadAllocatedBytes();
@@ -111,31 +117,39 @@ class ChildOrderBookAllocationTest {
   void dedupeAllocatesNothingOverALongDay() {
     final Driver d = new Driver();
     // Warm up in short windows until five in a row allocate nothing (C2 may allocate a few bytes
-    // while it compiles, as RouterAllocationTest records), then measure one long window in the
-    // same loop and call site, so that it is not compiled afresh (DR-INT-08).
+    // while it compiles, as RouterAllocationTest records), then measure long windows in the same
+    // loop and call site, so that it is not compiled afresh (DR-INT-08). Each measured window books
+    // more than twice every fill before it, so a set that grows with the day's fills has to grow in
+    // it, by an array of many kilobytes. A deoptimisation inside a long window can still cost the
+    // thread a few objects once (128 bytes, seen on Linux): a window that allocates is repeated, at
+    // most twice, and only if it allocated no more than that; the last one must allocate nothing.
     int quiet = 0;
     int windows = 0;
+    int measured = 0;
     long warmFills = 0;
     long measuredFills = 0;
     long measuredBytes = -1;
-    while (measuredBytes < 0) {
+    while (measuredBytes != 0) {
       if (++windows > 200) {
         fail("dedupe did not reach an allocation-free steady state in 200 windows");
       }
-      final boolean measure = quiet >= 5 && windows > 10;
+      final boolean measure = measured > 0 || (quiet >= 5 && windows > 10);
       final long target = measure ? Math.max(50_000L, 2 * warmFills + 1) : 1_000L;
       final long start = allocatedBytes();
       final long fills = d.run(target);
       final long bytes = allocatedBytes() - start;
       if (measure) {
+        measured++;
+        assertTrue(bytes <= ONE_OFF_BOUND, "bytes allocated booking " + fills + " fills: " + bytes);
+        assertTrue(bytes == 0 || measured < MEASURED_WINDOWS, "no measured window of " + measured + " was free: " + bytes);
         measuredFills = fills;
         measuredBytes = bytes;
+        warmFills += bytes == 0 ? 0 : fills;
       } else {
         warmFills += fills;
         quiet = bytes == 0 ? quiet + 1 : 0;
       }
     }
-    assertEquals(0L, measuredBytes, "bytes allocated booking " + measuredFills + " fills");
     assertTrue(measuredFills >= 50_000L);
     assertTrue(measuredFills > 2 * warmFills, "the measured window must outgrow the warm-up");
     assertTrue(d.book.duplicates() > measuredFills / 2, "resends were dropped as duplicates");
@@ -147,7 +161,7 @@ class ChildOrderBookAllocationTest {
             + " fills booked with nothing allocated, after "
             + warmFills
             + " in "
-            + (windows - 1)
+            + (windows - measured)
             + " warm-up windows");
   }
 }

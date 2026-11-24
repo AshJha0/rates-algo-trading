@@ -38,7 +38,7 @@ import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -210,11 +210,11 @@ def _blank(v: Any) -> bool:
     return v is None or (isinstance(v, str) and not v.strip())
 
 
-def _is_int(v: Any) -> bool:
+def _is_int(v: Any) -> TypeGuard[int]:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
-def _is_number(v: Any) -> bool:
+def _is_number(v: Any) -> TypeGuard[int | float]:
     return isinstance(v, int | float) and not isinstance(v, bool)
 
 
@@ -392,7 +392,8 @@ def _v2_family(
             problems.append(f"config rows[{n}] must be a mapping of row, arms and sessions")
             continue
         label = str(r.get("row"))
-        r_arms = [str(a) for a in r.get("arms")] if isinstance(r.get("arms"), list) else []
+        listed = r.get("arms")
+        r_arms = [str(a) for a in listed] if isinstance(listed, list) else []
         if label in run:
             problems.append(f"config rows: '{label}' is listed twice")
         run.append(label)
