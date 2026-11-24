@@ -319,10 +319,11 @@ class JournalWaitPathsTest {
         });
     assertTrue(e.getMessage().contains("made no progress for 200 ms with the ring full"), e.getMessage());
     assertEquals(1, ring.producerWaits());
-    assertTrue(ring.backlogHighWater() > 0, "the journal thread saw the backlog it was asked to drain");
     final long queued = ring.nextSequence() - 1;
     clock.release();
     ring.close();
+    // the stalled batch returns and counts the ring that filled behind it
+    assertTrue(ring.backlogHighWater() > (64 << 10) / 2, "the journal thread saw the backlog: " + ring.backlogHighWater());
     assertEquals(queued, frames("stall"), "every frame accepted before the failure is in the file");
     assertThrows(IllegalArgumentException.class,
         () -> RingJournal.start("bad", null, clock, 64 << 10, RingJournal.defaultDrainIdle(), 0L));
