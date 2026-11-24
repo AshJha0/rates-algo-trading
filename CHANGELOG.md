@@ -39,7 +39,7 @@ Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on
 ### Strategy (Round 5)
 
 - Strategy v2 behind switches, all off by default (`DeskSettings.StrategySwitches`; `DeskSettings.strategyV2()` turns all on): break-even, cover-relative pricing (`CoverModel`, Q1, Q3); one inventory reservation price capped at the hedge cost (Q4); fitted factor covariance and a factor hedge planner (`FactorModel`, `FactorHedgePlanner`, Q2); per-instrument tick hedge cost (`TickHedgeCostModel`, `VenueTicks`, Q5); internalisation budget with a time stop and passive-first hedges (`Hedger.Config.internalise`, `passiveFirst`); persisted multi-horizon client markouts with tier priors (`MarkoutStore`, Q6); time to live by volatility, pull at half the quoted distance and tick-correct prices (Q7, Q8). DR-R5-01 to DR-R5-06. docs/research/STRATEGY_V2.md.
-- Arithmetic from the calibration, not a result: at the 10-year the average client's break-even half-spread is 0.107 bp against an expected winning half-spread of 0.139 bp; at the 2-year the break-even is 0.265 bp.
+- Arithmetic from the calibration, not a result: at the 10-year the average client's break-even half-spread is 0.107 bp against an expected winning half-spread of 0.139 bp; at the 2-year the break-even is 0.162 bp on its 1/256 tick.
 
 ### Router (Round 6)
 
@@ -87,7 +87,7 @@ Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on
 - `Decimal9`: negative ties round away from zero as documented (`Math.round` took them toward positive infinity); `round`, `floor` and `ceil` are exact from 2^52 units up.
 - `DeskGroup`: a fill of a child order the router has already released (one that crossed its cancel, or an order left from before a restart) is booked as a position, once by execution id, and counted (`lateFills`); it was dropped before, so risk and the venue could differ (DR-V12-D13).
 - `BacktestRunner`, simulator v2: a cancel that finds the order filled reports `Filled` and is refused; it reported `PartiallyFilled` and then a `Cancelled` with nothing left, which the desk counted as an unrouted report (DR-V12-E09).
-- Tests: `LoopAllocationTest` fills the outbound ring in its warm-up and asks for one zero window of four, each after the first within 1,024 bytes; `ChildOrderBookAllocationTest` repeats its long window after a one-off of at most 256 bytes (DR-V12-T01). `ratesresearch.prereg` type guards for mypy strict. `tools/check_cookbook.py` runs the command recipes 38 and 39.
+- Tests: `LoopAllocationTest` fills the outbound ring in its warm-up and asks for one zero window of four, each after the first within 1,024 bytes; `ChildOrderBookAllocationTest` repeats its long window after a one-off of at most 256 bytes (DR-V12-T01). `ratesresearch.prereg` type guards for mypy strict. `tools/check_cookbook.py` runs the command recipes 38 and 39. Cookbook recipes 40 to 45 (simulator v2 session, leave-one-out fair value, break-even pricing, factor hedging, ladder routing, a fill after release); four tutorials (docs/tutorials).
 - Dead code removed in `RiskEngine.onFairValue` and `PositionKeeper`; behaviour unchanged.
 - `FeedBinding`: the first snapshot of a book that already has levels is announced between DISCONNECTED and CONNECTED, so it is no longer read as a gap (DR-V12-D09).
 - `Venues.simV2`: the three order books publish as venues 102, 103 and 104 (all were 102).

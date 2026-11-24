@@ -19,7 +19,7 @@ Documentation site: <https://ashjha0.github.io/rates-algo-trading/>.
 | build it and run something | [Quick start](#quick-start) |
 | learn the subject | [LEARN.md](LEARN.md) |
 | follow a worked path | Tutorials, [index](docs/tutorials/README.md): [a first back-test day](docs/tutorials/01-first-backtest-day.md), [the v2 desk in process](docs/tutorials/02-v2-desk-profile.md), [a registered experiment](docs/tutorials/03-registered-experiment.md), [wired latency](docs/tutorials/04-wired-latency.md) |
-| do one specific thing | [COOKBOOK.md](COOKBOOK.md), 39 recipes |
+| do one specific thing | [COOKBOOK.md](COOKBOOK.md), 45 recipes |
 | see how it fits together | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [diagrams](docs/site/pages/diagrams.md) |
 | bind to an interface or read a file format | [API_SPEC.md](API_SPEC.md) |
 | know why something is the way it is | [DECISIONS.md](DECISIONS.md) |
@@ -186,7 +186,7 @@ Read these before reading any number above.
 - **Not built:** Aeron replication and the quoting lease (DR-P6-06), APA publication, the Part 43 message and the pre-execution credit check (docs/compliance/RTS6_INVENTORY.md).
 - **The forward log is not a track record.** Its client flow and fills are synthetic, and the intraday market is held flat at the previous close, so informed clients carry no information and the session's spread capture has no adverse selection in it. Its synthetic income is close to deterministic, so a ratio of mean to standard deviation would be large and mean nothing; the summary prints none. Only the close mark of the session's book is a real outcome, and it measures no skill (docs/research/PAPER_TRADING_PLAN.md Section 6, review Section 2.5, DR-RV-C01).
 - **No independent review.** The code was written by AI sessions and merged by the owner with CI as the only gate (CONTRIBUTING.md). docs/compliance/RTS6_INVENTORY.md describes controls in simulation; it is not a claim of compliance.
-- **Cookbook.** 39 recipes are written. Recipe 9 is a comparison method checked by the golden tests; the other 38 are checked by `tools/check_cookbook.py` against their source and recorded output; recipes 38 and 39 (1.2.0) are shell commands, which it runs.
+- **Cookbook.** 45 recipes are written. Recipe 9 is a comparison method checked by the golden tests; the other 44 are checked by `tools/check_cookbook.py` against their source and recorded output; recipes 38 and 39 (1.2.0) are shell commands, which it runs.
 - **Ledger flags.** Nine audit rows carry `code_dirty: true`: AUDIT-02 to 04, AUDIT-12 to 14 and AUDIT-22 to 24. Each was recorded at the same commit as the row before it, while the ledger file itself was uncommitted; docs/research/PNL_AUDIT.md explains. The ledger chain has no external anchor (review Section 2.4). Three data sets were read 11, 9 and 2 times under different pre-registration ids, and their rows say look 1; `python -m ratesresearch.prereg data/ledger/ledger.jsonl` prints the looks per data set.
 
 ## Repository layout
