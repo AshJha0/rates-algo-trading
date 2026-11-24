@@ -278,38 +278,68 @@ class VenueSecurityTest {
     }
   }
 
-  @Test
-  void aWrongPasswordGetsALogoutWithAReasonAndADisconnect() {
+  /** One refused logon on an acceptor of its own, which has held no earlier connection. */
+  private static void refusedOnAFreshAcceptor(final String username, final Secret password) {
     final ManualClock clock = new ManualClock(Venues.T0);
     final ClobSimulator clob = clob(clock);
     final AcceptorOptions options = new AcceptorOptions(null, "desk-1", Secret.of(LOGON_PASSWORD), null);
     try (VenueHarness h = new VenueHarness(clob, clock, options)) {
-      final Refusal wrongPassword = new Refusal();
-      try (EngineSession e = h.prepare("RALGO", wrongPassword, null, "desk-1", Secret.of("not-the-password"), true)) {
-        expectRefusal(clob, e, wrongPassword);
-      }
-      assertEquals(1, clob.logonsRefused());
+      refused(h, clob, username, password);
+    }
+  }
 
-      final Refusal noCredentials = new Refusal();
-      try (EngineSession e = h.prepare("RALGO", noCredentials, null, null, null, true)) {
-        expectRefusal(clob, e, noCredentials);
-      }
-      assertEquals(2, clob.logonsRefused());
+  private static void refused(
+      final VenueHarness h, final ClobSimulator clob, final String username, final Secret password) {
+    final Refusal seen = new Refusal();
+    try (EngineSession e = h.prepare("RALGO", seen, null, username, password, true)) {
+      expectRefusal(clob, e, seen);
+    }
+    assertEquals(1, clob.logonsRefused());
+    assertEquals(1, clob.eventLog().stream().filter(l -> l.contains("logon refused RALGO")).count());
+  }
 
-      final Refusal wrongUser = new Refusal();
-      try (EngineSession e = h.prepare("RALGO", wrongUser, null, "desk-2", Secret.of(LOGON_PASSWORD), true)) {
-        expectRefusal(clob, e, wrongUser);
-      }
-      assertEquals(3, clob.logonsRefused());
-      assertEquals(3, clob.eventLog().stream().filter(l -> l.contains("logon refused RALGO")).count());
+  @Test
+  void aWrongPasswordGetsALogoutWithAReasonAndADisconnect() {
+    refusedOnAFreshAcceptor("desk-1", Secret.of("not-the-password"));
+  }
 
-      // the right credentials are accepted, on the same acceptor, after the refusals
+  @Test
+  void aLogonWithoutCredentialsIsRefusedTheSameWay() {
+    refusedOnAFreshAcceptor(null, null);
+  }
+
+  @Test
+  void aWrongUsernameIsRefusedTheSameWay() {
+    refusedOnAFreshAcceptor("desk-2", Secret.of(LOGON_PASSWORD));
+  }
+
+  /**
+   * QuickFIX/J queues the end of a connection for its session, not for the connection: handled after
+   * the next connection has attached, it closes that one. The desk's {@code VenueSession} retries a
+   * connection that ends before its Logon is answered (DR-INT-09), and so does this test.
+   */
+  @Test
+  void theRightCredentialsAreAcceptedOnTheSameAcceptorAfterARefusal() {
+    final ManualClock clock = new ManualClock(Venues.T0);
+    final ClobSimulator clob = clob(clock);
+    final AcceptorOptions options = new AcceptorOptions(null, "desk-1", Secret.of(LOGON_PASSWORD), null);
+    try (VenueHarness h = new VenueHarness(clob, clock, options)) {
+      refused(h, clob, "desk-1", Secret.of("not-the-password"));
       awaitVenueFree(clob);
-      try (EngineSession e = h.connect("RALGO", (s, m, d) -> { }, null, "desk-1", Secret.of(LOGON_PASSWORD), true)) {
-        assertEquals(SessionState.ACTIVE, e.session().state());
+      try (EngineSession e = h.prepare("RALGO", (s, m, d) -> { }, null, "desk-1", Secret.of(LOGON_PASSWORD), true)) {
+        // the desk's default ReconnectPolicy: five retries, 100 ms doubling; without the wait each
+        // attempt's own end can close the next
+        for (int retry = 0; e.session().state() != SessionState.ACTIVE; retry++) {
+          assertTrue(retry <= 5, "the right credentials were not accepted in five retries");
+          if (retry > 0) {
+            java.util.concurrent.locks.LockSupport.parkNanos(100_000_000L << (retry - 1));
+          }
+          e.transport().connect();
+          e.pollUntil(() -> e.session().state() == SessionState.ACTIVE || !e.transport().isConnected(), 10_000);
+        }
         assertEquals(0, e.session().stats().logonsRefused());
       }
-      assertEquals(3, clob.logonsRefused());
+      assertEquals(1, clob.logonsRefused());
     }
   }
 
