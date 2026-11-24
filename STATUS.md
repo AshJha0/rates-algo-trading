@@ -258,9 +258,8 @@ Known gaps of 1.2.0 (README "Limits" has each):
 - Simulator v2: the parameters listed in SIM_V2_CALIBRATION.md Section 11 are assumptions; Treasury competitors are not exactly at zero profit; the upper winner band does not start; deviations D1 to D18 (SIM_V2_DESIGN.md Section 14).
 - A restarted v2 market forgets the desk's earlier impact; per-component selections are not run at process level; a venue reusing an ExecID after release is booked; the TLS path allocates about 1.3 KB per message in the JDK.
 - Not delivered from Round 6: an AOT or CDS cache, a tighter allocation tolerance, a measurement of the write-protect fault fix (L9), repricing off the loop (L10), feed arbitration and heartbeat, `CompositeBuilder` in the process (S10, S11). No JMH benchmark for the router.
-- The `DeskGroup` flush workaround of DR-V12-D08 is unnecessary after DR-V12-P06; removing it is a small code change.
 - DESK_V2_WIRING.md Section 8 still describes the earlier five-id client tier map; `DeskSettings.V2_CLIENT_TIERS` follows the simulator's three ids since DR-V12-E03.
-- Mutation reports of 2026-11-23 are not committed; five of the six measured modules are not in the pom's `pit` modules.
+- Mutation scores were measured once, on 2026-11-23; the reports are not committed, and five of the six measured modules are not in the pom's `pit` modules.
 
 Owner items:
 

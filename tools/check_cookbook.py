@@ -10,12 +10,18 @@ Python recipes (P5 onward) live in research/recipes/: the first ```python block 
 script, and this checker runs the script and compares its output with the recorded file and
 with the "Expected output" block, so Python recipes are executed here rather than by Maven.
 
+Command recipes (38 onward) are not programs: the first plain ``` block holds shell commands, one
+a line, that run Python. The checker runs each with this interpreter from the repository root, in
+order and without a shell, and the joined output must equal the "Expected output" block.
+
 Usage: python tools/check_cookbook.py [repo root]
 """
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +68,8 @@ PYTHON_RECIPES = {
     37: ("recipe37_forward_ledger.py", "recipe37.txt"),
 }
 
+COMMAND_RECIPES = (38, 39)
+
 
 def section(text: str, number: int) -> str:
     start = re.search(rf"^## {number}\. ", text, re.M)
@@ -83,6 +91,27 @@ def fenced(block_text: str, lang: str, after: str | None = None) -> str:
     if m is None:
         raise SystemExit(f"COOKBOOK.md: ```{lang} block not found")
     return m.group(1)
+
+
+def run_command(line: str, root: Path) -> tuple[int, str]:
+    """Run one quoted command line, "[NAME=VALUE ...] python ARGS", and return its output."""
+    words = shlex.split(line)
+    env = dict(os.environ)
+    while words and re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
+        name, value = words.pop(0).split("=", 1)
+        env[name] = value
+    if not words or words[0] != "python":
+        raise SystemExit(f"COOKBOOK.md: a command recipe may only run python: {line}")
+    ran = subprocess.run(
+        [sys.executable, *words[1:]],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+        cwd=root,
+        env=env,
+    )
+    return ran.returncode, ran.stdout.replace("\r\n", "\n")
 
 
 def main(root: Path) -> int:
@@ -124,8 +153,21 @@ def main(root: Path) -> int:
             print(f"recipe {number}: running {script_name} does not reproduce {expected_name}")
             print(ran.stdout + ran.stderr)
             failures += 1
+    for number in COMMAND_RECIPES:
+        sec = section(cookbook, number)
+        output = ""
+        for line in fenced(sec, "").strip().splitlines():
+            code, text = run_command(line, root)
+            output += text
+            if code != 0:
+                print(f"recipe {number}: exit code {code}: {line}")
+                failures += 1
+        if output.strip() != fenced(sec, "", after="Expected output").strip():
+            print(f"recipe {number}: running its commands does not reproduce the output block")
+            print(output)
+            failures += 1
     if failures == 0:
-        total = len(RECIPES) + len(PYTHON_RECIPES)
+        total = len(RECIPES) + len(PYTHON_RECIPES) + len(COMMAND_RECIPES)
         print(f"cookbook: {total} recipes match their sources and recorded output")
     return 1 if failures else 0
 

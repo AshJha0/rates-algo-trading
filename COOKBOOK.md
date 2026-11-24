@@ -3318,7 +3318,7 @@ chain (fnv1a) verified to sequence 8
 
 The fixture's template ids are test values: ids 4 to 8 have no name in the tool's table, so their numbers are printed. The header of `word64_v2.raj` holds format version 2 at offset 4 and algorithm 2 (WORD64) at offset 20; `fnv1a_v1.raj` holds version 1 and zero there. From a research script, `ratesresearch.fnv.journal_hash_algorithm(data)` returns the algorithm id of a whole journal file's bytes (it checks that the declared capacity equals the file size, so pass the file, not the header alone), and `ratesresearch.fnv.chain_hash(algorithm, payload, previous)` continues a chain in either algorithm; recipe 35 shows the FNV-1a walk.
 
-This recipe is a command, not a program: `tools/check_cookbook.py` does not run it. The output was reproduced on 2026-11-23 with Python 3 on Windows 11.
+This recipe is a command, not a program: `tools/check_cookbook.py` runs the commands above and compares their output with the block.
 
 ## 39. How do I validate the Round 5 family registration?
 
@@ -3336,5 +3336,5 @@ research/prereg/R5-FAM-001.yaml: valid
 
 "Valid" means the file passes the registration rules, not that it has been approved: signing is the owner's step (tools/sim-v2/README.md). Once the family has run, `python -m ratesresearch.prereg bh data/ledger/ledger.jsonl family:R5-FAM-001` and `LedgerCli --bh family:R5-FAM-001` print its Benjamini-Hochberg table; before that the ledger holds no row for it.
 
-This recipe is a command, not a program: `tools/check_cookbook.py` does not run it. The output was reproduced on 2026-11-23 with Python 3 on Windows 11.
+This recipe is a command, not a program: `tools/check_cookbook.py` runs the commands above and compares their output with the block.
 
