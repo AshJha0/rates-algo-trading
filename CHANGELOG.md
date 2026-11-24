@@ -6,7 +6,7 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 - Dependencies, one batch of three Dependabot groups: Agrona 2.7.1, SBE 1.42.0, Error Prone 2.53.0, SnakeYAML 2.7, SLF4J 2.0.20 and Maven plugins; GitHub Actions (checkout, setup-java, setup-python, upload-artifact, Pages) at new pinned commits; mkdocs-material 9.8.2 and pymdown-extensions 13.1.2. No source change.
 - `deploy/rehearsal.py` refuses a target directory holding jars of several versions; it started the oldest one.
-- Test: `RestartRecoveryTest` waits for the prepared next segment before it takes the crash image (a race seen once on the Linux runner).
+- Test: `RestartRecoveryTest` waits for the prepared next segment before it takes the crash image (a race seen once on the Linux runner). `VenueBindingTest` allows the simulator's own RFQs while the sessions log on again.
 
 ## [1.2.0] - 2026-11-24
 

@@ -147,13 +147,17 @@ class VenueBindingTest {
           "both venues logged the old session out: " + diagnostics(p));
 
       final long sent = desk.desk().quoting().quotesSent();
+      final long rfqs = desk.desk().quoting().rfqs();
       p.d2cSession().connect();
       p.clobSession().connect();
       p.step(500_000_000L, STEP);
       assertTrue(await(p, () -> p.d2cSession().isActive() && p.clobSession().isActive()), "both sessions logged on again: " + diagnostics(p));
       assertTrue(await(p, () -> desk.desk().health().healthy(p.clock().epochNanos())), "both sessions up again");
       rfqWithLiveQuote(p);
-      assertEquals(sent + 1, desk.desk().quoting().quotesSent(), "quoting resumed after logon");
+      // simulated time passes while the sessions log on, so the simulator's own clients may ask too
+      final long resumed = desk.desk().quoting().quotesSent() - sent;
+      assertTrue(resumed >= 1, "quoting resumed after logon");
+      assertTrue(resumed <= desk.desk().quoting().rfqs() - rfqs, "at most one quote an RFQ");
       assertEquals(2, p.d2cSession().logons());
       assertNull(p.failure());
     }
