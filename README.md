@@ -18,6 +18,7 @@ Documentation site: <https://ashjha0.github.io/rates-algo-trading/>.
 | judge it in five minutes | [docs/REVIEWER_SUMMARY.md](docs/REVIEWER_SUMMARY.md), then [Limits](#limits) |
 | build it and run something | [Quick start](#quick-start) |
 | learn the subject | [LEARN.md](LEARN.md) |
+| follow a worked path | Tutorials, [index](docs/tutorials/README.md): [a first back-test day](docs/tutorials/01-first-backtest-day.md), [the v2 desk in process](docs/tutorials/02-v2-desk-profile.md), [a registered experiment](docs/tutorials/03-registered-experiment.md), [wired latency](docs/tutorials/04-wired-latency.md) |
 | do one specific thing | [COOKBOOK.md](COOKBOOK.md), 39 recipes |
 | see how it fits together | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [diagrams](docs/site/pages/diagrams.md) |
 | bind to an interface or read a file format | [API_SPEC.md](API_SPEC.md) |
@@ -231,6 +232,7 @@ For a newcomer, in reading order:
 
 - [LEARN.md](LEARN.md): the subject, from rates products to low-latency Java and regulation. Each section gives the plain idea, the formal statement and a worked example.
 - [COOKBOOK.md](COOKBOOK.md): how-do-I recipes whose output is checked in CI.
+- [docs/tutorials/README.md](docs/tutorials/README.md): four tutorials, from a first back-test to the wired latency benchmark.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, the wired process, the event loop, threading and numerical rules.
 
 For a desk reviewer:

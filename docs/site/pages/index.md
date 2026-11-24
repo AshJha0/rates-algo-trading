@@ -28,6 +28,7 @@ What is not built or not real is listed under "Limits" in the [README](https://g
 - [Reviewer summary](reviewer-summary.md): what is real evidence, the biggest limits, where to look in five minutes.
 - [Learn](learn.md): the subject, from rates products to low-latency Java and regulation.
 - [Cookbook](cookbook.md): 39 how-do-I recipes; 38 are checked against their source and recorded output in CI.
+- [Tutorials](tutorials.md): a first back-test day, the v2 desk in process, a registered experiment, wired latency.
 - [API contract](api-spec.md): units, journal format, SBE schema, clock semantics, each module's interface.
 - [Architecture](architecture.md): components, the wired process, the event loop, threading and numerical rules.
 - [Benchmarks](benchmarks.md): the wired-desk benchmark on one laptop, quiet and loaded, and the earlier event-loop runs as history.
