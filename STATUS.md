@@ -100,7 +100,7 @@ Planned 9 plan-days and about 0.75 wall-clock days. Actual, 2026-10-31: first co
 
 | Gate item | Result | Where |
 |---|---|---|
-| Zero bytes allocated on the loop thread over one million messages | met at the gate: 0 bytes after warm-up; since DR-INT-02 the test measures three windows of one million messages, the last must allocate 0 bytes and the second and third at most 1,024 each (the per-window bytes are printed only on failure) | `LoopAllocationTest`, `rates-core` |
+| Zero bytes allocated on the loop thread over one million messages | met at the gate: 0 bytes after warm-up; since DR-V12-T01 the test measures four windows of one million messages, each after the first at most 1,024 bytes and at least one of them 0 (the per-window bytes are printed only on failure) | `LoopAllocationTest`, `rates-core` |
 | Replay-hash equality property | met | `LoopPropertiesTest`, `LoopReplayTest` |
 | ArchUnit hot-path rules | met, each rule also proven to fail on a violating fixture | `HotPathRulesTest` |
 | Segmented journal round trip and cross-segment corruption | met | `SegmentedJournalTest` |

@@ -87,6 +87,7 @@ Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on
 - `Decimal9`: negative ties round away from zero as documented (`Math.round` took them toward positive infinity); `round`, `floor` and `ceil` are exact from 2^52 units up.
 - `DeskGroup`: a fill of a child order the router has already released (one that crossed its cancel, or an order left from before a restart) is booked as a position, once by execution id, and counted (`lateFills`); it was dropped before, so risk and the venue could differ (DR-V12-D13).
 - `BacktestRunner`, simulator v2: a cancel that finds the order filled reports `Filled` and is refused; it reported `PartiallyFilled` and then a `Cancelled` with nothing left, which the desk counted as an unrouted report (DR-V12-E09).
+- Tests: `LoopAllocationTest` fills the outbound ring in its warm-up and asks for one zero window of four, each after the first within 1,024 bytes; `ChildOrderBookAllocationTest` repeats its long window after a one-off of at most 256 bytes (DR-V12-T01). `ratesresearch.prereg` type guards for mypy strict. `tools/check_cookbook.py` runs the command recipes 38 and 39.
 - Dead code removed in `RiskEngine.onFairValue` and `PositionKeeper`; behaviour unchanged.
 - `FeedBinding`: the first snapshot of a book that already has levels is announced between DISCONNECTED and CONNECTED, so it is no longer read as a gap (DR-V12-D09).
 - `Venues.simV2`: the three order books publish as venues 102, 103 and 104 (all were 102).
