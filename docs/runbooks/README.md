@@ -12,7 +12,7 @@ One runbook per incident class, plus the daily procedures and the warm-standby d
 | Process restart on its journals | [restart.md](restart.md) | TradingProcessDown; `"recovered":true` in the status; `restart refused` on standard error |
 | Reconciliation break | [reconciliation-break.md](reconciliation-break.md) | UnexplainedReconciliationBreaks |
 
-Daily procedures: [start-of-day.md](start-of-day.md), [end-of-day.md](end-of-day.md). Restart after a crash or a stop: [restart.md](restart.md). Certificate and password rotation: [certificate-rotation.md](certificate-rotation.md). Design: [warm-standby-design.md](warm-standby-design.md). Record template: [post-incident-template.md](post-incident-template.md).
+Daily procedures: [start-of-day.md](start-of-day.md), [end-of-day.md](end-of-day.md). Restart after a crash or a stop: [restart.md](restart.md). Since 1.2.0, opt-in configurations: the v2 desk profile, its start, kill, stop and restart ([v2-profile.md](v2-profile.md)); the low-latency runtime profile ([low-latency-profile.md](low-latency-profile.md)). Research operations: running a registered simulator v2 experiment detached ([registered-experiment.md](registered-experiment.md)). Certificate and password rotation: [certificate-rotation.md](certificate-rotation.md). Design: [warm-standby-design.md](warm-standby-design.md). Record template: [post-incident-template.md](post-incident-template.md).
 
 The controls these runbooks act on are drawn in [RTS 6 control map](../site/pages/diagrams.md#rts-6-control-map).
 

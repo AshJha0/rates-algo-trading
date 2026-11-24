@@ -12,6 +12,12 @@ This project runs against simulated venues and public data. It has no live conne
 
 There are no secrets in this repository and none are needed to build it or to run the simulator preset. The rehearsal makes throwaway TLS material and passwords for each run and deletes them at the end; `TradingProcessMainTest` checks that neither password is in any file under the journal directory. CI uses only the default `GITHUB_TOKEN`. A pull request that adds a credential, token or private key is closed; if one is ever committed by mistake it is rotated and the history is rewritten with a note in CHANGELOG.md.
 
+## Changes in 1.2.0
+
+- The v2 desk profile's simulated venues (`SimulatedVenuesV2`) take the same acceptor options as the version 1 simulators: TLS, Logon credentials and a FIX store per venue. `deploy/config/trading-v2.yaml` sets TLS and credentials as the other deployment files do.
+- CPU pinning (`CoreAffinity`, DR-R6-L01) and journal page locking call `sched_setaffinity` and `mlock` through the JDK's foreign function API, a restricted method. The trading image starts the JVM with `--enable-native-access=ALL-UNNAMED`. No native library of the project's own is loaded; off Linux, or when the call is refused, the thread runs unpinned.
+- Journals written with `journalHash: word64` (journal format version 2) are tamper-evident in the same sense as FNV-1a journals: a chain of 64-bit non-cryptographic hashes that detects accidental damage and naive edits, not a deliberate forger who can recompute the chain. Readers refuse a version-2 header that names any other algorithm.
+
 ## Dependencies
 
 As of the 1.1.0 draft (2026-11-23):
@@ -22,6 +28,6 @@ As of the 1.1.0 draft (2026-11-23):
 - Container images start from `eclipse-temurin:25-jre`, a moving tag, not a digest.
 - There is no software bill of materials.
 
-Dependency updates and code scanning: `.github/dependabot.yml` proposes grouped weekly updates for Maven, pip (`/research`, `/docs/site`) and Actions. `.github/workflows/codeql.yml` scans Java and Python on every pull request, on push to `main` and weekly; it reports and does not gate. Neither has run on GitHub as of this draft. CodeQL "default setup" must be off in the repository settings for the workflow to upload results (owner item, deploy/OWNER_CHECKLIST.md). This answers review finding E7 except the image digests and the bill of materials.
+Dependency updates and code scanning: `.github/dependabot.yml` proposes grouped weekly updates for Maven, pip (`/research`, `/docs/site`) and Actions. `.github/workflows/codeql.yml` scans Java and Python on every pull request, on push to `main` and weekly; it reports and does not gate. CodeQL has run on pull requests since 1.1.0: its finding on the rehearsal's TLS context (a fallback without the TLS 1.3 floor) was fixed in 222e9c1 and 7fee46c. CodeQL "default setup" must be off in the repository settings for the workflow to upload results (owner item, deploy/OWNER_CHECKLIST.md). This answers review finding E7 except the image digests and the bill of materials.
 
 One person maintains the project; security reports and dependency alerts are read by that person, with no second reviewer.

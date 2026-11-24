@@ -29,6 +29,9 @@ One row per algorithm (PRA SS5/18, RTS 6 Article 1 and MAR 7A records). The `id`
 | ALG-UST-MM-01 | Treasury order-book quoter | Places and manages resting orders in on-the-run Treasuries on a central limit order book. | US Treasuries | D2D CLOB (simulated) | high | owner | owner | `limits.*` | P3 and P4 tests | not deployed | not applicable | instrument group | development |
 | ALG-HEDGE-01 | DV01 hedger | Hedges residual DV01 into futures and benchmarks when the ladder exceeds its band. | Treasury futures, benchmarks | CLOB (simulated) | medium | owner | owner | `limits.maxNetDv01Minor` | P3 hedger tests | not deployed | not applicable | process | development |
 | ALG-ROUTE-01 | Smart order router | Chooses venue and size for hedge and client orders and records decision inputs. | All | All (simulated) | medium | owner | owner | `limits.maxMessagesPerSecond` | P4 router tests, markout report | not deployed | not applicable | process | development |
+| ALG-SWP-RFQ-02 | Strategy v2 RFQ quoter (opt-in) | Prices swap and Treasury RFQs from a break-even distance and a learned distribution of the best competing quote, with one inventory reservation price capped at the hedge cost. Never quotes below break-even. | USD SOFR swaps at eight tenors, on-the-run Treasuries | D2C RFQ (simulator v2) | high | owner | owner | `limits.*`, `desk.strategy` | `StrategyPathTest`, `StrategyPropertyTest`, `DeskSettingsStrategyTest`; family registration R5-FAM-001 (unsigned, not run) | not deployed | 1.2.0 | process | development |
+| ALG-HEDGE-02 | Factor hedge planner with internalisation (opt-in) | Hedges the level factor always and the slope when it pays, at per-instrument tick costs; may hold a small residual and rest a passive hedge before crossing at a time stop. | on-the-run Treasuries, TYZ6 | two Treasury CLOBs, futures book (simulator v2) | medium | owner | owner | `limits.maxNetDv01Minor`, `desk.strategy` | `FactorHedgePlannerTest`, `HedgerInternalisationTest`; R5-FAM-001 | not deployed | 1.2.0 | process | development |
+| ALG-ROUTE-02 | Ladder-model router (opt-in) | Splits a hedge parent across every venue that lists the instrument from each venue's whole ladder, learned queue rates and a venue scorecard, and journals each decision with its ladder. | on-the-run Treasuries, TYZ6 | two Treasury CLOBs, futures book (simulator v2) | medium | owner | owner | `limits.maxMessagesPerSecond`, `desk.router` | `LadderModelTest`, `RouterBenchmarkTest` (declared check failed against passive-with-deadline, docs/research/ROUTER_BENCHMARK.md) | not deployed | 1.2.0 | process | development |
 
 Notes added 2026-11-23 (review docs/reviews/REVIEW_2026-11-23.md):
 
@@ -36,3 +39,9 @@ Notes added 2026-11-23 (review docs/reviews/REVIEW_2026-11-23.md):
 - ALG-UST-MM-01: the CLOB quoter is built but not enabled in the wired process (README "Limits").
 - ALG-HEDGE-01: the wired hedger trades Treasuries on the CLOB only; there is no futures simulator (DECISIONS.md DR-R2W-08).
 - ALG-ROUTE-01: in the wired process each router is given one venue, the CLOB (`rates-app/src/main/java/io/ratesalgo/app/loop/DeskGroup.java`), and routes hedge orders only.
+
+Notes added for 1.2.0 (2026-11-23):
+
+- ALG-SWP-RFQ-02, ALG-HEDGE-02 and ALG-ROUTE-02 run only on the opt-in v2 desk profile (`desk.profile: v2`, docs/research/DESK_V2_WIRING.md). The default profile runs ALG-SWP-RFQ-01, ALG-HEDGE-01 and ALG-ROUTE-01 exactly as in 1.1.0. No registered result supports any of the three new rows; their default changes only after a signed, pre-registered run.
+- ALG-HEDGE-02: on the v2 smoke day the planner never chose the future at the declared tick costs; the futures path is exercised by an outage test only. Swap-spread risk is visible and neither limited nor hedged.
+- ALG-ROUTE-02: one router per hedge instrument with every venue that lists it; a kill is confirmed only when all four venues report nothing working.

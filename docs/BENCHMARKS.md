@@ -1,6 +1,61 @@
 # Benchmarks: methodology
 
-This document fixes how latency is measured so that numbers, when they exist, mean the same thing from one report to the next. The first measurements were taken on 2026-10-31 on the development laptop, in-process, and are in the results section at the end with their report files.
+This document fixes how latency is measured so that numbers, when they exist, mean the same thing from one report to the next. Since 1.2.0 the current figures are those of the wired-desk benchmark, in the next section: the real trading process over loopback FIX, no run discarded. Everything after it describes the event-core harness of P2 and R2 (`LatencyHarness`, a constant-arithmetic handler timed on its own) and its results, kept as history. The review of 2026-11-23 (finding L4, docs/reviews/REVIEW_2026-11-23.md) found that harness's headline misleading: it timed a handler that does no desk work, left out the ring read and journal append, sat at one or two ticks of the 100 ns Windows clock, and discarded runs by a lateness rule correlated with the stalls being measured. Do not quote its figures as the desk's latency.
+
+## The wired desk (1.2.0)
+
+<!-- QUIET-RUN -->
+
+The headline above is owed: a run of the suite below on a quiet machine, with nothing else running, has not been made. Until it is, the figures in this section are readings of a loaded laptop. They say how small the desk's own work per request is; they say little about the code's floor and nothing about a production host.
+
+**What is measured.** `io.ratesalgo.bench.wired.WiredDeskBenchmark` (rates-bench) starts the real `TradingProcess` (DeskGroup pricing, risk, quoting, hedging and routing, its inbound, outbound and router journals, its FIX sessions and its supervisor) exactly as `TradingProcessMain` wires it, except that the D2C session connects to a load generator (`TradingProcess.Options.withD2cEndpoint`). The generator is a FIX acceptor on loopback, plain TCP or TLS 1.3, in the same JVM, so all stamps share one `System.nanoTime` clock. It writes QuoteRequests on a fixed schedule without waiting for answers and passes on every Quote it receives. Probes (`GatewayProbe`, `LoopProbe`) stamp each stage on the thread that passes it and are compiled out unless the JVM starts with `-Drates.probes=true`.
+
+**Headline interval.** T0 to T4: scheduled send to Quote bytes written to the socket. Every interval starts at the scheduled time, so a stall anywhere is charged to every request it delays (no coordinated omission). No run is discarded for any reason; the generator's lateness is reported beside each run instead. HdrHistogram, 3 significant digits; a p99.99 from 60,000 requests rests on six samples and is marked "few samples".
+
+**Configurations.** Runtime profile `default` (loop backoff, session and feed threads parking 200 us, nothing pinned, FNV-1a journals) or `lowLatency` (loop, session, feed and journal threads busy-spinning, WORD64 chain hash, segments offered for mlock, curve inputs conflated); journal `direct` or `ring`; transport `plain` or `tls`. Each of the eight runs in a fresh JVM (`WiredDeskSuite`) with the trading image's JVM flags (deploy/trading/Dockerfile; a test keeps the two lists equal) plus GC and safepoint logging. Only the default (recorded) desk profile is benchmarked: the outside D2C endpoint is refused on simulator v2, so the v2 profile has no figure here.
+
+**How to run.** `mvn -pl rates-bench exec:exec@wired` (properties `wired.rate`, `wired.warmup`, `wired.measure`, `wired.configs`, `wired.gcCompare`, `wired.label`); reports go to `rates-bench/target/wired/`; `python tools/latency_summary.py rates-bench/target/wired/wired-*.json` prints the tables. CI's latency job runs all eight on its Linux runner (10 s warm-up, 30 s measured), informational and non-gating.
+
+**Not measured.** A network card, a switch, kernel bypass, a real venue's FIX engine, another machine, a pinned or isolated core.
+
+### Run of 2026-11-23, laptop, loaded
+
+Machine: ASUS Vivobook 17 X1704VA, Intel Core 5 120U (12 logical CPUs), 16 GB, Windows 11, Eclipse Temurin 25.0.5+8, ZGC with 512 MB heap. 1,000 QuoteRequests per second, 20 s warm-up, 60 s measured (60,000 requests), commit 9c1daa9a58dc. Other sessions' Maven builds and tests ran throughout; generator lateness reached milliseconds at p99 in every run. Reports: `docs/benchmarks/wired-20261123/`.
+
+| Configuration | p50 (us) | p99 (us) | max (us) | Generator lateness p99 (us) |
+|---|---:|---:|---:|---:|
+| default-direct-plain | 24772.6 | 63438.8 | 111018.0 | 17350.7 |
+| default-ring-plain | 23838.7 | 56754.2 | 124321.8 | 14639.1 |
+| lowLatency-direct-plain | 4735.0 | 55181.3 | 156893.2 | 20119.6 |
+| lowLatency-ring-plain | 2299.9 | 28934.1 | 72417.3 | 9674.8 |
+| default-direct-tls | 22036.5 | 54591.5 | 314572.8 | 12181.5 |
+| default-ring-tls | 21168.1 | 282591.2 | 610271.2 | 16719.9 |
+| lowLatency-direct-tls | 203.5 | 9674.8 | 31719.4 | 3389.4 |
+| lowLatency-ring-tls | 666.6 | 8962.0 | 32243.7 | 3090.4 |
+| default-direct-plain, Parallel collector | 13770.8 | 40927.2 | 63668.2 | 745.0 |
+
+### Run of record after the v1.2 process integration, 2026-11-23, laptop, busier
+
+Commit 43ded7353ca4, default desk profile, four plain-TCP configurations, 10 s warm-up, 30 s measured (30,000 requests). The processor was 85 percent busy when the run started. Shorter and not comparable with the run above; it shows no improvement or regression. Reports: `docs/benchmarks/wired-20261123-v12/` (three of four; the default-ring-plain report is not committed, see docs/BENCHMARKS_V2.md).
+
+| Configuration | p50 (us) | p99 (us) | max (us) | Generator lateness p99 (us) |
+|---|---:|---:|---:|---:|
+| default-direct-plain | 2021.4 | 6111.2 | 23363.6 | 175.9 |
+| default-ring-plain | 1904.6 | 5492.7 | 17694.7 | 76.2 |
+| lowLatency-direct-plain | 49.0 | 314.6 | 20611.1 | 62.0 |
+| lowLatency-ring-plain | 61.6 | 8511.5 | 52232.2 | 1304.6 |
+
+### What the two runs say, and what they do not
+
+- The desk's own work per request is small in both: inbound journal append 0.2 to 0.6 us at p50, handler (pricing, risk, quoting, publish) 5.6 to 15.4 us at p50, encode 1.7 to 4.4 us, finish and socket write 21 to 62 us. Everything else is waiting.
+- In the default profile the waits are the parking idle strategies. On Windows a park lasts a timer period, so the default-profile medians are 20 to 25 ms in the first run and about 2 ms in the second with the same code path. Both are readings of the machine's load.
+- The lowLatency medians run from 49 us to 4.7 ms across runs of the same code; the spread follows the generator's lateness, that is, how busy the machine was.
+- Direct against ring journaling cannot be separated in either run. No producer waited in any ring run.
+- JIT compilation was still running in every measured phase; the warm-ups were too short for a loaded machine.
+- The Parallel-collector run was faster than its ZGC twin but ran last, on a quieter machine; it is not evidence for either collector. ZGC stays in the trading image (DECISIONS.md DR-R6-L06): TLS runs made 12 to 18 ZGC cycles per measured minute with pauses of at most 0.07 ms in the measured phases, and time to safepoint (up to 15 to 23 ms in most runs) was the larger cost, which a descheduled thread causes.
+- Nothing here is a target met.
+
+Full stage tables, the GC evidence and the JMH microbenchmarks of round 6 (chain hash: WORD64 4.8 to 7.8 times faster than FNV-1a; FIX encode variants that cannot be told apart under the noise) are in docs/BENCHMARKS_V2.md, the draft this section was made from, which the benchmark code still cites.
 
 ## Stage boundaries and clocks
 
@@ -63,6 +118,8 @@ The gating unit test, `LoopAllocationTest`, uses windows rather than a single de
 Hosted CI runners (GitHub-hosted Linux and Windows) produce informational numbers only. Their hardware is shared and varies between runs, so no threshold gates on them. Gating applies only on a self-hosted, pinned runner with a recorded configuration, when one exists (DECISIONS.md DR-005). Until then, reports come from the development machine and say so.
 
 ## Results
+
+Historical (event-core harness, 2026-10-31 to 2026-11-01). These rows time the loop on a constant handler, with no FIX, no desk and no gateways, and several were discarded by the lateness rule above; review finding L4 explains why they are not the desk's latency. The current figures are in [The wired desk (1.2.0)](#the-wired-desk-120). The rows stay as the record of what was measured.
 
 Rows are added with a link to the report file and the run date. Every row so far is in-process on a Windows laptop: the generator, the loop and the outbound gateway are threads of one JVM sharing one monotonic clock, no core is isolated or pinned, and the laptop runs its usual background load. By the rule in "Fixed-rate load generator" every P2 run below would be discarded, because the generator fell behind its schedule (generator lateness p99 above the 20 us interval in each report); they are recorded because they are the first evidence, and the lateness is in each report. The R2 runs after the change and not marked (b) are the first whose generator kept to schedule (generator lateness p99 7.1 to 11.9 us); the R2 reproduction before the change was just behind (20.2 us).
 
