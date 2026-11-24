@@ -17,7 +17,7 @@ Read this first:
 - **No experiment has been run.** The family registration R5-FAM-001 is unsigned and has not been run. The pilot measured timings and one session sd; no P&L of any arm was looked at. The ledger still has 32 rows.
 - **No P&L claim is made.** The router benchmark and every count below are simulator results under declared assumptions (DR-008).
 
-Release build: `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on the machine: 1,478 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped.
+Release build: `mvn -o -B -ntp verify` on the merged branch at dc132a3 (later commits change documentation only): 1,484 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped.
 
 ### Simulator (Round 3)
 

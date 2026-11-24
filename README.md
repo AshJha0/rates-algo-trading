@@ -131,7 +131,7 @@ These show that the parts agree with each other and with the project's own model
 
 | What | Result | Source, date |
 |---|---|---|
-| Test suite, 1.2.0 | `mvn -o -B -ntp verify` on the merged branch at 27b2677, alone on the machine: 1,478 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped | Laptop, Windows 11, Temurin 25.0.5, 2026-11-24; CI repeats both on every pull request |
+| Test suite, 1.2.0 | `mvn -o -B -ntp verify` on the merged branch at dc132a3 (later commits change documentation only): 1,484 Java tests in 21 modules, no failures, none skipped. Python: 183 passed, 2 skipped | Laptop, Windows 11, Temurin 25.0.5, 2026-11-24; CI repeats both on every pull request |
 | Test suite, 1.1.0 | 887 Java tests in 21 modules and 121 Python tests (1 skipped), no failures, run locally on 2026-11-23 (`mvn -o -B -ntp verify`, `pytest -q research`); `mypy` is checked in CI only | the release build of the fix round |
 | Wired process, ten simulated minutes, seed 7 (default profile) | 36 RFQs, 27 quoted, 16 filled, 210 hedge parents, 213 hedge fills, 229 trades reconciled with 0 breaks, nothing working after the kill switch, replay hash -4423185950475908182 equal; unchanged by 1.2.0 | `SmokeTest`, DR-INT-07, 2026-10-31, re-run 2026-11-23 |
 | Wired v2 profile, 30 simulated minutes, one seed (structural counts, no P&L read) | 20 RFQs, 20 quoted (6 swaps, 14 Treasuries), 9 won, 28 hedge parents, 63 fills (CLOB 1 38, CLOB 2 25, futures 0), 72 of 72 trades reconciled, nothing working on any venue after the kill, replay equal. The hedge planner never chose the TY future at its declared costs; the futures path is exercised by a feed-outage test | `SmokeV2Test`, docs/research/DESK_V2_WIRING.md Section 5, 2026-11-23 |
