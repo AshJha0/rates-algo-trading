@@ -249,6 +249,11 @@ def classpath(module: str) -> str:
     jars = [j for j in jars if not j.name.endswith(("-sources.jar", "-javadoc.jar"))]
     if not jars or not (target / "lib").is_dir():
         raise SystemExit(f"{module} is not packaged; run: mvn -B -ntp -DskipTests package -pl {module} -am")
+    if len(jars) > 1:
+        # an upgrade without a clean leaves older versions beside the new one, in lib as well; the
+        # oldest would be started
+        raise SystemExit(f"{module}/target holds {', '.join(j.name for j in jars)}; "
+                         f"run: mvn -B -ntp -DskipTests clean package -pl {module} -am")
     return os.pathsep.join([str(jars[0]), str(target / "lib" / "*")])
 
 

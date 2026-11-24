@@ -14,7 +14,7 @@
   <description>Post-trade books and records: position keeper over journaled fills, order records in the RTS 6 Annex II layout, end-of-day marks and P&amp;L, clearing and settlement state machines, reconciliations, restart procedure and surveillance hooks. Off the hot path.</description>
 
   <properties>
-    <maven-dependency-plugin.version>3.8.1</maven-dependency-plugin.version>
+    <maven-dependency-plugin.version>3.11.0</maven-dependency-plugin.version>
   </properties>
 
   <dependencies>

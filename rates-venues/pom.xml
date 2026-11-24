@@ -16,7 +16,7 @@
   <properties>
     <!-- Used only by this module, so pinned here rather than in the parent (brief rule). -->
     <quickfixj.version>3.0.2</quickfixj.version>
-    <slf4j.version>2.0.18</slf4j.version>
+    <slf4j.version>2.0.20</slf4j.version>
   </properties>
 
   <dependencies>
