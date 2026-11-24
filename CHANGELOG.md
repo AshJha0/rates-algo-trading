@@ -4,7 +4,101 @@ All notable changes to this project are recorded here. The format follows [Keep 
 
 ## [Unreleased]
 
-Nothing yet beyond the 1.1.0 draft below.
+Nothing yet.
+
+## [1.2.0] - 2026-11-24
+
+Rounds 3 to 7 of the plan in docs/reviews/REVIEW_2026-11-23.md Section 9, and their integration into one desk and one process. Review finding ids are in brackets.
+
+Read this first:
+
+- **Nothing in 1.2.0 changes what the default desk quotes or how it hedges.** `DeskProfile.defaults()` builds the recorded desk exactly as 1.1.0 did: `SmokeTest` prints 36 RFQs, 27 quotes, 16 fills, 210 hedge parents, 213 hedge fills and replay hash -4423185950475908182, as before.
+- **Every v2 component is opt-in.** Simulator v2, pricing v2, strategy v2 and the ladder router are selected by a desk profile (`DeskProfile.v2()`, config `desk.profile: v2`) or one at a time. No default changes until a registered experiment says it should (DR-V12-D01).
+- **No experiment has been run.** The family registration R5-FAM-001 is unsigned and has not been run. The pilot measured timings and one session sd; no P&L of any arm was looked at. The ledger still has 32 rows.
+- **No P&L claim is made.** The router benchmark and every count below are simulator results under declared assumptions (DR-008).
+
+<!-- BUILD-RESULT -->
+
+### Simulator (Round 3)
+
+- New module `rates-sim`: one market model shared by the venue simulators and the back-test (`MarketModel`, `RfqFlow`, `BookModel`, `SessionSeeds`, a strict parameter loader, `sim_v2_structure.json`). Rates move on three fitted factors; the mid a venue publishes is a rounded reading of an unrounded latent mid; informed clients move the level factor; competitors quote at zero expected profit; order books have other takers, impact and resilience (2.1, 2.2, S7, DR-R3-01, DR-R3-02).
+- Calibration from public data: docs/research/SIM_V2_CALIBRATION.md, parameters `data/calibration/sim_v2_params.json`, pre-analysis note `research/prereg/SIM3-CAL-001.yaml`. Three factors explain 98.9 % of daily par-yield variance; intraday swap volatility is 0.123 bp per root minute pooled; competitor median half-spread 0.183 bp (bounded, 0.123 to 0.272); average adverse move 0.059 bp, set by competitor zero profit. The old adverse-selection constants are outside what the data supports. What the data does not identify is listed with an assumption and a band.
+- Bindings: back-test `SimDay`, `SyntheticDay.generateSimV2`, `BacktestConfig.forSimV2`, `PairedSessions`; venues `SimV2Session`, `Venues.simV2` and the `sim_v2` presets. Acceptance tests A1 to A12 (SIM_V2_DESIGN.md Section 11). Deviations from the design, D1 to D18, are in its Section 14.
+- `SplitMix64` moved to `io.ratesalgo.common.random` (was `io.ratesalgo.backtest.util`); same algorithm, same outputs. Callers must change the import.
+- Own impact is a law of the total traded volume, not of each slice (DR-R3-04). Treasury venues show shares of one book (DR-R3-05). Workup is off under simulator v2 (DR-R3-06).
+
+### Pricing (Round 4)
+
+- Pricing v2, selectable (`PricingBindings.Version.V2`): SOFR curve from the overnight rate, FOMC-dated steps from SR1, SR3 with in-arrears Hull-White convexity and swaps at the eight risk tenors (`SofrCurve`); fair value of a quoted swap from a curve built without it plus a half-life residual (`SofrLeaveOneOut`, `FairValueSmoother`); a fitted Treasury spread curve with rich/cheap (`TreasurySpreadCurve`); bond risk at the market z-spread and a second ladder for spread risk (`SpreadSensitivityProvider`, `SpreadRiskBook`); carry and roll-down (`CarrySource`); business date from the clock with a 17:00 New York cut (`BusinessDate`) (A1, A2, A3, A4, A7, DR-R4-01 to DR-R4-08). docs/research/PRICING_V2.md.
+- Interpolation chosen on measurement: step then tension spline, because monotone convex gave ladders 4.3 % of DV01 away from a bump (DR-R4-02).
+- `data/golden/pricing_v2_golden.json`: QuantLib 1.44 prices every v2 instrument and SciPy solves the curves (A10). `analytics_golden.json` regenerates unchanged.
+- FOMC dates checked against the Board's calendar (2027's last decision day is 2027-11-17); SR1 and SR3 terms checked against CME Chapters 461 and 460 as filed with the CFTC.
+- `CurveBuilder` tries Newton before Levenberg-Marquardt, with the residual check in rate units (DR-R4-09). `DiscountCurve` keeps weight rows under the spline schemes; `OisSwapPricer` prices a telescoping period as one ratio. Version 1 results are bit for bit unchanged.
+- Pricing v2 state is a function of the journaled inputs: no clock is read at construction, and the first timed call fixes the business date (DR-V12-P05). `PricingBinding.setInput` records an input and `repriceIfDirty` applies all recorded inputs with one solve; `advanceTo` applies a held round whole (DR-V12-P06).
+
+### Strategy (Round 5)
+
+- Strategy v2 behind switches, all off by default (`DeskSettings.StrategySwitches`; `DeskSettings.strategyV2()` turns all on): break-even, cover-relative pricing (`CoverModel`, Q1, Q3); one inventory reservation price capped at the hedge cost (Q4); fitted factor covariance and a factor hedge planner (`FactorModel`, `FactorHedgePlanner`, Q2); per-instrument tick hedge cost (`TickHedgeCostModel`, `VenueTicks`, Q5); internalisation budget with a time stop and passive-first hedges (`Hedger.Config.internalise`, `passiveFirst`); persisted multi-horizon client markouts with tier priors (`MarkoutStore`, Q6); time to live by volatility, pull at half the quoted distance and tick-correct prices (Q7, Q8). DR-R5-01 to DR-R5-06. docs/research/STRATEGY_V2.md.
+- Arithmetic from the calibration, not a result: at the 10-year the average client's break-even half-spread is 0.107 bp against an expected winning half-spread of 0.139 bp; at the 2-year the break-even is 0.265 bp.
+
+### Router (Round 6)
+
+- Ladder model, opt-in (`RouterPresets.ladder()`, `ExecutionModel.defaults()`): a consolidated, fee-adjusted sweep across price levels (`LadderAllocator`), queue and cancellation rates learned from trade prints and book decrements (`FillCalibration`), a venue scorecard with throttles and outage exclusion (`VenueScorecard`), gamma gaps in child timing, a 2-tick collar, and other strategies' resting orders registered so the router neither crosses nor counts them (`registerOwnOrder`) (S6, S10, S13, DR-R6-R01 to DR-R6-R04). `VenueCapabilities`; `BookView.levelPrice`; `ExecutionListener.onTrade`. The touch model stays the default and what the ledger's runs used.
+- SBE: template 4 `TradePrint`, template 83 `RouteDecisionLadder`, template 84 `RouteDecisionModel`, `VenueExclusion` values 7 `Throttled` and 8 `Outage`. Additive; schema version unchanged (DR-R6-R06).
+- Fair router benchmark (5.1, DR-R6-R05): docs/research/ROUTER_BENCHMARK.md, scenario fixed before the run, run once, in the router's own simulator. Risk-adjusted cost (mean + 0.5 sd), ticks: router 0.8; sweep on arrival 0.6; schedule on the best venue 1.2; TWAP 1.2; passive with a deadline 0.4. The router ties the sweep, beats the schedule and TWAP by 0.5 ticks [0.3, 0.7], and loses to passive-with-deadline by 0.4 ticks [0.2, 0.5]. The check declared before the run failed against passive-with-deadline and is recorded as failed. The ladder router cannot be told apart from the touch router here. This replaces the 2.94 bp row.
+
+### Latency and journal (Round 6)
+
+- One thread per FIX session and per feed, each with its own idle strategy and CPU, on the default profile too; defaults park 200 us as before. Core pinning through the foreign function API on Linux (`CoreAffinity`) (L3, DR-R6-L01, DR-R6-L02).
+- `runtime.profile` (`default` or `lowLatency`) and `runtime.gatewayIdleStrategy`, `gatewayCpu`, `journalMode`, `journalHash`, `journalIdleStrategy`, `lockJournalPages`, `conflateCurveInputs`; `deploy/config/trading-lowlatency.yaml`. The default profile is unchanged.
+- Journal: chain hash named in the segment header. Format version 1 is FNV-1a, byte for byte as before, and stays the default; format version 2 names WORD64 at header offset 20 and hashes eight bytes a step. CRC32C was rejected because it keeps 32 bits (L8, DR-R6-L03). Ring journal: a full-ring wait and the segment preparer's retire wait fail after a stall limit instead of spinning for ever; the backlog high-water mark is reported; DIRECT stays the default; a restart works from a ring-mode crash image (L9, DR-R6-L04). Optional mlock of segments on Linux.
+- Curve-input conflation on the loop, opt-in (L10, DR-R6-L05). The FIX writer lends its buffer to the transport, so a plain send copies no body (L11, DR-R6-L08). Allocation tests also run with escape analysis off (L13, DR-R6-L07). The Dockerfile's JVM flags are justified one by one; ZGC kept (DR-R6-L06).
+- Wired-desk benchmark (`WiredDeskBenchmark`, `WiredDeskSuite`): the real trading process over loopback FIX, scheduled send to quote written, no run discarded (L4). Results in docs/BENCHMARKS.md from a loaded Windows laptop; a quiet-machine run is still owed. JMH: `ChainHashBenchmark`, `FixEncodeBenchmark`, `PricingV2RepriceBenchmark`.
+
+### Process and desk profiles
+
+- `DeskProfile` (`defaults()`, `v2()`, `withPricing`, `withRouter`, `withMarket`, `withSettings`): each component can be switched alone. The v2 desk trades on one D2C venue, two Treasury CLOBs that show shares of one book, and a futures book, with session, feed, sequence, book age and reconciliation kept per venue (DR-V12-D01, D02). docs/research/DESK_V2_WIRING.md.
+- `UsdUniverse.simV2()`: swaps at the eight risk tenors, the on-the-run Treasuries with their own ticks (S12 for the v2 universe), TYZ6 (`FuturesOverlay`, DR-V12-D06). Trade prints reach `LoopBook.applyTrade` and the router (DR-V12-D04). `CurveFeedV2` and `SimV2CurveRound` send the whole pricing v2 build set (DR-V12-D05). The loop converts futures contracts to face where quantities enter and leave it (DR-V12-D03). `AppIds`: `CLOB2_VENUE` 103, `FUTURES_VENUE` 104, gateways 4 and 5, feed status ids 6 and 7, `V2_OUTBOUND_RINGS` 6, `SWAP_1Y` 9012.
+- `TradingProcess.Options.withProfile`; the `desk` config section (`profile: default|v2`, `market`, `pricing`, `strategy`, `router`; `ProcessConfig.DeskSelection`, `deploy/config/trading-v2.yaml`). A selection other than the recorded desk is written to `desk.selection` beside the journals; a start on journals another selection wrote is refused; replay follows the file. `python deploy/rehearsal.py --mode process --profile v2`.
+- Halt, out-of-band kill, the supervisor and the undelivered-message halt cover every session: a kill is confirmed only when all four venues report nothing working. A restarted v2 process resumes four FIX sessions from their stores.
+- The markout store is read from one file and written to another; the next fresh start promotes it (DR-V12-D07).
+- Determinism: the simulator v2 venues of a session share a `SimSequencer`, one thread owns the market model, and the stepped process settles each session before the next (`SteppedDelivery`) (DR-V12-P02). Replay is exact; a stepped day repeats frame for frame; a threaded live v2 day is not repeatable run to run (two runs: 43,462 and 43,104 inbound frames, each reconciling with 0 breaks and replaying) (DR-V12-P03).
+- Status JSON on the v2 profile adds `profile`, `unfedCurveInputs`, `venues` (usable, book age) and `spreadPv01`.
+- v2 smoke day (`SmokeV2Test`, structural counts, no P&L): 20 RFQs, 20 quotes (6 swaps, 14 Treasuries), 9 won, 28 hedge parents, 63 fills (CLOB 1 38, CLOB 2 25, futures 0), 72 of 72 trades reconciled. The planner never chose the TY future at declared costs; the futures path is exercised by an outage test.
+
+### Experiments and ledger
+
+- Desk on simulator v2 in the back-tester (`SimBinding`, `DeskArms`, `DeskExperiment`): every arm of the Round 5 family is a `DeskProfile` built on one configuration; the strategy sees the live model's books with its own impact; experiment sessions publish every second; QuoteWithdraw is honoured in the v2 back-test (Q7) (DR-V12-B01 to B03, E02, E05).
+- `prereg_version: 2`: session-seed designs (`SessionDesign`), band rows (`BandParameters`), refusal of spent data (`SpentData`), families with rows and excluded band points. `ExperimentRunner`: checkpointed per session and arm, resumable, worker processes, no ledger row until complete, a timing-only pilot that writes no P&L (DR-V12-E07, E08). `LedgerCli --bh family:ID` computes Benjamini-Hochberg on command (DR-V12-B04). A dated pre-registration stays on the version 1 rules (DR-V12-B05). `SimV2Report`. Python twins in `ratesresearch.prereg`. tools/sim-v2/ (`build_classpath.sh`, `launch_detached.cmd`, `status.cmd`, README).
+- `research/prereg/R5-FAM-001.yaml`: one family of eight hypotheses (the v2 desk against the default, six leave-one-out ablations, cover pricing alone) and a descriptive baseline, on 2,000 shared sessions of seed base 31,000,000. UNSIGNED and not run (DR-V12-E01, E04, E06). The eight earlier drafts (SIM3-BASE-001, R5-001 to R5-007) are marked superseded before signing; kept, never run.
+- Client ids per simulator tier come from one place: 2001, 2002, 2003 (`DeskSettings.V2_CLIENT_ID_BASE`, DR-V12-E03).
+- Pilot on the pilot base (not an experiment, no ledger row): about 25 s per full-day session for one arm; session sd about 214k USD (8 sessions, imprecise).
+
+<!-- FAMILY-REG -->
+
+### Assurance (Round 7)
+
+- PIT mutation kill rates measured 2026-11-23: rates-risk 96.2 % (603 of 627), rates-posttrade 97.1 % (639 of 658), rates-core 93.6 % (437 of 467), rates-common 93.6 % (117 of 125), rates-api 90.5 % (190 of 210), rates-ops 88.7 % (306 of 345). Reports are not committed (E6).
+- Property tests: `Decimal9PropertiesTest` against BigDecimal, `HeadroomAndMarkPropertiesTest`, `BreachedLimitPropertiesTest`, posttrade keeper and reconciliation properties; the timer-wheel property test now runs (its class name did not match surefire's pattern).
+- Python reads journal format version 2 and the WORD64 chain hash (`ratesresearch.fnv`, `tools/journal_query.py`), checked bit for bit against Java-written fixtures.
+
+### Fixes
+
+- `RiskEngine.headroom` returns the exact boundary; its bisection stopped after 48 halvings and could fall up to 2^15 minor units short.
+- A PV01 figure already past its limit can no longer grow by even one minor unit: the 1e-9 relative rounding allowance is removed from the pillar, net, gross, basis and swap-spread checks, and the before and after figures are built from the same partial sum.
+- `Decimal9`: negative ties round away from zero as documented (`Math.round` took them toward positive infinity); `round`, `floor` and `ceil` are exact from 2^52 units up.
+- Dead code removed in `RiskEngine.onFairValue` and `PositionKeeper`; behaviour unchanged.
+- `FeedBinding`: the first snapshot of a book that already has levels is announced between DISCONNECTED and CONNECTED, so it is no longer read as a gap (DR-V12-D09).
+- `Venues.simV2`: the three order books publish as venues 102, 103 and 104 (all were 102).
+- `ChildOrderBook`: execution-id dedupe is held per child while it is in the book, in a preallocated pool (`ChildExecIds`); a fill beyond the pool is refused, counted and left outstanding. It allocated a 131 kB array after about 4,500 fills. `resetDay()` is removed (DR-V12-P04).
+- Simulator v2 venues on separate FIX threads could enter one `BookModel` at once; fixed by the sequencer above.
+- Back-test on simulator v2: the desk now sees the live model's books; reference prices every second instead of every 5 s; book tops keyed by price; the desk stands at the v2 session's business date.
+- Router benchmark strawman baselines resend a rejected order's quantity (a first attempt hung).
+
+### Documents
+
+- New research documents on the site: SIM_V2_CALIBRATION, SIM_V2_DESIGN, PRICING_V2, STRATEGY_V2, ROUTER_BENCHMARK, DESK_V2_WIRING. API_SPEC, DECISIONS (DR-R3, DR-R4, DR-R5, DR-R6-R, DR-R6-L, DR-V12-B, D, P and E records), LEARN, COOKBOOK (recipes 38 and 39), ARCHITECTURE and diagrams, BENCHMARKS, runbooks (v2 profile, low-latency profile, registered experiment), the RTS 6 and algorithm inventories, SECURITY.md and the review's follow-up table updated for 1.2.0.
+- docs/research/PNL_AUDIT.md: the old simulator's figures are superseded for new work, because the calibration puts its adverse-selection constants outside what the data supports. The recorded rows stand as records.
 
 ## [1.1.0] - 2026-11-23
 

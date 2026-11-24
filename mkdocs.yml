@@ -41,6 +41,13 @@ nav:
   - Desk features: desk-features.md
   - P&L audit: pnl-audit.md
   - Band P&L risk: band-risk.md
+  - Release 1.2.0 (opt-in v2):
+      - Simulator calibration: sim-v2-calibration.md
+      - Simulator design: sim-v2-design.md
+      - Pricing v2: pricing-v2.md
+      - Strategy v2: strategy-v2.md
+      - Router benchmark: router-benchmark.md
+      - Desk v2 wiring: desk-v2-wiring.md
   - Review 2026-11-23: review-2026-11-23.md
   - Compliance inventory: compliance.md
   - Runbooks: runbooks.md

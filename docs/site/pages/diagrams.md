@@ -18,6 +18,22 @@ From a venue through the gateway and ring buffer into the event loop, with every
 --8<-- "docs/diagrams/data_flow.mmd"
 ```
 
+## The v2 desk profile (1.2.0, opt-in)
+
+The second version of each component on one loop: simulator v2's D2C venue, two Treasury CLOBs showing shares of one book and a futures book, each with its own FIX session; three book feeds with trade prints; the curve round that feeds pricing v2 its whole build set; strategy v2; and one ladder-model router per hedge instrument across every venue that lists it. The default desk profile is unchanged and is the one drawn in [Data flow](#data-flow). Design: docs/research/DESK_V2_WIRING.md.
+
+```mermaid
+--8<-- "docs/diagrams/v2_desk_flow.mmd"
+```
+
+## Threads of one process (1.2.0)
+
+One thread per loop, per FIX session and per book feed, one for the simulated venues and a supervisor over all of them (DECISIONS.md DR-R6-L02). Dashed arrows exist only on the v2 profile. The runtime profile (`default` or `lowLatency`) sets idle strategies, journals and CPU pinning (API_SPEC.md Section 17.11).
+
+```mermaid
+--8<-- "docs/diagrams/thread_layout.mmd"
+```
+
 ## One RFQ
 
 The sequence for a dealer-to-client request for quote: request, pre-trade risk check, quote, client acceptance with cover price, position update, hedge decision and routed hedge order. Every message crossing the gateway is journaled. All of these components are built and wired in `rates-app` (API_SPEC.md Section 18); in the wired process the router has one venue, the CLOB (`DeskGroup.java`).
@@ -60,7 +76,7 @@ The router's child order states and the reports and actions that move between th
 
 ## Experiment lifecycle
 
-From fitting-period estimates to a pre-registration committed before the run, through the refusals of `ExperimentCli`, to the ledger line that records every run whatever its verdict, and the holdout that is opened once (API_SPEC.md Section 16.8, LEARN.md Section 10).
+From fitting-period estimates to a pre-registration committed before the run, through the refusals of `ExperimentCli`, to the ledger line that records every run whatever its verdict, and the holdout that is opened once (API_SPEC.md Section 16.8, LEARN.md Section 10). Since 1.2.0 the lower box is the simulator v2 path: a family registration (`prereg_version: 2`), `ExperimentRunner` with checkpoints per session and arm, one ledger row per hypothesis and one look per family run, and Benjamini-Hochberg by `LedgerCli --bh`. The first family, R5-FAM-001, is unsigned and has not run.
 
 ```mermaid
 --8<-- "docs/diagrams/experiment_lifecycle.mmd"
@@ -148,7 +164,7 @@ The order of a two-curve build: the OIS curve is bootstrapped alone, then held f
 
 ## Replay and determinism
 
-What is journaled in a live run, how `LoopReplay` rebuilds a loop and feeds it the inbound journal at the recorded times, and how the chain hash of what it produces is compared frame by frame with the recorded outbound journal ([API contract](api-spec.md) Section 9.7). Since 1.1.0 the same path restarts the process: a torn tail is cut, the inbound journal is replayed through the live loop, and the CLOB session reconciles before the venue is used (Section 18.9, DR-RV-X01 to X05).
+What is journaled in a live run, how `LoopReplay` rebuilds a loop and feeds it the inbound journal at the recorded times, and how the chain hash of what it produces is compared frame by frame with the recorded outbound journal ([API contract](api-spec.md) Section 9.7). Since 1.1.0 the same path restarts the process: a torn tail is cut, the inbound journal is replayed through the live loop, and the CLOB session reconciles before the venue is used (Section 18.9, DR-RV-X01 to X05). The box added in 1.2.0 states what repeats on the v2 desk profile: replay and a stepped day are exact; a threaded live v2 day is not repeatable run to run, and is not claimed to be.
 
 ```mermaid
 --8<-- "docs/diagrams/replay_determinism.mmd"

@@ -1,6 +1,6 @@
 graph TD
   common["rates-common<br/>Clock, ManualClock, TimerWheel, SplitMix64<br/>(P0)"]
-  sim["rates-sim<br/>simulator v2 market model<br/>(round 3)"]
+  sim["rates-sim<br/>simulator v2: MarketModel, RfqFlow, BookModel, SessionSeeds<br/>(round 3, 1.2.0)"]
   messages["rates-messages<br/>SBE schema v1 codecs<br/>(P0)"]
   journal["rates-journal<br/>JournalWriter, SegmentedJournal, Replayer<br/>(P0, P2)"]
   agrona["Agrona (external)"]
@@ -10,7 +10,7 @@ graph TD
 
   analytics["rates-analytics<br/>curves, swaps, bonds, futures<br/>(P1)"]
   core["rates-core<br/>event loop, replay, runner<br/>(P2)"]
-  bench["rates-bench<br/>latency harness, JMH<br/>(P2)"]
+  bench["rates-bench<br/>latency harness, JMH, wired-desk benchmark<br/>(P2, round 6)"]
   refdata["rates-refdata<br/>securities master, calendars<br/>(P2)"]
   fix["rates-fix<br/>FIX 4.4 codec, session, gateway<br/>(P2)"]
   venues["rates-venues<br/>D2C, CLOB, SEF simulators, book feed<br/>(P2)"]
@@ -35,10 +35,15 @@ graph TD
   core --> journal
   core --> agrona
   bench --> core
+  bench --> fix
+  bench --> journal
+  bench --> app
   fix --> common
   fix --> messages
   sim --> common
   venues --> sim
+  venues --> journal
+  venues --> messages
   backtest --> sim
   venues --> fix
   venues --> refdata

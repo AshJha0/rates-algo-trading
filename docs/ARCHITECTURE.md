@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the system as built at v1.0.0 (2026-10-31), with the 1.1.0 fix-round changes noted where they change the picture: the phase modules P0 to P6, wired by round 2 into one trading process (`rates-app`), with the desk features of `rates-strategy` beside the quoting engine. The status column says, component by component, what exists and how it is wired. Where a row says "planned", nothing in the repository implements it yet.
+This document describes the system as built at v1.0.0 (2026-10-31), with the 1.1.0 fix-round changes and the 1.2.0 additions noted where they change the picture (1.2.0: the opt-in v2 desk profile, its process wiring and threads, and the experiment pipeline, in [Version 1.2.0: the v2 desk profile](#version-120-the-v2-desk-profile)): the phase modules P0 to P6, wired by round 2 into one trading process (`rates-app`), with the desk features of `rates-strategy` beside the quoting engine. The status column says, component by component, what exists and how it is wired. Where a row says "planned", nothing in the repository implements it yet.
 
 ## Components
 
@@ -89,6 +89,96 @@ The loop keeps the CLOB down from DISCONNECTED until RECONCILED. A dropped sessi
 - The gateways, the feed, the curve feed and the simulated venues share one driver thread, which also paces simulated time; it reaches loop state only through the rings.
 - The desk's graph on the loop: pricing binding, composite book, P3 desk, one router per hedge instrument (Section 18.4). The status agent is the loop's only agent and only reads.
 - Post-trade and the back-test read the journals after the run (`JournalFeed`, `DeskBacktest`); tailing them live is a later step.
+
+Since 1.2.0 the diagram above is the recorded (default) desk profile, still threaded as shown except that each FIX session and the book feed have a thread of their own (`rates-d2c`, `rates-clob`, `rates-feed`; the venues stay on `rates-venues`). The next section covers the v2 profile.
+
+## Version 1.2.0: the v2 desk profile
+
+**What is opt-in.** Everything in this section. A desk is four choices, each with a recorded version and a second one, named together by `DeskProfile` (rates-app `loop/`): market (`Market.STANDARD` or `SIM_V2`), pricing (`PricingBindings.Version.V1` or `V2`), strategy (`DeskSettings.defaults()` or `strategyV2()`), router (`RouterModel.TOUCH` or `LADDER`). `DeskProfile.defaults()` is the recorded desk and is what the process builds unless the configuration's `desk` section says otherwise. With the default profile nothing quotes or hedges differently from 1.1.0: `SmokeTest` prints 36 RFQs, 27 quotes, 16 fills, 210 hedge parents, 213 hedge fills and replay hash -4423185950475908182, as before. No recorded figure was made with the v2 profile and no experiment has run on it. Design and evidence: docs/research/DESK_V2_WIRING.md (Sections 1 to 12), docs/research/SIM_V2_DESIGN.md, docs/research/PRICING_V2.md, docs/research/STRATEGY_V2.md, docs/research/ROUTER_BENCHMARK.md.
+
+### Data flow of the v2 profile
+
+Simulator v2 (`rates-sim`: `MarketModel`, `RfqFlow`, `BookModel`, `SessionSeeds`) is one market model behind four venues in the process (`SimulatedVenuesV2`, rates-app `sim/`; `Venues.simV2`, rates-venues):
+
+| Venue | Venue id | Gateway / outbound ring | Feed status id | Lists |
+|---|---|---|---|---|
+| D2C | 101 | 0 | - | swaps at eight tenors and Treasuries (RFQ) |
+| first Treasury CLOB | 102 | 1 | 3 | the four on-the-run Treasuries |
+| control | - | 2 | - | - |
+| second Treasury CLOB | 103 | 4 | 6 | the same Treasuries: the two CLOBs show shares of one book |
+| futures book | 104 | 5 | 7 | TYZ6 |
+
+Ring 3 is never written: gateway ids and feed status ids share one id space and 3 is the first CLOB's feed (DR-V12-D02). The futures venue counts contracts on its wire; the loop converts to face where a quantity enters or leaves it (DR-V12-D03).
+
+```
+ SimulatedVenuesV2 (rates-venues thread, SimSequencer drains every venue's inbox)
+   D2C 101  <-FIX->  VenueSession d2c   --+
+   CLOB 102 <-FIX->  VenueSession clob  --+
+   CLOB 103 <-FIX->  VenueSession clob2 --+--> InboundRouter --> inbound ring --> EventLoop (usd)
+   FUT 104  <-FIX->  VenueSession fut   --+                                        DeskGroup:
+   book feeds 102/103/104 + TradePrint (template 4)                                 FuturesOverlay over PricingV2
+        --> FeedBinding x3 (status 3, 6, 7) --+                                     LoopBook (per venue, prints)
+   CurveFeedV2 (SimV2CurveRound: overnight fixing,                                  strategy v2 (DeskSettings.strategyV2)
+        SR1 x2, SR3 x3, par swaps at 8 tenors, every 500 ms) --+                   one router per hedge instrument,
+                                                                                    ladder model, every venue listing it
+   outbound rings 0, 1, 4, 5 --> the four sessions; ring 2 control; journals in, out, route
+```
+
+- **Market data.** One `FeedBinding` per order-book venue under the 1.1.0 rules (snapshot first, a gap or refused frame becomes DISCONNECTED, a snapshot and CONNECTED). Trade prints have their own sequence and are not part of the delta stream; a lost print is counted, never a gap (DR-V12-D04). `DeskGroup.onTradePrint` applies a print to `LoopBook.applyTrade` and to the instrument's router (`SmartOrderRouter.onTrade`).
+- **Curve.** `CurveFeedV2` sends the whole build set of pricing v2 in one round, so `PricingV2.unfedInputs()` is 0 after the first round. The front end follows the simulator's two-year node and the overnight rate is constant in a session: declared assumptions in `SimV2CurveRound` (DR-V12-D05).
+- **Pricing.** `PricingBindings.create` builds `PricingV2`; with futures in the universe it sits under `FuturesOverlay`, which prices TY off its book and risks it at the model's declared sensitivity, not a cheapest-to-deliver calculation (DR-V12-D06). Pricing v2 state is a function of the journaled inputs: `setInput` records, `repriceIfDirty` applies once (`PricingBinding`). After a reprice every fair value goes to the risk engine and the spread ladder is recomputed. `SpreadRiskBook` is displayed only: nothing limits or hedges spread risk (DR-V12-D11).
+- **Strategy and hedging.** Strategy v2 gets a tick per instrument, a `HedgeAvailability` that is true while a venue listing the instrument has its session up, its book whole and an update within 10 s, the futures book through the composite `LoopBook`, and the markout store read from `markouts.start` and written to `markouts.end` (DR-V12-D07). On the smoke day the factor hedge planner never chose the future at the declared tick costs; the futures path is exercised by an outage test (DR-V12-D10, DESK_V2_WIRING.md Section 5).
+- **Routing.** One router per hedge instrument with every venue that lists it: both CLOBs for a Treasury, the futures book for TY. The ladder model (`RouterPresets.ladder()`, `ExecutionModel.defaults()`, `LadderAllocator`) reads every level price (`BookView.levelPrice`) and learns queue rates from prints. Orders the quoting side rests are registered with the router (`registerOwnOrder`). Decisions are journaled with templates 83 and 84 beside 80 to 82.
+- **Per-venue state.** Kill, gap, staleness, cancel-reject, overfill and reconciliation are per venue (`DeskGroup.venueUsable(venueId)`, `venueBookNanos(venueId)`). A venue that is down, gapped or silent is excluded and the others keep trading. Post-trade reconciles in venue units (`V2Reconciliation`).
+
+Mermaid: `docs/diagrams/v2_desk_flow.mmd`.
+
+### Threads of one process
+
+`TradingProcess.startThreads` runs one thread per loop, one per FIX session, one per book feed, one for the simulated venues and one supervisor (`TradingProcess.GatewayThread`, DR-R6-L02):
+
+| Thread | Recorded profile | v2 profile | Work |
+|---|---|---|---|
+| `rates-loop-usd` | yes | yes | the event loop: DeskGroup, journals in, out, route |
+| `rates-d2c`, `rates-clob` | yes | yes | D2C and first CLOB FIX sessions |
+| `rates-clob2`, `rates-fut` | - | yes | second CLOB and futures FIX sessions |
+| `rates-feed` | yes | yes | first CLOB book feed |
+| `rates-feed2`, `rates-feed-fut` | - | yes | second CLOB and futures book feeds |
+| `rates-venues` | yes | yes | simulated venues, curve feed, simulated time; on v2 the only thread that touches the market model (`SimSequencer`) |
+| `rates-supervisor` | yes | yes | watches loop duty cycles and every session and feed thread; halts, logs out, closes sockets |
+
+The runtime profile sets idle strategies and journals (`runtime.profile`, API_SPEC.md Section 17.11). `default`: the loop backs off, session and feed threads park 200 microseconds, nothing pinned, direct journals with the FNV-1a chain hash. `lowLatency` (`deploy/config/trading-lowlatency.yaml`): loop, session, feed and journal threads busy-spin, ring journals with the WORD64 chain hash (journal format version 2), segments offered for mlock, curve inputs conflated. `loopCpu` and `gatewayCpu` pin threads through `CoreAffinity` (`sched_setaffinity` by the JDK's foreign function API, Linux only; elsewhere the thread runs unpinned and reports it, DR-R6-L01). The venues thread is never pinned and never spins. A spinning thread belongs on a core the host reserves; pinning does not keep other work off it.
+
+A kill or a halt goes over every session. On the v2 profile the kill is confirmed only when all four venues report nothing working (`TradingProcess.kill`, `KillResult`); otherwise the sessions log out and then the sockets are closed. Mermaid: `docs/diagrams/thread_layout.mmd`.
+
+### Determinism on the v2 profile
+
+The venues of one session share one `MarketModel`, and the two Treasury venues share each `BookModel`. A FIX thread only puts what it receives in its venue's inbox; the venues thread drains the inboxes in a fixed order (D2C, CLOB 1, CLOB 2, futures; each first in, first out) and refuses a second draining thread (`SimSequencer`). The stepped process also fixes the order in which a loop receives what the venues send (`SteppedDelivery`). What is promised (DESK_V2_WIRING.md Section 12.2):
+
+- Replay of any journal, stepped or threaded: exact.
+- A stepped day (`TradingProcess.step`, `V2DeskProcess`): repeats exactly, frame for frame (`V2SteppedDeterminismTest`, `TradingProcessV2Test`).
+- A threaded live v2 day: not repeatable run to run. Two runs of one seed gave 43,462 and 43,104 inbound frames; each reconciled with 0 breaks and each replayed (`SupervisorV2Test`). Nothing more is claimed.
+
+### Configuration and restart
+
+The `desk` section (`profile: default|v2`, then `market`, `pricing`, `strategy`, `router` one at a time; `ProcessConfig.DeskSelection`) picks the profile; `deploy/config/trading-v2.yaml` is the example. A selection other than the recorded one is written to `desk.selection` in the journal directory before anything is journaled. A restart on journals another selection wrote is refused, and `--replay` builds its desk from that file. A process on the simulator v2 market starts at 09:00 New York (`TradingProcessMain.V2_START`). A fresh start promotes `markouts.end` to `markouts.start`; a restart does not, because the desk it rebuilds by replay must read the store the stopped process read. A restarted simulator v2 market is the seed's market taken alone to the restart time: it forgets the impact of what the desk traded before it stopped. Only the two whole profiles are run by tests at process level; a per-component selection is built but not run end to end.
+
+### Experiment pipeline
+
+The back-test runs a desk profile on simulator v2 (`SimBinding`, `DeskStrategy`, `DeskArms`, rates-app `backtest/`); the harness is in rates-backtest `experiment/`:
+
+```
+ registration (research/prereg/ID.yaml, prereg_version 2, kind family; unsigned drafts refused)
+   --> ExperimentRunner validate (SessionDesign, BandParameters, SpentData: spent seeds refused)
+   --> run: per session, one journal written once from the seed; every arm replays it against
+       its own fresh model of the same seed (common random numbers)
+   --> checkpoints per session and arm (sessions/<seed>.json, parts/<seed>/); a killed run resumes
+   --> summary.json once, after the last session; nothing earlier reads a P&L
+   --> ledger: one row per hypothesis plus the descriptive row, one look per family run
+   --> LedgerCli --bh family:ID (Benjamini-Hochberg, computed only by command)
+```
+
+`DeskExperiment` (rates-app) is the entry point; `tools/sim-v2/` launches it detached and reads its status ([runbook](runbooks/registered-experiment.md)). A timing-only pilot (`--timing-only`) writes and reads no P&L and makes no ledger row. The family registration `research/prereg/R5-FAM-001.yaml` is unsigned and has not run; the runner refuses it while its status is a draft. Mermaid: `docs/diagrams/experiment_lifecycle.mmd` (both the version 1 path and this one).
 
 ## Phase 0 module map
 

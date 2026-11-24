@@ -23,3 +23,20 @@ flowchart TD
   ledger --> next
   pre -->|also validated by| pyval
   ledger -->|statistics re-derived| recompute
+
+  subgraph v2["Simulator v2 family (1.2.0): prereg_version 2"]
+    reg["Family registration<br/>research/prereg/ID.yaml, kind family<br/>signed and committed before the run"]
+    draft["Status draft or unsigned:<br/>refused, nothing run"]
+    pilot["Timing-only pilot<br/>pilot seed base, --timing-only<br/>no P&L written or read, no ledger row"]
+    runner{"ExperimentRunner validates<br/>SessionDesign, BandParameters,<br/>SpentData, excluded band points refused"}
+    sess["Per session: one journal written once from the seed;<br/>every arm on a fresh model of the same seed"]
+    ckpt["Checkpoints per session and arm<br/>a killed run resumes at the next arm"]
+    summary["summary.json once, after the last session"]
+    rows["Ledger rows: one per hypothesis<br/>plus the descriptive row; one look per family run"]
+    bh["LedgerCli --bh family:ID<br/>Benjamini-Hochberg, by command only"]
+  end
+  reg --> runner
+  reg -.->|optional, before the run| pilot
+  runner -->|draft| draft
+  runner -->|valid| sess --> ckpt --> summary --> rows --> bh
+  rows -->|appended to| ledger

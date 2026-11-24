@@ -1,0 +1,68 @@
+%% Title: The v2 desk profile (1.2.0, opt-in): simulator v2's four venues, three feeds, the curve round, pricing v2, strategy v2 and the ladder router on one loop
+flowchart LR
+  subgraph venues["Simulated venues, thread rates-venues (SimulatedVenuesV2)"]
+    model["MarketModel (rates-sim)<br/>one model, owned by one thread<br/>SimSequencer drains each venue's inbox"]
+    d2c["D2C 101<br/>RFQs: swaps at 8 tenors, Treasuries"]
+    clob1["Treasury CLOB 102"]
+    clob2["Treasury CLOB 103<br/>shares of the same book"]
+    fut["Futures book 104<br/>TYZ6, contracts on the wire"]
+    round["SimV2CurveRound<br/>overnight fixing, SR1 x2, SR3 x3,<br/>par swaps at 8 tenors"]
+  end
+  subgraph gw["Sessions and feeds (one thread each)"]
+    s0["VenueSession d2c<br/>ring 0"]
+    s1["VenueSession clob<br/>ring 1"]
+    s4["VenueSession clob2<br/>ring 4"]
+    s5["VenueSession fut<br/>ring 5"]
+    f3["FeedBinding status 3"]
+    f6["FeedBinding status 6"]
+    f7["FeedBinding status 7"]
+    cf["CurveFeedV2<br/>one round every 500 ms"]
+  end
+  router_in["InboundRouter"]
+  subgraph loop["Event loop rates-loop-usd: DeskGroup"]
+    book["LoopBook<br/>per venue, trade prints"]
+    pricing["FuturesOverlay over PricingV2<br/>setInput, repriceIfDirty"]
+    spread["SpreadRiskBook<br/>displayed only"]
+    strat["Strategy v2<br/>DeskSettings.strategyV2()"]
+    hedger["Hedger and FactorHedgePlanner<br/>HedgeAvailability per instrument"]
+    routers["One router per hedge instrument<br/>ladder model, every venue listing it"]
+    risk["Risk engine<br/>per-venue usable, kill"]
+  end
+  journals[("Journals in, out, route<br/>route: templates 80 to 84")]
+
+  model --- d2c
+  model --- clob1
+  model --- clob2
+  model --- fut
+  model --> round
+  d2c <-->|FIX| s0
+  clob1 <-->|FIX| s1
+  clob2 <-->|FIX| s4
+  fut <-->|FIX| s5
+  clob1 -->|BookUpdate, TradePrint| f3
+  clob2 -->|BookUpdate, TradePrint| f6
+  fut -->|BookUpdate, TradePrint| f7
+  round --> cf
+  s0 --> router_in
+  s1 --> router_in
+  s4 --> router_in
+  s5 --> router_in
+  f3 --> router_in
+  f6 --> router_in
+  f7 --> router_in
+  cf --> router_in
+  router_in --> book
+  router_in --> pricing
+  book --> pricing
+  pricing --> risk
+  pricing --> spread
+  book --> strat
+  pricing --> strat
+  strat -->|quotes| s0
+  risk --> hedger
+  hedger --> routers
+  book --> routers
+  routers -->|children| s1
+  routers -->|children| s4
+  routers -->|children| s5
+  loop --> journals
