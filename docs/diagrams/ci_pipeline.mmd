@@ -6,15 +6,15 @@ flowchart LR
     python["python: Python 3.12 on ubuntu and windows<br/>lock as constraints, ruff, mypy, pytest,<br/>ledger chain and looks, check_cookbook.py,<br/>run_notebooks.py"]
     policy["policy: word policy DR-007,<br/>no file over 2 MB DR-006"]
     fwd["java-forward: Java 27<br/>informational, DR-003"]
-    lat["latency: rates-bench harness<br/>informational, DR-005"]
+    lat["latency: rates-bench harness and wired desk<br/>informational, DR-005"]
   end
   subgraph docs["docs.yml"]
-    build["build: run_notebooks.py,<br/>mkdocs build --strict"]
+    build["build: check_site_current.py, run_notebooks.py,<br/>mkdocs build --strict"]
     deploy["deploy: GitHub Pages<br/>when the Pages source is GitHub Actions"]
   end
   subgraph ops["ops.yml"]
     cfg["config-and-dashboards: validate_config.py,<br/>lint_dashboards.py, bash -n bluegreen.sh"]
-    reh["rehearsal: ConfigValidatorMain,<br/>deploy/rehearsal.py with the kill switch,<br/>images when Docker is available"]
+    reh["rehearsal: ConfigValidatorMain,<br/>deploy/rehearsal.py with the kill switch,<br/>in process mode and inside the trading image"]
   end
   subgraph info["informational, not gating (1.1.0)"]
     codeql["codeql.yml: Java and Python"]
@@ -23,7 +23,7 @@ flowchart LR
   gate{"Required checks pass<br/>main ruleset, no approval required"}
   merge["Merge to main"]
   report["latency-report artifact<br/>compared by hand"]
-  release["Release tag<br/>(v1.0.0, then v1.1.0)"]
+  release["Release tag<br/>(v1.0.0, v1.1.0)"]
 
   pr -->|triggers| ci
   pr -->|triggers| docs
@@ -32,6 +32,9 @@ flowchart LR
   java -->|gates| gate
   python -->|gates| gate
   policy -->|gates| gate
+  build -->|gates| gate
+  cfg -->|gates| gate
+  reh -->|gates, two jobs| gate
   lat -->|uploads| report
   gate -->|required| merge
   merge -->|push to main| build

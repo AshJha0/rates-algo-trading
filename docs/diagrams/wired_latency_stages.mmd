@@ -1,0 +1,30 @@
+%% Title: Stages of the wired-desk benchmark, T0 to T5 (WiredDeskBenchmark, StageProbe)
+flowchart LR
+  subgraph gen["Load generator (FixLoadGenerator)"]
+    t0["T0<br/>scheduled send time"]
+    sent["SENT<br/>socket write returned"]
+    t5["T5<br/>Quote read"]
+  end
+  subgraph d2cIn["Thread rates-d2c, inbound"]
+    pub["T1 PUBLISHED<br/>QuoteRequest offered to the ring"]
+  end
+  subgraph loopT["Thread rates-loop-usd"]
+    rd["T2 LOOP_READ<br/>read from the ring and checked"]
+    jnl["JOURNALED<br/>in the inbound journal, or its ring"]
+    done["T3 HANDLED<br/>handler returned, Quote in the outbound ring"]
+  end
+  subgraph d2cOut["Thread rates-d2c, outbound"]
+    deq["DEQUEUED<br/>taken from the outbound ring"]
+    enc["ENCODED<br/>FIX fields encoded"]
+    t4["T4 WRITTEN<br/>bytes written to the socket, or through TLS"]
+  end
+  t0 -->|generatorLateness| sent
+  sent -->|wireInToPublished| pub
+  pub -->|ringWait| rd
+  rd -->|journalAppend| jnl
+  jnl -->|handler| done
+  done -->|outboundRingWait| deq
+  deq -->|encode| enc
+  enc -->|finishAndSocketWrite| t4
+  t4 -->|wireOut| t5
+  t0 -.->|"headline: scheduledToQuoteWritten"| t4

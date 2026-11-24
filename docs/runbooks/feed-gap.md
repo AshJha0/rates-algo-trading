@@ -4,7 +4,7 @@ A feed gap is a break in a venue's book feed sequence (`BookUpdate.venueSeqNo` n
 
 ## Detection
 
-- The feed binding (`FeedBinding`, API_SPEC.md Section 18.5) stops forwarding and publishes GatewayStatus DISCONNECTED for the feed (status id 3). The desk's input health pulls every live quote with reason `FeedGap`, and the routers exclude the venue (`VenueExclusion.Stale`) and cancel children resting there. No KillSwitch is engaged for a gap.
+- The feed binding (`FeedBinding`, API_SPEC.md Section 18.5) stops forwarding and publishes GatewayStatus DISCONNECTED for the feed (status id 3; on the v2 profile also 6 for the second CLOB and 7 for the futures book, each on its own). The desk's input health pulls every live quote with reason `FeedGap`, and the routers exclude the venue (`VenueExclusion.Stale`) and cancel children resting there. No KillSwitch is engaged for a gap.
 - The binding then delivers a full snapshot and publishes GatewayStatus CONNECTED; quoting resumes on its own once the inputs are healthy again. A gap that keeps recurring shows as repeated DISCONNECTED and CONNECTED pairs.
 - Alert `InboundQueueBacklog` when the inbound ring buffer backs up behind a slow loop; a full ring is now a cause of gaps, not only a symptom.
 
@@ -23,7 +23,7 @@ python tools/journal_query.py JOURNAL --template BookUpdate --since START --unti
 python tools/journal_query.py JOURNAL --template Heartbeat --since START --until END
 ```
 
-Look for the last `BookUpdate` before the gap and the first after it, the GatewayStatus frames with id 3, and any `Quote` sent between the gap and the pull.
+Look for the last `BookUpdate` before the gap and the first after it, the GatewayStatus frames (template 65003) with the feed's id, and any `Quote` sent between the gap and the pull.
 
 ## Escalation
 

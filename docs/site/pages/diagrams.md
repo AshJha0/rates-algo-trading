@@ -4,7 +4,7 @@ Mermaid sources live in `docs/diagrams/` and are embedded here unchanged. Dashed
 
 ## Module dependencies
 
-Every module is built; the outline style marks the phase that introduced it. `rates-journal` does not depend on `rates-messages`: the journal stores payload bytes and a template id, and interpretation belongs to the handler.
+Every module is built; the label gives the phase or round that introduced or last extended it. The arrows are the compile dependencies in the poms. `rates-journal` does not depend on `rates-messages`: the journal stores payload bytes and a template id, and interpretation belongs to the handler.
 
 ```mermaid
 --8<-- "docs/diagrams/module_deps.mmd"
@@ -28,15 +28,47 @@ The second version of each component on one loop: simulator v2's D2C venue, two 
 
 ## Threads of one process (1.2.0)
 
-One thread per loop, per FIX session and per book feed, one for the simulated venues and a supervisor over all of them (DECISIONS.md DR-R6-L02). Dashed arrows exist only on the v2 profile. The runtime profile (`default` or `lowLatency`) sets idle strategies, journals and CPU pinning (API_SPEC.md Section 17.11).
+One thread per loop, per FIX session and per book feed, one for the simulated venues and a supervisor over all of them (DECISIONS.md DR-R6-L02). Dashed arrows exist only on the v2 profile. The runtime profile (`default` or `lowLatency`) sets idle strategies and journals; the CPU keys are set on their own (API_SPEC.md Section 17.11).
 
 ```mermaid
 --8<-- "docs/diagrams/thread_layout.mmd"
 ```
 
+## The v2 process: venues, sessions and threads (1.2.0, opt-in)
+
+Who may touch what. A venue's FIX thread only fills its inbox; `rates-venues` alone drains the inboxes into the market model, in a fixed order. Four sessions and three feeds each have a thread, and all of them, with the curve feed, publish into the one inbound ring the loop reads ([API contract](api-spec.md) Sections 9.9 and 18.10).
+
+```mermaid
+--8<-- "docs/diagrams/v2_topology.mmd"
+```
+
+## Pricing v2 data path (1.2.0, opt-in)
+
+One curve input from the feed to a quote: the band check, the round that is held until it is complete or 100 ms old, the curve solve and what happens when it fails, the leave-one-out fair value, the Treasury fit, the two ladders and the push to the risk engine ([API contract](api-spec.md) Section 18.3a, [Pricing v2](pricing-v2.md)).
+
+```mermaid
+--8<-- "docs/diagrams/pricing_v2_data_path.mmd"
+```
+
+## Simulator v2 components (1.2.0, opt-in)
+
+One market model, built from the parameter files and a session seed, behind both the venue simulators and the back-test ([design](sim-v2-design.md)). The desk changes the market only through its own orders.
+
+```mermaid
+--8<-- "docs/diagrams/simulator_v2_components.mmd"
+```
+
+## Latency stages of the wired benchmark (1.2.0)
+
+The stamps of `WiredDeskBenchmark`, from the scheduled send T0 to the Quote read by the generator T5, and the interval each pair measures. The headline is T0 to T4. Intervals are named as in its reports; the benchmark's own names stand beside T1 to T3 of the stage table in [Benchmarks](benchmarks.md). Only the default desk profile is measured.
+
+```mermaid
+--8<-- "docs/diagrams/wired_latency_stages.mmd"
+```
+
 ## One RFQ
 
-The sequence for a dealer-to-client request for quote: request, pre-trade risk check, quote, client acceptance with cover price, position update, hedge decision and routed hedge order. Every message crossing the gateway is journaled. All of these components are built and wired in `rates-app` (API_SPEC.md Section 18); in the wired process the router has one venue, the CLOB (`DeskGroup.java`).
+The sequence for a dealer-to-client request for quote: request, pre-trade risk check, quote, client acceptance with cover price, position update, hedge decision and routed hedge order. The event loop journals every message it receives and sends; the gateway does not. All of these components are built and wired in `rates-app` (API_SPEC.md Section 18); on the default profile the router has one venue, the CLOB; the v2 profile routes over every venue that lists the instrument.
 
 ```mermaid
 --8<-- "docs/diagrams/rfq_sequence.mmd"
@@ -44,7 +76,7 @@ The sequence for a dealer-to-client request for quote: request, pre-trade risk c
 
 ## One duty cycle of the event loop
 
-What `EventLoop.doWork()` does on its thread (P2): latch the clock, drain the inbound rings with journal-then-dispatch, publish and journal outbound messages, raise backpressure after the handler, poll the timers and journal a clock tick when any fired, then run the agents. The contract is [API contract](api-spec.md) Section 9.
+What `EventLoop.doWork()` does on its thread (P2): latch the clock, drain the inbound rings with journal-then-dispatch, publish and journal outbound messages, raise backpressure after the handler, poll the timers and journal a clock tick when any fired, then run the agents. The optional block is curve-input conflation (Section 9.9), off by default. The contract is [API contract](api-spec.md) Section 9.
 
 ```mermaid
 --8<-- "docs/diagrams/event_loop_cycle.mmd"
@@ -52,7 +84,7 @@ What `EventLoop.doWork()` does on its thread (P2): latch the clock, drain the in
 
 ## Journal frame layout
 
-The 32-byte file header, the 32-byte frame header and the chain hash definition, as pinned in [API contract](api-spec.md) Section 1.
+The 32-byte file header, the 32-byte frame header and the chain hash definitions of format versions 1 and 2, as pinned in [API contract](api-spec.md) Section 1.
 
 ```mermaid
 --8<-- "docs/diagrams/journal_frame.mmd"
@@ -68,18 +100,34 @@ Quotes and fixings become one instrument per pillar; `CurveBuilder` solves them 
 
 ## Child order lifecycle
 
-The router's child order states and the reports and actions that move between them, as pinned in [API contract](api-spec.md) Section 15.4. Late fills after a cancel are counted up to the cumulative quantity the venue reported with the cancel. Since 1.1.0 every wait is bounded by `RouterTimeouts`, a cancel reject arrives as template 45, and a child with no answer ends unresolved.
+The router's child order states and the reports and actions that move between them, as pinned in [API contract](api-spec.md) Section 15.4. Late fills after a cancel are counted up to the cumulative quantity the venue reported with the cancel. Since 1.1.0 every wait is bounded by `RouterTimeouts`, a cancel reject arrives as template 45, and a child with no answer is flagged unresolved. Since 1.2.0 a fill reported after the router released the child is still booked as a position (DR-V12-D13). `Released` is not a value of `ChildState`: it is the slot leaving the book.
 
 ```mermaid
 --8<-- "docs/diagrams/child_order_lifecycle.mmd"
 ```
 
+## A fill that races a cancel (1.2.0)
+
+The four orders in which a fill and the answer to a cancel can arrive, and who books the fill in each ([API contract](api-spec.md) Sections 15.4 and 18.4a, DECISIONS.md DR-V12-D13 and DR-V12-E09).
+
+```mermaid
+--8<-- "docs/diagrams/cancel_fill_race.mmd"
+```
+
 ## Experiment lifecycle
 
-From fitting-period estimates to a pre-registration committed before the run, through the refusals of `ExperimentCli`, to the ledger line that records every run whatever its verdict, and the holdout that is opened once (API_SPEC.md Section 16.8, LEARN.md Section 10). Since 1.2.0 the lower box is the simulator v2 path: a family registration (`prereg_version: 2`), `ExperimentRunner` with checkpoints per session and arm, one ledger row per hypothesis and one look per family run, and Benjamini-Hochberg by `LedgerCli --bh`. The first family, R5-FAM-001, is unsigned and has not run.
+From fitting-period estimates to a pre-registration committed before the run, through the refusals of `ExperimentCli`, to the ledger line that records every run whatever its verdict, and the holdout that is opened once (API_SPEC.md Section 16.8, LEARN.md Section 10). Since 1.2.0 the lower box is the simulator v2 path: a family registration (`prereg_version: 2`), `ExperimentRunner` with checkpoints per session and arm, one ledger row per hypothesis plus the description rows, one look per family run, and Benjamini-Hochberg by `LedgerCli --bh`. The first family, R5-FAM-001, is unsigned and has not run.
 
 ```mermaid
 --8<-- "docs/diagrams/experiment_lifecycle.mmd"
+```
+
+## Family experiment: refusals, checkpoints and failures (1.2.0)
+
+The lower box of the diagram above in detail: every refusal that stops a run before it starts, what is written as sessions finish, what a crash or a failed session leaves, and the one step in which the summary and the ledger rows are written ([API contract](api-spec.md) Section 16.10).
+
+```mermaid
+--8<-- "docs/diagrams/family_experiment.mmd"
 ```
 
 ## Trade lifecycle
@@ -92,7 +140,7 @@ From an RFQ or an order, through the journal and the position keeper, into the o
 
 ## Deployment topology
 
-The simulated environment: blue and green trading processes on a shared journal volume, the venue simulator, Prometheus, Grafana and the end-of-day report job. The dashed link from blue to green is the warm-standby replication designed in `docs/runbooks/warm-standby-design.md`.
+The simulated environment: blue and green trading processes on a shared journal volume (each runs its venue simulators in process), the venue-sim image, which serves health and metrics only, Prometheus, Grafana and the end-of-day report job. The dashed link from blue to green is the warm-standby replication designed in `docs/runbooks/warm-standby-design.md`.
 
 ```mermaid
 --8<-- "docs/diagrams/deployment_topology.mmd"
@@ -132,7 +180,7 @@ The three states of the process-wide kill switch and the four-eyes reset (API_SP
 
 ## System context
 
-Who and what the platform exchanges messages and files with: the desk roles, the simulated clients and venues, the clearing house, the public data sources through the research package, and monitoring; the dashed box is transparency reporting, which is not built (RTS 6 inventory, US and EU flow rows).
+Who and what the platform exchanges messages and files with: the desk roles, the simulated clients and venues, the clearing house, the public data sources through the research package, and monitoring; the dashed box is transparency reporting, which is not built, and the dashed SEF link is certified but not connected to the process (RTS 6 inventory, US and EU flow rows).
 
 ```mermaid
 --8<-- "docs/diagrams/system_context.mmd"

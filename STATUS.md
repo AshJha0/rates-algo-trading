@@ -264,7 +264,6 @@ Owner items:
 
 - Sign R5-FAM-001 (or not) and start its run.
 - Repository settings, checked 2026-11-23 with `gh api`: the repository is public; the `main` ruleset is active with nine required status checks, 0 required approvals, strict status checks off, and deletion and force pushes blocked; the Pages source is GitHub Actions. Turning on strict status checks is review item E5. CodeQL default setup off and Issues enabled (deploy/OWNER_CHECKLIST.md).
-- `deploy/config/trading-v2.yaml` says a change needs an approving review; practice is that CI is the only gate (CONTRIBUTING.md).
 
 Carried from earlier releases:
 

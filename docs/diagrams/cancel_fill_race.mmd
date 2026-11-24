@@ -1,0 +1,35 @@
+%% Title: A fill that races a cancel, from the router to the risk engine (DR-RV-R03, DR-V12-D13, DR-V12-E09)
+sequenceDiagram
+  participant S as SmartOrderRouter
+  participant B as ChildOrderBook
+  participant V as Venue
+  participant D as DeskGroup
+  participant R as RiskEngine
+
+  S->>B: requestCancel, CancelRequested, prior state kept
+  S->>V: OrderCancel (41), wait cancelNanos (2 s)
+  alt the fill is reported before the cancel is answered
+    V->>D: ExecutionReport fill
+    D->>B: booked once by venue and execId
+    D->>R: position, through the hedger
+    V->>D: ExecutionReport Cancelled for the rest
+    D->>S: freed quantity may be routed again
+  else the order had already filled, the cancel is refused
+    V->>D: ExecutionReport Filled
+    V->>D: OrderCancelReject (45)
+    Note over V,D: simulator v2 back-test, the same: cancelOrder returns false (DR-V12-E09)
+    D->>S: onCancelReject
+    S->>B: prior state, if still CancelRequested
+    Note over S,B: then one more cancelNanos wait, then cancel again or flag unresolved
+  else Cancelled carries a cumQuantity above the fills reported
+    V->>D: ExecutionReport Cancelled
+    D->>B: frees ordered minus the larger of cum and venueCum
+    Note over B: slot kept, waits for the missing fills
+    V->>D: late fill
+    D->>B: booked, leaves reaches zero, slot released
+  else the child was already released
+    V->>D: ExecutionReport fill, child unknown to the router
+    D->>D: unroutedReports and lateFills counted
+    D->>R: onFill once by venue and execId (DR-V12-D13)
+    Note over D,R: parent not reopened, hedger sees it in the next residual, a TradeBust reverses it
+  end

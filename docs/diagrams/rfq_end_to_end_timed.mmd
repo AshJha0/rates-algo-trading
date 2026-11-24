@@ -18,7 +18,7 @@ sequenceDiagram
   L->>J: append inbound frame at the latched cycle time
   L->>Q: dispatch through QuotingEventHandler
   Note over Q: inputs no older than 2 s, heartbeats within 3 s, re-quote throttle 250 ms (Section 12.1)
-  Q->>R: checkQuote, 11 checks in order (Section 13.2)
+  Q->>R: checkQuote, checks in order (Section 13.2)
   R-->>Q: accepted, quantity reserved
   Q->>L: publish Quote (11), FIRM until now + 5 s or the request expiry, whichever is first
   L->>J: append outbound frame
@@ -36,7 +36,7 @@ sequenceDiagram
   Note over Q: an unanswered quote expires at validUntilNanos and frees its reservation
   H->>R: on each timer: residual ladder
   Note over H: first tranche 0.5 of the plan, then half-life 30 s (Section 14.2)
-  H->>S: parent order through HedgeOrderSink, bound at integration
+  H->>S: parent order through HedgeOrderSink (RouterHedgeSink)
   Note over S: slices over at most 120 s, passive for at most 30 s, then aggressive (Section 15.1)
   S->>L: NewOrder (20) to the chosen venue
   L->>J: append outbound frame
