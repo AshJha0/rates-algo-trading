@@ -31,9 +31,11 @@ import org.junit.jupiter.api.io.TempDir;
  * windows (DR-R2J-02).
  *
  * <p>The check is windowed (DR-INT-02). Warm-up is one million messages, extended 250,000 at a time
- * while the JIT is still compiling, up to four times (DR-INT-06); then three consecutive
- * windows of one million messages are measured. The last window must allocate exactly nothing and
- * no window after the first may allocate more than {@link #LATER_WINDOW_BOUND} bytes. The first
+ * while the JIT is still compiling, up to four times (DR-INT-06); then four consecutive
+ * windows of one million messages are measured. No window after the first may allocate more than
+ * {@link #LATER_WINDOW_BOUND} bytes and at least one of them must allocate exactly nothing, the rule
+ * of {@code WiredLoopAllocationTest}: a one-off deoptimisation can fall in any one window
+ * (DR-V12-T01). The first
  * window is reported but not bounded: a one-off allocation of a few hundred bytes just after
  * warm-up (a late JIT recompile, a rare path such as backpressure taken for the first time) is not
  * a per-message leak, and a per-message leak of even one byte shows as at least a megabyte in every
@@ -51,7 +53,7 @@ class LoopAllocationTest {
 
   private static final int WARM_UP = 1_000_000;
   private static final int WINDOW = 1_000_000;
-  private static final int WINDOWS = 3;
+  private static final int WINDOWS = 4;
   private static final int EXTRA_WARM_UP = 4;
   private static final int EXTRA_WARM_UP_WINDOW = 250_000;
   private static final long LATER_WINDOW_BOUND = 1024L;
@@ -207,7 +209,11 @@ class LoopAllocationTest {
       for (int w = 1; w < WINDOWS; w++) {
         assertTrue(bytes[w] <= LATER_WINDOW_BOUND, "a window after the first exceeded " + LATER_WINDOW_BOUND + " bytes: " + report);
       }
-      assertEquals(0L, bytes[WINDOWS - 1], "the last window allocated on the loop thread: " + report);
+      long fewest = Long.MAX_VALUE;
+      for (int w = 1; w < WINDOWS; w++) {
+        fewest = Math.min(fewest, bytes[w]);
+      }
+      assertEquals(0L, fewest, "no window after the first was allocation-free: " + report);
     }
   }
 
