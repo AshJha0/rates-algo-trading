@@ -2,19 +2,19 @@
 
 Client RFQs, fills and hedge fills are synthetic (fitted models). Rates and the close mark are real (US Treasury par curve, NY Fed SOFR, DTCC SOFR OIS prints). See docs/research/PAPER_TRADING_PLAN.md.
 
-Decisions 11, marked sessions 10, skipped 0.
+Decisions 12, marked sessions 11, skipped 0.
 
 ## Real component: close mark on the residual position
 
 The end-of-session position times the real move from the committed close to the marking close. The desk takes no view on direction, so the expected value is zero: this line measures the exposure left overnight, not skill.
 
-Cumulative -738,956.81 USD over 10 sessions. Mean -73,895.68 USD a session, standard error 359,975.60 USD.
+Cumulative -1,639,621.35 USD over 11 sessions. Mean -149,056.49 USD a session, standard error 334,172.31 USD.
 
 ## Synthetic component: session P&L
 
 Synthetic. Spread income, hedge cost, carry, funding and fees from model-generated client flow against a market with no intraday moves. With the market held still the income carries almost no market risk, so its mean is many times its day-to-day variation by construction. That is a property of the set-up, not a track record, and no ratio of mean to standard deviation is printed for it or for any total that contains it.
 
-Cumulative 14,581,632.99 USD (synthetic) over 10 sessions.
+Cumulative 16,832,547.82 USD (synthetic) over 11 sessions.
 
 | Session | Marked on | Session P&L (synthetic) | Cumulative (synthetic) | Close mark (real) | Cumulative close mark (real) | End net DV01 |
 |---|---|---:|---:|---:|---:|---:|
@@ -28,3 +28,4 @@ Cumulative 14,581,632.99 USD (synthetic) over 10 sessions.
 | 2026-11-20 | 2026-11-20 | 1,392,971.88 | 11,073,471.42 | -353,528.33 | -2,396,026.67 | -11,886.50 |
 | 2026-11-23 | 2026-11-23 | 1,635,558.01 | 12,709,029.43 | 2,154,076.85 | -241,949.82 | 49,990.00 |
 | 2026-11-24 | 2026-11-24 | 1,872,603.56 | 14,581,632.99 | -497,006.99 | -738,956.81 | -4,574.50 |
+| 2026-11-25 | 2026-11-25 | 2,250,914.83 | 16,832,547.82 | -900,664.54 | -1,639,621.35 | 24,669.00 |
