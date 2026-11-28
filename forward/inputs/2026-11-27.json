@@ -1,0 +1,72 @@
+{
+ "as_of": "2026-11-27",
+ "notice": "SOFR (c) 2026 Federal Reserve Bank of New York. Treasury par yields: US Treasury, public domain. Swap marks derived from DTCC public price dissemination (CFTC Part 43); raw DTCC data not redistributed.",
+ "schema": "forward_inputs/1",
+ "sofr": {
+  "effective_date": "2026-11-25",
+  "pct": 3.95,
+  "revision": ""
+ },
+ "sources": [
+  {
+   "bytes": 18497,
+   "fetched_utc": "2026-11-28T09:09:26Z",
+   "name": "treasury_par_curve",
+   "sha256": "a37e0a945f074a2246cd17eec5f70494c563d4696d08d6ad47c38150850c7020",
+   "url": "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/2026/all?type=daily_treasury_yield_curve&field_tdr_date_value=2026&page&_format=csv"
+  },
+  {
+   "bytes": 2398,
+   "fetched_utc": "2026-11-28T09:09:26Z",
+   "name": "nyfed_sofr",
+   "sha256": "7455a944e7ab6e183228b513f7458287494476440c92ff38bfd4fe0c5e75a460",
+   "url": "https://markets.newyorkfed.org/api/rates/secured/sofr/last/10.json"
+  },
+  {
+   "bytes": 1013039,
+   "fetched_utc": "2026-11-28T09:09:27Z",
+   "name": "dtcc_sdr_rates_eod",
+   "sha256": "9fcdc29b50b5d8d349bb80766dacc19b64c8e3061b238e0febbdbb1e4a3ec5b1",
+   "url": "https://kgc0418-tdw-data-0.s3.amazonaws.com/cftc/eod/CFTC_CUMULATIVE_RATES_2026_11_27.zip"
+  }
+ ],
+ "swaps_pct": {
+  "10Y": {
+   "rate": 4.55101,
+   "source": "ust_plus_spread",
+   "spread_bp": -38.899,
+   "spread_from": "2026-11-25"
+  },
+  "2Y": {
+   "rate": 4.5774,
+   "source": "ust_plus_spread",
+   "spread_bp": -11.26,
+   "spread_from": "2026-11-24"
+  },
+  "30Y": {
+   "rate": 4.672724,
+   "source": "ust_plus_spread",
+   "spread_bp": -65.7276,
+   "spread_from": "2026-11-25"
+  },
+  "5Y": {
+   "rate": 4.46851,
+   "source": "ust_plus_spread",
+   "spread_bp": -27.149,
+   "spread_from": "2026-11-25"
+  }
+ },
+ "ust_par_pct": {
+  "10Y": 4.94,
+  "1M": 4.27,
+  "1Y": 4.61,
+  "20Y": 5.36,
+  "2Y": 4.69,
+  "30Y": 5.33,
+  "3M": 4.35,
+  "3Y": 4.72,
+  "5Y": 4.74,
+  "6M": 4.46,
+  "7Y": 4.82
+ }
+}
